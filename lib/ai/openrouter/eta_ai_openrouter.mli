@@ -3,8 +3,8 @@
     Chat requests use OpenRouter's Responses-style envelope plus optional
     routing controls and attribution headers. Prompt capability flags are
     conservative for routing: image and audio parts are encoded, while video
-    prompt input is not advertised. Image generation, speech, transcription,
-    rerank, and video generation use OpenRouter-specific endpoint helpers. *)
+    prompt input is not advertised. Image generation, audio, rerank, and video
+    generation use OpenRouter-specific endpoint helpers. *)
 
 type attribution = { referer : string option; title : string option }
 (** Optional OpenRouter attribution headers. [referer] is sent as [HTTP-Referer]
@@ -134,9 +134,106 @@ module Embeddings : sig
     (Eta_ai.Embedding.response, Eta_ai.ai_error) Eta.Effect.t
 end
 
-module Speech : Eta_ai.Provider.Speech
 module Images : Eta_ai.Provider.Images
-module Transcriptions : Eta_ai.Provider.Transcriptions
+
+module Audio : sig
+  module Speech_to_text : sig
+    type request = {
+      model : Eta_ai.model;
+      file : Eta_ai.Audio.upload;
+      language : string option;
+      prompt : string option;
+      response_format : string option;
+      temperature : float option;
+      extra_fields : (string * string) list;
+    }
+
+    type result = {
+      text : string option;
+      usage : Eta_ai.usage option;
+      raw : Eta_ai.raw_json option;
+    }
+
+    type configuration = {
+      model : Eta_ai.model;
+      temperature : float option;
+    }
+
+    type request_construction
+
+    include
+      Eta_ai.Audio.Speech_to_text.Provider
+        with type request := request
+         and type result := result
+         and type error := Eta_ai.ai_error
+         and type configuration := configuration
+         and type request_construction := request_construction
+
+    val encode : request -> (Eta_ai.raw_json, Eta_ai.ai_error) Stdlib.result
+    val decode : Eta_ai.raw_json -> (result, Eta_ai.ai_error) Stdlib.result
+
+    val request :
+      ?provider:Eta_ai.provider ->
+      api_key:Eta_ai.api_key ->
+      request ->
+      (Eta_http.Request.t, Eta_ai.ai_error) Stdlib.result
+
+    val create :
+      ?provider:Eta_ai.provider ->
+      Eta_http.Client.t ->
+      api_key:Eta_ai.api_key ->
+      request ->
+      (result, Eta_ai.ai_error) Eta.Effect.t
+  end
+
+  module Text_to_speech : sig
+    type request = {
+      model : Eta_ai.model;
+      input : string;
+      voice : string;
+      response_format : string option;
+      speed : float option;
+      instructions : string option;
+      extra : (string * Eta_ai.Json.t) list;
+    }
+
+    type result = Eta_ai.Audio.Text_to_speech.result = {
+      content_type : string option;
+      audio : bytes;
+    }
+
+    type configuration = {
+      model : Eta_ai.model;
+      extra : (string * Eta_ai.Json.t) list;
+    }
+
+    type request_construction
+
+    include
+      Eta_ai.Audio.Text_to_speech.Provider
+        with type request := request
+         and type result := result
+         and type error := Eta_ai.ai_error
+         and type configuration := configuration
+         and type request_construction := request_construction
+
+    val encode : request -> (Eta_ai.raw_json, Eta_ai.ai_error) Stdlib.result
+
+    val request :
+      ?provider:Eta_ai.provider ->
+      api_key:Eta_ai.api_key ->
+      request ->
+      (Eta_http.Request.t, Eta_ai.ai_error) Stdlib.result
+
+    val create :
+      ?provider:Eta_ai.provider ->
+      Eta_http.Client.t ->
+      api_key:Eta_ai.api_key ->
+      request ->
+      (result, Eta_ai.ai_error) Eta.Effect.t
+  end
+end
+
 module Rerank : Eta_ai.Provider.Rerank
 module Video : Eta_ai.Provider.Video
 
@@ -160,20 +257,11 @@ val encode_embeddings :
 val decode_embeddings :
   Eta_ai.raw_json -> (Eta_ai.Embedding.response, Eta_ai.ai_error) result
 
-val encode_speech :
-  Eta_ai.Speech.request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
-
 val encode_image_generation :
   Eta_ai.Image.request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
 
 val decode_image_generation :
   Eta_ai.raw_json -> (Eta_ai.Image.response, Eta_ai.ai_error) result
-
-val encode_transcription :
-  Eta_ai.Transcription.request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
-
-val decode_transcription :
-  Eta_ai.raw_json -> (Eta_ai.Transcription.response, Eta_ai.ai_error) result
 
 val encode_rerank :
   Eta_ai.Rerank.request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
@@ -245,22 +333,10 @@ val embeddings_request :
   Eta_ai.Embedding.request ->
   (Eta_http.Request.t, Eta_ai.ai_error) result
 
-val speech_request :
-  ?provider:Eta_ai.provider ->
-  api_key:Eta_ai.api_key ->
-  Eta_ai.Speech.request ->
-  (Eta_http.Request.t, Eta_ai.ai_error) result
-
 val image_generation_request :
   ?provider:Eta_ai.provider ->
   api_key:Eta_ai.api_key ->
   Eta_ai.Image.request ->
-  (Eta_http.Request.t, Eta_ai.ai_error) result
-
-val transcription_request :
-  ?provider:Eta_ai.provider ->
-  api_key:Eta_ai.api_key ->
-  Eta_ai.Transcription.request ->
   (Eta_http.Request.t, Eta_ai.ai_error) result
 
 val rerank_request :
@@ -306,26 +382,12 @@ val embeddings :
   Eta_ai.Embedding.request ->
   (Eta_ai.Embedding.response, Eta_ai.ai_error) Eta.Effect.t
 
-val speech :
-  ?provider:Eta_ai.provider ->
-  Eta_http.Client.t ->
-  api_key:Eta_ai.api_key ->
-  Eta_ai.Speech.request ->
-  (Eta_ai.Speech.response, Eta_ai.ai_error) Eta.Effect.t
-
 val image_generation :
   ?provider:Eta_ai.provider ->
   Eta_http.Client.t ->
   api_key:Eta_ai.api_key ->
   Eta_ai.Image.request ->
   (Eta_ai.Image.response, Eta_ai.ai_error) Eta.Effect.t
-
-val transcription :
-  ?provider:Eta_ai.provider ->
-  Eta_http.Client.t ->
-  api_key:Eta_ai.api_key ->
-  Eta_ai.Transcription.request ->
-  (Eta_ai.Transcription.response, Eta_ai.ai_error) Eta.Effect.t
 
 val rerank :
   ?provider:Eta_ai.provider ->

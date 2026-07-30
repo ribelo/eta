@@ -1,4 +1,5 @@
 module Json = Json
+module Audio = Audio
 
 include Types
 
@@ -120,24 +121,6 @@ module Provider = struct
       api_key:api_key ->
       Image.request ->
       (Image.response, ai_error) Eta.Effect.t
-  end
-
-  module type Speech = sig
-    val create :
-      provider:provider ->
-      Eta_http.Client.t ->
-      api_key:api_key ->
-      Speech.request ->
-      (Speech.response, ai_error) Eta.Effect.t
-  end
-
-  module type Transcriptions = sig
-    val create :
-      provider:provider ->
-      Eta_http.Client.t ->
-      api_key:api_key ->
-      Transcription.request ->
-      (Transcription.response, ai_error) Eta.Effect.t
   end
 
   module type Rerank = sig

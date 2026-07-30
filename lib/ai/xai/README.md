@@ -44,7 +44,7 @@ let api_key_from_credential = Eta_ai_xai.api_key credential
 let headers = Eta_ai_xai.authorization_headers credential
 
 let management = Eta_ai_xai.Collections.management_key "management-secret"
-let ephemeral = Eta_ai_xai.Realtime.client_secret "ephemeral-secret"
+let ephemeral = Eta_ai_xai.Audio.Realtime.client_secret "ephemeral-secret"
 
 let default_inference_base = Eta_ai_xai.default_base_url
 (* "https://api.x.ai" *)
@@ -67,7 +67,7 @@ let management_endpoint =
   alias back to `Eta_ai.api_key`.
 - Management key: `Collections.management_key` (redacted label
   `xai_management_api_key`). Used only on the management plane.
-- Realtime client secret: `Realtime.client_secret` (redacted label
+- Realtime client secret: `Audio.Realtime.client_secret` (redacted label
   `xai_realtime_client_secret`). Create via REST; connect with
   `eta_ai_xai_eio`.
 - `Endpoint.inference` and `Endpoint.management` are nominally distinct so an
@@ -328,14 +328,14 @@ listing is implemented; embedding/video generation runners are not.
 ```ocaml
 open Eta_ai_xai
 
-let stt : Speech_to_text.request =
+let stt : Audio.Speech_to_text.request =
   {
     source =
-      Speech_to_text.File
+      Audio.Speech_to_text.File
         {
-          filename = "audio.wav";
+          Eta_ai.Audio.filename = "audio.wav";
           content_type = "audio/wav";
-          data = Bytes.of_string "RIFF";
+          source = Eta_ai.Audio.bytes (Bytes.of_string "RIFF");
         };
     audio_format = None;
     sample_rate = None;
@@ -350,9 +350,9 @@ let stt : Speech_to_text.request =
   }
 
 let transcribe client ~api_key =
-  Speech_to_text.transcribe client ~api_key stt
+  Audio.Speech_to_text.transcribe client ~api_key stt
 
-let tts : Text_to_speech.request =
+let tts : Audio.Text_to_speech.request =
   {
     text = "hello";
     language = "en";
@@ -360,7 +360,7 @@ let tts : Text_to_speech.request =
     output_format =
       Some
         {
-          codec = Text_to_speech.Mp3;
+          codec = Audio.Text_to_speech.Mp3;
           sample_rate = Some 24000;
           bit_rate = Some 128000;
         };
@@ -371,12 +371,12 @@ let tts : Text_to_speech.request =
   }
 
 let synthesize client ~api_key =
-  Text_to_speech.synthesize client ~api_key tts
+  Audio.Text_to_speech.synthesize client ~api_key tts
 
 let voices client ~api_key =
   let open Eta.Syntax in
-  let* built_in = Voices.list_built_in client ~api_key in
-  let* custom = Voices.list_custom client ~api_key ~limit:100 () in
+  let* built_in = Audio.Voices.list_built_in client ~api_key in
+  let* custom = Audio.Voices.list_custom client ~api_key ~limit:100 () in
   Eta.Effect.pure (built_in, custom)
 ```
 
@@ -388,40 +388,45 @@ Streaming STT/TTS WebSockets are in `eta_ai_xai_eio`.
 
 ## Realtime codecs and client secrets
 
-`Realtime` builds sessions and event codecs only. Connection is
-`Eta_ai_xai_eio.Realtime`.
+`Audio.Realtime` builds sessions and event codecs only. Connection is
+`Eta_ai_xai_eio.Audio.Realtime`.
 
 ```ocaml
 open Eta_ai_xai
 
 let session =
   let format =
-    match Realtime.pcm ~sample_rate:24000 with
+    match Audio.Realtime.pcm ~sample_rate:24000 with
     | Ok format -> format
     | Error error -> failwith (Format.asprintf "%a" Error.pp error)
   in
   match
-    Realtime.session ~model:"grok-voice-latest" ~voice:"eve"
+    Audio.Realtime.session ~model:"grok-voice-latest" ~voice:"eve"
       ~input_audio:
         {
           format;
-          transport = Realtime.Json;
+          transport = Audio.Realtime.Json;
           transcription =
             Some { language_hint = Some "en"; keyterms = [ "Eta" ] };
         }
       ~output_audio:
-        { format = Realtime.opus; transport = Realtime.Binary; speed = None }
+        {
+          format = Audio.Realtime.opus;
+          transport = Audio.Realtime.Binary;
+          speed = None;
+        }
       ()
   with
   | Ok session -> session
   | Error error -> failwith (Format.asprintf "%a" Error.pp error)
 
 let mint_secret client ~api_key =
-  Realtime.create_client_secret client ~api_key ~expires_after_s:3600
+  Audio.Realtime.create_client_secret client ~api_key ~expires_after_s:3600
 
 (* Codecs for application-owned loops *)
-let _ = Realtime.client_event_message Realtime.Input_audio_buffer_commit
-let decode message = Realtime.decode_server_event message
+let _ =
+  Audio.Realtime.client_event_message Audio.Realtime.Input_audio_buffer_commit
+let decode message = Audio.Realtime.decode_server_event message
 ```
 
 - `expires_after_s` must be in `1 .. 3600`.

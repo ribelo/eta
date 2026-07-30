@@ -140,11 +140,11 @@ let test_xaipkg_capabilities_security () =
     (Format.asprintf "%a" Eta_redacted.pp (X.api_key credential));
   let management = X.Collections.management_key "management-secret" in
   ignore management;
-  let ephemeral = X.Realtime.client_secret "ephemeral-secret" in
+  let ephemeral = X.Audio.Realtime.client_secret "ephemeral-secret" in
   Alcotest.(check string) "xaisec-fo5p redacted ephemeral"
     "<redacted:xai_realtime_client_secret>"
     (Format.asprintf "%a" Eta_redacted.pp
-       (X.Realtime.client_secret_redacted ephemeral))
+       (X.Audio.Realtime.client_secret_redacted ephemeral))
 
 let test_xairsp_complete_request_and_validation () =
   let tools =
@@ -741,7 +741,7 @@ let test_xaimod_stt_tts_realtime () =
         X.Models.video_generation_model_request ~api_key:key ~model_id:"video" () );
     ];
   let custom_voices =
-    X.Voices.custom_list_request ~api_key:key ~limit:100
+    X.Audio.Voices.custom_list_request ~api_key:key ~limit:100
       ~pagination_token:"next" ()
     |> expect_ok "custom voice list"
   in
@@ -750,18 +750,22 @@ let test_xaimod_stt_tts_realtime () =
       Alcotest.(check string) (id ^ " method") "GET" request.H.Request.method_;
       require (id ^ " authority/path") ("https://api.x.ai" ^ path) request.uri)
     [
-      ("xaivoice-v50p", "/v1/tts/voices", X.Voices.built_in_list_request ~api_key:key ());
-      ("xaivoice-9kah", "/v1/tts/voices/eve", X.Voices.built_in_get_request ~api_key:key ~voice_id:"eve" ());
+      ("xaivoice-v50p", "/v1/tts/voices", X.Audio.Voices.built_in_list_request ~api_key:key ());
+      ("xaivoice-9kah", "/v1/tts/voices/eve", X.Audio.Voices.built_in_get_request ~api_key:key ~voice_id:"eve" ());
       ("xaivoice-mv4h", "/v1/custom-voices?", custom_voices);
-      ("xaivoice-4yam", "/v1/custom-voices/custom_opaque", X.Voices.custom_get_request ~api_key:key ~voice_id:"custom_opaque" ());
-      ("xaivoice-f3yb", "/v1/custom-voices/custom_opaque/audio", X.Voices.custom_audio_request ~api_key:key ~voice_id:"custom_opaque" ());
+      ("xaivoice-4yam", "/v1/custom-voices/custom_opaque", X.Audio.Voices.custom_get_request ~api_key:key ~voice_id:"custom_opaque" ());
+      ("xaivoice-f3yb", "/v1/custom-voices/custom_opaque/audio", X.Audio.Voices.custom_audio_request ~api_key:key ~voice_id:"custom_opaque" ());
     ];
-  let stt : X.Speech_to_text.request =
+  let stt : X.Audio.Speech_to_text.request =
     {
       source =
-        X.Speech_to_text.File
-          { A.filename = "audio.raw"; content_type = "application/octet-stream"; data = Bytes.of_string "pcm" };
-      audio_format = Some X.Speech_to_text.Pcm;
+        X.Audio.Speech_to_text.File
+          {
+            A.Audio.filename = "audio.raw";
+            content_type = "application/octet-stream";
+            source = A.Audio.bytes (Bytes.of_string "pcm");
+          };
+      audio_format = Some X.Audio.Speech_to_text.Pcm;
       sample_rate = Some 16000;
       language = Some "en";
       format = Some true;
@@ -773,13 +777,13 @@ let test_xaimod_stt_tts_realtime () =
       vad_threshold = Some 0.5;
     }
   in
-  let request = X.Speech_to_text.request ~api_key:key stt |> expect_ok "STT" in
+  let request = X.Audio.Speech_to_text.request ~api_key:key stt |> expect_ok "STT" in
   let request_body = body request in
   Alcotest.(check bool) "xaistt-vjqk options before STT file" true
     (index "sample rate" {|name="sample_rate"|} request_body
      < index "STT file" {|name="file"|} request_body);
   let transcript =
-    X.Speech_to_text.decode_response (read_fixture "stt.json")
+    X.Audio.Speech_to_text.decode_response (read_fixture "stt.json")
     |> expect_ok "STT fixture"
   in
   Alcotest.(check bool) "xaistt-fmd4 transcript fields" true
@@ -793,32 +797,32 @@ let test_xaimod_stt_tts_realtime () =
         && word.end_ = Some 0.5 && word.confidence = Some 0.98
         && word.speaker = Some 0)
   | _ -> Alcotest.fail "word fixture");
-  let tts : X.Text_to_speech.request =
+  let tts : X.Audio.Text_to_speech.request =
     {
       text = "hello";
       language = "en";
       voice_id = Some "custom_opaque";
       output_format =
-        Some { codec = X.Text_to_speech.Mp3; sample_rate = Some 24000; bit_rate = Some 128000 };
+        Some { codec = X.Audio.Text_to_speech.Mp3; sample_rate = Some 24000; bit_rate = Some 128000 };
       speed = Some 1.2;
       optimize_streaming_latency = Some 1;
       text_normalization = Some true;
       with_timestamps = true;
     }
   in
-  let request = X.Text_to_speech.request ~api_key:key tts |> expect_ok "TTS" in
+  let request = X.Audio.Text_to_speech.request ~api_key:key tts |> expect_ok "TTS" in
   require "xaivoice-v39s opaque unary voice"
     {|"voice_id":"custom_opaque"|} (body request);
-  let pcm = X.Realtime.pcm ~sample_rate:32000 |> expect_ok "PCM" in
+  let pcm = X.Audio.Realtime.pcm ~sample_rate:32000 |> expect_ok "PCM" in
   let realtime_tools =
     [
-      X.Realtime.Function
+      X.Audio.Realtime.Function
         {
           name = "lookup";
           description = Some "Lookup";
           parameters = `Assoc [ ("type", `String "object") ];
         };
-      X.Realtime.Web_search
+      X.Audio.Realtime.Web_search
         {
           location =
             Some
@@ -832,7 +836,7 @@ let test_xaimod_stt_tts_realtime () =
           excluded_domains = [];
           enable_image_understanding = Some true;
         };
-      X.Realtime.X_search
+      X.Audio.Realtime.X_search
         {
           allowed_x_handles = List.init 20 (fun index -> "handle" ^ string_of_int index);
           excluded_x_handles = [];
@@ -841,9 +845,9 @@ let test_xaimod_stt_tts_realtime () =
           enable_image_understanding = Some true;
           enable_video_understanding = Some true;
         };
-      X.Realtime.File_search
+      X.Audio.Realtime.File_search
         { vector_store_ids = [ "collection_1" ]; max_num_results = Some 2 };
-      X.Realtime.Mcp
+      X.Audio.Realtime.Mcp
         {
           server_url = "https://mcp.example";
           server_label = "mcp";
@@ -855,7 +859,7 @@ let test_xaimod_stt_tts_realtime () =
     ]
   in
   let realtime =
-    X.Realtime.session ~instructions:"brief" ~model:"grok-voice-latest"
+    X.Audio.Realtime.session ~instructions:"brief" ~model:"grok-voice-latest"
       ~reasoning_effort:"high" ~voice:"custom_opaque"
       ~tools:realtime_tools
       ~turn_detection:
@@ -870,15 +874,15 @@ let test_xaimod_stt_tts_realtime () =
       ~input_audio:
         {
           format = pcm;
-          transport = X.Realtime.Json;
+          transport = X.Audio.Realtime.Json;
           transcription = Some { language_hint = Some "en"; keyterms = [ "Eta" ] };
         }
       ~output_audio:
-        { format = X.Realtime.opus; transport = X.Realtime.Binary; speed = Some 1.1 }
+        { format = X.Audio.Realtime.opus; transport = X.Audio.Realtime.Binary; speed = Some 1.1 }
       ()
     |> expect_ok "Realtime session"
   in
-  let session = X.Realtime.session_to_string realtime in
+  let session = X.Audio.Realtime.session_to_string realtime in
   List.iter (fun (id, needle) -> require id needle session)
     [
       ("xairt-fjv5", {|"reasoning":{"effort":"high"}|});
@@ -936,7 +940,7 @@ let test_xaimod_stt_tts_realtime () =
         |> Option.value ~default:[] |> List.length)
   | _ -> Alcotest.fail "Realtime tool wire shapes");
   let both_handles =
-    X.Realtime.X_search
+    X.Audio.Realtime.X_search
       {
         allowed_x_handles = [ "xai" ];
         excluded_x_handles = [ "other" ];
@@ -946,11 +950,11 @@ let test_xaimod_stt_tts_realtime () =
         enable_video_understanding = None;
       }
   in
-  (match X.Realtime.session ~tools:[ both_handles ] () with
+  (match X.Audio.Realtime.session ~tools:[ both_handles ] () with
   | Error (X.Error.Invalid_request _) -> ()
   | _ -> Alcotest.fail "mutually exclusive Realtime X handles");
   let too_many_handles =
-    X.Realtime.X_search
+    X.Audio.Realtime.X_search
       {
         allowed_x_handles = List.init 21 string_of_int;
         excluded_x_handles = [];
@@ -960,27 +964,27 @@ let test_xaimod_stt_tts_realtime () =
         enable_video_understanding = None;
       }
   in
-  (match X.Realtime.session ~tools:[ too_many_handles ] () with
+  (match X.Audio.Realtime.session ~tools:[ too_many_handles ] () with
   | Error (X.Error.Invalid_request _) -> ()
   | _ -> Alcotest.fail "Realtime X handles max 20");
   let append =
-    X.Realtime.client_event_message
-      (X.Realtime.Input_audio_buffer_append (Bytes.of_string "pcm"))
+    X.Audio.Realtime.client_event_message
+      (X.Audio.Realtime.Input_audio_buffer_append (Bytes.of_string "pcm"))
   in
   (match append with
   | A.Realtime.Text raw ->
       require "xairt-t5ie JSON append" "input_audio_buffer.append" raw
   | A.Realtime.Binary _ -> Alcotest.fail "JSON append");
   let binary =
-    X.Realtime.client_event_message
-      (X.Realtime.Input_audio_binary (Bytes.of_string "pcm"))
+    X.Audio.Realtime.client_event_message
+      (X.Audio.Realtime.Input_audio_binary (Bytes.of_string "pcm"))
   in
   (match binary with
   | A.Realtime.Binary _ ->
       Alcotest.(check bool) "xairt-xgpp binary message" true true
   | A.Realtime.Text _ -> Alcotest.fail "binary transport");
   let secret =
-    X.Realtime.client_secret_request ~api_key:key ~expires_after_s:3600 ()
+    X.Audio.Realtime.client_secret_request ~api_key:key ~expires_after_s:3600 ()
     |> expect_ok "client secret"
   in
   Alcotest.(check bool) "xairt-u0gn client secret POST authority/path/auth" true
@@ -990,80 +994,80 @@ let test_xaimod_stt_tts_realtime () =
   Alcotest.(check string) "xairt-u0gn client secret POST authority/path/auth"
     "https://api.x.ai/v1/realtime/client_secrets" secret.uri;
   (match
-     X.Realtime.client_secret_request ~api_key:key ~expires_after_s:3601 ()
+     X.Audio.Realtime.client_secret_request ~api_key:key ~expires_after_s:3601 ()
    with
   | Error (X.Error.Invalid_request _) ->
       Alcotest.(check bool) "xairt-r25l client-secret TTL rejected" true true
   | _ -> Alcotest.fail "Realtime client-secret TTL")
 
 let test_xairt_client_and_server_event_codecs () =
-  let session = X.Realtime.session () |> expect_ok "event session" in
+  let session = X.Audio.Realtime.session () |> expect_ok "event session" in
   let text_type id event expected =
-    match X.Realtime.client_event_message event with
+    match X.Audio.Realtime.client_event_message event with
     | A.Realtime.Text raw -> require id ({|"type":"|} ^ expected ^ {|"|}) raw
     | A.Realtime.Binary _ -> Alcotest.failf "%s expected text event" id
   in
   List.iter
     (fun (id, event, wire_type) -> text_type id event wire_type)
     [
-      ("xairt-ix1l", X.Realtime.Session_update session, "session.update");
-      ("xairt-qyz3", X.Realtime.Input_audio_buffer_commit, "input_audio_buffer.commit");
-      ("xairt-s2k1", X.Realtime.Input_audio_buffer_clear, "input_audio_buffer.clear");
+      ("xairt-ix1l", X.Audio.Realtime.Session_update session, "session.update");
+      ("xairt-qyz3", X.Audio.Realtime.Input_audio_buffer_commit, "input_audio_buffer.commit");
+      ("xairt-s2k1", X.Audio.Realtime.Input_audio_buffer_clear, "input_audio_buffer.clear");
       ( "xairt-tczg",
-        X.Realtime.Conversation_item_create
-          (X.Realtime.Message_item (`Assoc [ ("role", `String "user") ])),
+        X.Audio.Realtime.Conversation_item_create
+          (X.Audio.Realtime.Message_item (`Assoc [ ("role", `String "user") ])),
         "conversation.item.create" );
       ( "xairt-wots",
-        X.Realtime.Conversation_item_create
-          (X.Realtime.Function_call_output { call_id = "call_1"; output = "result" }),
+        X.Audio.Realtime.Conversation_item_create
+          (X.Audio.Realtime.Function_call_output { call_id = "call_1"; output = "result" }),
         "conversation.item.create" );
-      ("xairt-75yu", X.Realtime.Conversation_item_delete { item_id = "item_1" }, "conversation.item.delete");
+      ("xairt-75yu", X.Audio.Realtime.Conversation_item_delete { item_id = "item_1" }, "conversation.item.delete");
       ( "xairt-dpki",
-        X.Realtime.Conversation_item_truncate
+        X.Audio.Realtime.Conversation_item_truncate
           { item_id = "item_1"; content_index = 0; audio_end_ms = 12 },
         "conversation.item.truncate" );
-      ("xairt-ujsx", X.Realtime.Response_create None, "response.create");
-      ("xairt-et1h", X.Realtime.Response_cancel { response_id = Some "resp_1" }, "response.cancel");
+      ("xairt-ujsx", X.Audio.Realtime.Response_create None, "response.create");
+      ("xairt-et1h", X.Audio.Realtime.Response_cancel { response_id = Some "resp_1" }, "response.cancel");
     ];
   let tag = function
-    | X.Realtime.Session_created _ -> "session.created"
-    | X.Realtime.Session_updated _ -> "session.updated"
-    | X.Realtime.Conversation_created _ -> "conversation.created"
-    | X.Realtime.Conversation_item_added _ -> "conversation.item.added"
-    | X.Realtime.Conversation_item_deleted _ -> "conversation.item.deleted"
-    | X.Realtime.Conversation_item_truncated _ -> "conversation.item.truncated"
-    | X.Realtime.Input_audio_speech_started _ -> "input_audio_buffer.speech_started"
-    | X.Realtime.Input_audio_speech_stopped _ -> "input_audio_buffer.speech_stopped"
-    | X.Realtime.Input_audio_committed _ -> "input_audio_buffer.committed"
-    | X.Realtime.Input_audio_cleared _ -> "input_audio_buffer.cleared"
-    | X.Realtime.Input_audio_timeout_triggered _ -> "input_audio_buffer.timeout_triggered"
-    | X.Realtime.Input_audio_transcription_completed _ ->
+    | X.Audio.Realtime.Session_created _ -> "session.created"
+    | X.Audio.Realtime.Session_updated _ -> "session.updated"
+    | X.Audio.Realtime.Conversation_created _ -> "conversation.created"
+    | X.Audio.Realtime.Conversation_item_added _ -> "conversation.item.added"
+    | X.Audio.Realtime.Conversation_item_deleted _ -> "conversation.item.deleted"
+    | X.Audio.Realtime.Conversation_item_truncated _ -> "conversation.item.truncated"
+    | X.Audio.Realtime.Input_audio_speech_started _ -> "input_audio_buffer.speech_started"
+    | X.Audio.Realtime.Input_audio_speech_stopped _ -> "input_audio_buffer.speech_stopped"
+    | X.Audio.Realtime.Input_audio_committed _ -> "input_audio_buffer.committed"
+    | X.Audio.Realtime.Input_audio_cleared _ -> "input_audio_buffer.cleared"
+    | X.Audio.Realtime.Input_audio_timeout_triggered _ -> "input_audio_buffer.timeout_triggered"
+    | X.Audio.Realtime.Input_audio_transcription_completed _ ->
         "conversation.item.input_audio_transcription.completed"
-    | X.Realtime.Input_audio_transcription_updated _ ->
+    | X.Audio.Realtime.Input_audio_transcription_updated _ ->
         "conversation.item.input_audio_transcription.updated"
-    | X.Realtime.Response_created _ -> "response.created"
-    | X.Realtime.Response_output_audio_delta { audio; _ } ->
+    | X.Audio.Realtime.Response_created _ -> "response.created"
+    | X.Audio.Realtime.Response_output_audio_delta { audio; _ } ->
         Alcotest.(check string) "xairt-px9d decoded base64 audio" "audio"
           (Bytes.to_string audio);
         "response.output_audio.delta"
-    | X.Realtime.Response_output_audio_done _ -> "response.output_audio.done"
-    | X.Realtime.Response_output_audio_transcript_delta _ ->
+    | X.Audio.Realtime.Response_output_audio_done _ -> "response.output_audio.done"
+    | X.Audio.Realtime.Response_output_audio_transcript_delta _ ->
         "response.output_audio_transcript.delta"
-    | X.Realtime.Response_output_audio_transcript_done _ ->
+    | X.Audio.Realtime.Response_output_audio_transcript_done _ ->
         "response.output_audio_transcript.done"
-    | X.Realtime.Response_text_delta _ -> "response.text.delta"
-    | X.Realtime.Response_output_text_delta _ -> "response.output_text.delta"
-    | X.Realtime.Response_function_call_arguments_done call ->
+    | X.Audio.Realtime.Response_text_delta _ -> "response.text.delta"
+    | X.Audio.Realtime.Response_output_text_delta _ -> "response.output_text.delta"
+    | X.Audio.Realtime.Response_function_call_arguments_done call ->
         Alcotest.(check string) "xairt-y06g call id" "call_001" call.call_id;
         Alcotest.(check string) "xairt-y06g function name" "get_weather" call.name;
         Alcotest.(check string) "xairt-y06g arguments"
           {|{"location":"Warsaw"}|} call.arguments;
         "response.function_call_arguments.done"
-    | X.Realtime.Response_done _ -> "response.done"
-    | X.Realtime.Dtmf_event_received _ -> "input_audio_buffer.dtmf_event_received"
-    | X.Realtime.Error _ -> "error"
-    | X.Realtime.Unknown _ -> "unknown"
-    | X.Realtime.Binary_audio _ -> "binary"
+    | X.Audio.Realtime.Response_done _ -> "response.done"
+    | X.Audio.Realtime.Dtmf_event_received _ -> "input_audio_buffer.dtmf_event_received"
+    | X.Audio.Realtime.Error _ -> "error"
+    | X.Audio.Realtime.Unknown _ -> "unknown"
+    | X.Audio.Realtime.Binary_audio _ -> "binary"
   in
   let samples =
     [
@@ -1104,13 +1108,13 @@ let test_xairt_client_and_server_event_codecs () =
   in
   List.iter
     (fun (id, expected, raw) ->
-      match X.Realtime.decode_server_event (A.Realtime.Text raw) with
+      match X.Audio.Realtime.decode_server_event (A.Realtime.Text raw) with
       | Ok event -> Alcotest.(check string) id expected (tag event)
       | Error _ -> Alcotest.failf "%s failed to decode" id)
     samples;
   let unknown = {|{"type":"future.event","sentinel":{"kept":true}}|} in
-  match X.Realtime.decode_server_event (A.Realtime.Text unknown) with
-  | Ok (X.Realtime.Unknown { raw; _ }) ->
+  match X.Audio.Realtime.decode_server_event (A.Realtime.Text unknown) with
+  | Ok (X.Audio.Realtime.Unknown { raw; _ }) ->
       require "xairt-fp57 unknown raw JSON preservation"
         {|"sentinel":{"kept":true}|} (A.Json.compact raw)
   | _ -> Alcotest.fail "unknown Realtime event"
@@ -1141,7 +1145,7 @@ let test_utf8_scalar_validation () =
   let repeated count value =
     String.concat "" (List.init count (fun _ -> value))
   in
-  let tts text : X.Text_to_speech.request =
+  let tts text : X.Audio.Text_to_speech.request =
     {
       text;
       language = "en";
@@ -1154,22 +1158,22 @@ let test_utf8_scalar_validation () =
     }
   in
   ignore
-    (X.Text_to_speech.request ~api_key:(A.api_key "key")
+    (X.Audio.Text_to_speech.request ~api_key:(A.api_key "key")
        (tts (repeated 15_000 "é"))
     |> expect_ok "15000 Unicode scalar TTS input");
   (match
-     X.Text_to_speech.request ~api_key:(A.api_key "key")
+     X.Audio.Text_to_speech.request ~api_key:(A.api_key "key")
        (tts (repeated 15_001 "é"))
    with
   | Error (X.Error.Invalid_request _) -> ()
   | _ -> Alcotest.fail "15001 Unicode scalar TTS input");
   Alcotest.(check bool) "xaitts-jo6b unary 15000-character bound" true true;
-  (match X.Text_to_speech.request ~api_key:(A.api_key "key") (tts "\xC0\xAF") with
+  (match X.Audio.Text_to_speech.request ~api_key:(A.api_key "key") (tts "\xC0\xAF") with
   | Error (X.Error.Invalid_request _) -> ()
   | _ -> Alcotest.fail "invalid UTF-8 TTS input");
-  let stt keyterm : X.Speech_to_text.request =
+  let stt keyterm : X.Audio.Speech_to_text.request =
     {
-      source = X.Speech_to_text.Url "https://audio.example/input.wav";
+      source = X.Audio.Speech_to_text.Url "https://audio.example/input.wav";
       audio_format = None;
       sample_rate = None;
       language = None;
@@ -1183,22 +1187,22 @@ let test_utf8_scalar_validation () =
     }
   in
   ignore
-    (X.Speech_to_text.request ~api_key:(A.api_key "key")
+    (X.Audio.Speech_to_text.request ~api_key:(A.api_key "key")
        (stt (repeated 50 "😀"))
     |> expect_ok "50 Unicode scalar STT keyterm");
   (match
-     X.Speech_to_text.request ~api_key:(A.api_key "key")
+     X.Audio.Speech_to_text.request ~api_key:(A.api_key "key")
        (stt (repeated 51 "😀"))
    with
   | Error (X.Error.Invalid_request _) -> ()
   | _ -> Alcotest.fail "51 Unicode scalar STT keyterm");
-  let pcm = X.Realtime.pcm ~sample_rate:24000 |> expect_ok "pcm" in
+  let pcm = X.Audio.Realtime.pcm ~sample_rate:24000 |> expect_ok "pcm" in
   (match
-     X.Realtime.session
+     X.Audio.Realtime.session
        ~input_audio:
          {
            format = pcm;
-           transport = X.Realtime.Json;
+           transport = X.Audio.Realtime.Json;
            transcription =
              Some { language_hint = None; keyterms = [ "\xED\xA0\x80" ] };
          }
@@ -1209,7 +1213,7 @@ let test_utf8_scalar_validation () =
 
 let test_local_contract_validation_matrix () =
   let key = A.api_key "key" in
-  let base_stt source : X.Speech_to_text.request =
+  let base_stt source : X.Audio.Speech_to_text.request =
     {
       source;
       audio_format = None;
@@ -1227,48 +1231,48 @@ let test_local_contract_validation_matrix () =
   List.iter
     (fun (id, source) ->
       let request =
-        X.Speech_to_text.request ~api_key:key (base_stt source)
+        X.Audio.Speech_to_text.request ~api_key:key (base_stt source)
         |> expect_ok id
       in
       Alcotest.(check string) id "POST" request.method_)
     [
-      ("xaistt-9ncy", X.Speech_to_text.Url "https://audio.example/a.wav");
+      ("xaistt-9ncy", X.Audio.Speech_to_text.Url "https://audio.example/a.wav");
       ( "xaistt-9ncy",
-        X.Speech_to_text.File
+        X.Audio.Speech_to_text.File
           {
-            A.filename = "a.wav";
+            A.Audio.filename = "a.wav";
             content_type = "audio/wav";
-            data = Bytes.of_string "audio";
+            source = A.Audio.bytes (Bytes.of_string "audio");
           } );
     ];
   List.iter
     (fun format ->
       let request =
-        { (base_stt (X.Speech_to_text.Url "https://audio.example/raw")) with
+        { (base_stt (X.Audio.Speech_to_text.Url "https://audio.example/raw")) with
           audio_format = Some format;
           sample_rate = Some 16000;
         }
       in
       ignore
-        (X.Speech_to_text.request ~api_key:key request
+        (X.Audio.Speech_to_text.request ~api_key:key request
         |> expect_ok "xaistt-tlyz raw format"))
-    [ X.Speech_to_text.Pcm; X.Speech_to_text.Mulaw; X.Speech_to_text.Alaw ];
+    [ X.Audio.Speech_to_text.Pcm; X.Audio.Speech_to_text.Mulaw; X.Audio.Speech_to_text.Alaw ];
   List.iter
     (fun rate ->
       let request =
-        { (base_stt (X.Speech_to_text.Url "https://audio.example/raw")) with
-          audio_format = Some X.Speech_to_text.Pcm;
+        { (base_stt (X.Audio.Speech_to_text.Url "https://audio.example/raw")) with
+          audio_format = Some X.Audio.Speech_to_text.Pcm;
           sample_rate = Some rate;
         }
       in
       ignore
-        (X.Speech_to_text.request ~api_key:key request
+        (X.Audio.Speech_to_text.request ~api_key:key request
         |> expect_ok "xaistt-yi4h sample rate"))
     [ 8000; 16000; 22050; 24000; 44100; 48000 ];
   let complete_stt =
     {
-      (base_stt (X.Speech_to_text.Url "https://audio.example/raw")) with
-      audio_format = Some X.Speech_to_text.Pcm;
+      (base_stt (X.Audio.Speech_to_text.Url "https://audio.example/raw")) with
+      audio_format = Some X.Audio.Speech_to_text.Pcm;
       sample_rate = Some 16000;
       language = Some "en";
       format = Some true;
@@ -1280,15 +1284,15 @@ let test_local_contract_validation_matrix () =
       vad_threshold = Some 0.1;
     }
   in
-  let stt = X.Speech_to_text.request ~api_key:key complete_stt |> expect_ok "STT fields" in
+  let stt = X.Audio.Speech_to_text.request ~api_key:key complete_stt |> expect_ok "STT fields" in
   List.iter
     (fun field -> require "xaistt-1j69 complete unary STT fields" field (body stt))
     [ {|name="audio_format"|}; {|name="sample_rate"|}; {|name="language"|};
       {|name="format"|}; {|name="multichannel"|}; {|name="channels"|};
       {|name="diarize"|}; {|name="keyterm"|}; {|name="filler_words"|};
       {|name="vad_threshold"|} ];
-  let tts ?(codec = X.Text_to_speech.Mp3) ?sample_rate ?bit_rate ?speed
-      ?latency () : X.Text_to_speech.request =
+  let tts ?(codec = X.Audio.Text_to_speech.Mp3) ?sample_rate ?bit_rate ?speed
+      ?latency () : X.Audio.Text_to_speech.request =
     {
       text = "hello";
       language = "en";
@@ -1301,7 +1305,7 @@ let test_local_contract_validation_matrix () =
     }
   in
   let complete =
-    X.Text_to_speech.request ~api_key:key
+    X.Audio.Text_to_speech.request ~api_key:key
       (tts ~sample_rate:24000 ~bit_rate:128000 ~speed:1.2 ~latency:1 ())
     |> expect_ok "complete TTS"
   in
@@ -1313,62 +1317,62 @@ let test_local_contract_validation_matrix () =
   List.iter
     (fun latency ->
       ignore
-        (X.Text_to_speech.request ~api_key:key (tts ~latency ())
+        (X.Audio.Text_to_speech.request ~api_key:key (tts ~latency ())
         |> expect_ok "xaitts-3gtl latency"))
     [ 0; 1 ];
   List.iter
     (fun codec ->
       ignore
-        (X.Text_to_speech.request ~api_key:key (tts ~codec ())
+        (X.Audio.Text_to_speech.request ~api_key:key (tts ~codec ())
         |> expect_ok "xaitts-6c22 codec"))
-    [ X.Text_to_speech.Mp3; X.Text_to_speech.Wav; X.Text_to_speech.Pcm;
-      X.Text_to_speech.Mulaw; X.Text_to_speech.Alaw ];
+    [ X.Audio.Text_to_speech.Mp3; X.Audio.Text_to_speech.Wav; X.Audio.Text_to_speech.Pcm;
+      X.Audio.Text_to_speech.Mulaw; X.Audio.Text_to_speech.Alaw ];
   List.iter
     (fun sample_rate ->
       ignore
-        (X.Text_to_speech.request ~api_key:key (tts ~sample_rate ())
+        (X.Audio.Text_to_speech.request ~api_key:key (tts ~sample_rate ())
         |> expect_ok "xaitts-3s49 sample rate"))
     [ 8000; 16000; 22050; 24000; 44100; 48000 ];
   List.iter
     (fun bit_rate ->
       ignore
-        (X.Text_to_speech.request ~api_key:key (tts ~bit_rate ())
+        (X.Audio.Text_to_speech.request ~api_key:key (tts ~bit_rate ())
         |> expect_ok "xaitts-36y7 MP3 bit rate"))
     [ 32000; 64000; 96000; 128000; 192000 ];
   List.iter
     (fun speed ->
       ignore
-        (X.Text_to_speech.request ~api_key:key (tts ~speed ())
+        (X.Audio.Text_to_speech.request ~api_key:key (tts ~speed ())
         |> expect_ok "xaitts-9hog speed range"))
     [ 0.7; 1.5 ];
   let realtime_formats =
     [
-      ("xairt-tkis", X.Realtime.pcmu, "audio/pcmu", 8000, 1);
-      ("xairt-q2pj", X.Realtime.pcma, "audio/pcma", 8000, 1);
-      ("xairt-r2oo", X.Realtime.opus, "audio/opus", 24000, 1);
+      ("xairt-tkis", X.Audio.Realtime.pcmu, "audio/pcmu", 8000, 1);
+      ("xairt-q2pj", X.Audio.Realtime.pcma, "audio/pcma", 8000, 1);
+      ("xairt-r2oo", X.Audio.Realtime.opus, "audio/opus", 24000, 1);
     ]
   in
   List.iter
     (fun (id, format, mime, rate, channels) ->
       Alcotest.(check bool) id true
-        (X.Realtime.audio_format_mime format = mime
-        && X.Realtime.audio_format_sample_rate format = rate
-        && X.Realtime.audio_format_channels format = channels))
+        (X.Audio.Realtime.audio_format_mime format = mime
+        && X.Audio.Realtime.audio_format_sample_rate format = rate
+        && X.Audio.Realtime.audio_format_channels format = channels))
     realtime_formats;
   Alcotest.(check (list string)) "xairt-yhm2 complete Realtime audio formats"
     [ "audio/pcm"; "audio/pcmu"; "audio/pcma"; "audio/opus" ]
     [
-      X.Realtime.pcm ~sample_rate:8000 |> expect_ok "pcm"
-      |> X.Realtime.audio_format_mime;
-      X.Realtime.audio_format_mime X.Realtime.pcmu;
-      X.Realtime.audio_format_mime X.Realtime.pcma;
-      X.Realtime.audio_format_mime X.Realtime.opus;
+      X.Audio.Realtime.pcm ~sample_rate:8000 |> expect_ok "pcm"
+      |> X.Audio.Realtime.audio_format_mime;
+      X.Audio.Realtime.audio_format_mime X.Audio.Realtime.pcmu;
+      X.Audio.Realtime.audio_format_mime X.Audio.Realtime.pcma;
+      X.Audio.Realtime.audio_format_mime X.Audio.Realtime.opus;
     ];
   List.iter
     (fun rate ->
-      let format = X.Realtime.pcm ~sample_rate:rate |> expect_ok "xairt-35ni" in
+      let format = X.Audio.Realtime.pcm ~sample_rate:rate |> expect_ok "xairt-35ni" in
       Alcotest.(check int) "xairt-35ni PCM sample rate" rate
-        (X.Realtime.audio_format_sample_rate format))
+        (X.Audio.Realtime.audio_format_sample_rate format))
     [ 8000; 16000; 22050; 24000; 32000; 44100; 48000 ];
   let too_many_ids =
     X.Responses.File_search
@@ -1492,7 +1496,7 @@ let test_collections_results_and_timestamps () =
     (Some "2025-09-16T19:07:03.000000Z") document.last_indexed_at;
   let custom =
     run_ok rt "custom voice timestamp fixture"
-      (X.Voices.list_custom
+      (X.Audio.Voices.list_custom
          (client (read_fixture "custom_voices.json") (ref None))
          ~api_key:(A.api_key "key") ())
   in
@@ -1566,7 +1570,7 @@ let test_large_owned_binary_results () =
   in
   Alcotest.(check int) "large file bytes" (Bytes.length bytes)
     (Bytes.length file.bytes);
-  let tts_request : X.Text_to_speech.request =
+  let tts_request : X.Audio.Text_to_speech.request =
     {
       text = "large";
       language = "en";
@@ -1580,17 +1584,17 @@ let test_large_owned_binary_results () =
   in
   let tts =
     run_ok rt "large TTS body"
-      (X.Text_to_speech.synthesize (binary_client "audio/mpeg")
+      (X.Audio.Text_to_speech.synthesize (binary_client "audio/mpeg")
          ~api_key:(A.api_key "key") tts_request)
   in
   (match tts with
-  | X.Text_to_speech.Raw_audio audio ->
+  | X.Audio.Text_to_speech.Raw_audio audio ->
       Alcotest.(check int) "large TTS bytes" (Bytes.length bytes)
-        (Bytes.length audio.bytes)
+        (Bytes.length audio.audio)
   | _ -> Alcotest.fail "raw TTS");
   let voice =
     run_ok rt "large custom voice body"
-      (X.Voices.custom_audio (binary_client "audio/wav")
+      (X.Audio.Voices.custom_audio (binary_client "audio/wav")
          ~api_key:(A.api_key "key") ~voice_id:"voice_1")
   in
   Alcotest.(check int) "large voice bytes" (Bytes.length bytes)
@@ -1835,7 +1839,7 @@ let test_xai_http_fixture_runners_and_spans () =
     && H.Core.Header.get "authorization" request.headers
        = Some "Bearer fixture-secret");
   let spans = Eta.Tracer.dump tracer in
-  Alcotest.(check int) "xaiobs-92ax exactly one REST GenAI span" 1
+  Alcotest.(check int) "xaiobs-98ld exactly one REST GenAI span" 1
     (List.length
        (List.filter (fun (span : Eta.Tracer.span) -> span.name = "chat xai") spans));
   let span =
@@ -1895,6 +1899,19 @@ let test_xai_http_fixture_runners_and_spans () =
         && model.long_context_threshold = Some 200000L
         && model.image_price = Some 40L)
   | _ -> Alcotest.fail "model fixture");
+  let model_spans =
+    Eta.Tracer.dump tracer
+    |> List.filter (fun (span : Eta.Tracer.span) ->
+           span.name = "list_models xai")
+  in
+  Alcotest.(check int) "xaiobs-hchu one ordinary provider client span" 1
+    (List.length model_spans);
+  let model_span = List.hd model_spans in
+  Alcotest.(check (option string)) "ordinary provider name" (Some "xai")
+    (List.assoc_opt "eta_ai.provider.name" model_span.attrs);
+  Alcotest.(check bool) "xaiobs-jdm1 resource is not a GenAI operation" false
+    (Option.is_some
+       (List.assoc_opt "gen_ai.operation.name" model_span.attrs));
   let language =
     run_ok rt "language model fixture"
       (X.Models.list_language_models
@@ -1911,12 +1928,12 @@ let test_xai_http_fixture_runners_and_spans () =
         && model.output_modalities = [ "text" ]
         && model.search_price = Some 5L && model.aliases = [ "latest" ])
   | _ -> Alcotest.fail "language model fixture");
-  let tts : X.Text_to_speech.request =
+  let tts : X.Audio.Text_to_speech.request =
     {
       text = "hi";
       language = "en";
       voice_id = Some "eve";
-      output_format = Some { codec = X.Text_to_speech.Mp3; sample_rate = None; bit_rate = None };
+      output_format = Some { codec = X.Audio.Text_to_speech.Mp3; sample_rate = None; bit_rate = None };
       speed = None;
       optimize_streaming_latency = None;
       text_normalization = None;
@@ -1925,35 +1942,142 @@ let test_xai_http_fixture_runners_and_spans () =
   in
   let timestamped =
     run_ok rt "timestamped TTS"
-      (X.Text_to_speech.synthesize
+      (X.Audio.Text_to_speech.synthesize
          (client
             ~headers:[ ("content-type", "application/json") ]
             (read_fixture "tts_timestamped.json") (ref None))
          ~api_key:(A.api_key "fixture-secret") tts)
   in
   (match timestamped with
-  | X.Text_to_speech.Timestamped_audio value ->
+  | X.Audio.Text_to_speech.Timestamped_audio value ->
       Alcotest.(check bool) "xaitts-2xcr timestamped result fields" true
         (Bytes.to_string value.audio = "MP3"
         && value.content_type = Some "audio/mpeg"
         && value.duration = Some 0.92 && value.graph_chars = [ "H"; "i" ]);
       require "xaitts-m0n3 graph_times preserved" "\"start\":0.06"
         (A.Json.compact value.graph_times)
-  | X.Text_to_speech.Raw_audio _ -> Alcotest.fail "timestamped variant");
+  | X.Audio.Text_to_speech.Raw_audio _ -> Alcotest.fail "timestamped variant");
   let raw =
     run_ok rt "raw TTS"
-      (X.Text_to_speech.synthesize
+      (X.Audio.Text_to_speech.synthesize
          (client ~headers:[ ("content-type", "audio/mpeg") ] "MP3" (ref None))
          ~api_key:(A.api_key "fixture-secret")
          { tts with with_timestamps = false })
   in
   match raw with
-  | X.Text_to_speech.Raw_audio value ->
+  | X.Audio.Text_to_speech.Raw_audio value ->
       Alcotest.(check bool) "xaitts-b7vv raw bytes/content type" true
-        (Bytes.to_string value.bytes = "MP3"
+        (Bytes.to_string value.audio = "MP3"
         && value.content_type = Some "audio/mpeg");
       Alcotest.(check bool) "xaitts-ho68 explicit result variants" true true
-  | X.Text_to_speech.Timestamped_audio _ -> Alcotest.fail "raw variant"
+  | X.Audio.Text_to_speech.Timestamped_audio _ -> Alcotest.fail "raw variant"
+
+let test_oabridge_xai_neutral_conversion_and_projection () =
+  let neutral_tts : A.Audio.Text_to_speech.request =
+    {
+      text = "hello";
+      voice = "custom_voice";
+      encoding = Some A.Audio.Text_to_speech.Mp3;
+      speed = Some 1.2;
+    }
+  in
+  let construction = X.Audio.Text_to_speech.of_eta_ai neutral_tts in
+  (* oabridge-d348: neutral conversion yields only an abstract construction.
+     xAI's required language and provider-only controls are supplied separately
+     before a submittable provider request exists. *)
+  let configured =
+    X.Audio.Text_to_speech.configure
+      {
+        language = "en";
+        sample_rate = Some 24000;
+        bit_rate = Some 128000;
+        optimize_streaming_latency = Some 1;
+        text_normalization = Some true;
+        with_timestamps = false;
+      }
+      construction
+    |> expect_ok "oabridge-pmod/d348 xAI TTS configure"
+  in
+  Alcotest.(check string) "provider language supplied separately" "en"
+    configured.language;
+  Alcotest.(check (option string)) "neutral voice converted"
+    (Some "custom_voice") configured.voice_id;
+  (match
+     X.Audio.Text_to_speech.configure
+       {
+         language = "";
+         sample_rate = None;
+         bit_rate = None;
+         optimize_streaming_latency = None;
+         text_normalization = None;
+         with_timestamps = false;
+       }
+       construction
+   with
+  | Error (X.Error.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "oabridge-d348 must not invent a missing xAI language");
+  (match configured.output_format with
+  | Some { codec = X.Audio.Text_to_speech.Mp3; sample_rate; bit_rate } ->
+      Alcotest.(check (option int)) "provider sample rate" (Some 24000)
+        sample_rate;
+      Alcotest.(check (option int)) "provider bit rate" (Some 128000) bit_rate
+  | _ -> Alcotest.fail "neutral MP3 encoding was not converted");
+  let projected =
+    X.Audio.Text_to_speech.to_eta_ai
+      (X.Audio.Text_to_speech.Timestamped_audio
+         {
+           audio = Bytes.of_string "MP3";
+           content_type = Some "audio/mpeg";
+           duration = Some 0.5;
+           graph_chars = [ "h" ];
+           graph_times = `List [];
+           raw = "{}";
+         })
+  in
+  Alcotest.(check string) "oabridge-ff14 explicit TTS projection" "MP3"
+    (Bytes.to_string projected.audio);
+  let upload : A.Audio.upload =
+    {
+      filename = "sample.wav";
+      content_type = "audio/wav";
+      source = A.Audio.bytes (Bytes.of_string "RIFF");
+    }
+  in
+  let construction =
+    X.Audio.Speech_to_text.of_eta_ai
+      { A.Audio.Speech_to_text.upload = upload; language = Some "en" }
+  in
+  let configured =
+    X.Audio.Speech_to_text.configure
+      {
+        audio_format = None;
+        sample_rate = None;
+        format = None;
+        multichannel = None;
+        channels = None;
+        diarize = Some true;
+        keyterm = [ "Eta" ];
+        filler_words = None;
+        vad_threshold = Some 0.5;
+      }
+      construction
+    |> expect_ok "oabridge-pmod/d348 xAI STT configure"
+  in
+  Alcotest.(check (option string)) "neutral language converted" (Some "en")
+    configured.language;
+  let projected =
+    X.Audio.Speech_to_text.to_eta_ai
+      {
+        X.Audio.Speech_to_text.text = "hello";
+        language = Some "en";
+        duration = Some 1.0;
+        words = [];
+        channels = [];
+        raw = "{}";
+      }
+  in
+  Alcotest.(check (option string)) "oabridge-ff14 explicit STT projection"
+    (Some "hello") projected.text
 
 let tests =
   [
@@ -1971,6 +2095,9 @@ let tests =
           test_xaicol_hosts_and_operations;
         Alcotest.test_case "Models speech and Realtime" `Quick
           test_xaimod_stt_tts_realtime;
+        Alcotest.test_case
+          "oabridge-pmod/d348/ff14 xAI neutral conversion and projection" `Quick
+          test_oabridge_xai_neutral_conversion_and_projection;
         Alcotest.test_case "Realtime client/server codec matrix" `Quick
           test_xairt_client_and_server_event_codecs;
         Alcotest.test_case "lossless errors" `Quick

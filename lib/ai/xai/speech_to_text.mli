@@ -1,7 +1,7 @@
 (** Unary xAI speech-to-text. Streaming transport belongs to eta_ai_xai_eio. *)
 
 type source =
-  | File of Eta_ai.binary_file
+  | File of Eta_ai.Audio.upload
   | Url of string
 
 type raw_audio_format = Pcm | Mulaw | Alaw
@@ -44,6 +44,28 @@ type response = {
   channels : channel list;
   raw : Eta_ai.raw_json;
 }
+
+type configuration = {
+  audio_format : raw_audio_format option;
+  sample_rate : int option;
+  format : bool option;
+  multichannel : bool option;
+  channels : int option;
+  diarize : bool option;
+  keyterm : string list;
+  filler_words : bool option;
+  vad_threshold : float option;
+}
+
+type request_construction
+
+include
+  Eta_ai.Audio.Speech_to_text.Provider
+    with type request := request
+     and type result := response
+     and type error := Xai_error.t
+     and type configuration := configuration
+     and type request_construction := request_construction
 
 val request :
   ?endpoint:Endpoint.inference ->

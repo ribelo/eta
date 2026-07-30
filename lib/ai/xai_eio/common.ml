@@ -29,7 +29,7 @@ let bearer redacted =
 
 let headers (key : Eta_ai.api_key) = bearer key
 let secret_headers secret =
-  bearer (Eta_ai_xai.Realtime.client_secret_redacted secret)
+  bearer (Eta_ai_xai.Audio.Realtime.client_secret_redacted secret)
 
 let authority_attrs raw_url =
   match Eta_http.Core.Url.parse raw_url with

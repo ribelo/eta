@@ -9,7 +9,8 @@ type t
 type sender
 
 val headers : Eta_ai.api_key -> Eta_http.Core.Header.t
-val secret_headers : Eta_ai_xai.Realtime.client_secret -> Eta_http.Core.Header.t
+val secret_headers :
+  Eta_ai_xai.Audio.Realtime.client_secret -> Eta_http.Core.Header.t
 
 val connect :
   ?ca_file:string ->

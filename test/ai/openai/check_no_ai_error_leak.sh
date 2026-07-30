@@ -108,8 +108,8 @@ eio = texts[root / "lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.mli"]
 if not re.search(r"type realtime_error = \[ Eta_http_eio\.Ws\.Client\.ws_error \| `Openai_error of Eta_ai_openai\.Error\.t \]", eio):
     errors.append("lib/ai/openai_realtime_eio.mli: realtime_error does not structurally retain OpenAI Error.t")
 for signature in [
-    r"val read_event : t -> \(Eta_ai_openai\.Realtime\.server_event option, realtime_error\) Eta\.Effect\.t",
-    r"val events : t -> \(Eta_ai_openai\.Realtime\.server_event, realtime_error\) Eta_stream\.Stream\.t",
+    r"val read_event : t -> \(Eta_ai_openai\.Audio\.Realtime\.server_event option, realtime_error\) Eta\.Effect\.t",
+    r"val events : t -> \(Eta_ai_openai\.Audio\.Realtime\.server_event, realtime_error\) Eta_stream\.Stream\.t",
 ]:
     if not re.search(signature, eio):
         errors.append(f"lib/ai/openai_realtime_eio.mli: missing nominal signature matching {signature}")

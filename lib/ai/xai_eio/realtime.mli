@@ -15,7 +15,7 @@ val connect_api_key :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   api_key:Eta_ai.api_key ->
-  session:Eta_ai_xai.Realtime.session ->
+  session:Eta_ai_xai.Audio.Realtime.session ->
   unit ->
   (t, error) Eta.Effect.t
 
@@ -24,16 +24,16 @@ val connect_ephemeral :
   ?conversation_id:string ->
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
-  secret:Eta_ai_xai.Realtime.client_secret ->
-  session:Eta_ai_xai.Realtime.session ->
+  secret:Eta_ai_xai.Audio.Realtime.client_secret ->
+  session:Eta_ai_xai.Audio.Realtime.session ->
   unit ->
   (t, error) Eta.Effect.t
 
 val send_event :
-  t -> Eta_ai_xai.Realtime.client_event -> (unit, error) Eta.Effect.t
+  t -> Eta_ai_xai.Audio.Realtime.client_event -> (unit, error) Eta.Effect.t
 val send_audio : t -> bytes -> (unit, error) Eta.Effect.t
 val read_event :
-  t -> (Eta_ai_xai.Realtime.server_event option, error) Eta.Effect.t
+  t -> (Eta_ai_xai.Audio.Realtime.server_event option, error) Eta.Effect.t
 val close : t -> (unit, error) Eta.Effect.t
 
 type connection_options =
@@ -46,9 +46,9 @@ type connection_options =
 module Transport : sig
   include
     Eta_ai.Realtime.Transport
-      with type session = Eta_ai_xai.Realtime.session
-       and type client_event = Eta_ai_xai.Realtime.client_event
-       and type server_event = Eta_ai_xai.Realtime.server_event
+      with type session = Eta_ai_xai.Audio.Realtime.session
+       and type client_event = Eta_ai_xai.Audio.Realtime.client_event
+       and type server_event = Eta_ai_xai.Audio.Realtime.server_event
        and type error = error
        and type scope = Eio.Switch.t
        and type connection_options = connection_options

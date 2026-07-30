@@ -12,13 +12,6 @@ let responses = Responses_impl.run
 let stream_responses = Responses_impl.stream
 let embeddings_request = Embeddings_impl.request
 let embeddings = Embeddings_impl.run
-let encode_speech = Speech_impl.encode
-let speech_request = Speech_impl.request
-let speech = Speech_impl.run
-let encode_transcription = Transcription_impl.encode
-let decode_transcription = Transcription_impl.decode
-let transcription_request = Transcription_impl.request
-let transcription = Transcription_impl.run
 let encode_rerank = Rerank_impl.encode
 let decode_rerank = Rerank_impl.decode
 let rerank_request = Rerank_impl.request
@@ -53,19 +46,14 @@ module Embeddings = struct
   let run_with_routing = Embeddings_impl.run
 end
 
-module Speech = struct
-  let create ~provider client ~api_key request =
-    speech ~provider client ~api_key request
-end
-
 module Images = struct
   let generate ~provider client ~api_key request =
     image_generation ~provider client ~api_key request
 end
 
-module Transcriptions = struct
-  let create ~provider client ~api_key request =
-    transcription ~provider client ~api_key request
+module Audio = struct
+  module Speech_to_text = Transcription_impl
+  module Text_to_speech = Speech_impl
 end
 
 module Rerank = struct

@@ -267,16 +267,17 @@ let with_json_fields extra fields =
       Json.object_
         (fields @ List.map (fun (name, value) -> (name, Some value)) extra)
 
-let encode_speech_lossless ?(instructions = true) (request : A.Speech.request) =
-  if A.Json_helpers.is_blank request.input then
+let encode_speech_lossless ?(instructions = true) ~model ~input ~voice
+    ?response_format ?speed ?speech_instructions ?(extra = []) () =
+  if A.Json_helpers.is_blank input then
     Stdlib.Error (Invalid_request "speech input must not be empty")
-  else if A.Json_helpers.is_blank request.voice then
+  else if A.Json_helpers.is_blank voice then
     Stdlib.Error (Invalid_request "speech voice must not be empty")
-  else if (not instructions) && Option.is_some request.instructions then
+  else if (not instructions) && Option.is_some speech_instructions then
     Stdlib.Error (Unsupported "speech instructions")
   else
     let speed =
-      match request.speed with
+      match speed with
       | None -> Stdlib.Ok None
       | Some value -> (
           match Json.float value with
@@ -287,19 +288,22 @@ let encode_speech_lossless ?(instructions = true) (request : A.Speech.request) =
     | Stdlib.Error _ as error -> error
     | Stdlib.Ok speed ->
         Stdlib.Ok
-          (with_json_fields request.extra
+          (with_json_fields extra
              [
-               ("model", Some (Json.string request.model));
-               ("input", Some (Json.string request.input));
-               ("voice", Some (Json.string request.voice));
+               ("model", Some (Json.string model));
+               ("input", Some (Json.string input));
+               ("voice", Some (Json.string voice));
                ( "response_format",
-                 Option.map Json.string request.response_format );
+                 Option.map Json.string response_format );
                ("speed", speed);
                ( "instructions",
-                 if instructions then Option.map Json.string request.instructions
+                 if instructions then Option.map Json.string speech_instructions
                  else None );
              ]
           |> Json.to_string)
 
-let encode_speech ?(instructions = true) ~provider request =
-  encode_speech_lossless ~instructions request |> map_codec_failure ~provider
+let encode_speech ?(instructions = true) ~provider ~model ~input ~voice
+    ?response_format ?speed ?speech_instructions ?extra () =
+  encode_speech_lossless ~instructions ~model ~input ~voice ?response_format
+    ?speed ?speech_instructions ?extra ()
+  |> map_codec_failure ~provider

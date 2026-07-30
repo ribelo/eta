@@ -13,8 +13,6 @@ let credential = A.api_key
 let authorization_headers = auth_headers
 
 module Image_endpoint = Images
-module Speech_endpoint = Speech
-module Transcription_endpoint = Transcriptions
 
 let chat_completions_request = Chat_completions.request
 let responses_request = Responses.request
@@ -52,15 +50,15 @@ let decode_image_response = Image_endpoint.decode
 let image_generation_request = Image_endpoint.request
 let image_generation = Image_endpoint.run
 
-let encode_speech = Speech_endpoint.encode
-let speech_request = Speech_endpoint.request
-let speech = Speech_endpoint.run
+module Audio = struct
+  module Voices = struct
+    type t = string
+  end
 
-let decode_transcription_response = Transcription_endpoint.decode_response
-let transcription_request = Transcription_endpoint.request
-let transcription = Transcription_endpoint.run
-
-module Realtime = Realtime
+  module Speech_to_text = Transcriptions
+  module Text_to_speech = Speech
+  module Realtime = Realtime
+end
 
 module Chat = struct
   let encode ~provider request =
@@ -110,16 +108,6 @@ end
 module Images = struct
   let generate ~provider client ~api_key request =
     image_generation ~provider client ~api_key request
-end
-
-module Speech = struct
-  let create ~provider client ~api_key request =
-    speech ~provider client ~api_key request
-end
-
-module Transcriptions = struct
-  let create ~provider client ~api_key request =
-    transcription ~provider client ~api_key request
 end
 
 (** Native model catalog ([GET /v1/models]). *)

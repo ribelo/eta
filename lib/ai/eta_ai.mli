@@ -29,6 +29,99 @@ module Json : sig
 end
 (** Small Yojson-backed helper surface for provider codecs. *)
 
+module Audio : sig
+  type replayability = Replayable | One_shot
+  type pull = unit -> bytes option
+  type upload_source
+
+  val bytes : bytes -> upload_source
+
+  val stream :
+    ?length:int64 ->
+    replayability:replayability ->
+    (unit -> pull) ->
+    upload_source
+
+  val known_length : upload_source -> int64 option
+  val replayability : upload_source -> replayability
+  val open_pull : upload_source -> pull
+
+  type upload = {
+    filename : string;
+    content_type : string;
+    source : upload_source;
+  }
+
+  module Speech_to_text : sig
+    type request = {
+      upload : upload;
+      language : string option;
+    }
+
+    type result = {
+      text : string option;
+      language : string option;
+      duration_s : float option;
+    }
+
+    type neutral_request = request
+    type neutral_result = result
+
+    module type Provider = sig
+      type request
+      type result
+      type error
+      type configuration
+      type request_construction
+
+      val of_eta_ai : neutral_request -> request_construction
+
+      val configure :
+        configuration ->
+        request_construction ->
+        (request, error) Stdlib.result
+
+      val to_eta_ai : result -> neutral_result
+    end
+  end
+
+  module Text_to_speech : sig
+    type encoding = Mp3 | Wav | Pcm
+
+    type request = {
+      text : string;
+      voice : string;
+      encoding : encoding option;
+      speed : float option;
+    }
+
+    type result = {
+      content_type : string option;
+      audio : bytes;
+    }
+
+    type neutral_request = request
+    type neutral_result = result
+
+    module type Provider = sig
+      type request
+      type result
+      type error
+      type configuration
+      type request_construction
+
+      val of_eta_ai : neutral_request -> request_construction
+
+      val configure :
+        configuration ->
+        request_construction ->
+        (request, error) Stdlib.result
+
+      val to_eta_ai : result -> neutral_result
+    end
+  end
+end
+
 type headers = Eta_http.Core.Header.t
 type api_key = string Eta_redacted.t
 val api_key : string -> api_key
@@ -274,41 +367,6 @@ module Image : sig
   type response = {
     created : int option;
     images : generated list;
-    usage : usage option;
-    raw : raw_json option;
-  }
-end
-
-module Speech : sig
-  type request = {
-    model : model;
-    input : string;
-    voice : string;
-    response_format : string option;
-    speed : float option;
-    instructions : string option;
-    extra : (string * Json.t) list;
-  }
-
-  type response = {
-    content_type : string option;
-    audio : bytes;
-  }
-end
-
-module Transcription : sig
-  type request = {
-    model : model;
-    file : binary_file;
-    language : string option;
-    prompt : string option;
-    response_format : string option;
-    temperature : float option;
-    extra_fields : (string * string) list;
-  }
-
-  type response = {
-    text : string option;
     usage : usage option;
     raw : raw_json option;
   }
@@ -943,24 +1001,6 @@ module Provider : sig
       api_key:api_key ->
       Image.request ->
       (Image.response, ai_error) Eta.Effect.t
-  end
-
-  module type Speech = sig
-    val create :
-      provider:provider ->
-      Eta_http.Client.t ->
-      api_key:api_key ->
-      Speech.request ->
-      (Speech.response, ai_error) Eta.Effect.t
-  end
-
-  module type Transcriptions = sig
-    val create :
-      provider:provider ->
-      Eta_http.Client.t ->
-      api_key:api_key ->
-      Transcription.request ->
-      (Transcription.response, ai_error) Eta.Effect.t
   end
 
   module type Rerank = sig

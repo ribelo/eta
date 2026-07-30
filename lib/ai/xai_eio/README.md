@@ -18,7 +18,7 @@ Realtime (`eta_ai_openai` + `eta_ai_openai_realtime_eio`).
 | Package | Owns |
 | --- | --- |
 | `eta_ai_xai` | Requests, decoders, redacted secrets, unary HTTP runners, Realtime codecs |
-| `eta_ai_xai_eio` | `Responses_ws`, `Realtime`, `Streaming_stt`, `Streaming_tts` |
+| `eta_ai_xai_eio` | `Responses_ws`, `Realtime`, `Audio.Speech_to_text`, `Audio.Text_to_speech` |
 | Application | Switch, net, audio/text buffers, tool handlers, reconnect policy |
 
 Depends on: `eta`, `eta_ai`, `eta_ai_xai`, `eta_http`, `eta_http_eio`,
@@ -112,7 +112,7 @@ let run_responses ~sw ~net ~rt ~api_key =
 
 ## Realtime
 
-Conversational speech WebSocket using `Eta_ai_xai.Realtime.session` and event
+Conversational speech WebSocket using `Eta_ai_xai.Audio.Realtime.session` and event
 codecs.
 
 ```ocaml
@@ -120,23 +120,23 @@ open Eta_ai_xai_eio
 
 let session =
   let format =
-    match Eta_ai_xai.Realtime.pcm ~sample_rate:24000 with
+    match Eta_ai_xai.Audio.Realtime.pcm ~sample_rate:24000 with
     | Ok format -> format
     | Error error ->
         failwith (Format.asprintf "%a" Eta_ai_xai.Error.pp error)
   in
   match
-    Eta_ai_xai.Realtime.session ~model:"grok-voice-latest"
+    Eta_ai_xai.Audio.Realtime.session ~model:"grok-voice-latest"
       ~input_audio:
         {
           format;
-          transport = Eta_ai_xai.Realtime.Json;
+          transport = Eta_ai_xai.Audio.Realtime.Json;
           transcription = None;
         }
       ~output_audio:
         {
           format;
-          transport = Eta_ai_xai.Realtime.Json;
+          transport = Eta_ai_xai.Audio.Realtime.Json;
           speed = None;
         }
       ()
@@ -149,16 +149,16 @@ let run_realtime_api_key ~sw ~net ~rt ~api_key =
   let open Eta.Syntax in
   let effect =
     let* conn =
-      Realtime.connect_api_key ~sw ~net ~api_key ~session ()
+      Audio.Realtime.connect_api_key ~sw ~net ~api_key ~session ()
     in
-    let* () = Realtime.send_audio conn (Bytes.create 320) in
+    let* () = Audio.Realtime.send_audio conn (Bytes.create 320) in
     let* () =
-      Realtime.send_event conn
-        Eta_ai_xai.Realtime.Input_audio_buffer_commit
+      Audio.Realtime.send_event conn
+        Eta_ai_xai.Audio.Realtime.Input_audio_buffer_commit
     in
-    let* event = Realtime.read_event conn in
+    let* event = Audio.Realtime.read_event conn in
     ignore event;
-    Realtime.close conn
+    Audio.Realtime.close conn
   in
   Eta_eio.Runtime.run rt effect
 
@@ -166,9 +166,9 @@ let run_realtime_ephemeral ~sw ~net ~rt ~secret =
   let open Eta.Syntax in
   let effect =
     let* conn =
-      Realtime.connect_ephemeral ~sw ~net ~secret ~session ()
+      Audio.Realtime.connect_ephemeral ~sw ~net ~secret ~session ()
     in
-    Realtime.close conn
+    Audio.Realtime.close conn
   in
   Eta_eio.Runtime.run rt effect
 
@@ -177,9 +177,9 @@ let run_sip ~sw ~net ~rt ~api_key ~call_id =
   let open Eta.Syntax in
   let effect =
     let* conn =
-      Realtime.connect_api_key ~sw ~net ~api_key ~session ~call_id ()
+      Audio.Realtime.connect_api_key ~sw ~net ~api_key ~session ~call_id ()
     in
-    Realtime.close conn
+    Audio.Realtime.close conn
   in
   Eta_eio.Runtime.run rt effect
 ```
@@ -187,7 +187,7 @@ let run_sip ~sw ~net ~rt ~api_key ~call_id =
 - `connect_api_key` authorizes with the inference API key (optional
   `call_id` / `conversation_id` query params).
 - `connect_ephemeral` authorizes with a redacted client secret from
-  `Eta_ai_xai.Realtime.create_client_secret`. Secrets with CR/LF fail before
+  `Eta_ai_xai.Audio.Realtime.create_client_secret`. Secrets with CR/LF fail before
   network I/O.
 - `send_audio` chooses JSON base64 vs binary frames from the session transport.
 - Function-call server events are delivered as typed
@@ -195,7 +195,7 @@ let run_sip ~sw ~net ~rt ~api_key ~call_id =
   replies with `Conversation_item_create (Function_call_output ...)`.
 - No Live Translation socket, phone provisioning, or call-control methods.
 
-`Realtime.Transport` implements `Eta_ai.Realtime.Transport` for generic
+`Audio.Realtime.Transport` implements `Eta_ai.Realtime.Transport` for generic
 session runners.
 
 ## Streaming speech-to-text
@@ -203,10 +203,10 @@ session runners.
 ```ocaml
 open Eta_ai_xai_eio
 
-let config : Streaming_stt.config =
+let config : Audio.Speech_to_text.config =
   {
     sample_rate = Some 16000;
-    encoding = Some Streaming_stt.Pcm;
+    encoding = Some Audio.Speech_to_text.Pcm;
     interim_results = Some true;
     endpointing = Some 250;
     language = Some "en";
@@ -223,15 +223,15 @@ let config : Streaming_stt.config =
 let run_stt ~sw ~net ~rt ~api_key =
   let open Eta.Syntax in
   let effect =
-    let* conn = Streaming_stt.connect ~sw ~net ~api_key config in
-    let* () = Streaming_stt.send_audio conn (Bytes.create 640) in
-    let* () = Streaming_stt.finalize conn in
-    let* () = Streaming_stt.audio_done conn in
+    let* conn = Audio.Speech_to_text.connect ~sw ~net ~api_key config in
+    let* () = Audio.Speech_to_text.send_audio conn (Bytes.create 640) in
+    let* () = Audio.Speech_to_text.finalize conn in
+    let* () = Audio.Speech_to_text.audio_done conn in
     let rec loop () =
-      let* event = Streaming_stt.read_event conn in
+      let* event = Audio.Speech_to_text.read_event conn in
       match event with
-      | None | Some (Streaming_stt.Transcript_done _) ->
-          Streaming_stt.close conn
+      | None | Some (Audio.Speech_to_text.Transcript_done _) ->
+          Audio.Speech_to_text.close conn
       | Some _ -> loop ()
     in
     loop ()
@@ -257,11 +257,11 @@ Sample rates: 8000, 16000, 22050, 24000, 44100, 48000. Multichannel requires
 ```ocaml
 open Eta_ai_xai_eio
 
-let config : Streaming_tts.config =
+let config : Audio.Text_to_speech.config =
   {
     language = "en";
     voice = "eve";
-    codec = Some Streaming_tts.Mp3;
+    codec = Some Audio.Text_to_speech.Mp3;
     sample_rate = Some 24000;
     bit_rate = Some 128000;
     speed = Some 1.0;
@@ -273,17 +273,17 @@ let config : Streaming_tts.config =
 let run_tts ~sw ~net ~rt ~api_key =
   let open Eta.Syntax in
   let effect =
-    let* conn = Streaming_tts.connect ~sw ~net ~api_key config in
-    let* () = Streaming_tts.text_delta conn "hello from Eta" in
-    let* () = Streaming_tts.text_done conn in
+    let* conn = Audio.Text_to_speech.connect ~sw ~net ~api_key config in
+    let* () = Audio.Text_to_speech.text_delta conn "hello from Eta" in
+    let* () = Audio.Text_to_speech.text_done conn in
     let rec loop () =
-      let* event = Streaming_tts.read_event conn in
+      let* event = Audio.Text_to_speech.read_event conn in
       match event with
-      | None | Some (Streaming_tts.Audio_done _) -> Streaming_tts.close conn
-      | Some (Streaming_tts.Audio_delta _) -> loop ()
-      | Some (Streaming_tts.Audio_clear _) -> loop ()
-      | Some (Streaming_tts.Error _) -> Streaming_tts.close conn
-      | Some (Streaming_tts.Unknown _) -> loop ()
+      | None | Some (Audio.Text_to_speech.Audio_done _) -> Audio.Text_to_speech.close conn
+      | Some (Audio.Text_to_speech.Audio_delta _) -> loop ()
+      | Some (Audio.Text_to_speech.Audio_clear _) -> loop ()
+      | Some (Audio.Text_to_speech.Error _) -> Audio.Text_to_speech.close conn
+      | Some (Audio.Text_to_speech.Unknown _) -> loop ()
     in
     loop ()
   in

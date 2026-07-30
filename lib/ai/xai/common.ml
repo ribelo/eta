@@ -187,12 +187,20 @@ let authority_attrs base_url =
       | Some port -> [ ("server.port", string_of_int port) ]
       | None -> []
 
-let with_span ~base_url ~operation ?model ?(attrs = []) eff =
+let with_span ?(telemetry = `Gen_ai) ~base_url ~operation ?model ?(attrs = [])
+    eff =
   let attrs =
-    [
-      ("gen_ai.operation.name", operation);
-      ("gen_ai.provider.name", provider_name);
-    ]
+    (match telemetry with
+    | `Gen_ai ->
+        [
+          ("gen_ai.operation.name", operation);
+          ("gen_ai.provider.name", provider_name);
+        ]
+    | `Provider ->
+        [
+          ("eta_ai.operation.name", operation);
+          ("eta_ai.provider.name", provider_name);
+        ])
     @ authority_attrs base_url
     @
     (match model with
@@ -226,19 +234,19 @@ let perform_response_unspanned ?max_bytes client request =
                        ~headers:response.headers
                        (Bytes.to_string body))))
 
-let perform_response ?max_bytes ~base_url ~operation ?model ?(attrs = []) client
-    request =
+let perform_response ?max_bytes ?(telemetry = `Gen_ai) ~base_url ~operation
+    ?model ?(attrs = []) client request =
   perform_response_unspanned ?max_bytes client request
-  |> with_span ~base_url ~operation ?model ~attrs
+  |> with_span ~telemetry ~base_url ~operation ?model ~attrs
 
-let perform_json ?max_bytes ~base_url ~operation ?model ?(attrs = [])
-    ?(result_attrs = fun _ -> []) client request decode =
+let perform_json ?max_bytes ?(telemetry = `Gen_ai) ~base_url ~operation ?model
+    ?(attrs = []) ?(result_attrs = fun _ -> []) client request decode =
   perform_response_unspanned ?max_bytes client request
   |> E.bind (fun (body, _) ->
          match decode (Bytes.to_string body) with
          | Ok value -> E.pure value |> E.annotate_all (result_attrs value)
          | Error error -> E.fail error)
-  |> with_span ~base_url ~operation ?model ~attrs
+  |> with_span ~telemetry ~base_url ~operation ?model ~attrs
 
 let safe_disposition label value =
   if

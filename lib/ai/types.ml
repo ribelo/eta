@@ -235,41 +235,6 @@ module Image = struct
   }
 end
 
-module Speech = struct
-  type request = {
-    model : model;
-    input : string;
-    voice : string;
-    response_format : string option;
-    speed : float option;
-    instructions : string option;
-    extra : (string * Json.t) list;
-  }
-
-  type response = {
-    content_type : string option;
-    audio : bytes;
-  }
-end
-
-module Transcription = struct
-  type request = {
-    model : model;
-    file : binary_file;
-    language : string option;
-    prompt : string option;
-    response_format : string option;
-    temperature : float option;
-    extra_fields : (string * string) list;
-  }
-
-  type response = {
-    text : string option;
-    usage : usage option;
-    raw : raw_json option;
-  }
-end
-
 module Rerank = struct
   type request = {
     model : model;

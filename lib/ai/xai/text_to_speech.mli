@@ -19,9 +19,9 @@ type request = {
   with_timestamps : bool;
 }
 
-type raw_audio = {
+type raw_audio = Eta_ai.Audio.Text_to_speech.result = {
   content_type : string option;
-  bytes : bytes;
+  audio : bytes;
 }
 
 type timestamped_audio = {
@@ -36,6 +36,25 @@ type timestamped_audio = {
 type response =
   | Raw_audio of raw_audio
   | Timestamped_audio of timestamped_audio
+
+type configuration = {
+  language : string;
+  sample_rate : int option;
+  bit_rate : int option;
+  optimize_streaming_latency : int option;
+  text_normalization : bool option;
+  with_timestamps : bool;
+}
+
+type request_construction
+
+include
+  Eta_ai.Audio.Text_to_speech.Provider
+    with type request := request
+     and type result := response
+     and type error := Xai_error.t
+     and type configuration := configuration
+     and type request_construction := request_construction
 
 val request :
   ?endpoint:Endpoint.inference ->

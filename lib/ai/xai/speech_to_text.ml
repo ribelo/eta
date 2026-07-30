@@ -6,7 +6,7 @@ module C = Common
 let ( let* ) = Result.bind
 
 type source =
-  | File of A.binary_file
+  | File of A.Audio.upload
   | Url of string
 
 type raw_audio_format = Pcm | Mulaw | Alaw
@@ -50,6 +50,29 @@ type response = {
   raw : A.raw_json;
 }
 
+type configuration = {
+  audio_format : raw_audio_format option;
+  sample_rate : int option;
+  format : bool option;
+  multichannel : bool option;
+  channels : int option;
+  diarize : bool option;
+  keyterm : string list;
+  filler_words : bool option;
+  vad_threshold : float option;
+}
+
+type request_construction = A.Audio.Speech_to_text.request
+
+let of_eta_ai request = request
+
+let to_eta_ai (response : response) : A.Audio.Speech_to_text.result =
+  {
+    text = Some response.text;
+    language = response.language;
+    duration_s = response.duration;
+  }
+
 let sample_rates = [ 8000; 16000; 22050; 24000; 44100; 48000 ]
 
 let bool_string = function true -> "true" | false -> "false"
@@ -61,8 +84,11 @@ let option_field name f = function
 let validate request =
   let* () =
     match request.source with
-    | File file when Bytes.length file.A.data > 500_000_000 ->
-        C.invalid "speech-to-text file exceeds 500 MB"
+    | File file -> (
+        match A.Audio.known_length file.source with
+        | Some length when Int64.compare length 500_000_000L > 0 ->
+            C.invalid "speech-to-text file exceeds 500 MB"
+        | Some _ | None -> Ok ())
     | _ -> Ok ()
   in
   let* () =
@@ -108,6 +134,42 @@ let validate request =
       let* _ = C.finite_float "vad_threshold" value in
       Ok ()
 
+let configure configuration (construction : request_construction) =
+  let request =
+    {
+      source = File construction.upload;
+      audio_format = configuration.audio_format;
+      sample_rate = configuration.sample_rate;
+      language = construction.language;
+      format = configuration.format;
+      multichannel = configuration.multichannel;
+      channels = configuration.channels;
+      diarize = configuration.diarize;
+      keyterm = configuration.keyterm;
+      filler_words = configuration.filler_words;
+      vad_threshold = configuration.vad_threshold;
+    }
+  in
+  Result.map (fun () -> request) (validate request)
+
+let read_upload (upload : A.Audio.upload) =
+  let buffer = Buffer.create 4096 in
+  let pull = A.Audio.open_pull upload.source in
+  let rec loop total =
+    match pull () with
+    | None -> Ok (Bytes.of_string (Buffer.contents buffer))
+    | Some chunk ->
+        let total = total + Bytes.length chunk in
+        if total > 500_000_000 then C.invalid "speech-to-text file exceeds 500 MB"
+        else (
+          Buffer.add_bytes buffer chunk;
+          loop total)
+    | exception exn ->
+        C.invalid
+          ("speech-to-text upload source failed: " ^ Printexc.to_string exn)
+  in
+  loop 0
+
 let request ?(endpoint = Endpoint.default_inference) ~api_key request =
   let* () = validate request in
   let audio_format =
@@ -127,20 +189,22 @@ let request ?(endpoint = Endpoint.default_inference) ~api_key request =
     @ option_field "filler_words" bool_string request.filler_words
     @ option_field "vad_threshold" (Printf.sprintf "%.17g") request.vad_threshold
   in
-  let parts =
+  let* parts =
     match request.source with
-    | Url url -> fields @ [ C.Field ("url", url) ]
+    | Url url -> Ok (fields @ [ C.Field ("url", url) ])
     | File file ->
-        fields
-        @ [
-            C.File
-              {
-                name = "file";
-                filename = file.A.filename;
-                content_type = file.content_type;
-                data = file.data;
-              };
-          ]
+        let* data = read_upload file in
+        Ok
+          (fields
+          @ [
+              C.File
+                {
+                  name = "file";
+                  filename = file.filename;
+                  content_type = file.content_type;
+                  data;
+                };
+            ])
   in
   let* boundary, body = C.multipart ~label:"speech-to-text" parts in
   let base_url = Endpoint.inference_base_url endpoint in
@@ -190,7 +254,7 @@ let decode_response raw =
     }
 
 let transcribe ?(endpoint = Endpoint.default_inference) client ~api_key
-    request_value =
+    (request_value : request) =
   let base_url = Endpoint.inference_base_url endpoint in
   let attrs =
     match request_value.audio_format with

@@ -224,14 +224,14 @@ let response_request : X.Responses.request =
     prompt_cache_key = None;
   }
 
-let realtime_session ?instructions ?(input = X.Realtime.Json)
-    ?(output = X.Realtime.Json) () =
+let realtime_session ?instructions ?(input = X.Audio.Realtime.Json)
+    ?(output = X.Audio.Realtime.Json) () =
   let format =
-    match X.Realtime.pcm ~sample_rate:24000 with
+    match X.Audio.Realtime.pcm ~sample_rate:24000 with
     | Ok value -> value
     | Error error -> Alcotest.failf "%a" X.Error.pp error
   in
-  X.Realtime.session ?instructions ~model:"grok-voice-latest"
+  X.Audio.Realtime.session ?instructions ~model:"grok-voice-latest"
     ~input_audio:{ format; transport = input; transcription = None }
     ~output_audio:{ format; transport = output; speed = None } ()
   |> function
@@ -269,27 +269,27 @@ let test_secure_endpoint_subprotocol_and_realtime_races () =
   let xai_net = routed_net ~sw ~net port in
   let connection =
     run rt
-      (T.Realtime.connect_api_key ~ca_file:cert ~sw ~net:xai_net
+      (T.Audio.Realtime.connect_api_key ~ca_file:cert ~sw ~net:xai_net
          ~call_id:"sip-call-1"
          ~api_key:(Eta_ai.api_key "api-secret")
          ~session:(realtime_session ()) ())
   in
   Alcotest.(check bool) "xairt-edx9 Realtime API-key connection" true true;
-  run rt (T.Realtime.send_audio connection (Bytes.of_string "json-audio"));
+  run rt (T.Audio.Realtime.send_audio connection (Bytes.of_string "json-audio"));
   ignore
     (run rt
        (E.par
-          (T.Realtime.send_event connection
-             X.Realtime.Input_audio_buffer_commit)
-          (T.Realtime.send_event connection
-             X.Realtime.Input_audio_buffer_clear)));
+          (T.Audio.Realtime.send_event connection
+             X.Audio.Realtime.Input_audio_buffer_commit)
+          (T.Audio.Realtime.send_event connection
+             X.Audio.Realtime.Input_audio_buffer_clear)));
   ignore
     (run rt
        (E.par
-          (T.Realtime.send_event connection
-             (X.Realtime.Session_update
-                (realtime_session ~input:X.Realtime.Binary ())))
-          (T.Realtime.send_audio connection (Bytes.of_string "audio"))));
+          (T.Audio.Realtime.send_event connection
+             (X.Audio.Realtime.Session_update
+                (realtime_session ~input:X.Audio.Realtime.Binary ())))
+          (T.Audio.Realtime.send_audio connection (Bytes.of_string "audio"))));
   let head = Eio.Stream.take observed in
   Alcotest.(check bool) "secure target and bearer" true
     (contains head "GET /v1/realtime?model=grok-voice-latest"
@@ -313,7 +313,7 @@ let test_secure_endpoint_subprotocol_and_realtime_races () =
         || (contains third "input_audio_buffer.append"
            && contains fourth "session.update"))
     | _ -> false);
-  ignore (expect_error rt (T.Realtime.read_event connection));
+  ignore (expect_error rt (T.Audio.Realtime.read_event connection));
   Alcotest.(check bool) "xairt-v6m0 typed pull event stream" true true;
   Alcotest.(check bool) "xairt-webr failed connection closes stream" true true
 
@@ -334,8 +334,8 @@ let test_ephemeral_prefix_and_token_rejection () =
   let xai_net = routed_net ~sw ~net port in
   let connection =
     run rt
-      (T.Realtime.connect_ephemeral ~ca_file:cert ~sw ~net:xai_net
-         ~secret:(X.Realtime.client_secret "token-value")
+      (T.Audio.Realtime.connect_ephemeral ~ca_file:cert ~sw ~net:xai_net
+         ~secret:(X.Audio.Realtime.client_secret "token-value")
          ~session:(realtime_session ()) ())
   in
   Alcotest.(check bool) "xairt-1pv3 ephemeral Realtime connection" true true;
@@ -345,11 +345,11 @@ let test_ephemeral_prefix_and_token_rejection () =
     (header_value "sec-websocket-protocol" head);
   Alcotest.(check (option string)) "xaisec-n7lu secret only Realtime endpoint" None
     (header_value "authorization" head);
-  run rt (T.Realtime.close connection);
-  let bad_secret = X.Realtime.client_secret "bad\r\nprotocol" in
+  run rt (T.Audio.Realtime.close connection);
+  let bad_secret = X.Audio.Realtime.client_secret "bad\r\nprotocol" in
   (match
      expect_error rt
-       (T.Realtime.connect_ephemeral ~ca_file:cert ~sw ~net ~secret:bad_secret
+       (T.Audio.Realtime.connect_ephemeral ~ca_file:cert ~sw ~net ~secret:bad_secret
           ~session:(realtime_session ()) ())
    with
   | Eta.Cause.Fail (`Protocol "invalid WebSocket subprotocol token") -> ()
@@ -357,7 +357,7 @@ let test_ephemeral_prefix_and_token_rejection () =
 
 let stt_config =
   {
-    T.Streaming_stt.sample_rate = Some 16000;
+    T.Audio.Speech_to_text.sample_rate = Some 16000;
     encoding = Some Pcm;
     interim_results = Some true;
     endpointing = Some 250;
@@ -414,21 +414,21 @@ let test_stt_state_machine_and_multichannel_done () =
   let rt = runtime sw env in
   let connection =
     run rt
-      (T.Streaming_stt.connect ~ca_file:cert ~sw ~net:(routed_net ~sw ~net port)
+      (T.Audio.Speech_to_text.connect ~ca_file:cert ~sw ~net:(routed_net ~sw ~net port)
          ~api_key:(Eta_ai.api_key "key") stt_config)
   in
-  run rt (T.Streaming_stt.send_audio connection (Bytes.of_string "audio"));
+  run rt (T.Audio.Speech_to_text.send_audio connection (Bytes.of_string "audio"));
   ignore
-    (expect_error rt (T.Streaming_stt.finalize ~channel:2 connection));
-  run rt (T.Streaming_stt.finalize ~channel:1 connection);
+    (expect_error rt (T.Audio.Speech_to_text.finalize ~channel:2 connection));
+  run rt (T.Audio.Speech_to_text.finalize ~channel:1 connection);
   Alcotest.(check bool) "xaistt-m2dm finalize keeps connection open" true true;
-  run rt (T.Streaming_stt.audio_done connection);
+  run rt (T.Audio.Speech_to_text.audio_done connection);
   Alcotest.(check bool) "xaistt-cc5x audio.done flushes pending audio" true true;
-  (match run rt (T.Streaming_stt.read_event connection) with
+  (match run rt (T.Audio.Speech_to_text.read_event connection) with
   | Some (Transcript_created { id = "tr_1"; _ }) ->
       Alcotest.(check bool) "xaistt-spzg transcript.created id" true true
   | _ -> Alcotest.fail "created event");
-  (match run rt (T.Streaming_stt.read_event connection) with
+  (match run rt (T.Audio.Speech_to_text.read_event connection) with
   | Some
       (Transcript_partial
         {
@@ -443,12 +443,12 @@ let test_stt_state_machine_and_multichannel_done () =
       Alcotest.(check bool) "xaistt-zs6w utterance-final classification"
         true true
   | _ -> Alcotest.fail "schema-valid channel zero partial");
-  (match run rt (T.Streaming_stt.read_event connection) with
+  (match run rt (T.Audio.Speech_to_text.read_event connection) with
   | Some (Transcript_done raw)
     when Eta_ai.Json.int_member "channel_index" raw = Some 0 ->
       Alcotest.(check bool) "xaistt-ydg9 typed transcript.done" true true
   | _ -> Alcotest.fail "first channel done");
-  (match run rt (T.Streaming_stt.read_event connection) with
+  (match run rt (T.Audio.Speech_to_text.read_event connection) with
   | Some
       (Transcript_partial
         {
@@ -460,7 +460,7 @@ let test_stt_state_machine_and_multichannel_done () =
         }) ->
       ()
   | _ -> Alcotest.fail "connection closed before channel one partial");
-  (match run rt (T.Streaming_stt.read_event connection) with
+  (match run rt (T.Audio.Speech_to_text.read_event connection) with
   | Some (Transcript_done raw)
     when Eta_ai.Json.int_member "channel_index" raw = Some 1 ->
       ()
@@ -469,13 +469,13 @@ let test_stt_state_machine_and_multichannel_done () =
   Alcotest.(check bool) "xaistt-hs0n all-channel transcript.done closes" true true;
   ignore
     (expect_error rt
-       (T.Streaming_stt.send_audio connection Bytes.empty));
+       (T.Audio.Speech_to_text.send_audio connection Bytes.empty));
   let invalid =
     { stt_config with keyterm = [ String.make 51 'x' ] }
   in
   ignore
     (expect_error rt
-       (T.Streaming_stt.connect ~ca_file:cert ~sw ~net:(routed_net ~sw ~net port)
+       (T.Audio.Speech_to_text.connect ~ca_file:cert ~sw ~net:(routed_net ~sw ~net port)
           ~api_key:(Eta_ai.api_key "key") invalid))
 
 let test_stt_pre_ready_bound_and_validation () =
@@ -493,28 +493,28 @@ let test_stt_pre_ready_bound_and_validation () =
   let rt = runtime sw env in
   let connection =
     run rt
-      (T.Streaming_stt.connect ~ca_file:cert ~sw ~net:(routed_net ~sw ~net port)
+      (T.Audio.Speech_to_text.connect ~ca_file:cert ~sw ~net:(routed_net ~sw ~net port)
          ~api_key:(Eta_ai.api_key "key")
-         T.Streaming_stt.default_config)
+         T.Audio.Speech_to_text.default_config)
   in
   run rt
-    (T.Streaming_stt.send_audio connection (Bytes.create 1_048_576));
+    (T.Audio.Speech_to_text.send_audio connection (Bytes.create 1_048_576));
   ignore
     (expect_error rt
-       (T.Streaming_stt.send_audio connection (Bytes.make 1 '\000')));
+       (T.Audio.Speech_to_text.send_audio connection (Bytes.make 1 '\000')));
   let invalid_configs =
     [
       {
-        T.Streaming_stt.default_config with
+        T.Audio.Speech_to_text.default_config with
         multichannel = Some false;
         channels = Some 2;
       };
       {
-        T.Streaming_stt.default_config with
+        T.Audio.Speech_to_text.default_config with
         vad_threshold = Some 1.1;
       };
       {
-        T.Streaming_stt.default_config with
+        T.Audio.Speech_to_text.default_config with
         keyterm = [ String.make 51 'x' ];
       };
     ]
@@ -523,9 +523,9 @@ let test_stt_pre_ready_bound_and_validation () =
     (fun config ->
       ignore
         (expect_error rt
-           (T.Streaming_stt.connect ~ca_file:cert ~sw ~net:(routed_net ~sw ~net port) ~api_key:(Eta_ai.api_key "key") config)))
+           (T.Audio.Speech_to_text.connect ~ca_file:cert ~sw ~net:(routed_net ~sw ~net port) ~api_key:(Eta_ai.api_key "key") config)))
     invalid_configs;
-  run rt (T.Streaming_stt.close connection);
+  run rt (T.Audio.Speech_to_text.close connection);
   Eio.Promise.resolve resolve_release_server ();
   let release_items_server, resolve_release_items_server = Eio.Promise.create () in
   let items_port =
@@ -536,21 +536,21 @@ let test_stt_pre_ready_bound_and_validation () =
   in
   let item_connection =
     run rt
-      (T.Streaming_stt.connect ~ca_file:cert ~sw
+      (T.Audio.Speech_to_text.connect ~ca_file:cert ~sw
          ~net:(routed_net ~sw ~net items_port)
          ~api_key:(Eta_ai.api_key "key")
-         T.Streaming_stt.default_config)
+         T.Audio.Speech_to_text.default_config)
   in
   for _ = 1 to 1024 do
-    run rt (T.Streaming_stt.send_audio item_connection Bytes.empty)
+    run rt (T.Audio.Speech_to_text.send_audio item_connection Bytes.empty)
   done;
   ignore
     (expect_error rt
-       (T.Streaming_stt.send_audio item_connection Bytes.empty));
-  run rt (T.Streaming_stt.close item_connection);
+       (T.Audio.Speech_to_text.send_audio item_connection Bytes.empty));
+  run rt (T.Audio.Speech_to_text.close item_connection);
   Eio.Promise.resolve resolve_release_items_server ()
 
-let tts_config : T.Streaming_tts.config =
+let tts_config : T.Audio.Text_to_speech.config =
   {
     language = "en";
     voice = "custom_opaque";
@@ -596,26 +596,26 @@ let test_tts_two_complete_cycles_and_fences () =
   let rt = runtime sw env in
   let connection =
     run rt
-      (T.Streaming_tts.connect ~ca_file:cert ~sw ~net:(routed_net ~sw ~net port)
+      (T.Audio.Text_to_speech.connect ~ca_file:cert ~sw ~net:(routed_net ~sw ~net port)
          ~api_key:(Eta_ai.api_key "key") tts_config)
   in
   Alcotest.(check bool) "xaivoice-c456 opaque streaming voice query" true true;
   Alcotest.(check bool) "xaitts-bsz3 streaming latency level accepted" true true;
   for cycle = 1 to 2 do
     run rt
-      (T.Streaming_tts.text_delta connection
+      (T.Audio.Text_to_speech.text_delta connection
          (Printf.sprintf "cycle-%d" cycle));
-    run rt (T.Streaming_tts.text_done connection);
+    run rt (T.Audio.Text_to_speech.text_done connection);
     ignore
       (expect_error rt
-         (T.Streaming_tts.text_delta connection "too-early"));
-    (match run rt (T.Streaming_tts.read_event connection) with
+         (T.Audio.Text_to_speech.text_delta connection "too-early"));
+    (match run rt (T.Audio.Text_to_speech.read_event connection) with
     | Some (Audio_delta { audio_timestamps = Some raw; _ }) ->
         Alcotest.(check (option int)) "xaitts-1owf timestamp preservation"
           (Some cycle)
           (Eta_ai.Json.int_member "cycle" raw)
     | _ -> Alcotest.fail "audio.delta");
-    (match run rt (T.Streaming_tts.read_event connection) with
+    (match run rt (T.Audio.Text_to_speech.read_event connection) with
     | Some (Audio_done _) ->
         Alcotest.(check bool) "xaitts-c3u5 audio.done typed event" true true;
         Alcotest.(check bool) "xaitts-86ko audio.done keeps connection open"
@@ -625,9 +625,9 @@ let test_tts_two_complete_cycles_and_fences () =
   done;
   ignore
     (expect_error rt
-       (T.Streaming_tts.text_delta connection (String.make 15_001 'x')));
+       (T.Audio.Text_to_speech.text_delta connection (String.make 15_001 'x')));
   Alcotest.(check bool) "xaitts-fwob oversized text.delta rejected" true true;
-  run rt (T.Streaming_tts.close connection)
+  run rt (T.Audio.Text_to_speech.close connection)
 
 let test_streaming_codec_samples_and_unknown_preservation () =
   Eio_main.run @@ fun env ->
@@ -651,12 +651,12 @@ let test_streaming_codec_samples_and_unknown_preservation () =
   let rt = runtime sw env in
   let stt =
     run rt
-      (T.Streaming_stt.connect ~ca_file:cert ~sw
+      (T.Audio.Speech_to_text.connect ~ca_file:cert ~sw
          ~net:(routed_net ~sw ~net stt_port)
-         ~api_key:(Eta_ai.api_key "key") T.Streaming_stt.default_config)
+         ~api_key:(Eta_ai.api_key "key") T.Audio.Speech_to_text.default_config)
   in
   let stt_expect id predicate =
-    match run rt (T.Streaming_stt.read_event stt) with
+    match run rt (T.Audio.Speech_to_text.read_event stt) with
     | Some event -> Alcotest.(check bool) id true (predicate event)
     | None -> Alcotest.failf "%s missing event" id
   in
@@ -692,13 +692,13 @@ let test_streaming_codec_samples_and_unknown_preservation () =
   in
   let tts =
     run rt
-      (T.Streaming_tts.connect ~ca_file:cert ~sw
+      (T.Audio.Text_to_speech.connect ~ca_file:cert ~sw
          ~net:(routed_net ~sw ~net tts_port)
          ~api_key:(Eta_ai.api_key "key") tts_config)
   in
-  run rt (T.Streaming_tts.text_clear tts);
+  run rt (T.Audio.Text_to_speech.text_clear tts);
   let tts_expect id predicate =
-    match run rt (T.Streaming_tts.read_event tts) with
+    match run rt (T.Audio.Text_to_speech.read_event tts) with
     | Some event -> Alcotest.(check bool) id true (predicate event)
     | None -> Alcotest.failf "%s missing event" id
   in
@@ -890,14 +890,14 @@ let test_realtime_close_and_cancellation_release_once () =
        let rt = runtime connection_sw env in
        let connection =
          run rt
-           (T.Realtime.connect_api_key ~ca_file:cert ~sw:connection_sw
+           (T.Audio.Realtime.connect_api_key ~ca_file:cert ~sw:connection_sw
               ~net:(routed_net ~sw:connection_sw ~net port)
               ~api_key:(Eta_ai.api_key "key")
               ~session:(realtime_session ()) ())
        in
        if cancel then
          Eio.Switch.fail connection_sw (Failure "cancel Realtime connection")
-       else run rt (T.Realtime.close connection)
+       else run rt (T.Audio.Realtime.close connection)
      with Failure _ -> ());
     Eio.Promise.await closed;
     Alcotest.(check int) id 1 (Atomic.get close_count)
@@ -1027,18 +1027,18 @@ let test_observability_attrs_and_exclusions () =
   in
   let connection =
     run rt
-      (T.Realtime.connect_api_key ~ca_file:cert ~sw ~net:(routed_net ~sw ~net port) ~api_key:(Eta_ai.api_key "OBSERVABILITY-SECRET")
+      (T.Audio.Realtime.connect_api_key ~ca_file:cert ~sw ~net:(routed_net ~sw ~net port) ~api_key:(Eta_ai.api_key "OBSERVABILITY-SECRET")
          ~session:
            (realtime_session ~instructions:"SENSITIVE-CONTENT" ())
          ())
   in
   run rt
-    (T.Realtime.send_audio connection
+    (T.Audio.Realtime.send_audio connection
        (Bytes.of_string "AUDIO-CONTENT-SENTINEL"));
-  ignore (run rt (T.Realtime.read_event connection));
-  ignore (run rt (T.Realtime.read_event connection));
-  ignore (run rt (T.Realtime.read_event connection));
-  run rt (T.Realtime.close connection);
+  ignore (run rt (T.Audio.Realtime.read_event connection));
+  ignore (run rt (T.Audio.Realtime.read_event connection));
+  ignore (run rt (T.Audio.Realtime.read_event connection));
+  run rt (T.Audio.Realtime.close connection);
   Eio.Fiber.yield ();
   let session_spans =
     Eta.Tracer.dump tracer

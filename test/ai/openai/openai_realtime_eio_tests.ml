@@ -1,5 +1,5 @@
 module E = Eta.Effect
-module R = Eta_ai_openai.Realtime
+module R = Eta_ai_openai.Audio.Realtime
 module T = Eta_ai_openai_realtime_eio
 
 type read_action = Return of string | Await : unit Eio.Promise.t -> read_action

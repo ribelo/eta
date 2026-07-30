@@ -1,5 +1,98 @@
 open Eta_ai
 
+let drain source =
+  let pull = Audio.open_pull source in
+  let buffer = Buffer.create 16 in
+  let rec loop () =
+    match pull () with
+    | None -> Buffer.contents buffer
+    | Some chunk ->
+        Buffer.add_bytes buffer chunk;
+        loop ()
+  in
+  loop ()
+
+let test_oastt_59ol_bvq8_upload_sources () =
+  let bytes = Audio.bytes (Bytes.of_string "bytes") in
+  Alcotest.(check (option int64)) "bytes known length" (Some 5L)
+    (Audio.known_length bytes);
+  Alcotest.(check bool) "bytes replayable" true
+    (Audio.replayability bytes = Audio.Replayable);
+  Alcotest.(check string) "bytes first pull" "bytes" (drain bytes);
+  Alcotest.(check string) "bytes replay" "bytes" (drain bytes);
+  let opens = ref 0 in
+  let source =
+    Audio.stream ~length:6L ~replayability:Audio.Replayable (fun () ->
+        incr opens;
+        let chunks = ref [ Bytes.of_string "str"; Bytes.of_string "eam" ] in
+        fun () ->
+          match !chunks with
+          | [] -> None
+          | chunk :: rest ->
+              chunks := rest;
+              Some chunk)
+  in
+  Alcotest.(check (option int64)) "stream known length" (Some 6L)
+    (Audio.known_length source);
+  Alcotest.(check string) "stream pull chunks" "stream" (drain source);
+  Alcotest.(check string) "stream replay opens a new puller" "stream"
+    (drain source);
+  Alcotest.(check int) "stream factory opened twice" 2 !opens;
+  let one_shot =
+    Audio.stream ~replayability:Audio.One_shot (fun () -> fun () -> None)
+  in
+  Alcotest.(check (option int64)) "unknown stream length" None
+    (Audio.known_length one_shot);
+  Alcotest.(check bool) "one-shot metadata" true
+    (Audio.replayability one_shot = Audio.One_shot)
+
+let test_oabridge_ctoh_neutral_subset_fields () =
+  let upload : Audio.upload =
+    {
+      filename = "sample.wav";
+      content_type = "audio/wav";
+      source = Audio.bytes (Bytes.of_string "RIFF");
+    }
+  in
+  let stt : Audio.Speech_to_text.request =
+    { upload; language = Some "en" }
+  in
+  Alcotest.(check string) "STT filename" "sample.wav" stt.upload.filename;
+  Alcotest.(check string) "STT content type" "audio/wav"
+    stt.upload.content_type;
+  Alcotest.(check (option string)) "STT language" (Some "en") stt.language;
+  let transcript : Audio.Speech_to_text.result =
+    {
+      text = Some "hello";
+      language = Some "en";
+      duration_s = Some 1.25;
+    }
+  in
+  Alcotest.(check (option string)) "STT text" (Some "hello") transcript.text;
+  Alcotest.(check (option string)) "STT result language" (Some "en")
+    transcript.language;
+  Alcotest.(check (option (float 0.0))) "STT duration" (Some 1.25)
+    transcript.duration_s;
+  let tts : Audio.Text_to_speech.request =
+    {
+      text = "hello";
+      voice = "voice";
+      encoding = Some Audio.Text_to_speech.Wav;
+      speed = Some 1.1;
+    }
+  in
+  Alcotest.(check string) "TTS text" "hello" tts.text;
+  Alcotest.(check string) "TTS voice" "voice" tts.voice;
+  Alcotest.(check bool) "TTS shared encoding" true
+    (tts.encoding = Some Audio.Text_to_speech.Wav);
+  Alcotest.(check (option (float 0.0))) "TTS speed" (Some 1.1) tts.speed;
+  let audio : Audio.Text_to_speech.result =
+    { content_type = Some "audio/wav"; audio = Bytes.of_string "WAV" }
+  in
+  Alcotest.(check (option string)) "TTS content type" (Some "audio/wav")
+    audio.content_type;
+  Alcotest.(check string) "TTS audio" "WAV" (Bytes.to_string audio.audio)
+
 let transport_provider =
   {
     name = "stream-fixture";
@@ -116,6 +209,13 @@ let test_transport_caps_error_body_before_provider_decode () =
 let () =
   Alcotest.run "eta-ai-eio-transport"
     [
+      ( "audio",
+        [
+          Alcotest.test_case "oastt-59ol/bvq8 upload source behavior" `Quick
+            test_oastt_59ol_bvq8_upload_sources;
+          Alcotest.test_case "oabridge-ctoh neutral subset field coverage" `Quick
+            test_oabridge_ctoh_neutral_subset_fields;
+        ] );
       ( "provider-transport",
         [
           Alcotest.test_case "error body max bytes before decode" `Quick

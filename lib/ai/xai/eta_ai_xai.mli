@@ -31,7 +31,10 @@ module Responses = Responses
 module Files = Files
 module Collections = Collections
 module Models = Models
-module Speech_to_text = Speech_to_text
-module Text_to_speech = Text_to_speech
-module Voices = Voices
-module Realtime = Realtime
+
+module Audio : sig
+  module Speech_to_text = Speech_to_text
+  module Text_to_speech = Text_to_speech
+  module Voices = Voices
+  module Realtime = Realtime
+end

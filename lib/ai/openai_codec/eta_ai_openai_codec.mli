@@ -32,7 +32,14 @@ val reasoning_level_to_string : reasoning_level -> string
 
 val encode_speech_lossless :
   ?instructions:bool ->
-  Eta_ai.Speech.request ->
+  model:string ->
+  input:string ->
+  voice:string ->
+  ?response_format:string ->
+  ?speed:float ->
+  ?speech_instructions:string ->
+  ?extra:(string * Eta_ai.Json.t) list ->
+  unit ->
   (Eta_ai.raw_json, codec_failure) result
 
 val temperature_json_lossless :
@@ -93,7 +100,14 @@ val with_json_fields :
 val encode_speech :
   ?instructions:bool ->
   provider:string ->
-  Eta_ai.Speech.request ->
+  model:string ->
+  input:string ->
+  voice:string ->
+  ?response_format:string ->
+  ?speed:float ->
+  ?speech_instructions:string ->
+  ?extra:(string * Eta_ai.Json.t) list ->
+  unit ->
   (Eta_ai.raw_json, Eta_ai.ai_error) result
 
 val encode_embeddings_json :

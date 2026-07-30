@@ -1,6 +1,6 @@
 module E = Eta.Effect
 module Openai = Eta_ai_openai
-module Realtime = Openai.Realtime
+module Realtime = Openai.Audio.Realtime
 
 type realtime_error =
   [ Eta_http_eio.Ws.Client.ws_error | `Openai_error of Openai.Error.t ]

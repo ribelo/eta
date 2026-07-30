@@ -24,9 +24,9 @@ type request = {
   with_timestamps : bool;
 }
 
-type raw_audio = {
+type raw_audio = A.Audio.Text_to_speech.result = {
   content_type : string option;
-  bytes : bytes;
+  audio : bytes;
 }
 
 type timestamped_audio = {
@@ -41,6 +41,29 @@ type timestamped_audio = {
 type response =
   | Raw_audio of raw_audio
   | Timestamped_audio of timestamped_audio
+
+type configuration = {
+  language : string;
+  sample_rate : int option;
+  bit_rate : int option;
+  optimize_streaming_latency : int option;
+  text_normalization : bool option;
+  with_timestamps : bool;
+}
+
+type request_construction = A.Audio.Text_to_speech.request
+
+let of_eta_ai request = request
+
+let codec_of_eta_ai = function
+  | A.Audio.Text_to_speech.Mp3 -> Mp3
+  | Wav -> Wav
+  | Pcm -> Pcm
+
+let to_eta_ai = function
+  | Raw_audio audio -> audio
+  | Timestamped_audio audio ->
+      { A.Audio.Text_to_speech.content_type = audio.content_type; audio = audio.audio }
 
 let sample_rates = [ 8000; 16000; 22050; 24000; 44100; 48000 ]
 let bit_rates = [ 32000; 64000; 96000; 128000; 192000 ]
@@ -97,6 +120,36 @@ let validate request =
       | (Wav | Pcm | Mulaw | Alaw), None -> Ok ()
       | (Wav | Pcm | Mulaw | Alaw), Some _ ->
           C.invalid "bit_rate is supported only for MP3"
+
+let configure configuration (construction : request_construction) =
+  let output_format =
+    Option.map
+      (fun encoding ->
+        {
+          codec = codec_of_eta_ai encoding;
+          sample_rate = configuration.sample_rate;
+          bit_rate = configuration.bit_rate;
+        })
+      construction.encoding
+  in
+  let request =
+    {
+      text = construction.text;
+      language = configuration.language;
+      voice_id = Some construction.voice;
+      output_format;
+      speed = construction.speed;
+      optimize_streaming_latency = configuration.optimize_streaming_latency;
+      text_normalization = configuration.text_normalization;
+      with_timestamps = configuration.with_timestamps;
+    }
+  in
+  if
+    Option.is_none construction.encoding
+    && (Option.is_some configuration.sample_rate
+       || Option.is_some configuration.bit_rate)
+  then C.invalid "sample_rate and bit_rate require a neutral audio encoding"
+  else Result.map (fun () -> request) (validate request)
 
 let output_format_json output =
   Json.object_
@@ -164,7 +217,7 @@ let decode_timestamped raw =
        })
 
 let synthesize ?(endpoint = Endpoint.default_inference) client ~api_key
-    request_value =
+    (request_value : request) =
   let base_url = Endpoint.inference_base_url endpoint in
   match request ~endpoint ~api_key request_value with
   | Error error -> E.fail error
@@ -185,4 +238,4 @@ let synthesize ?(endpoint = Endpoint.default_inference) client ~api_key
              else
                E.pure
                  (Raw_audio
-                    { content_type = C.content_type headers; bytes }))
+                    { content_type = C.content_type headers; audio = bytes }))

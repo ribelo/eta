@@ -234,7 +234,7 @@ let revoke_public_url_request ?endpoint:custom ~api_key ~file_id () =
 let run_result ~base_url ~operation client decode request =
   match request with
   | Error error -> E.fail error
-  | Ok request -> C.perform_json ~base_url ~operation client request decode
+  | Ok request -> C.perform_json ~telemetry:`Provider ~base_url ~operation client request decode
 
 let upload ?endpoint:custom client ~api_key ?expires_after_s ?purpose file =
   let endpoint = endpoint custom in
@@ -251,21 +251,21 @@ let list ?endpoint:custom client ~api_key request =
 let get ?endpoint:custom client ~api_key ~file_id =
   let endpoint = endpoint custom in
   let base_url = base_url endpoint in
-  C.perform_json ~base_url ~operation:"get_file" client
+  C.perform_json ~telemetry:`Provider ~base_url ~operation:"get_file" client
     (get_request ~endpoint ~api_key ~file_id ())
     decode_resource
 
 let delete ?endpoint:custom client ~api_key ~file_id =
   let endpoint = endpoint custom in
   let base_url = base_url endpoint in
-  C.perform_json ~base_url ~operation:"delete_file" client
+  C.perform_json ~telemetry:`Provider ~base_url ~operation:"delete_file" client
     (delete_request ~endpoint ~api_key ~file_id ())
     decode_deleted
 
 let content ?endpoint:custom client ~api_key ~file_id ~format =
   let endpoint = endpoint custom in
   let base_url = base_url endpoint in
-  C.perform_response ~max_bytes:(content_max_bytes format) ~base_url
+  C.perform_response ~telemetry:`Provider ~max_bytes:(content_max_bytes format) ~base_url
     ~operation:"download_file" client
     (content_request ~endpoint ~api_key ~file_id ~format ())
   |> E.map (fun (bytes, headers) ->
@@ -282,6 +282,6 @@ let create_public_url ?endpoint:custom client ~api_key ~file_id
 let revoke_public_url ?endpoint:custom client ~api_key ~file_id =
   let endpoint = endpoint custom in
   let base_url = base_url endpoint in
-  C.perform_json ~base_url ~operation:"revoke_file_public_url" client
+  C.perform_json ~telemetry:`Provider ~base_url ~operation:"revoke_file_public_url" client
     (revoke_public_url_request ~endpoint ~api_key ~file_id ())
     decode_revocation

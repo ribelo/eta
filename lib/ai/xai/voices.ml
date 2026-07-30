@@ -117,7 +117,7 @@ let decode_custom_page raw =
 
 let run ?endpoint:custom ~operation client request decode =
   let base_url = base_url (endpoint custom) in
-  C.perform_json ~base_url ~operation client request decode
+  C.perform_json ~telemetry:`Provider ~base_url ~operation client request decode
 
 let list_built_in ?endpoint client ~api_key =
   run ?endpoint ~operation:"list_voices" client
@@ -138,7 +138,7 @@ let list_custom ?endpoint:custom_endpoint client ~api_key ?limit
   with
   | Error error -> E.fail error
   | Ok request ->
-      C.perform_json ~base_url ~operation:"list_custom_voices" client request
+      C.perform_json ~telemetry:`Provider ~base_url ~operation:"list_custom_voices" client request
         decode_custom_page
 
 let get_custom ?endpoint client ~api_key ~voice_id =
@@ -149,7 +149,7 @@ let get_custom ?endpoint client ~api_key ~voice_id =
 let custom_audio ?endpoint:custom_endpoint client ~api_key ~voice_id =
   let endpoint = endpoint custom_endpoint in
   let base_url = base_url endpoint in
-  C.perform_response ~max_bytes:reference_audio_max_bytes ~base_url
+  C.perform_response ~telemetry:`Provider ~max_bytes:reference_audio_max_bytes ~base_url
     ~operation:"get_custom_voice_audio" client
     (custom_audio_request ~endpoint ~api_key ~voice_id ())
   |> E.map (fun (bytes, headers) ->

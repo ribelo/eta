@@ -397,7 +397,7 @@ let batch_get_documents_request ?management_endpoint:custom ~management_key
 let run_result ~base_url ~operation client decode request =
   match request with
   | Error error -> E.fail error
-  | Ok request -> C.perform_json ~base_url ~operation client request decode
+  | Ok request -> C.perform_json ~telemetry:`Provider ~base_url ~operation client request decode
 
 let create_collection ?management_endpoint:custom client ~management_key request =
   let management_endpoint = management_endpoint custom in
@@ -415,7 +415,7 @@ let get_collection ?management_endpoint:custom client ~management_key
     ~collection_id =
   let management_endpoint = management_endpoint custom in
   let base_url = management_base_url management_endpoint in
-  C.perform_json ~base_url ~operation:"get_collection" client
+  C.perform_json ~telemetry:`Provider ~base_url ~operation:"get_collection" client
     (get_collection_request ~management_endpoint ~management_key
        ~collection_id ())
     decode_resource
@@ -424,7 +424,7 @@ let update_collection ?management_endpoint:custom client ~management_key
     ~collection_id request =
   let management_endpoint = management_endpoint custom in
   let base_url = management_base_url management_endpoint in
-  C.perform_json ~base_url ~operation:"update_collection" client
+  C.perform_json ~telemetry:`Provider ~base_url ~operation:"update_collection" client
     (update_collection_request ~management_endpoint ~management_key
        ~collection_id request)
     decode_resource
@@ -433,7 +433,7 @@ let delete_collection ?management_endpoint:custom client ~management_key
     ~collection_id =
   let management_endpoint = management_endpoint custom in
   let base_url = management_base_url management_endpoint in
-  C.perform_json ~base_url ~operation:"delete_collection" client
+  C.perform_json ~telemetry:`Provider ~base_url ~operation:"delete_collection" client
     (delete_collection_request ~management_endpoint ~management_key
        ~collection_id ())
     decode_unit
@@ -442,7 +442,7 @@ let add_file ?management_endpoint:custom client ~management_key ~collection_id
     ~file_id ?fields () =
   let management_endpoint = management_endpoint custom in
   let base_url = management_base_url management_endpoint in
-  C.perform_json ~base_url ~operation:"add_collection_document" client
+  C.perform_json ~telemetry:`Provider ~base_url ~operation:"add_collection_document" client
     (add_file_request ~management_endpoint ~management_key
        ~collection_id ~file_id ?fields ())
     decode_unit
@@ -469,7 +469,7 @@ let get_document ?management_endpoint:custom client ~management_key
     ~collection_id ~file_id =
   let management_endpoint = management_endpoint custom in
   let base_url = management_base_url management_endpoint in
-  C.perform_json ~base_url ~operation:"get_collection_document" client
+  C.perform_json ~telemetry:`Provider ~base_url ~operation:"get_collection_document" client
     (get_document_request ~management_endpoint ~management_key
        ~collection_id ~file_id ())
     decode_document
@@ -478,7 +478,7 @@ let reindex_document ?management_endpoint:custom client ~management_key
     ~collection_id ~file_id =
   let management_endpoint = management_endpoint custom in
   let base_url = management_base_url management_endpoint in
-  C.perform_json ~base_url ~operation:"reindex_collection_document" client
+  C.perform_json ~telemetry:`Provider ~base_url ~operation:"reindex_collection_document" client
     (reindex_document_request ~management_endpoint ~management_key
        ~collection_id ~file_id ())
     decode_unit
@@ -487,7 +487,7 @@ let remove_document ?management_endpoint:custom client ~management_key
     ~collection_id ~file_id =
   let management_endpoint = management_endpoint custom in
   let base_url = management_base_url management_endpoint in
-  C.perform_json ~base_url ~operation:"remove_collection_document" client
+  C.perform_json ~telemetry:`Provider ~base_url ~operation:"remove_collection_document" client
     (remove_document_request ~management_endpoint ~management_key
        ~collection_id ~file_id ())
     decode_unit

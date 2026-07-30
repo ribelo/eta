@@ -863,11 +863,15 @@ let test_incomplete_response_and_reasoning_replay () =
   Alcotest.(check bool) "replay precedes call" true (reasoning_at < call_at);
   Alcotest.(check bool) "call precedes output" true (call_at < output_at)
 
-let transcription_request () : A.Transcription.request =
+let transcription_request () : O.Audio.Speech_to_text.request =
   {
     model = "openai/whisper-large-v3";
     file =
-      { filename = "sample.wav"; content_type = "audio/wav"; data = Bytes.of_string "RIFF" };
+      {
+        A.Audio.filename = "sample.wav";
+        content_type = "audio/wav";
+        source = A.Audio.bytes (Bytes.of_string "RIFF");
+      };
     language = Some "en";
     prompt = None;
     response_format = None;
@@ -877,9 +881,9 @@ let transcription_request () : A.Transcription.request =
 
 let test_encode_and_decode_task_apis () =
   let speech =
-    O.encode_speech
+    O.Audio.Text_to_speech.encode
       {
-        A.Speech.model = "elevenlabs/eleven-turbo-v2";
+        O.Audio.Text_to_speech.model = "elevenlabs/eleven-turbo-v2";
         input = "hello";
         voice = "alloy";
         response_format = Some "pcm";
@@ -891,12 +895,12 @@ let test_encode_and_decode_task_apis () =
   in
   require_contains "speech model" ~needle:"\"model\":\"elevenlabs/eleven-turbo-v2\"" speech;
   let transcription =
-    O.encode_transcription (transcription_request ())
+    O.Audio.Speech_to_text.encode (transcription_request ())
     |> expect_ok "transcription encode"
   in
   require_contains "stt input" ~needle:"\"input_audio\":{" transcription;
   let transcription_response =
-    O.decode_transcription (read_fixture "transcription.json")
+    O.Audio.Speech_to_text.decode (read_fixture "transcription.json")
     |> expect_ok "transcription fixture"
   in
   Alcotest.(check (option string))
@@ -994,9 +998,9 @@ let test_task_request_endpoints_and_binary_runners () =
   in
   let speech =
     run_ok rt "speech"
-      (O.speech ~provider client ~api_key:(A.api_key "or-test")
+      (O.Audio.Text_to_speech.create ~provider client ~api_key:(A.api_key "or-test")
          {
-           A.Speech.model = "elevenlabs/eleven-turbo-v2";
+           O.Audio.Text_to_speech.model = "elevenlabs/eleven-turbo-v2";
            input = "hello";
            voice = "alloy";
            response_format = Some "pcm";

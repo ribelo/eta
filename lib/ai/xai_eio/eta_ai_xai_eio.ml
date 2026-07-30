@@ -1,7 +1,10 @@
 module Responses_ws = Responses_ws
-module Realtime = Realtime
-module Streaming_stt = Streaming_stt
-module Streaming_tts = Streaming_tts
+
+module Audio = struct
+  module Speech_to_text = Streaming_stt
+  module Text_to_speech = Streaming_tts
+  module Realtime = Realtime
+end
 
 let capabilities : Eta_ai_xai.Capabilities.t =
   {

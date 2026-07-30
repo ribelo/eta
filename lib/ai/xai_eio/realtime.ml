@@ -1,5 +1,5 @@
 module E = Eta.Effect
-module R = Eta_ai_xai.Realtime
+module R = Eta_ai_xai.Audio.Realtime
 
 type error = Common.error
 

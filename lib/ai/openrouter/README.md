@@ -79,8 +79,9 @@ Use eta_ai redacted keys and pass eta_http clients explicitly:
 
 - OpenRouter routing is request-local and encoded under the `provider` JSON
   object.
-- Provider packages expose unified `Chat`, `Embeddings`, `Speech`,
-  `Transcriptions`, `Rerank`, and `Video` modules that include the common
+- Provider packages expose unified `Chat`, `Embeddings`, `Audio`, `Rerank`, and
+  `Video` modules. `Audio` contains `Speech_to_text` and `Text_to_speech`;
+  the remaining capability modules include the common
   `Eta_ai.Provider` interfaces; OpenRouter extends chat and embeddings with
   routing and Responses-specific helpers.
 - Ordered `routing.order` models a fallback chain.

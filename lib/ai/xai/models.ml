@@ -124,7 +124,7 @@ let decode_list decoder raw =
 
 let run ?endpoint:custom ~operation client request decode =
   let base_url = base_url (endpoint custom) in
-  C.perform_json ~base_url ~operation client request decode
+  C.perform_json ~telemetry:`Provider ~base_url ~operation client request decode
 
 let list_models ?endpoint client ~api_key =
   run ?endpoint ~operation:"list_models" client

@@ -926,9 +926,9 @@ let test_speech_runner () =
   in
   let response =
     run_ok rt "speech runner"
-      (O.speech client ~api_key:(A.api_key "sk-test")
+      (O.Audio.Text_to_speech.create client ~api_key:(A.api_key "sk-test")
          {
-           A.Speech.model = "gpt-4o-mini-tts";
+           O.Audio.Text_to_speech.model = "gpt-4o-mini-tts";
            input = "hello";
            voice = "alloy";
            response_format = Some "mp3";
@@ -946,11 +946,15 @@ let test_speech_runner () =
 
 let test_transcription_request_and_decode () =
   let request =
-    O.transcription_request ~api_key:(A.api_key "sk-test")
+    O.Audio.Speech_to_text.request ~api_key:(A.api_key "sk-test")
       {
-        A.Transcription.model = "gpt-4o-transcribe";
+        O.Audio.Speech_to_text.model = "gpt-4o-transcribe";
         file =
-          { filename = "sample.wav"; content_type = "audio/wav"; data = Bytes.of_string "RIFF" };
+          {
+            A.Audio.filename = "sample.wav";
+            content_type = "audio/wav";
+            source = A.Audio.bytes (Bytes.of_string "RIFF");
+          };
         language = Some "en";
         prompt = None;
         response_format = Some "json";
@@ -965,7 +969,7 @@ let test_transcription_request_and_decode () =
     "multipart" true
     (Option.is_some (H.Core.Header.get "content-type" request.headers));
   let response =
-    O.decode_transcription_response (read_fixture "transcription.json")
+    O.Audio.Speech_to_text.decode_response (read_fixture "transcription.json")
     |> expect_ok "transcription fixture"
   in
   Alcotest.(check (option string)) "text" (Some "hello eta") response.text
@@ -973,12 +977,12 @@ let test_transcription_request_and_decode () =
 let test_transcription_request_rejects_multipart_header_injection () =
   let make_request ?(content_type = "audio/wav") ?(extra_fields = []) () =
     {
-      A.Transcription.model = "gpt-4o-transcribe";
+      O.Audio.Speech_to_text.model = "gpt-4o-transcribe";
       file =
         {
-          filename = "sample.wav";
+          A.Audio.filename = "sample.wav";
           content_type;
-          data = Bytes.of_string "RIFF";
+          source = A.Audio.bytes (Bytes.of_string "RIFF");
         };
       language = None;
       prompt = None;
@@ -988,13 +992,13 @@ let test_transcription_request_rejects_multipart_header_injection () =
     }
   in
   let field_error =
-    O.transcription_request ~api_key:(A.api_key "sk-test")
+    O.Audio.Speech_to_text.request ~api_key:(A.api_key "sk-test")
       (make_request ~extra_fields:[ ("bad\r\nname", "value") ] ())
     |> expect_invalid_request "transcription extra field name"
   in
   require_contains "field name error" ~needle:"field name" field_error;
   let content_type_error =
-    O.transcription_request ~api_key:(A.api_key "sk-test")
+    O.Audio.Speech_to_text.request ~api_key:(A.api_key "sk-test")
       (make_request ~content_type:"audio/wav\r\nX-Injected: yes" ())
     |> expect_invalid_request "transcription content type"
   in
@@ -1005,10 +1009,15 @@ let test_transcription_request_avoids_boundary_collision () =
   let data = Bytes.of_string "RIFF" in
   let digest_boundary = "eta-ai-" ^ Digest.to_hex (Digest.bytes data) in
   let request =
-    O.transcription_request ~api_key:(A.api_key "sk-test")
+    O.Audio.Speech_to_text.request ~api_key:(A.api_key "sk-test")
       {
-        A.Transcription.model = "gpt-4o-transcribe";
-        file = { filename = "sample.wav"; content_type = "audio/wav"; data };
+        O.Audio.Speech_to_text.model = "gpt-4o-transcribe";
+        file =
+          {
+            A.Audio.filename = "sample.wav";
+            content_type = "audio/wav";
+            source = A.Audio.bytes data;
+          };
         language = None;
         prompt = Some ("please transcribe --" ^ digest_boundary);
         response_format = None;
@@ -1025,6 +1034,95 @@ let test_transcription_request_avoids_boundary_collision () =
     "prompt does not contain chosen boundary" false
     (contains ~needle:boundary ("please transcribe --" ^ digest_boundary));
   ignore (request_body_string request : string)
+
+let test_oabridge_openai_neutral_conversion_and_projection () =
+  let neutral_tts : A.Audio.Text_to_speech.request =
+    {
+      text = "hello";
+      voice = "alloy";
+      encoding = Some A.Audio.Text_to_speech.Wav;
+      speed = Some 1.1;
+    }
+  in
+  let construction = O.Audio.Text_to_speech.of_eta_ai neutral_tts in
+  (* oabridge-d348: [construction] has the abstract [request_construction]
+     type. The only public path to [request] requires this explicit provider
+     configuration, including OpenAI's required model. *)
+  let configured =
+    O.Audio.Text_to_speech.configure
+      { model = "gpt-4o-mini-tts"; instructions = Some "brief"; extra = [] }
+      construction
+    |> expect_ok "oabridge-pmod/d348 OpenAI TTS configure"
+  in
+  Alcotest.(check string) "provider model supplied separately"
+    "gpt-4o-mini-tts" configured.model;
+  Alcotest.(check string) "neutral text converted" "hello" configured.input;
+  Alcotest.(check (option string)) "neutral encoding converted" (Some "wav")
+    configured.response_format;
+  (match
+     O.Audio.Text_to_speech.configure
+       { model = ""; instructions = None; extra = [] }
+       construction
+   with
+  | Error (O.Error.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "oabridge-d348 must not invent a missing OpenAI model");
+  let projected =
+    O.Audio.Text_to_speech.to_eta_ai
+      { O.Audio.Text_to_speech.content_type = Some "audio/wav";
+        audio = Bytes.of_string "WAV" }
+  in
+  Alcotest.(check string) "oabridge-ff14 explicit TTS projection" "WAV"
+    (Bytes.to_string projected.audio);
+  let upload : A.Audio.upload =
+    {
+      filename = "sample.wav";
+      content_type = "audio/wav";
+      source = A.Audio.bytes (Bytes.of_string "RIFF");
+    }
+  in
+  let construction =
+    O.Audio.Speech_to_text.of_eta_ai
+      { A.Audio.Speech_to_text.upload = upload; language = Some "en" }
+  in
+  let configured =
+    O.Audio.Speech_to_text.configure
+      {
+        model = "gpt-4o-transcribe";
+        prompt = Some "Eta";
+        response_format = Some "json";
+        temperature = Some 0.0;
+        extra_fields = [];
+      }
+      construction
+    |> expect_ok "oabridge-pmod/d348 OpenAI STT configure"
+  in
+  Alcotest.(check string) "STT provider model supplied separately"
+    "gpt-4o-transcribe" configured.model;
+  (* oabridge-ff14: every neutral field is decoded from the provider body and
+     projected; none is silently dropped. *)
+  let body =
+    {|{"text":"hello","language":"french","duration":12.5}|}
+  in
+  let decoded =
+    O.Audio.Speech_to_text.decode_response body
+    |> expect_ok "oabridge-ff14 STT decode"
+  in
+  let projected = O.Audio.Speech_to_text.to_eta_ai decoded in
+  Alcotest.(check (option string)) "oabridge-ff14 projected text" (Some "hello")
+    projected.text;
+  Alcotest.(check (option string)) "oabridge-ff14 projected language"
+    (Some "french") projected.language;
+  Alcotest.(check (option (float 0.0001))) "oabridge-ff14 projected duration"
+    (Some 12.5) projected.duration_s;
+  let bare =
+    O.Audio.Speech_to_text.decode_response {|{"text":"hello"}|}
+    |> expect_ok "oabridge-ff14 STT decode without optional fields"
+    |> O.Audio.Speech_to_text.to_eta_ai
+  in
+  Alcotest.(check (option string)) "oabridge-ff14 absent language stays absent"
+    None bare.language;
+  Alcotest.(check (option (float 0.0001)))
+    "oabridge-ff14 absent duration stays absent" None bare.duration_s
 
 let test_chat_and_responses_encode_audio_content () =
   let request =
@@ -1069,11 +1167,11 @@ let test_openai_image_content_wire_shape () =
 
 let test_realtime_session_json () =
   let session =
-    O.Realtime.session ~model:"gpt-realtime-2" ~instructions:"stay brief"
+    O.Audio.Realtime.session ~model:"gpt-realtime-2" ~instructions:"stay brief"
       ~input_audio_format:A.Pcm16 ~output_audio_format:A.G711_ulaw ~voice:"verse"
       ~max_output_tokens:128 ()
   in
-  let raw = O.Realtime.session_to_string session in
+  let raw = O.Audio.Realtime.session_to_string session in
   require_contains "realtime type" ~needle:"\"type\":\"realtime\"" raw;
   require_contains "modalities" ~needle:"\"output_modalities\":[\"text\",\"audio\"]" raw;
   require_contains "pcm format" ~needle:"\"type\":\"audio/pcm\"" raw;
@@ -1081,9 +1179,9 @@ let test_realtime_session_json () =
   require_contains "voice" ~needle:"\"voice\":\"verse\"" raw
 
 let test_realtime_client_secret_request () =
-  let session = O.Realtime.session ~model:"gpt-realtime-2" () in
+  let session = O.Audio.Realtime.session ~model:"gpt-realtime-2" () in
   let request =
-    O.Realtime.client_secret_request ~base_url:"https://api.openai.test"
+    O.Audio.Realtime.client_secret_request ~base_url:"https://api.openai.test"
       ~api_key:(A.api_key "sk-test") session
   in
   Alcotest.(check string)
@@ -1100,28 +1198,28 @@ let test_realtime_client_event_audio_append () =
     | _ -> Alcotest.fail "expected audio"
   in
   let raw =
-    O.Realtime.client_event_to_string (O.Realtime.Input_audio_buffer_append audio)
+    O.Audio.Realtime.client_event_to_string (O.Audio.Realtime.Input_audio_buffer_append audio)
   in
   require_contains "append type" ~needle:"\"type\":\"input_audio_buffer.append\"" raw;
   require_contains "audio data" ~needle:"\"audio\":\"AAECAw==\"" raw
 
 let test_realtime_decode_server_events () =
   (match
-     O.Realtime.decode_server_event
+     O.Audio.Realtime.decode_server_event
        "{\"type\":\"response.output_audio.delta\",\"delta\":\"abc\"}"
    with
-  | Stdlib.Ok (O.Realtime.Response_audio_delta "abc") -> ()
+  | Stdlib.Ok (O.Audio.Realtime.Response_audio_delta "abc") -> ()
   | _ -> Alcotest.fail "expected audio delta");
   (match
-     O.Realtime.decode_server_event
+     O.Audio.Realtime.decode_server_event
        "{\"type\":\"error\",\"error\":{\"code\":\"bad_request\",\"message\":\"nope\"}}"
    with
   | Stdlib.Ok
-      (O.Realtime.Server_error
+      (O.Audio.Realtime.Server_error
          { code = Some "bad_request"; message = "nope"; _ }) ->
       ()
   | _ -> Alcotest.fail "expected realtime error event");
-  match O.Realtime.decode_server_event "{not-json" with
+  match O.Audio.Realtime.decode_server_event "{not-json" with
   | Stdlib.Error (O.Error.Decode { raw_body = Some "{not-json"; _ }) -> ()
   | Stdlib.Error (O.Error.Decode _) -> ()
   | Stdlib.Ok _ -> Alcotest.fail "malformed frame must not succeed"
@@ -1131,8 +1229,8 @@ let test_airealtime_shared_codec_contract () =
   (* airealtime-02ky/5xcr/xem8/6gv2: the shared codec shape keeps OpenAI's
      session and event types and admits binary messages without adding them to
      OpenAI's lossless event algebra. *)
-  let session = O.Realtime.session ~model:"gpt-realtime-2" () in
-  (match O.Realtime.Codec.encode_session session with
+  let session = O.Audio.Realtime.session ~model:"gpt-realtime-2" () in
+  (match O.Audio.Realtime.Codec.encode_session session with
   | A.Realtime.Text raw ->
       require_contains "session update frame"
         ~needle:"\"type\":\"session.update\"" raw;
@@ -1140,7 +1238,7 @@ let test_airealtime_shared_codec_contract () =
         raw
   | A.Realtime.Binary _ -> Alcotest.fail "OpenAI session must encode as text");
   match
-    O.Realtime.Codec.decode_server_event
+    O.Audio.Realtime.Codec.decode_server_event
       (A.Realtime.Binary (Bytes.of_string "\000\001"))
   with
   | Stdlib.Error (O.Error.Decode { message; _ }) ->
@@ -1472,14 +1570,14 @@ let test_aierr_openai_local_codec_and_transport_classes () =
   | Stdlib.Error (O.Error.Invalid_request _) -> ()
   | _ -> Alcotest.fail "blank image prompt is Invalid_request");
   (match
-     O.transcription_request ~api_key:(A.api_key "sk")
+     O.Audio.Speech_to_text.request ~api_key:(A.api_key "sk")
        {
-         A.Transcription.model = "m";
+         O.Audio.Speech_to_text.model = "m";
          file =
            {
-             filename = "a.wav";
+             A.Audio.filename = "a.wav";
              content_type = "audio/wav\r\nX:1";
-             data = Bytes.of_string "RIFF";
+             source = A.Audio.bytes (Bytes.of_string "RIFF");
            };
          language = None;
          prompt = None;
@@ -2212,16 +2310,8 @@ let test_aierr_openai_codec_lossless_validation_apis () =
         } -> ()
     | _ -> Alcotest.fail "Responses Http callback changed");
   match
-    C.encode_speech_lossless
-      {
-        A.Speech.model = "tts";
-        input = "hello";
-        voice = "alloy";
-        response_format = None;
-        speed = Some nan;
-        instructions = None;
-        extra = [];
-      }
+    C.encode_speech_lossless ~model:"tts" ~input:"hello" ~voice:"alloy"
+      ~speed:nan ()
   with
   | Stdlib.Error (C.Invalid_request _) -> ()
   | _ -> Alcotest.fail "speech lossless invalid"
@@ -2891,6 +2981,9 @@ let tests =
             test_transcription_request_rejects_multipart_header_injection;
           Alcotest.test_case "transcription multipart boundary collision" `Quick
             test_transcription_request_avoids_boundary_collision;
+          Alcotest.test_case
+            "oabridge-pmod/d348/ff14 OpenAI neutral conversion and projection"
+            `Quick test_oabridge_openai_neutral_conversion_and_projection;
           Alcotest.test_case "list models runner" `Quick test_list_models_runner;
           Alcotest.test_case "list models provider error is safe" `Quick
             test_list_models_provider_error_is_safe;

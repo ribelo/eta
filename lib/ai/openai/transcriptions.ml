@@ -5,13 +5,74 @@ module A = Common.A
 module H = Common.H
 module Json = Common.Json
 
+type request = {
+  model : A.model;
+  file : A.Audio.upload;
+  language : string option;
+  prompt : string option;
+  response_format : string option;
+  temperature : float option;
+  extra_fields : (string * string) list;
+}
+
+type result = {
+  text : string option;
+  language : string option;
+  duration_s : float option;
+  usage : A.usage option;
+  raw : A.raw_json option;
+}
+
+(* [duration] is published as a JSON number by the verbose response format. *)
+let duration_seconds json =
+  match Json.member "duration" json with
+  | Some (`Float value) -> Some value
+  | Some (`Int value) -> Some (float_of_int value)
+  | Some _ | None -> None
+
+type configuration = {
+  model : A.model;
+  prompt : string option;
+  response_format : string option;
+  temperature : float option;
+  extra_fields : (string * string) list;
+}
+
+type request_construction = A.Audio.Speech_to_text.request
+
+let of_eta_ai request = request
+
+let configure configuration (request : request_construction) =
+  if A.Json_helpers.is_blank configuration.model then
+    Common.invalid_request "transcription model must not be empty"
+  else
+    Stdlib.Ok
+      {
+        model = configuration.model;
+        file = request.upload;
+        language = request.language;
+        prompt = configuration.prompt;
+        response_format = configuration.response_format;
+        temperature = configuration.temperature;
+        extra_fields = configuration.extra_fields;
+      }
+
+let to_eta_ai (result : result) : A.Audio.Speech_to_text.result =
+  {
+    text = result.text;
+    language = result.language;
+    duration_s = result.duration_s;
+  }
+
 let decode_response raw =
   match Common.parse_json raw with
   | Stdlib.Error _ as error -> error
   | Stdlib.Ok json ->
       Stdlib.Ok
         {
-          A.Transcription.text = Json.string_member "text" json;
+          text = Json.string_member "text" json;
+          language = Json.string_member "language" json;
+          duration_s = duration_seconds json;
           usage =
             Option.map Common.Codec.usage (Json.object_member "usage" json);
           raw = Some raw;
@@ -67,10 +128,25 @@ let[@zero_alloc] contains_substring value ~needle =
     done;
     !found)
 
-let multipart_boundary (file : A.binary_file) strings =
-  let base = "eta-ai-" ^ Digest.to_hex (Digest.bytes file.data) in
+let read_upload source =
+  let buffer = Buffer.create 4096 in
+  let pull = A.Audio.open_pull source in
+  let rec loop () =
+    match pull () with
+    | None -> Stdlib.Ok (Bytes.of_string (Buffer.contents buffer))
+    | Some chunk ->
+        Buffer.add_bytes buffer chunk;
+        loop ()
+    | exception exn ->
+        Common.invalid_request
+          ("transcription upload source failed: " ^ Printexc.to_string exn)
+  in
+  loop ()
+
+let multipart_boundary data strings =
+  let base = "eta-ai-" ^ Digest.to_hex (Digest.bytes data) in
   let collides boundary =
-    contains_substring (Bytes.unsafe_to_string file.data) ~needle:boundary
+    contains_substring (Bytes.unsafe_to_string data) ~needle:boundary
     || List.exists (contains_substring ~needle:boundary) strings
   in
   let rec loop suffix =
@@ -88,16 +164,19 @@ let add_field buffer boundary name value =
   Buffer.add_string buffer value;
   Buffer.add_string buffer "\r\n"
 
-let multipart_body (request : A.Transcription.request) =
+let multipart_body (request : request) =
   match safe_disposition_value "transcription filename" request.file.filename with
   | Stdlib.Error _ as error -> error
   | Stdlib.Ok filename -> (
       match safe_header_value "transcription content type" request.file.content_type with
       | Stdlib.Error _ as error -> error
       | Stdlib.Ok content_type -> (
-          match safe_extra_fields request.extra_fields with
+          match read_upload request.file.source with
           | Stdlib.Error _ as error -> error
-          | Stdlib.Ok extra_fields ->
+          | Stdlib.Ok file_data -> (
+              match safe_extra_fields request.extra_fields with
+              | Stdlib.Error _ as error -> error
+              | Stdlib.Ok extra_fields ->
               let temperature =
                 Option.map (Printf.sprintf "%.17g") request.temperature
               in
@@ -119,9 +198,9 @@ let multipart_body (request : A.Transcription.request) =
                   fields extra_fields
               in
               let boundary =
-                multipart_boundary request.file (List.rev fields)
+                multipart_boundary file_data (List.rev fields)
               in
-              let buffer = Buffer.create (Bytes.length request.file.data + 512) in
+              let buffer = Buffer.create (Bytes.length file_data + 512) in
               add_field buffer boundary "model" request.model;
               Option.iter (add_field buffer boundary "language") request.language;
               Option.iter (add_field buffer boundary "prompt") request.prompt;
@@ -138,9 +217,10 @@ let multipart_body (request : A.Transcription.request) =
                 ^ filename ^ "\"\r\n");
               Buffer.add_string buffer
                 ("Content-Type: " ^ content_type ^ "\r\n\r\n");
-              Buffer.add_bytes buffer request.file.data;
+              Buffer.add_bytes buffer file_data;
               Buffer.add_string buffer ("\r\n--" ^ boundary ^ "--\r\n");
-              Stdlib.Ok (boundary, Bytes.of_string (Buffer.contents buffer))))
+                  Stdlib.Ok
+                    (boundary, Bytes.of_string (Buffer.contents buffer)))))
 
 let multipart_request provider ~path api_key boundary body =
   let headers =
@@ -166,3 +246,5 @@ let run ?provider:custom_provider client ~api_key transcription_request =
   Common.run_raw_decoded provider client
     (request ~provider ~api_key transcription_request)
     decode_response
+
+let create = run

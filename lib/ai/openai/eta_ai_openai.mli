@@ -4,8 +4,8 @@
     {!chat_completions_provider} for the legacy Chat Completions envelope.
     Chat prompt capability flags are conservative: image parts are encoded, but
     audio prompt input belongs to Realtime and video prompt input is not
-    advertised. Speech, transcription, image generation, and Realtime are
-    exposed as separate endpoint modules. *)
+    advertised. Speech-to-text, text-to-speech, voices, and Realtime are grouped
+    under [Audio]; image generation remains a separate endpoint module. *)
 
 module Error = Openai_error
 
@@ -141,22 +141,113 @@ module Images : sig
     (Eta_ai.Image.response, Error.t) Eta.Effect.t
 end
 
-module Speech : sig
-  val create :
-    provider:Eta_ai.provider ->
-    Eta_http.Client.t ->
-    api_key:Eta_ai.api_key ->
-    Eta_ai.Speech.request ->
-    (Eta_ai.Speech.response, Error.t) Eta.Effect.t
-end
+module Audio : sig
+  module Voices : sig
+    type t = string
+  end
 
-module Transcriptions : sig
-  val create :
-    provider:Eta_ai.provider ->
-    Eta_http.Client.t ->
-    api_key:Eta_ai.api_key ->
-    Eta_ai.Transcription.request ->
-    (Eta_ai.Transcription.response, Error.t) Eta.Effect.t
+  module Speech_to_text : sig
+    type request = {
+      model : Eta_ai.model;
+      file : Eta_ai.Audio.upload;
+      language : string option;
+      prompt : string option;
+      response_format : string option;
+      temperature : float option;
+      extra_fields : (string * string) list;
+    }
+
+    type result = {
+      text : string option;
+      language : string option;
+      duration_s : float option;
+      usage : Eta_ai.usage option;
+      raw : Eta_ai.raw_json option;
+    }
+
+    type configuration = {
+      model : Eta_ai.model;
+      prompt : string option;
+      response_format : string option;
+      temperature : float option;
+      extra_fields : (string * string) list;
+    }
+
+    type request_construction
+
+    include
+      Eta_ai.Audio.Speech_to_text.Provider
+        with type request := request
+         and type result := result
+         and type error := Error.t
+         and type configuration := configuration
+         and type request_construction := request_construction
+
+    val decode_response : Eta_ai.raw_json -> (result, Error.t) Stdlib.result
+
+    val request :
+      ?provider:Eta_ai.provider ->
+      api_key:Eta_ai.api_key ->
+      request ->
+      (Eta_http.Request.t, Error.t) Stdlib.result
+
+    val create :
+      ?provider:Eta_ai.provider ->
+      Eta_http.Client.t ->
+      api_key:Eta_ai.api_key ->
+      request ->
+      (result, Error.t) Eta.Effect.t
+  end
+
+  module Text_to_speech : sig
+    type request = {
+      model : Eta_ai.model;
+      input : string;
+      voice : Voices.t;
+      response_format : string option;
+      speed : float option;
+      instructions : string option;
+      extra : (string * Eta_ai.Json.t) list;
+    }
+
+    type result = {
+      content_type : string option;
+      audio : bytes;
+    }
+
+    type configuration = {
+      model : Eta_ai.model;
+      instructions : string option;
+      extra : (string * Eta_ai.Json.t) list;
+    }
+
+    type request_construction
+
+    include
+      Eta_ai.Audio.Text_to_speech.Provider
+        with type request := request
+         and type result := result
+         and type error := Error.t
+         and type configuration := configuration
+         and type request_construction := request_construction
+
+    val encode : request -> (Eta_ai.raw_json, Error.t) Stdlib.result
+
+    val request :
+      ?provider:Eta_ai.provider ->
+      api_key:Eta_ai.api_key ->
+      request ->
+      (Eta_http.Request.t, Error.t) Stdlib.result
+
+    val create :
+      ?provider:Eta_ai.provider ->
+      Eta_http.Client.t ->
+      api_key:Eta_ai.api_key ->
+      request ->
+      (result, Error.t) Eta.Effect.t
+  end
+
+  module Realtime = Realtime
 end
 
 val encode_chat :
@@ -178,16 +269,10 @@ val encode_image_generation :
   Eta_ai.Image.request -> (Eta_ai.raw_json, Error.t) result
 val decode_image_response :
   Eta_ai.raw_json -> (Eta_ai.Image.response, Error.t) result
-val encode_speech :
-  Eta_ai.Speech.request -> (Eta_ai.raw_json, Error.t) result
-val decode_transcription_response :
-  Eta_ai.raw_json -> (Eta_ai.Transcription.response, Error.t) result
 val decode_stream_event :
   Eta_ai.sse_event -> (Eta_ai.stream_event list, Error.t) result
 val decode_error :
   status:int -> headers:Eta_ai.headers -> Eta_ai.raw_json -> Error.t
-
-module Realtime = Realtime
 
 val chat_completions_request :
   ?structured_output:structured_output ->
@@ -212,18 +297,6 @@ val image_generation_request :
   ?provider:Eta_ai.provider ->
   api_key:Eta_ai.api_key ->
   Eta_ai.Image.request ->
-  (Eta_http.Request.t, Error.t) result
-
-val speech_request :
-  ?provider:Eta_ai.provider ->
-  api_key:Eta_ai.api_key ->
-  Eta_ai.Speech.request ->
-  (Eta_http.Request.t, Error.t) result
-
-val transcription_request :
-  ?provider:Eta_ai.provider ->
-  api_key:Eta_ai.api_key ->
-  Eta_ai.Transcription.request ->
   (Eta_http.Request.t, Error.t) result
 
 val chat_completions :
@@ -254,20 +327,6 @@ val image_generation :
   api_key:Eta_ai.api_key ->
   Eta_ai.Image.request ->
   (Eta_ai.Image.response, Error.t) Eta.Effect.t
-
-val speech :
-  ?provider:Eta_ai.provider ->
-  Eta_http.Client.t ->
-  api_key:Eta_ai.api_key ->
-  Eta_ai.Speech.request ->
-  (Eta_ai.Speech.response, Error.t) Eta.Effect.t
-
-val transcription :
-  ?provider:Eta_ai.provider ->
-  Eta_http.Client.t ->
-  api_key:Eta_ai.api_key ->
-  Eta_ai.Transcription.request ->
-  (Eta_ai.Transcription.response, Error.t) Eta.Effect.t
 
 val stream_chat_completions :
   ?structured_output:structured_output ->
