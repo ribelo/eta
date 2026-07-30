@@ -468,6 +468,19 @@ Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
 ### E44 — Observability full split
 - What: `eta_observability` package; root keeps the interpreter's
   minimal contract only.
+- Decision: **promoted 2026-07-30** (`def7c1c5`; one rework round).
+- Decision rationale: the blueprint ADT made the split architecture-legal
+  (every observability leaf is already a `Custom` closure). Root keeps
+  `Capabilities` types, `Runtime_contract`, `Spi.Expert`, and the
+  defect→span diagnostic path (79 `Effect` vals); the application-facing
+  SDK (40 vals + `Logger`/`Meter`/`Tracer`/`Log_level`/`Trace_context`)
+  moved, dependency direction strictly SDK → root, zero raw fiber-local
+  keys exposed. Review caught a batch-metrics double allocation (fixed:
+  streaming `~ts_ms`, lazy batch −16.1% wall / −200k words) and a missing
+  `local_with_binding` restoration contract for third-party backends
+  (fixed: full prose + native/JS conformance tests). Single
+  backend-neutral package verified on both substrates. Evidence:
+  `.scratch/research/dx/e44/`, V-DX-E44-002.
 
 ## Proposed (no decision yet)
 

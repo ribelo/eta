@@ -5764,3 +5764,75 @@ verdict promote-with-reservations on first pass.
 
 Header date typo: the sealing date was 2026-07-30, not 2026-07-26 (the
 ledger's E44 registration date was copied by mistake). Content unchanged.
+
+---
+
+## V-DX-E44-002 — 2026-07-30 — research/dx-e44-observability-split — phase: results + decision
+
+**Gates** (orchestrator re-run, both rounds): native trio pass in worktree
+AND on master after the `--no-ff` merge (`def7c1c5`); mainline JS
+(`test/cache_jsoo`, `test/js_jsoo`, `_build-mainline`) pass — the single
+backend-neutral package claim is verified, not inferred (no duplicated SDK
+in `lib/jsoo`).
+
+**Review arc.** Fresh-oracle PR review → verdict promote-with-reservations
+(4 findings) → orchestrator verified all four against cited lines → one
+bounded rework round (`f6ce2182`..`c2249a62`) → reviewer-of-record
+re-review → **PROMOTE**, all findings resolved, no new blockers. Findings:
+(F1) batch metrics double allocation (SDK built `ts=0` points, SPI
+re-copied) + batch path unmeasured; (F2) `local_with_binding` had zero
+restoration prose; (F3) three SDK prose qualifications (`with_result_attrs`
+callback failures, `with_context` active-parent precedence,
+`is_tracing_enabled` = effective admission); (F4) CHANGELOG missing the
+now-public `('a, +'err) t` covariance.
+
+**Resolutions verified.** F1: streaming `point_of_metric ~ts_ms` — one
+construction per point, uniform batch ts; watchlist extended with
+`metric_updates`/`metric_updates_lazy`/`_intercept_keep` at 100k points;
+15-pair rerun: eager +0.873%, lazy **−16.110%**, intercepted −0.239%;
+allocations: lazy batch **−199,995 words**; honest uncertainty language
+(pooled + per-pair spreads, no one-sided bound claimed; the broad "<2%"
+claim explicitly withdrawn). F2: full contract prose (restore on
+normal/exception/cancellation, LIFO, fork-snapshot Inherit vs Fiber_local)
++ synchronized native/JS conformance tests + law row R110b. F3/F4: prose
+and changelog corrected with executable coverage.
+
+**Census.** `Effect.mli` 119 → **79** vals root + **40** SDK vals (both
+audited by orchestrator). Packages 48 → 49. Dependency direction proven by
+`dune describe`: `eta (requires ())`, `eta_observability (requires
+(eta-uid))`. Zero stale references (orchestrator rg + executor script).
+**Seam:** zero raw fiber-local keys exposed; behavioral
+`Spi.Expert.context` ops; private `Runtime_capabilities` noops. Accepted
+weakest point (registered as watch F12): the broad unstable SPI surface.
+
+**Red-team 3/3:** root-only combinator call → `Unbound module`; dune cycle
+rejection proven; root-only hand-rolled tracer receives defect span events
+with the SDK absent.
+
+**Prediction scoring (orchestrator, V-DX-E44-001).** Hits: package shape,
+dependency direction, zero-delta mechanism (allocations *improved*), jsoo
+single package, promote outcome, "one rework round" prediction. Misses:
+census — predicted 85±3 root vals, actual 79 (underestimated the extended
+context surface: `with_error_pp`, `suppress_observability`, `here_attr`
+also moved; the executor's own 79 was exact); "at most one Spi-exposed
+key" — actual zero (better than predicted). Executor: 10 exact, 1 partial,
+0 contradicted (its own scoring, spot-checked).
+
+**Protocol notes.** Executor caught two orchestrator authoring errors:
+objective cited a nonexistent `.scratch/research/dx-ledger.md` (the real
+ledger lives in `docs/research/` — future objectives will cite it
+correctly and un-fence that one file); its exclusion search incidentally
+returned lines from fenced `docs/research/` — recorded raw, no
+contamination (predictions live in dx-journal.md). Cross-compiler catch of
+note: OxCaml accepted a helper named `effect`; mainline OCaml 5.4 reserves
+it — the mainline gate exists precisely for this.
+
+**Decision: PROMOTE.** Merged `--no-ff` (`def7c1c5`); master gates green;
+master + branch pushed; worktree removed; objectives archived.
+
+**Follow-ups.** F12 (watch): breadth of the unstable `Spi.Expert`
+observability seam — consolidate when the SPI stabilizes. F13:
+`bench/run.sh --quick` stops in the pre-existing TypeScript workload
+(`Effect.with_scope` unavailable there) — unrelated to E44; blocks the
+exact quick-bench command; owner: bench infrastructure. F10 CLOSED by this
+experiment (eta_stream row phrasing fixed in the re-tiering).

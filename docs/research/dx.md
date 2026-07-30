@@ -981,3 +981,38 @@ builders fail; the private CMI sits outside normal reach.
 
 Provenance: `.scratch/research/dx/e42a/`, V-DX-E42A-001..002, branch
 `research/dx-e42a-privacy-moves`, merge `d45a9c1e`.
+
+## E44 — Observability full split (promoted 2026-07-30)
+
+The audit's charge is now discharged: `Effect` is no longer simultaneously
+the effect, the tracer, the logger, the metrics DSL, and the propagation
+framework. Root `eta` keeps the interpreter's minimal contract —
+`Capabilities` types, `Runtime_contract`, `Spi.Expert`, and the
+defect→span diagnostic path — 79 `Effect` vals. The application-facing SDK
+(40 vals plus `Logger`/`Meter`/`Tracer`/`Log_level`/`Trace_context`) lives
+in the new `eta_observability` package; the dependency edge is strictly
+`eta_observability → eta`, proven by `dune describe`. Install only what
+you use, now true for observability.
+
+Why it was safe: the blueprint ADT (`Pure | Fail | Custom | Map | Bind`)
+never knew about observability — every leaf was already a `Custom`
+closure, so the split moved library code, not interpreter behavior. The
+one delicate seam (fiber-local keys shared by the core defect path and
+the DSL) resolved with **zero raw keys exposed**: the SDK receives narrow
+behavioral operations over an abstract `Spi.Expert.context`.
+
+Two review catches that made it better. The split had introduced a batch
+metrics double allocation (point copied once per side of the seam); the
+fix — a streaming timestamp-aware producer — left the lazy batch path
+**16% faster with 200k fewer allocated words** than before the split.
+And `local_with_binding`'s restoration guarantee was correct in both
+supplied backends but written nowhere: the contract now documents
+restore-on-exception/cancellation, LIFO nesting, and fork-snapshot
+semantics as backend conformance requirements, with synchronized
+native/JS tests.
+
+Accepted watch item: the unstable `Spi.Expert` surface is broad (F12);
+it consolidates when the SPI stabilizes.
+
+Provenance: `.scratch/research/dx/e44/`, V-DX-E44-001..002, branch
+`research/dx-e44-observability-split`, merge `def7c1c5`.
