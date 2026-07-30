@@ -5757,3 +5757,10 @@ the SDK — evidence recorded, decision reverts to namespace-split.
 **Outcome (predicted).** Promote with one rework round (seam discipline
 surprises in a migration this size). Review: PR-style oracle; predict
 verdict promote-with-reservations on first pass.
+
+---
+
+## V-DX-E44-001a — 2026-07-30 — correction to V-DX-E44-001
+
+Header date typo: the sealing date was 2026-07-30, not 2026-07-26 (the
+ledger's E44 registration date was copied by mistake). Content unchanged.
