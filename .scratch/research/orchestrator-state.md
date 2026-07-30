@@ -11,8 +11,7 @@ loop (plan §4.2 as amended by Amendment 1).
 - In flight: **E44 — Observability full split** (`eta_observability`)
   - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e44`
   - Branch: `research/dx-e44-observability-split`
-  - Stage: predictions sealed (V-DX-E44-001); objective.md written;
-    awaiting executor
+  - Stage: review found 4 verified reservations; followup-1.md rework issued; awaiting executor
 - Done (recent): **E42b promoted** (`5a67dfd5`; `ppx_eta_sql` split,
   `docs/packages.md` tiers, `Mutable_ref` purity contract, `race` clarity;
   one should-not-merge round fixed pre-merge; F10/F11 registered)
