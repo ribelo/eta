@@ -1,3 +1,5 @@
+open Eta
+
 type status = Capabilities.span_status = Ok | Error of string | Cancelled
 type kind = Capabilities.span_kind = Internal | Server | Client | Producer | Consumer
 
@@ -317,7 +319,8 @@ let noop : Capabilities.tracer =
 let dump t = with_lock t @@ fun () -> List.rev t.spans
 
 let retain_recent t ~max =
-  if max < 0 then invalid_arg "Eta.Tracer.retain_recent: max must be >= 0";
+  if max < 0 then
+    invalid_arg "Eta_observability.Tracer.retain_recent: max must be >= 0";
   with_lock t @@ fun () ->
   let rec take n acc = function
     | _ when n = 0 -> List.rev acc

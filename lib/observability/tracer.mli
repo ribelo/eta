@@ -1,9 +1,10 @@
 (** Built-in tracer implementations for tests and disabled tracing.
 
-    [Eta_observability.Tracer.noop] is the default when no tracer is installed:
-    it records nothing and has negligible overhead. [in_memory] collects spans
-    in memory for assertions in tests. Production exporters such as
-    OpenTelemetry live in optional packages like [eta_otel]. *)
+    [Eta_observability.Tracer.noop] records nothing and has negligible overhead.
+    The runtime uses a separate private default with equivalent no-recording
+    capability behavior. [in_memory] collects spans in memory for assertions in
+    tests. Production exporters such as OpenTelemetry live in optional packages
+    like [eta_otel]. *)
 
 open Eta
 

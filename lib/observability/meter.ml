@@ -1,3 +1,5 @@
+open Eta
+
 type kind = Capabilities.metric_kind =
   | Counter of { monotonic : bool }
   | Gauge

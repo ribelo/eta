@@ -20,8 +20,8 @@ type interrupt_id
 
 (** Diagnostic payload for unchecked defects.
 
-    [span_name] and [annotations] are copied from the active Eta
-    [named]/[annotate] context when the defect is captured. [backtrace] is
+    [span_name] and [annotations] are copied from the active Eta observability
+    span/annotation context when the defect is captured. [backtrace] is
     controlled by [Eta_eio.Runtime.create ?capture_backtrace]. *)
 type die = {
   exn : exn;

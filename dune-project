@@ -17,6 +17,15 @@
   (ocaml (>= 5.2.0))))
 
 (package
+ (name eta_observability)
+ (synopsis "Tracing, structured logging, metrics, and W3C propagation for Eta")
+ (description
+  "eta_observability provides Eta's optional application-facing tracing, structured logging, metrics, in-memory capability implementations, and W3C trace-context propagation helpers.")
+ (depends
+  (ocaml (>= 5.2.0))
+  eta))
+
+(package
  (name eta_cache)
  (synopsis "Effect-integrated keyed cache for Eta")
  (description

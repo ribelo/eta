@@ -1,3 +1,5 @@
+open Eta
+
 type t = Capabilities.trace_context = {
   trace_id : string;
   span_id : string;

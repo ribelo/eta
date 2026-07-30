@@ -1,3 +1,5 @@
+open Eta
+
 type level = Capabilities.log_level =
   | Trace
   | Debug
