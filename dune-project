@@ -496,6 +496,23 @@
   (yojson (>= 2.0))))
 
 (package
+ (name eta_ai_xai_eio)
+ (synopsis "Eio WebSocket transports for xAI")
+ (description
+  "eta_ai_xai_eio provides separate native Eio WebSocket transports for xAI Responses, Realtime speech, streaming speech-to-text, and streaming text-to-speech.")
+ (depends
+  (ocaml (>= 5.2.0))
+  eta
+  eta_ai
+  eta_ai_xai
+  eta_http
+  eta_http_eio
+  eta_redacted
+  eta_stream
+  base64
+  (eio (>= 1.0))))
+
+(package
  (name eta_ai_anthropic)
  (synopsis "Anthropic provider for Eta AI")
  (description

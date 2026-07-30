@@ -1,0 +1,20 @@
+(test
+ (name run)
+ (libraries
+  eta
+  eta_ai
+  eta_ai_xai
+  eta_ai_xai_eio
+  eta_eio
+  eta_http
+  eta_http_eio
+  eta_http_ws
+  eta_http_tls_openssl
+  alcotest
+  cstruct
+  eio
+  eio.mock
+  eio_main)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

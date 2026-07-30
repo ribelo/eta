@@ -661,6 +661,8 @@ module Codec = struct
 end
 
 type client_secret = string Eta_redacted.t
+let client_secret value =
+  Eta_redacted.make ~label:"xai_realtime_client_secret" value
 let client_secret_redacted value = value
 
 type client_secret_response = {
@@ -693,7 +695,7 @@ let decode_client_secret raw =
   let* value = C.required_string "value" json in
   Ok
     {
-      value = Eta_redacted.make ~label:"xai_realtime_client_secret" value;
+      value = client_secret value;
       expires_at = C.int64_member "expires_at" json;
       raw;
     }

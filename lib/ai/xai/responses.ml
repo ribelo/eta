@@ -502,6 +502,20 @@ let encode_request_json request =
 let encode_request request =
   encode_request_json request |> Result.map Json.to_string
 
+let encode_websocket_create ?generate request =
+  let* request_json = encode_request_json request in
+  match request_json with
+  | `Assoc fields ->
+      let fields = List.remove_assoc "stream" fields in
+      Ok
+        (Json.to_string
+           (`Assoc
+             (("type", `String "response.create")
+             :: (match generate with
+                | None -> fields
+                | Some value -> ("generate", `Bool value) :: fields))))
+  | _ -> assert false
+
 let content_of_eta_ai = function
   | A.Text text -> Ok (Input_text text)
   | A.Image { detail = None; url } -> Ok (Input_image { image_url = url })

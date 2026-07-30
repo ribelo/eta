@@ -202,6 +202,7 @@ where supported.
 | `eta_ai_openai` | `Eta_ai_openai` | OpenAI Responses/Chat Completions provider | `eta_observability`, `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `base64`, `yojson` |
 | `eta_ai_openai_realtime_eio` | `Eta_ai_openai_realtime_eio` | Eio WebSocket adapter for OpenAI Realtime | `eta_ai`, `eta_ai_openai`, `eta_http`, `eta_http_eio`, `eta_redacted`, `eta_stream`, `eio` |
 | `eta_ai_xai` | `Eta_ai_xai` | transport-neutral xAI Responses, resources, unary speech, voice discovery, and Realtime codecs | `eta_ai`, `eta_redacted`, `eta_http`, `base64`, `yojson` |
+| `eta_ai_xai_eio` | `Eta_ai_xai_eio` | separate Eio WebSocket transports for xAI Responses, Realtime, streaming STT, and streaming TTS | `eta_ai`, `eta_ai_xai`, `eta_http`, `eta_http_eio`, `eta_redacted`, `eta_stream`, `base64`, `eio` |
 | `eta_ai_anthropic` | `Eta_ai_anthropic` | Anthropic Messages provider | `eta_ai`, `eta_redacted`, `eta_http`, `yojson` |
 | `eta_ai_openrouter` | `Eta_ai_openrouter` | OpenRouter provider | `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `base64`, `yojson` |
 | `eta_ai_openai_compat` | `Eta_ai_openai_compat` | OpenAI-compatible adapter (Together, Groq, Fireworks, ...) | `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `yojson` |

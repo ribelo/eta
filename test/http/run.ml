@@ -348,6 +348,8 @@ let () =
             `Quick test_ws_rejects_64bit_length_with_msb_set_as_protocol_error;
           Alcotest.test_case "send text masks client frame" `Quick
             test_ws_send_text_masks_client_frame;
+          Alcotest.test_case "close sends frame when writer available" `Quick
+            test_ws_close_sends_frame_when_writer_available;
           Alcotest.test_case "queued send observes close" `Quick
             test_ws_queued_send_observes_close_sent;
           Alcotest.test_case "close sent is atomic" `Quick
@@ -370,6 +372,20 @@ let () =
             test_ws_selected_subprotocol;
           Alcotest.test_case "fragmented text reassembles" `Quick
             test_ws_fragmented_text_reassembles;
+          Alcotest.test_case "fragmented aggregate limit" `Quick
+            test_ws_fragmented_message_enforces_aggregate_limit;
+          Alcotest.test_case "rejects invalid subprotocol tokens" `Quick
+            test_ws_rejects_invalid_subprotocol_tokens;
+          Alcotest.test_case "upgrade failure preserves response" `Quick
+            test_ws_upgrade_failure_preserves_response;
+          Alcotest.test_case "upgrade failure chunked body" `Quick
+            test_ws_upgrade_failure_reads_chunked_body;
+          Alcotest.test_case "upgrade failure close-delimited body" `Quick
+            test_ws_upgrade_failure_reads_close_delimited_body;
+          Alcotest.test_case "full queue blocked write close releases" `Quick
+            test_ws_full_queue_and_blocked_write_close_releases;
+          Alcotest.test_case "close wakes active incoming read" `Quick
+            test_ws_close_wakes_active_incoming_read;
           Alcotest.test_case "clean close ends inbound" `Quick
             test_ws_clean_close_ends_inbound_stream;
           Alcotest.test_case "masked server frame fails" `Quick

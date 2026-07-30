@@ -202,6 +202,10 @@ val of_eta_ai :
 
 val encode_request : request -> (Eta_ai.raw_json, Xai_error.t) result
 
+val encode_websocket_create :
+  ?generate:bool -> request -> (Eta_ai.raw_json, Xai_error.t) result
+(** xAI Responses WebSocket request encoder. *)
+
 type usage = {
   input_tokens : int option;
   output_tokens : int option;

@@ -9,6 +9,8 @@ type scripted_flow = {
   mutable pending : string option;
   writes : Buffer.t;
   mutable closed : int;
+  closed_signal : unit Eio.Promise.t;
+  close_resolver : unit Eio.Promise.u;
 }
 
 module Scripted_flow = struct
@@ -23,7 +25,9 @@ module Scripted_flow = struct
         match Stdlib.Queue.take_opt t.reads with
         | Some (Return chunk) -> chunk
         | Some (Await promise) ->
-            Eio.Promise.await promise;
+            Eio.Fiber.first
+              (fun () -> Eio.Promise.await promise)
+              (fun () -> Eio.Promise.await t.closed_signal);
             raise End_of_file
         | None -> raise End_of_file)
 
@@ -40,18 +44,25 @@ module Scripted_flow = struct
     | None -> ()
     | Some gate ->
         Eio.Promise.resolve gate.write_started ();
-        Eio.Promise.await gate.write_release);
+        Eio.Fiber.first
+          (fun () -> Eio.Promise.await gate.write_release)
+          (fun () -> Eio.Promise.await t.closed_signal);
+        if t.closed > 0 then raise End_of_file);
     List.iter (fun buf -> Buffer.add_string t.writes (Cstruct.to_string buf)) bufs;
     Cstruct.lenv bufs
 
   let copy t ~src = Eio.Flow.Pi.simple_copy ~single_write t ~src
   let shutdown _ _ = ()
-  let close t = t.closed <- t.closed + 1
+  let close t =
+    let first = t.closed = 0 in
+    t.closed <- t.closed + 1;
+    if first then Eio.Promise.resolve t.close_resolver ()
 end
 
 let scripted_flow actions =
   let reads = Stdlib.Queue.create () in
   List.iter (fun action -> Stdlib.Queue.push action reads) actions;
+  let closed_signal, close_resolver = Eio.Promise.create () in
   let state =
     {
       reads;
@@ -59,6 +70,8 @@ let scripted_flow actions =
       pending = None;
       writes = Buffer.create 512;
       closed = 0;
+      closed_signal;
+      close_resolver;
     }
   in
   let flow : Eta_http_eio.Ws.Client.flow =
@@ -382,7 +395,7 @@ let test_ws_rejects_oversized_frame_before_payload_read () =
           | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
           | `Connect message -> Format.fprintf fmt "connect %s" message
           | `Protocol message -> Format.fprintf fmt "protocol %s" message
-          | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+          | `Upgrade_failed failure -> Format.fprintf fmt "upgrade %d" failure.Eta_http_eio.Ws.Client.status
           | `Timeout -> Format.pp_print_string fmt "timeout"))
         cause
 
@@ -415,7 +428,7 @@ let test_ws_rejects_64bit_length_with_msb_set_as_protocol_error () =
           | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
           | `Connect message -> Format.fprintf fmt "connect %s" message
           | `Protocol message -> Format.fprintf fmt "protocol %s" message
-          | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+          | `Upgrade_failed failure -> Format.fprintf fmt "upgrade %d" failure.Eta_http_eio.Ws.Client.status
           | `Timeout -> Format.pp_print_string fmt "timeout"))
         cause
 
@@ -432,6 +445,22 @@ let test_ws_send_text_masks_client_frame () =
   Eta_http_eio.Ws.Client.send_text conn "hello"
   |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok;
   expect_client_frame state Text "hello"
+
+let test_ws_close_sends_frame_when_writer_available () =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  let never, _ = Eio.Promise.create () in
+  let state, flow =
+    scripted_flow [ Return (switching_response key); Await never ]
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
+  with_test_clock @@ fun sw _clock rt ->
+  let conn =
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  Eta_http_eio.Ws.Client.close conn
+  |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok;
+  expect_client_frame state Close (Bytes.to_string (close_status_payload 1000))
 
 let test_ws_queued_send_observes_close_sent () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
@@ -472,7 +501,7 @@ let test_ws_queued_send_observes_close_sent () =
           | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
           | `Connect message -> Format.fprintf fmt "connect %s" message
           | `Protocol message -> Format.fprintf fmt "protocol %s" message
-          | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+          | `Upgrade_failed failure -> Format.fprintf fmt "upgrade %d" failure.Eta_http_eio.Ws.Client.status
           | `Timeout -> Format.pp_print_string fmt "timeout"))
         cause);
   Eta_test.Expect.expect_ok (Eio.Promise.await close_done);
@@ -482,7 +511,7 @@ let test_ws_queued_send_observes_close_sent () =
   in
   Alcotest.(check (list int))
     "client frames"
-    [ Eta_http_ws.Codec.opcode_to_int Text; Eta_http_ws.Codec.opcode_to_int Close ]
+    []
     (List.map Eta_http_ws.Codec.opcode_to_int opcodes)
 
 let test_ws_close_sent_uses_atomic_state () =
@@ -554,7 +583,7 @@ let test_ws_rejects_http10_upgrade_response () =
           | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
           | `Connect message -> Format.fprintf fmt "connect %s" message
           | `Protocol message -> Format.fprintf fmt "protocol %s" message
-          | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+          | `Upgrade_failed failure -> Format.fprintf fmt "upgrade %d" failure.Eta_http_eio.Ws.Client.status
           | `Timeout -> Format.pp_print_string fmt "timeout"))
         cause
 
@@ -584,7 +613,7 @@ let test_ws_rejects_consecutive_ping_flood () =
           | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
           | `Connect message -> Format.fprintf fmt "connect %s" message
           | `Protocol message -> Format.fprintf fmt "protocol %s" message
-          | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+          | `Upgrade_failed failure -> Format.fprintf fmt "upgrade %d" failure.Eta_http_eio.Ws.Client.status
           | `Timeout -> Format.pp_print_string fmt "timeout"))
         cause
 
@@ -611,7 +640,7 @@ let test_ws_close_1011_fails_inbound_stream () =
           | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
           | `Connect message -> Format.fprintf fmt "connect %s" message
           | `Protocol message -> Format.fprintf fmt "protocol %s" message
-          | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+          | `Upgrade_failed failure -> Format.fprintf fmt "upgrade %d" failure.Eta_http_eio.Ws.Client.status
           | `Timeout -> Format.pp_print_string fmt "timeout"))
         cause
 
@@ -643,13 +672,13 @@ let test_ws_invalid_peer_close_code_is_protocol_error () =
           | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
           | `Connect message -> Format.fprintf fmt "connect %s" message
           | `Protocol message -> Format.fprintf fmt "protocol %s" message
-          | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+          | `Upgrade_failed failure -> Format.fprintf fmt "upgrade %d" failure.Eta_http_eio.Ws.Client.status
           | `Timeout -> Format.pp_print_string fmt "timeout"))
         cause
 
 let pp_ws_error fmt = function
   | `Connect message -> Format.fprintf fmt "connect %s" message
-  | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+  | `Upgrade_failed failure -> Format.fprintf fmt "upgrade %d" failure.Eta_http_eio.Ws.Client.status
   | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
   | `Protocol message -> Format.fprintf fmt "protocol %s" message
   | `Timeout -> Format.pp_print_string fmt "timeout"
@@ -751,6 +780,189 @@ let test_ws_fragmented_text_reassembles () =
   in
   Alcotest.(check (list string)) "messages" [ "hello" ]
     (List.map (function `Text text -> text | `Binary _ -> "<binary>") messages)
+
+let test_ws_fragmented_message_enforces_aggregate_limit () =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  let first =
+    Eta_http_ws.Codec.encode
+      { fin = false; opcode = Text; payload = Bytes.of_string "abc" }
+    |> Bytes.to_string
+  in
+  let second =
+    Eta_http_ws.Codec.encode
+      { fin = true; opcode = Continuation; payload = Bytes.of_string "def" }
+    |> Bytes.to_string
+  in
+  let _state, flow =
+    scripted_flow [ Return (switching_response key ^ first ^ second) ]
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
+  with_test_clock @@ fun sw _clock rt ->
+  let conn =
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~max_frame_size:5 ~sw ~flow url
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  Eta.Runtime.run rt
+    (Eta_stream.run_drain (Eta_http_eio.Ws.Client.incoming conn))
+  |> expect_ws_protocol_failure
+       "WebSocket fragmented message exceeds max_frame_size"
+
+let test_ws_rejects_invalid_subprotocol_tokens () =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  List.iter
+    (fun protocol ->
+      let state, flow =
+        scripted_flow [ Return (switching_response key) ]
+      in
+      let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
+      with_test_clock @@ fun sw _clock rt ->
+      (match
+         Eta.Runtime.run rt
+           (Eta_http_eio.Ws.Client.connect_on_flow ~key
+              ~protocols:[ protocol ] ~sw ~flow url)
+       with
+      | Eta.Exit.Error
+          (Eta.Cause.Fail
+            (`Protocol "invalid WebSocket subprotocol token")) ->
+          ()
+      | _ -> Alcotest.fail "invalid subprotocol token was accepted");
+      Alcotest.(check int) "nothing written" 0 (Buffer.length state.writes))
+    [ ""; "has space"; "has,comma"; "has\rcr"; "has\nlf"; "has/slash" ]
+
+let test_ws_upgrade_failure_preserves_response () =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  let body = {|{"error":{"code":"denied"}}|} in
+  let response =
+    Printf.sprintf
+      "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nX-Test: preserved\r\nContent-Length: %d\r\n\r\n%s"
+      (String.length body) body
+  in
+  let _state, flow = scripted_flow [ Return response ] in
+  let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
+  with_test_clock @@ fun sw _clock rt ->
+  match
+    Eta.Runtime.run rt
+      (Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url)
+  with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (`Upgrade_failed { status; headers; body = actual })) ->
+      Alcotest.(check int) "status" 403 status;
+      Alcotest.(check (option string)) "header" (Some "preserved")
+        (Eta_http.Core.Header.get "x-test" headers);
+      Alcotest.(check string) "body" body (Bytes.to_string actual)
+  | _ -> Alcotest.fail "expected structured upgrade failure"
+
+let expect_upgrade_body ~status ~expected flow =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
+  with_test_clock @@ fun sw _clock rt ->
+  match
+    Eta.Runtime.run rt
+      (Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url)
+  with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (`Upgrade_failed { status = actual; body; _ })) ->
+      Alcotest.(check int) "status" status actual;
+      Alcotest.(check string) "decoded body" expected (Bytes.to_string body)
+  | _ -> Alcotest.fail "expected structured upgrade failure"
+
+let test_ws_upgrade_failure_reads_chunked_body () =
+  let body = {|{"error":"chunked"}|} in
+  let first = String.sub body 0 7 in
+  let second = String.sub body 7 (String.length body - 7) in
+  let response =
+    Printf.sprintf
+      "HTTP/1.1 401 Unauthorized\r\nTransfer-Encoding: chunked\r\n\r\n%X\r\n%s"
+      (String.length body) first
+  in
+  let _state, flow =
+    scripted_flow [ Return response; Return (second ^ "\r\n0\r\n\r\n") ]
+  in
+  expect_upgrade_body ~status:401 ~expected:body flow
+
+let test_ws_upgrade_failure_reads_close_delimited_body () =
+  let body = {|{"error":"close-delimited"}|} in
+  let response =
+    "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+    ^ String.sub body 0 8
+  in
+  let _state, flow =
+    scripted_flow
+      [ Return response; Return (String.sub body 8 (String.length body - 8)) ]
+  in
+  expect_upgrade_body ~status:403 ~expected:body flow
+
+let test_ws_full_queue_and_blocked_write_close_releases () =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  let frames =
+    List.init (Eta_http_eio.Ws.Client.default_incoming_capacity + 1)
+      (fun index ->
+        Eta_http_ws.Codec.encode
+          {
+            fin = true;
+            opcode = Text;
+            payload = Bytes.of_string (string_of_int index);
+          }
+        |> Bytes.to_string)
+    |> String.concat ""
+  in
+  let never, _ = Eio.Promise.create () in
+  let state, flow =
+    scripted_flow
+      [ Return (switching_response key ^ frames); Await never ]
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
+  with_test_clock @@ fun sw _clock rt ->
+  let conn =
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  Eio.Fiber.yield ();
+  let write_started, write_started_u = Eio.Promise.create () in
+  let never_write, never_write_u = Eio.Promise.create () in
+  ignore never_write_u;
+  gate_next_write state ~started:write_started_u ~release:never_write;
+  let write_done, write_done_u = Eio.Promise.create () in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Ws.Client.send_text conn "blocked"
+      |> Eta.Runtime.run rt |> Eio.Promise.resolve write_done_u);
+  Eio.Promise.await write_started;
+  Eta_http_eio.Ws.Client.close conn
+  |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok;
+  (match Eio.Promise.await write_done with
+  | Eta.Exit.Ok () | Eta.Exit.Error (Eta.Cause.Fail (`Closed _)) -> ()
+  | _ -> Alcotest.fail "blocked write did not terminate after close");
+  Eta_stream.run_drain (Eta_http_eio.Ws.Client.incoming conn)
+  |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok;
+  Alcotest.(check int) "full-queue flow released once" 1 state.closed
+
+let test_ws_close_wakes_active_incoming_read () =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  let never, _ = Eio.Promise.create () in
+  let state, flow =
+    scripted_flow [ Return (switching_response key); Await never ]
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
+  with_test_clock @@ fun sw _clock rt ->
+  let conn =
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  let read_done, read_done_u = Eio.Promise.create () in
+  Eio.Fiber.fork ~sw (fun () ->
+      (Eta_http_eio.Ws.Client.incoming conn
+      |> Eta_stream.Stream.take 1 |> Eta_stream.run_collect
+      |> Eta.Runtime.run rt)
+      |> Eio.Promise.resolve read_done_u);
+  Eio.Fiber.yield ();
+  Eta_http_eio.Ws.Client.close conn
+  |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok;
+  Alcotest.(check (list string)) "blocked incoming read wakes" []
+    (Eio.Promise.await read_done |> Eta_test.Expect.expect_ok
+    |> List.map (function `Text text -> text | `Binary _ -> "<binary>"));
+  Alcotest.(check int) "blocked-read flow released once" 1 state.closed
 
 let test_ws_clean_close_ends_inbound_stream () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in

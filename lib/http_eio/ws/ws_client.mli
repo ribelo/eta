@@ -1,8 +1,14 @@
 (** HTTP/1.1 WebSocket client transport. *)
 
+type upgrade_failure = {
+  status : int;
+  headers : Header.t;
+  body : bytes;
+}
+
 type ws_error =
   [ `Connect of string
-  | `Upgrade_failed of int
+  | `Upgrade_failed of upgrade_failure
   | `Closed of int * string
   | `Protocol of string
   | `Timeout
@@ -21,6 +27,8 @@ val default_max_consecutive_pings : int
 (** Default maximum number of peer ping frames accepted without an intervening
     data frame. This bounds malicious ping loops while allowing normal
     keep-alive pings over long-lived connections. *)
+
+val default_incoming_capacity : int
 
 val connect_on_flow :
   ?key:string ->

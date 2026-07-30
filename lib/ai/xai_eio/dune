@@ -1,0 +1,15 @@
+(library
+ (name eta_ai_xai_eio)
+ (public_name eta_ai_xai_eio)
+ (synopsis "Eio WebSocket transports for xAI")
+ (private_modules common)
+ (libraries
+  eta
+  eta_ai
+  eta_ai_xai
+  eta_http
+  eta_http_eio
+  eta_redacted
+  eta_stream
+  base64
+  eio))

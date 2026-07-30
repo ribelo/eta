@@ -213,6 +213,7 @@ module Codec : sig
 end
 
 type client_secret = private string Eta_redacted.t
+val client_secret : string -> client_secret
 val client_secret_redacted : client_secret -> string Eta_redacted.t
 
 type client_secret_response = {

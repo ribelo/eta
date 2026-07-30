@@ -6,9 +6,15 @@ module Header = Header
 module Url = Url
 module Connect = Connect
 
+type upgrade_failure = {
+  status : int;
+  headers : Header.t;
+  body : bytes;
+}
+
 type ws_error =
   [ `Connect of string
-  | `Upgrade_failed of int
+  | `Upgrade_failed of upgrade_failure
   | `Closed of int * string
   | `Protocol of string
   | `Timeout
@@ -22,6 +28,7 @@ type t = {
   incoming : (message, ws_error) Queue.t;
   write_mutex : Eio.Mutex.t;
   close_sent : bool Atomic.t;
+  flow_closed : bool Atomic.t;
   selected_protocol : string option;
   max_consecutive_pings : int;
   mutable consecutive_pings : int;
@@ -30,8 +37,11 @@ type t = {
 let max_header_bytes = 32 * 1024
 let read_chunk_size = 4096
 let default_max_consecutive_pings = 128
+let default_incoming_capacity = 64
 
 let close_flow flow = try Eio.Flow.close flow with _ -> ()
+let close_connection_flow t =
+  if Atomic.compare_and_set t.flow_closed false true then close_flow t.flow
 
 let http_error_to_connect error =
   `Connect (Format.asprintf "%a" Error.pp error)
@@ -187,36 +197,223 @@ let read_response_head flow =
   in
   loop 0
 
+let max_upgrade_error_body = 1_048_576
+
+type upgrade_body_reader = {
+  flow : flow;
+  initial : bytes;
+  mutable initial_off : int;
+  scratch : Cstruct.t;
+}
+
+let make_upgrade_body_reader flow initial =
+  { flow; initial; initial_off = 0; scratch = Cstruct.create read_chunk_size }
+
+let read_upgrade_some reader max_len =
+  let pending = Bytes.length reader.initial - reader.initial_off in
+  if pending > 0 then
+    let count = min pending max_len in
+    let bytes = Bytes.sub reader.initial reader.initial_off count in
+    reader.initial_off <- reader.initial_off + count;
+    Ok (Some bytes)
+  else
+    try
+      let count =
+        Eio.Flow.single_read reader.flow
+          (Cstruct.sub reader.scratch 0
+             (min max_len (Cstruct.length reader.scratch)))
+      in
+      if count = 0 then Ok None
+      else (
+        let bytes = Bytes.create count in
+        Cstruct.blit_to_bytes reader.scratch 0 bytes 0 count;
+        Ok (Some bytes))
+    with
+    | End_of_file -> Ok None
+    | exn -> Error (`Connect (Printexc.to_string exn))
+
+let read_upgrade_exact reader length =
+  let output = Bytes.create length in
+  let rec loop offset =
+    if offset = length then Ok output
+    else
+      match read_upgrade_some reader (length - offset) with
+      | Error _ as error -> error
+      | Ok None ->
+          Error (`Protocol "WebSocket upgrade error body ended early")
+      | Ok (Some bytes) ->
+          let count = Bytes.length bytes in
+          Bytes.blit bytes 0 output offset count;
+          loop (offset + count)
+  in
+  loop 0
+
+let read_upgrade_line reader =
+  let buffer = Buffer.create 32 in
+  let rec loop previous_cr =
+    if Buffer.length buffer > max_header_bytes then
+      Error (`Protocol "WebSocket upgrade chunk line too large")
+    else
+      match read_upgrade_exact reader 1 with
+      | Error _ as error -> error
+      | Ok byte ->
+          let char = Bytes.get byte 0 in
+          if previous_cr && Char.equal char '\n' then
+            let line = Buffer.contents buffer in
+            Ok (String.sub line 0 (String.length line - 1))
+          else (
+            Buffer.add_char buffer char;
+            loop (Char.equal char '\r'))
+  in
+  loop false
+
+let chunk_size line =
+  let raw =
+    match String.index_opt line ';' with
+    | None -> line
+    | Some index -> String.sub line 0 index
+  in
+  let raw = trim raw in
+  if String.equal raw "" then
+    Error (`Protocol "invalid WebSocket upgrade chunk size")
+  else
+    match Int64.of_string_opt ("0x" ^ raw) with
+    | Some value when Int64.compare value 0L >= 0 -> Ok value
+    | _ -> Error (`Protocol "invalid WebSocket upgrade chunk size")
+
+let read_upgrade_chunked reader =
+  let output = Buffer.create 512 in
+  let rec trailers () =
+    match read_upgrade_line reader with
+    | Error _ as error -> error
+    | Ok "" -> Ok (Bytes.of_string (Buffer.contents output))
+    | Ok _ -> trailers ()
+  in
+  let rec chunks () =
+    match read_upgrade_line reader with
+    | Error _ as error -> error
+    | Ok line -> (
+        match chunk_size line with
+        | Error _ as error -> error
+        | Ok 0L -> trailers ()
+        | Ok length
+          when Int64.compare length
+                 (Int64.of_int (max_upgrade_error_body - Buffer.length output))
+               > 0 ->
+            Error (`Protocol "WebSocket upgrade error body too large")
+        | Ok length -> (
+            match read_upgrade_exact reader (Int64.to_int length) with
+            | Error _ as error -> error
+            | Ok bytes -> (
+                match read_upgrade_exact reader 2 with
+                | Error _ as error -> error
+                | Ok ending
+                  when not (Bytes.equal ending (Bytes.of_string "\r\n")) ->
+                    Error (`Protocol "WebSocket upgrade chunk missing CRLF")
+                | Ok _ ->
+                    Buffer.add_bytes output bytes;
+                    chunks ())))
+  in
+  chunks ()
+
+let read_upgrade_close_delimited reader =
+  let output = Buffer.create 512 in
+  let rec loop () =
+    let remaining = max_upgrade_error_body - Buffer.length output in
+    match read_upgrade_some reader (remaining + 1) with
+    | Error _ as error -> error
+    | Ok None -> Ok (Bytes.of_string (Buffer.contents output))
+    | Ok (Some bytes) when Bytes.length bytes > remaining ->
+        Error (`Protocol "WebSocket upgrade error body too large")
+    | Ok (Some bytes) ->
+        Buffer.add_bytes output bytes;
+        loop ()
+  in
+  loop ()
+
+let read_upgrade_error_body flow head =
+  let transfer_encoding =
+    Header.get_all "transfer-encoding" head.headers
+    |> List.concat_map (String.split_on_char ',')
+    |> List.map Eta.String_helpers.lowercase_ascii_trim
+  in
+  let content_lengths = Header.get_all "content-length" head.headers in
+  if transfer_encoding <> [] && content_lengths <> [] then
+    Error
+      (`Protocol
+        "WebSocket upgrade response has both Transfer-Encoding and Content-Length")
+  else
+    let reader = make_upgrade_body_reader flow head.initial in
+    match transfer_encoding with
+    | [ "chunked" ] -> read_upgrade_chunked reader
+    | _ :: _ ->
+        Error (`Protocol "unsupported WebSocket upgrade Transfer-Encoding")
+    | [] -> (
+        match content_lengths with
+        | [] -> read_upgrade_close_delimited reader
+        | first :: rest
+          when List.exists
+                 (fun value -> not (String.equal (trim value) (trim first)))
+                 rest ->
+            Error (`Protocol "conflicting WebSocket upgrade Content-Length")
+        | raw :: _ -> (
+            match int_of_string_opt (trim raw) with
+            | None ->
+                Error (`Protocol "invalid WebSocket upgrade Content-Length")
+            | Some n when n < 0 ->
+                Error (`Protocol "invalid WebSocket upgrade Content-Length")
+            | Some n when n > max_upgrade_error_body ->
+                Error (`Protocol "WebSocket upgrade error body too large")
+            | Some n -> read_upgrade_exact reader n))
+
 let add_header buffer (name, value) =
   Buffer.add_string buffer name;
   Buffer.add_string buffer ": ";
   Buffer.add_string buffer value;
   Buffer.add_string buffer "\r\n"
 
+let is_subprotocol_token_char c =
+  let code = Char.code c in
+  code >= 0x21 && code <= 0x7e
+  && not (String.contains "()<>@,;:\\\"/[]?={} \t" c)
+
+let valid_subprotocol value =
+  String.length value > 0 && String.for_all is_subprotocol_token_char value
+
+let validate_protocols protocols =
+  if List.for_all valid_subprotocol protocols then Ok ()
+  else Error (`Protocol "invalid WebSocket subprotocol token")
+
 let write_upgrade_request flow ?(headers = Header.empty) ?(protocols = []) url key =
   if not (Header.valid headers) then Error (`Protocol "invalid WebSocket request header")
   else
-    let buffer = Buffer.create 512 in
-    Buffer.add_string buffer "GET ";
-    Buffer.add_string buffer (Url.origin_form url);
-    Buffer.add_string buffer " HTTP/1.1\r\n";
-    add_header buffer ("Host", Url.authority url);
-    add_header buffer ("Connection", "Upgrade");
-    add_header buffer ("Upgrade", "websocket");
-    add_header buffer ("Sec-WebSocket-Version", "13");
-    add_header buffer ("Sec-WebSocket-Key", key);
-    (match protocols with
-    | [] -> ()
-    | protocols -> add_header buffer ("Sec-WebSocket-Protocol", String.concat ", " protocols));
-    List.iter (add_header buffer) (Header.to_list headers);
-    Buffer.add_string buffer "\r\n";
-    try
-      Eio.Flow.copy_string (Buffer.contents buffer) flow;
-      Ok ()
-    with exn -> Error (`Connect (Printexc.to_string exn))
+    match validate_protocols protocols with
+    | Error _ as error -> error
+    | Ok () ->
+        let buffer = Buffer.create 512 in
+        Buffer.add_string buffer "GET ";
+        Buffer.add_string buffer (Url.origin_form url);
+        Buffer.add_string buffer " HTTP/1.1\r\n";
+        add_header buffer ("Host", Url.authority url);
+        add_header buffer ("Connection", "Upgrade");
+        add_header buffer ("Upgrade", "websocket");
+        add_header buffer ("Sec-WebSocket-Version", "13");
+        add_header buffer ("Sec-WebSocket-Key", key);
+        (match protocols with
+        | [] -> ()
+        | protocols ->
+            add_header buffer
+              ("Sec-WebSocket-Protocol", String.concat ", " protocols));
+        List.iter (add_header buffer) (Header.to_list headers);
+        Buffer.add_string buffer "\r\n";
+        try
+          Eio.Flow.copy_string (Buffer.contents buffer) flow;
+          Ok ()
+        with exn -> Error (`Connect (Printexc.to_string exn))
 
 let validate_handshake ?(protocols = []) key head =
-  if head.status <> 101 then Error (`Upgrade_failed head.status)
+  if head.status <> 101 then
+    Error (`Protocol "validate_handshake called for non-101 response")
   else
     match Header.get "upgrade" head.headers with
     | Some upgrade
@@ -412,17 +609,18 @@ let close_payload ?code ?(reason = "") () =
         Bytes.blit_string reason 0 payload 2 (String.length reason);
         Ok payload
 
-let send_close_frame_sync ?code ?reason t =
-  match close_payload ?code ?reason () with
-  | Error _ as error -> error
-  | Ok payload ->
-      Atomic.set t.close_sent true;
-      send_frame_sync ~allow_after_close:true t
-        { Codec.fin = true; opcode = Close; payload }
-
-let send_close_frame ?code ?reason t =
-  Effect.sync (fun () -> send_close_frame_sync ?code ?reason t)
-  |> Effect.bind (function Ok () -> Effect.unit | Error error -> Effect.fail error)
+let terminate_with_close_frame t payload =
+  let first = Atomic.compare_and_set t.close_sent false true in
+  (if first then
+     Spi.daemon
+       (send_frame ~allow_after_close:true t
+          { Codec.fin = true; opcode = Close; payload }
+       |> Effect.bind_error (fun _ -> Effect.unit))
+   else Effect.unit)
+  |> Effect.bind (fun () ->
+         Effect.sync (fun () ->
+             Eio.Fiber.yield ();
+             close_connection_flow t))
 
 let queue_close_error t error = Queue.close_with_error t.incoming error
 
@@ -459,6 +657,13 @@ type fragment = {
   buffer : Buffer.t;
 }
 
+let append_fragment ~max_frame_size fragment payload =
+  if Buffer.length fragment.buffer + Bytes.length payload > max_frame_size then
+    Error (`Protocol "WebSocket fragmented message exceeds max_frame_size")
+  else (
+    Buffer.add_bytes fragment.buffer payload;
+    Ok ())
+
 let message_of_payload opcode payload =
   match opcode with
   | Codec.Text -> (
@@ -470,7 +675,7 @@ let message_of_payload opcode payload =
 
 let fail_reader t error =
   queue_close_error t error;
-  close_flow t.flow;
+  close_connection_flow t;
   Effect.unit
 
 let rec reader_loop t reader fragment =
@@ -497,10 +702,8 @@ and handle_frame t reader fragment frame =
       match parse_close_payload frame.payload with
       | Error error -> fail_reader t error
       | Ok (code, reason) ->
-          let _ = send_close_frame_sync ~code ~reason t in
           close_queue_for_peer_close t code reason;
-          close_flow t.flow;
-          Effect.unit)
+          terminate_with_close_frame t frame.payload)
 
 and handle_data_frame t reader fragment frame =
   t.consecutive_pings <- 0;
@@ -521,24 +724,33 @@ and handle_continuation t reader fragment frame =
   t.consecutive_pings <- 0;
   match fragment with
   | None -> fail_reader t (`Protocol "continuation without initial data frame")
-  | Some fragment ->
-      Buffer.add_bytes fragment.buffer frame.payload;
-      if frame.fin then
-        let payload = Bytes.of_string (Buffer.contents fragment.buffer) in
-        match message_of_payload fragment.opcode payload with
-        | Error error -> fail_reader t error
-        | Ok None -> fail_reader t (`Protocol "invalid continuation opcode")
-        | Ok (Some message) -> enqueue t message |> Effect.bind (fun () -> reader_loop t reader None)
-      else reader_loop t reader (Some fragment)
+  | Some fragment -> (
+      match
+        append_fragment ~max_frame_size:reader.max_frame_size fragment
+          frame.payload
+      with
+      | Error error -> fail_reader t error
+      | Ok () ->
+          if frame.fin then
+            let payload = Bytes.of_string (Buffer.contents fragment.buffer) in
+            match message_of_payload fragment.opcode payload with
+            | Error error -> fail_reader t error
+            | Ok None ->
+                fail_reader t (`Protocol "invalid continuation opcode")
+            | Ok (Some message) ->
+                enqueue t message
+                |> Effect.bind (fun () -> reader_loop t reader None)
+          else reader_loop t reader (Some fragment))
 
-let make_connection ~flow ~selected_protocol ~max_frame_size
+let make_connection ~sw ~flow ~selected_protocol ~max_frame_size
     ~max_consecutive_pings initial =
   let t =
     {
       flow;
-      incoming = Queue.unbounded ();
+      incoming = Queue.bounded ~capacity:default_incoming_capacity ();
       write_mutex = Eio.Mutex.create ();
       close_sent = Atomic.make false;
+      flow_closed = Atomic.make false;
       selected_protocol;
       max_consecutive_pings;
       consecutive_pings = 0;
@@ -553,11 +765,15 @@ let make_connection ~flow ~selected_protocol ~max_frame_size
       max_frame_size;
     }
   in
+  Eio.Switch.on_release sw (fun () ->
+      Atomic.set t.close_sent true;
+      Queue.shutdown t.incoming;
+      close_connection_flow t);
   Spi.daemon (reader_loop t reader None) |> Effect.map (fun () -> t)
 
 let connect_on_flow ?(key = Codec.key_of_nonce (Openssl.random_bytes 16))
     ?(max_frame_size = default_max_frame_size) ?headers ?protocols
-    ?(max_consecutive_pings = default_max_consecutive_pings) ~sw:_ ~flow url =
+    ?(max_consecutive_pings = default_max_consecutive_pings) ~sw ~flow url =
   check_max_frame_size max_frame_size;
   check_max_consecutive_pings max_consecutive_pings;
   let open Effect in
@@ -568,11 +784,20 @@ let connect_on_flow ?(key = Codec.key_of_nonce (Openssl.random_bytes 16))
            sync (fun () -> read_response_head flow)
            |> bind (function Ok head -> pure head | Error error -> fail error))
     |> bind (fun head ->
-           match validate_handshake ?protocols key head with
-           | Ok selected_protocol ->
-               make_connection ~flow ~selected_protocol ~max_frame_size
-                 ~max_consecutive_pings head.initial
-           | Error error -> fail error)
+           if head.status <> 101 then
+             sync (fun () -> read_upgrade_error_body flow head)
+             |> bind (function
+                  | Error error -> fail error
+                  | Ok body ->
+                      fail
+                        (`Upgrade_failed
+                          { status = head.status; headers = head.headers; body }))
+           else
+             match validate_handshake ?protocols key head with
+             | Ok selected_protocol ->
+                 make_connection ~sw ~flow ~selected_protocol ~max_frame_size
+                   ~max_consecutive_pings head.initial
+             | Error error -> fail error)
   in
   connect
   |> bind_error (fun error ->
@@ -580,24 +805,28 @@ let connect_on_flow ?(key = Codec.key_of_nonce (Openssl.random_bytes 16))
 
 let connect ?ca_file ?key ?max_frame_size ?headers ?protocols
     ?max_consecutive_pings ~sw ~net raw_url =
-  match parse_url raw_url with
+  match validate_protocols (Option.value ~default:[] protocols) with
   | Error error -> Effect.fail error
-  | Ok url ->
-      let target = Connect.target_of_url url in
-      Connect.connect_tcp ~sw ~net ~method_:"GET" target
-      |> map_http_error
-      |> Effect.bind (fun tcp ->
-             match Url.scheme url with
-             | Http ->
-                 connect_on_flow ?key ?max_frame_size ?headers ?protocols ~sw
-                   ?max_consecutive_pings ~flow:tcp url
-             | Https ->
-                 Connect.connect_tls ~alpn_protocols:[ "http/1.1" ] ?ca_file
-                   ~method_:"GET" target tcp
-                 |> map_http_error
-                 |> Effect.bind (fun (tls, _alpn) ->
-                        connect_on_flow ?key ?max_frame_size ?headers
-                          ?protocols ?max_consecutive_pings ~sw ~flow:tls url))
+  | Ok () -> (
+      match parse_url raw_url with
+      | Error error -> Effect.fail error
+      | Ok url ->
+          let target = Connect.target_of_url url in
+          Connect.connect_tcp ~sw ~net ~method_:"GET" target
+          |> map_http_error
+          |> Effect.bind (fun tcp ->
+                 match Url.scheme url with
+                 | Http ->
+                     connect_on_flow ?key ?max_frame_size ?headers ?protocols
+                       ~sw ?max_consecutive_pings ~flow:tcp url
+                 | Https ->
+                     Connect.connect_tls ~alpn_protocols:[ "http/1.1" ]
+                       ?ca_file ~method_:"GET" target tcp
+                     |> map_http_error
+                     |> Effect.bind (fun (tls, _alpn) ->
+                            connect_on_flow ?key ?max_frame_size ?headers
+                              ?protocols ?max_consecutive_pings ~sw ~flow:tls
+                              url)))
 
 let incoming t = Eta_stream.Stream.from_queue t.incoming
 let selected_protocol t = t.selected_protocol
@@ -612,8 +841,8 @@ let send_binary t payload =
   send_frame t { Codec.fin = true; opcode = Binary; payload }
 
 let close ?(code = 1000) ?(reason = "") t =
-  send_close_frame ~code ~reason t
-  |> Effect.on_exit (fun _ ->
-         Effect.sync (fun () ->
-             Queue.close t.incoming;
-             close_flow t.flow))
+  match close_payload ~code ~reason () with
+  | Error error -> Effect.fail error
+  | Ok payload ->
+      Queue.shutdown t.incoming;
+      terminate_with_close_frame t payload
