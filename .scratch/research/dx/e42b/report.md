@@ -224,3 +224,51 @@ after the four-line `race` doc insertion accounts for 342 of those line events.
 - **Package tiers — PROMOTE:** all 48 packages are classified by reproducible precedence rules.
 - **Mutable_ref purity — PROMOTE:** the accepted footgun is loud, mitigated, and executable evidence proves multiplication.
 - **Race naming — PROMOTE:** retain `race`; no surprise evidence met the rename condition, and the JS divergence is explicit.
+
+## Follow-up 1 outcome
+
+All five independent-review findings were justified and fixed. The original PPX
+split remained unchanged and upheld.
+
+1. **Mutable_ref cardinality:** the earlier “zero-to-many” wording is superseded
+   by “at least once, possibly many times” in both mli docs and API-DX. The false
+   phrase originated in the orchestrator objective and was copied in good faith;
+   implementation inspection shows `f old` always precedes the first CAS. R177
+   now states the corrected claim.
+2. **Tier derivability:** the rules now classify by the package's primary public
+   contract. Incidental bridge/native-harness types do not turn Eta-owned
+   general functionality into an Integration. `eta_stream` and `eta_test` retain
+   Batteries with explicit Eio bridge notes; `ppx_eta_sql` is Integration because
+   SQL language/protocol generation is its primary contract. The journal
+   re-derives all 48 packages, and the `eta_eio`/`eta_schema_yojson` red-team
+   attempts still have one answer.
+3. **SQL README:** both table-extension preprocess examples now use
+   `(pps ppx_eta_sql)`; no stale `(pps ppx_eta)` table instruction remains.
+4. **Registry pointers:** R43-R51 and R98 now point to their actual Queue test
+   registrations. The registry header requires a whole-file pointer refresh
+   after mid-file insertions; all pointers shifted by the expanded race tests and
+   race mli wording were refreshed in the same follow-up.
+5. **Race qualification:** the interface now distinguishes selection from final
+   return: a cancelled-loser finalizer diagnostic replaces the selected value
+   with an error. The named early-error test covers typed failure, defect,
+   interruption, and finalizer causes losing to success. The all-failure test
+   retains all four mixed causes, so broad R179 is now discriminated; new R180
+   registers the post-winner cleanup-diagnostic path.
+
+The law registry is amended to **183 registered external clusters** and **299
+covered rows**. The focused `test/core_eio` suite passed all 648 cases before the
+full gates.
+
+All four required follow-up gates passed on the final implementation and test
+tree, each on its first attempt:
+
+| gate | result |
+| --- | --- |
+| `nix develop -c dune build @install` | PASS |
+| `nix develop -c dune runtest --force` | PASS |
+| `nix develop -c eta-oxcaml-test-shipped` | PASS |
+| `nix develop .#mainline -c dune build --build-dir=_build-mainline test/cache_jsoo test/js_jsoo` | PASS |
+
+Follow-up recommendation for every item: **PROMOTE**. The review blockers are
+closed without changing package ownership, public extension spelling, public
+types, or the retained `race` name.
