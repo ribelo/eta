@@ -173,11 +173,6 @@ let trace_context_roundtrip () =
   | None -> ()
   | Some ctx -> ignore (Eta_observability.Trace_context.inject ctx)
 
-let repeat n f =
-  for _ = 1 to n do
-    f ()
-  done
-
 let workloads =
   let item name run =
     { Bench_lib.name = "effect.observability." ^ name; run; samples = None }
@@ -209,10 +204,14 @@ let workloads =
     item "eta_otel.encoder.span.1000" (fun () -> run_otel `Span 1_000);
     item "eta_otel.encoder.log.100" (fun () -> run_otel `Log 100);
     item "eta_otel.encoder.metric.100" (fun () -> run_otel `Metric 100);
-    item "cause.construction.fail" (fun () -> repeat 10_000 (fun () -> ignore (Cause.fail "a")));
-    item "cause.construction.concurrent" (fun () -> repeat 10_000 cause_concurrent);
-    item "cause.construction.suppressed" (fun () -> repeat 10_000 cause_suppressed);
-    item "trace_context.extract_inject" (fun () -> repeat 10_000 trace_context_roundtrip);
+    item "cause.construction.fail" (fun () ->
+        Bench_lib.repeat 10_000 (fun () -> ignore (Cause.fail "a")));
+    item "cause.construction.concurrent" (fun () ->
+        Bench_lib.repeat 10_000 cause_concurrent);
+    item "cause.construction.suppressed" (fun () ->
+        Bench_lib.repeat 10_000 cause_suppressed);
+    item "trace_context.extract_inject" (fun () ->
+        Bench_lib.repeat 10_000 trace_context_roundtrip);
   ]
 
 let () = Bench_lib.run (Bench_lib.parse_args ()) workloads

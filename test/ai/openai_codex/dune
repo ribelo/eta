@@ -5,6 +5,7 @@
   eta
   eta_ai
   eta_ai_openai_codex
+  eta_ai_test_support
   eta_http
   eta_runtime_common_tests
   alcotest))

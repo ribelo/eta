@@ -1,0 +1,4 @@
+(library
+ (name eta_ai_test_support)
+ (libraries alcotest)
+ (modules eta_ai_test_support))

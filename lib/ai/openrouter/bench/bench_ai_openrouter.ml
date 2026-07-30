@@ -1,27 +1,5 @@
-let weather_schema =
-  Eta_ai.Json.to_string
-    (Eta_ai.Json.object_
-       [
-         ("type", Some (Eta_ai.Json.string "object"));
-         ( "properties",
-           Some
-             (Eta_ai.Json.object_
-                [
-                  ( "location",
-                    Some
-                      (Eta_ai.Json.object_
-                         [ ("type", Some (Eta_ai.Json.string "string")) ]) );
-                ]) );
-       ])
-
-let expect_ok = function
-  | Ok value -> value
-  | Error _ -> failwith "unexpected error"
-
-let weather_tool () =
-  Eta_ai.make_tool ~name:"weather" ~description:"Get current weather"
-    ~input_schema_json:weather_schema ~strict:true ()
-  |> expect_ok
+let expect_ok = Bench_ai_support.expect_ok
+let weather_tool = Bench_ai_support.weather_tool
 
 let request : Eta_ai.tool Eta_ai.Responses.request =
   {
@@ -56,11 +34,6 @@ let routing () =
     ~require_parameters:true ~sort:"throughput" ()
   |> expect_ok
 
-let repeat n f =
-  for _ = 1 to n do
-    f ()
-  done
-
 let workloads =
   let item name run =
     { Bench_lib.name = "ai_openrouter." ^ name; run; samples = None }
@@ -68,9 +41,8 @@ let workloads =
   [
     item "encode_responses.10k" (fun () ->
         let routing = routing () in
-        repeat 10_000 (fun () ->
-            ignore
-              (Eta_ai_openrouter.encode_responses ~routing request)));
+        Bench_lib.repeat 10_000 (fun () ->
+            ignore (Eta_ai_openrouter.encode_responses ~routing request)));
     item "request.responses.10k" (fun () ->
         let provider =
           Eta_ai_openrouter.responses_provider
@@ -80,7 +52,7 @@ let workloads =
             ()
         in
         let routing = routing () in
-        repeat 10_000 (fun () ->
+        Bench_lib.repeat 10_000 (fun () ->
             ignore
               (Eta_ai_openrouter.responses_request ~routing ~provider
                  ~api_key:(Eta_ai.api_key "sk-bench") request)));

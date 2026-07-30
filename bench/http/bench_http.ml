@@ -4,11 +4,6 @@ let response_bytes =
 
 let request_body = [ Bytes.of_string "hello"; Bytes.of_string " "; Bytes.of_string "world" ]
 
-let repeat n f =
-  for _ = 1 to n do
-    f ()
-  done
-
 let ws_text_payload = Bytes.of_string "{\"type\":\"response.create\"}"
 let ws_binary_payload = Bytes.make 960 '\000'
 let ws_mask = Bytes.of_string "\001\002\003\004"
@@ -280,19 +275,25 @@ let workloads =
     { Bench_lib.name = "http." ^ name; run; samples = None }
   in
   [
-    item "h1.parse.response.100k" (fun () -> repeat 100_000 parse_response);
-    item "h1.parse_raw.response.100k" (fun () -> repeat 100_000 parse_response_raw);
-    item "h1.write.request.100k" (fun () -> repeat 100_000 write_request);
-    item "request.url_body.100k" (fun () -> repeat 100_000 url_request);
+    item "h1.parse.response.100k" (fun () ->
+        Bench_lib.repeat 100_000 parse_response);
+    item "h1.parse_raw.response.100k" (fun () ->
+        Bench_lib.repeat 100_000 parse_response_raw);
+    item "h1.write.request.100k" (fun () ->
+        Bench_lib.repeat 100_000 write_request);
+    item "request.url_body.100k" (fun () ->
+        Bench_lib.repeat 100_000 url_request);
     item "error.projection_json.100k" (fun () ->
-        repeat 100_000 error_projection_json);
-    item "h2.security.headers.10k" (fun () -> repeat 10_000 h2_security);
-    item "ws.codec.encode.text.100k" (fun () -> repeat 100_000 ws_codec_encode_text);
-    item "ws.codec.decode.text.100k" (fun () -> repeat 100_000 ws_codec_decode_text);
+        Bench_lib.repeat 100_000 error_projection_json);
+    item "h2.security.headers.10k" (fun () -> Bench_lib.repeat 10_000 h2_security);
+    item "ws.codec.encode.text.100k" (fun () ->
+        Bench_lib.repeat 100_000 ws_codec_encode_text);
+    item "ws.codec.decode.text.100k" (fun () ->
+        Bench_lib.repeat 100_000 ws_codec_decode_text);
     item "ws.codec.encode.masked_binary_960b.100k" (fun () ->
-        repeat 100_000 ws_codec_encode_masked_binary);
+        Bench_lib.repeat 100_000 ws_codec_encode_masked_binary);
     item "ws.codec.decode.masked_binary_960b.100k" (fun () ->
-        repeat 100_000 ws_codec_decode_masked_binary);
+        Bench_lib.repeat 100_000 ws_codec_decode_masked_binary);
     item "ws.loopback.echo_text.1k" (fun () -> ws_loopback_echo 1_000);
   ]
 

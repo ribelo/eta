@@ -5,16 +5,8 @@ module H = Eta_http
 
 module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
-let read_fixture name =
-  let path = Filename.concat "fixtures" name in
-  let input = open_in path in
-  Fun.protect
-    ~finally:(fun () -> close_in_noerr input)
-    (fun () -> really_input_string input (in_channel_length input))
-
-let expect_ok label = function
-  | Stdlib.Ok value -> value
-  | Stdlib.Error _ -> Alcotest.fail ("expected Ok: " ^ label)
+let read_fixture = Eta_ai_test_support.read_fixture
+let expect_ok = Eta_ai_test_support.expect_ok
 
 let contains ~needle value =
   let needle_len = String.length needle in

@@ -5,6 +5,13 @@ type opts = {
   samples : int;
 }
 
+(** Invoke [f] exactly [n] times when [n > 0]; never invoke it for [n <= 0].
+    The loop itself allocates nothing. *)
+let repeat n f =
+  for _ = 1 to n do
+    f ()
+  done
+
 type workload = {
   name : string;
   run : unit -> unit;

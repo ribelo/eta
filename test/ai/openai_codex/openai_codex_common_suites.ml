@@ -4,18 +4,11 @@ module E = Eta.Effect
 module H = Eta_http
 
 module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
-  let read_fixture name =
-    let path = Filename.concat "fixtures" name in
-    let input = open_in path in
-    Fun.protect
-      ~finally:(fun () -> close_in_noerr input)
-      (fun () -> really_input_string input (in_channel_length input))
+  let read_fixture = Eta_ai_test_support.read_fixture
 
-  let expect_ok label = function
-    | Stdlib.Ok value -> value
-    | Stdlib.Error err ->
-        Alcotest.failf "expected Ok: %s (%s)" label
-          (A.project_ai_error err).diagnostic
+  let expect_ok label =
+    Eta_ai_test_support.expect_ok_msg label (fun err ->
+        (A.project_ai_error err).diagnostic)
 
   let expect_error label = function
     | Stdlib.Error err -> err

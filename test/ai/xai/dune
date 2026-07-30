@@ -4,6 +4,7 @@
   eta
   eta_ai
   eta_ai_xai
+  eta_ai_test_support
   eta_http
   eta_runtime_common_tests
   eta_test_backend_eio

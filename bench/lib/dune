@@ -1,3 +1,14 @@
 (library
  (name bench_lib)
+ (modules bench_lib)
  (libraries unix str))
+
+(library
+ (name bench_ai_support)
+ (modules bench_ai_support)
+ (libraries eta_ai))
+
+(test
+ (name test_bench_lib_repeat)
+ (modules test_bench_lib_repeat)
+ (libraries bench_lib alcotest))

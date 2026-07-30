@@ -5,6 +5,7 @@
   eta
   eta_ai
   eta_ai_moonshot
+  eta_ai_test_support
   eta_http
   eta_runtime_common_tests
   alcotest))

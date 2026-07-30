@@ -4,15 +4,11 @@ module E = Eta.Effect
 module H = Eta_http
 module B = Eta_test_backend_eio.Backend
 
-let read_fixture name =
-  let input = open_in (Filename.concat "fixtures" name) in
-  Fun.protect ~finally:(fun () -> close_in_noerr input) (fun () ->
-      really_input_string input (in_channel_length input))
+let read_fixture = Eta_ai_test_support.read_fixture
 
-let expect_ok label = function
-  | Ok value -> value
-  | Error error ->
-      Alcotest.failf "%s: %a" label X.Error.pp error
+let expect_ok label =
+  Eta_ai_test_support.expect_ok_msg label (fun error ->
+      Format.asprintf "%a" X.Error.pp error)
 
 let contains ~needle value =
   let rec loop index =

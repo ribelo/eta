@@ -6,6 +6,7 @@
   eta_observability
   eta_ai
   eta_ai_openai_compat
+  eta_ai_test_support
   eta_http
   eta_runtime_common_tests
   alcotest))

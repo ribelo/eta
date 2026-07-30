@@ -1,27 +1,5 @@
-let weather_schema =
-  Eta_ai.Json.to_string
-    (Eta_ai.Json.object_
-       [
-         ("type", Some (Eta_ai.Json.string "object"));
-         ( "properties",
-           Some
-             (Eta_ai.Json.object_
-                [
-                  ( "location",
-                    Some
-                      (Eta_ai.Json.object_
-                         [ ("type", Some (Eta_ai.Json.string "string")) ]) );
-                ]) );
-       ])
-
-let expect_ok = function
-  | Ok value -> value
-  | Error _ -> failwith "unexpected error"
-
-let tool () =
-  Eta_ai.make_tool ~name:"weather" ~description:"Get current weather"
-    ~input_schema_json:weather_schema ~strict:true ()
-  |> expect_ok
+let expect_ok = Bench_ai_support.expect_ok
+let tool = Bench_ai_support.weather_tool
 
 let request () : Eta_ai.chat_request =
   {
@@ -107,11 +85,6 @@ let provider () =
           });
   }
 
-let repeat n f =
-  for _ = 1 to n do
-    f ()
-  done
-
 let workloads =
   let p = provider () in
   let item name run =
@@ -119,15 +92,15 @@ let workloads =
   in
   [
     item "toolkit.add_find.100k" (fun () ->
-        repeat 100_000 (fun () ->
+        Bench_lib.repeat 100_000 (fun () ->
             let toolkit = Eta_ai.make_toolkit [ tool () ] |> expect_ok in
             ignore (Eta_ai.find_tool "weather" toolkit)));
     item "provider.encode_decode.100k" (fun () ->
-        repeat 100_000 (fun () ->
+        Bench_lib.repeat 100_000 (fun () ->
             let raw = p.encode_chat (request ()) |> expect_ok in
             ignore (p.decode_chat raw)));
     item "api_key.headers.100k" (fun () ->
-        repeat 100_000 (fun () ->
+        Bench_lib.repeat 100_000 (fun () ->
             ignore (p.auth_headers (Eta_ai.api_key "sk-bench"))));
   ]
 

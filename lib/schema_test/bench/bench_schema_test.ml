@@ -11,11 +11,6 @@ let json =
   Eta_schema.Json.object_
     [ ("name", Eta_schema.Json.string "eta"); ("count", Eta_schema.Json.int 42) ]
 
-let repeat n f =
-  for _ = 1 to n do
-    f ()
-  done
-
 let decode_ok () =
   ignore (Eta_schema_test.decode_ok schema json)
 
@@ -31,9 +26,9 @@ let workloads =
     { Bench_lib.name = "schema_test." ^ name; run; samples = None }
   in
   [
-    item "decode_ok.10k" (fun () -> repeat 10_000 decode_ok);
-    item "encode_ok.10k" (fun () -> repeat 10_000 encode_ok);
-    item "roundtrip.10k" (fun () -> repeat 10_000 roundtrip);
+    item "decode_ok.10k" (fun () -> Bench_lib.repeat 10_000 decode_ok);
+    item "encode_ok.10k" (fun () -> Bench_lib.repeat 10_000 encode_ok);
+    item "roundtrip.10k" (fun () -> Bench_lib.repeat 10_000 roundtrip);
   ]
 
 let () = Bench_lib.run (Bench_lib.parse_args ()) workloads
