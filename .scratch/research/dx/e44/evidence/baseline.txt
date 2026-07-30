@@ -1,0 +1,49 @@
+# DX-E44 baseline
+
+Commit before implementation: `027d5500` (`docs(dx-e44): seal predictions`).
+
+Commands and results:
+
+```text
+$ rg -c '^val ' lib/eta/effect.mli
+119
+
+$ find . -maxdepth 1 -type f -name '*.opam' | wc -l
+48
+
+$ rg -n constructors lib/eta/effect_core.ml
+Pure | Fail | Custom | Map | Bind
+
+$ rg observability implementation references in lib/jsoo lib/js
+lib/jsoo: none
+lib/js: facade re-exports only (Log_level and Trace_context)
+```
+
+`dependency-before.txt` was produced with:
+
+```sh
+nix develop -c sh -c \
+  'dune describe workspace > .scratch/research/dx/e44/evidence/dependency-before.txt'
+```
+
+The exact quick benchmark command was attempted twice:
+
+```sh
+nix develop -c bash bench/run.sh --quick \
+  --out .scratch/research/dx/e44/evidence/bench-before.json
+```
+
+Both attempts failed before producing the result envelope because the
+pre-existing TypeScript comparison workload calls unavailable
+`Effect.with_scope`; see `bench-before-failure.txt`. No E44 files had changed.
+The focused native watchlist baseline was therefore captured with:
+
+```sh
+nix develop -c sh -c \
+  'dune exec bench/runtime_observability/runtime_observability.exe -- --quick \
+   > .scratch/research/dx/e44/evidence/runtime-observability-before.jsonl'
+```
+
+It produced 90 measurement rows. The exact full command remains a required
+post-change attempt; the focused before/after run is the parity evidence if the
+unrelated TypeScript failure remains.

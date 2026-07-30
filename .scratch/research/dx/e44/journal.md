@@ -84,3 +84,11 @@ changed. This section is immutable after the commit
 - A js_of_ocaml-specific observability implementation or duplicated SDK.
 - A repeatable runtime watchlist regression above 2% after controlling for
   benchmark noise.
+
+## Baseline evidence
+
+The immutable predictions above were committed as `027d5500`. Baseline census,
+dependency graph, and focused runtime-observability benchmark artifacts are in
+`evidence/`. The exact full quick benchmark failed twice on a pre-existing
+TypeScript Effect API mismatch (`Effect.with_scope` is unavailable); the raw
+failure is preserved without changing that adjacent benchmark implementation.

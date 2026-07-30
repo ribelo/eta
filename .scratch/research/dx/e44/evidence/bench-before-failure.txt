@@ -1,0 +1,18 @@
+construction_sink=22
+418 |     if (depth === 0) return Effect.succeed(0)
+419 |     return Effect.flatMap(acquireOne, (v: number) =>
+420 |       Effect.map(build(depth - 1), (x: number) => x + v),
+421 |     )
+422 |   }
+423 |   return Effect.with_scope(build(64))
+                      ^
+TypeError: Effect.with_scope is not a function. (In 'Effect.with_scope(build(64))', 'Effect.with_scope' is undefined)
+      at <anonymous> (bench/runtime_overhead_ts/runtime_overhead.ts:423:17)
+      at <anonymous> (bench/runtime_overhead_ts/runtime_overhead.ts:480:58)
+      at warmup (bench/runtime_overhead_ts/runtime_overhead.ts:137:5)
+      at runWorkload (bench/runtime_overhead_ts/runtime_overhead.ts:144:3)
+      at main (bench/runtime_overhead_ts/runtime_overhead.ts:491:40)
+      at bench/runtime_overhead_ts/runtime_overhead.ts:496:1
+      at loadAndEvaluateModule (2:1)
+
+Bun v1.3.13 (Linux x64)
