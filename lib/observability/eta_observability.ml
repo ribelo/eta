@@ -66,7 +66,8 @@ let with_context trace_context eff =
 let with_external_parent ~trace_id ~span_id eff =
   match Trace_context.make ~trace_id ~span_id () with
   | Some context -> with_context context eff
-  | None -> invalid_arg "Effect.with_external_parent: invalid trace context"
+  | None ->
+      invalid_arg "Eta_observability.with_external_parent: invalid trace context"
 
 let current_span =
   Expert.make ~leaf_name:"Effect.current_span" (fun context ->

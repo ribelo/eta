@@ -172,3 +172,8 @@ single-package use, adversarial boundaries, migration completeness, and focused
 runtime parity are proven by committed artifacts. The broad behavioral
 `Spi.Expert` seam remains the weakest review target; no hold or kill trigger was
 observed.
+
+The independent final review initially blocked on an incorrect R90b executable
+pointer and an external-row headline count. Both were corrected to the exact
+`die captures diagnostics` and `annotate_all die diagnostics` registrations;
+the stale invalid-argument path for `with_external_parent` was also corrected.
