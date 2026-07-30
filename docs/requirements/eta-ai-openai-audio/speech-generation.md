@@ -26,4 +26,4 @@ chunked audio, and Speech SSE as distinct typed protocols.
 - The OpenAI speech collection convenience shall accept a caller-supplied maximum byte limit. ^oatts-7c46
 
 ## Open questions
-- Which known Speech SSE event schemas can be established from a first-party source beyond the endpoint's `stream_format=sse` declaration?
+- The published speech reference declares `stream_format=sse` without event schemas, so the concrete Speech SSE event types are unresolved and need an authenticated canary.

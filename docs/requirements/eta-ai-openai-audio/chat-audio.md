@@ -28,4 +28,4 @@ misrepresenting the text-and-image Responses contract as audio-capable.
 
 ## Open questions
 
-- Which documented Chat audio streaming fields and deltas belong in the typed streaming event algebra?
+- The published Chat streaming-event reference lists only content, refusal, role, tool-call, and legacy function-call deltas, so which audio fields a streamed audio completion emits is unresolved and needs an authenticated canary.
