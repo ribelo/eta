@@ -3,14 +3,14 @@ module X = Eta_ai_xai
 module T = Eta_ai_xai_eio
 module Ws_codec = Eta_http_ws.Codec
 
-let run rt effect =
-  match Eta.Runtime.run rt effect with
+let run rt eff =
+  match Eta.Runtime.run rt eff with
   | Eta.Exit.Ok value -> value
   | Eta.Exit.Error cause ->
       Alcotest.failf "effect failed: %a" (Eta.Cause.pp (fun _ _ -> ())) cause
 
-let expect_error rt effect =
-  match Eta.Runtime.run rt effect with
+let expect_error rt eff =
+  match Eta.Runtime.run rt eff with
   | Eta.Exit.Error cause -> cause
   | Eta.Exit.Ok _ -> Alcotest.fail "expected typed failure"
 

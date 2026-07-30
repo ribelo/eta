@@ -818,8 +818,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_effect_filter_or_fail_callback_raises_become_defects () =
     B.with_runtime @@ fun _ctx rt ->
-    let expect_defect label effect =
-      match B.run rt effect with
+    let expect_defect label eff =
+      match B.run rt eff with
       | Exit.Error (Cause.Die _) -> ()
       | Exit.Error cause ->
           Alcotest.failf "%s: expected callback defect, got %a" label
