@@ -15,7 +15,8 @@ that Eta can establish without guessing account or server policy.
 - When OpenAI returns malformed successful audio JSON, the OpenAI provider shall return nominal `Decode` with the available raw body. ^oaerr-yeh9
 - When OpenAI returns malformed streamed JSON, the owning stream shall fail through the outer nominal error channel. ^oaerr-noio
 - When malformed streamed JSON terminates an OpenAI audio stream, the owning stream shall release its transport exactly once. ^oaerr-wka0
-- When OpenAI returns a documented provider failure during streaming, the owning stream shall fail through the outer nominal error channel rather than returning a successful in-band neutral error event. ^oaerr-qt13
+- When OpenAI returns a documented provider failure during streaming, the owning protocol shall deliver it as a typed in-band error event preserving the complete payload and raw JSON. ^oaerr-02qe
+- When a caller receives a typed in-band provider error event, the caller shall decide whether the owning stream continues or terminates. ^oaerr-g6ee
 - If OpenAI returns an unknown successful JSON event type, then the OpenAI provider shall preserve its event type and complete JSON in an `Unknown` variant. ^oaerr-koau
 - Every decoded OpenAI audio JSON record shall retain the complete raw JSON object. ^oaerr-8cu4
 - When a caller explicitly projects an OpenAI audio error into `Eta_ai.ai_error`, the projection shall be total. ^oaerr-ebna

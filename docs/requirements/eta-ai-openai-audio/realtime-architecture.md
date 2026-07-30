@@ -27,3 +27,4 @@ private WebSocket mechanics and the provider-neutral lifecycle shape.
 - If a caller finishes an already-finished session, then the OpenAI Eio transport shall reject the duplicate finish. ^oartc-qfrz
 - If a caller sends an event after aborting a connection, then the OpenAI Eio transport shall reject the operation. ^oartc-l098
 - When a Realtime request depends on server-owned session policy, the OpenAI Eio transport shall submit it for OpenAI to evaluate. ^oartc-v4rg
+- When OpenAI emits a documented recoverable `error` server event, the owning Realtime protocol shall deliver it as a typed in-band error event preserving its complete payload and raw JSON. ^oartc-ebfd
