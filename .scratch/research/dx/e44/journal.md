@@ -156,3 +156,11 @@ An exclusion search was run from the repository root without excluding
 directory. No file there was opened separately, edited, or staged. Subsequent
 searches explicitly excluded `docs/research/**`. This is recorded raw rather
 than hidden.
+
+## Red-team
+
+All three required probes passed. A root-only Dune consumer cannot resolve the
+SDK; Dune rejects a temporarily introduced real `eta <-> eta_observability`
+cycle; and a root-only Eio consumer with a hand-written `Capabilities.tracer`
+receives defect exception annotations from an internally named root effect.
+Sources, commands, raw outputs, and verdicts are under `redteam/`.

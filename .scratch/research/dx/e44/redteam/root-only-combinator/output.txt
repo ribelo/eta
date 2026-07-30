@@ -1,0 +1,7 @@
+Entering directory '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e44/.scratch/research/dx/e44/redteam/root-only-combinator'
+File "probe.ml", line 1, characters 8-34:
+1 | let _ = Eta_observability.log_info "must not compile with only eta"
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: Unbound module "Eta_observability"
+Leaving directory '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e44/.scratch/research/dx/e44/redteam/root-only-combinator'
+exit=1
