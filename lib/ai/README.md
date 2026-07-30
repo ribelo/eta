@@ -14,9 +14,9 @@ It owns provider-agnostic types and helpers that every Eta AI provider shares:
 ## Why it is separate
 
 Provider packages (`eta_ai_openai`, `eta_ai_anthropic`, `eta_ai_openrouter`,
-`eta_ai_openai_compat`) own provider-specific HTTP encoding and decoding.
-`eta_ai` keeps the shared vocabulary in one small package so providers can
-share types without each provider depending on every other provider.
+`eta_ai_openai_compat`, `eta_ai_xai`) own provider-specific HTTP encoding and
+decoding. `eta_ai` keeps the shared vocabulary in one small package so providers
+can share types without each provider depending on every other provider.
 
 ## Package boundary
 
@@ -29,7 +29,9 @@ share types without each provider depending on every other provider.
 Provider packages are transport-neutral too. OpenAI Realtime WebSocket
 connection code lives in `eta_ai_openai_realtime_eio`; the base
 `eta_ai_openai` package keeps only request construction, HTTP endpoint runners,
-Realtime session/client-secret helpers, and event codecs.
+Realtime session/client-secret helpers, and event codecs. xAI follows the same
+split: `eta_ai_xai` for codecs and unary HTTP, `eta_ai_xai_eio` for Responses,
+Realtime, and streaming speech WebSockets.
 
 ## How to use it
 
@@ -47,9 +49,10 @@ let request =
   }
 ```
 
-Pass `request` to `Eta_ai_openai.responses`, `Eta_ai_anthropic.messages`, or
-another provider runner. Provider packages are documented under
-`lib/ai/<provider>/README.md`.
+Pass `request` to `Eta_ai_openai.responses`, `Eta_ai_anthropic.messages`,
+`Eta_ai_xai.Responses.create`, or another provider runner. Provider packages are
+documented under `lib/ai/<provider>/README.md` (xAI Eio transports under
+`lib/ai/xai_eio/README.md`).
 
 ## Limits
 
