@@ -159,11 +159,14 @@ val seq : (unit, 'err) t -> (unit, 'err) t -> (unit, 'err) t
 val concat : (unit, 'err) t list -> (unit, 'err) t
 
 val race : ('a, 'err) t list -> ('a, 'err) t
-(** First child to produce a value wins; the rest are cancelled.
+(** The first child to produce a value is selected and the rest are cancelled.
+    The selected value is returned unless cancelled-loser cleanup produces a
+    finalizer diagnostic, in which case that diagnostic is returned as an error.
 
-    Unlike JavaScript's [Promise.race], a typed failure does not win: it is
-    collected while [race] waits for the first success; if every child fails,
-    their causes are returned concurrently.
+    Unlike JavaScript's [Promise.race], an [Exit.Error] cause does not win:
+    typed failures, defects, interruptions, and finalizer causes are collected
+    while [race] waits for the first success. If every child fails, their causes
+    are returned concurrently.
 
     Losers' values are discarded by design. Resource lifetime is owned by
     scopes, not by race: a loser that holds its resource under

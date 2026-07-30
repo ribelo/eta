@@ -19,10 +19,14 @@ these rules in order; the first matching rule wins:
    may change without migration ceremony.
 2. **Core** — the backend-neutral package every ordinary Eta program needs,
    independent of runtime, platform, or feature choice.
-3. **Integrations** — implements or names an external runtime, platform,
-   protocol, service, engine, driver, wire format, or codec.
-4. **Batteries** — remaining general-purpose Eta functionality with no external
-   service or protocol contract.
+3. **Integrations** — its primary public contract implements or names an
+   external runtime, platform, protocol, service, engine, driver, wire format,
+   or codec.
+4. **Batteries** — remaining general-purpose, Eta-owned functionality whose
+   primary contract is not an external boundary. It may contain platform-specific
+   Eta machinery; an explicitly named bridge or native test harness does not
+   change the tier when that boundary is incidental plumbing rather than the
+   package's primary contract.
 
 An optional package is not automatically labs, and a commonly used adapter is
 not core. There are currently no packages explicitly designated labs; that
@@ -46,8 +50,8 @@ empty tier is intentional rather than an invitation to infer instability.
 | `eta_schema` | General schema descriptions without a wire-format dependency. |
 | `eta_schema_test` | General test assertions for `eta_schema`, not a service or protocol adapter. |
 | `eta_signal` | General explicit-stabilization reactive graphs. |
-| `eta_stream` | General streams, mailboxes, channels, and queues. |
-| `eta_test` | General deterministic Eta test runtime and assertions. |
+| `eta_stream` | General backend-neutral streams, mailboxes, channels, and queues; `from_eio_stream` is an explicit bridge. |
+| `eta_test` | General deterministic Eta test runtime and assertions; Eio types are native harness plumbing. |
 | `ppx_eta` | General Eta syntax and typed-error printer generation. |
 
 ### Integrations (36)
@@ -89,7 +93,7 @@ empty tier is intentional rather than an invitation to infer instability.
 | `eta_sql_dsl` | SQL language builder shared by database integrations. |
 | `eta_turso` | Turso SQLite-compatible native database driver. |
 | `eta_utop` | UTop and Eio developer-runtime integration. |
-| `ppx_eta_sql` | SQL table-declaration code generator. |
+| `ppx_eta_sql` | Code generation for the external SQL language/protocol family is its primary contract. |
 
 ### Labs (0)
 

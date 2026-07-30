@@ -228,7 +228,7 @@ Use it by adding the PPX to the target that declares tables:
 
 ```lisp
 (preprocess
- (pps ppx_eta))
+ (pps ppx_eta_sql))
 ```
 
 Queries remain ordinary typed builder values:

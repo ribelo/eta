@@ -12,7 +12,7 @@ val set : 'a t -> 'a -> unit
 val update : 'a t -> ('a -> 'a) -> unit
 (** [update t f] applies [f] to the current value and stores the result.
 
-    [f] {b MUST be pure} and must be safe to run zero-to-many times. A CAS
+    [f] {b MUST be pure}. It runs at least once and may run many times. A CAS
     failure retries the operation and may evaluate [f] again. If [f] is
     effectful, retries multiply those effects, including logging, sends, and
     external increments. *)
@@ -20,7 +20,7 @@ val update : 'a t -> ('a -> 'a) -> unit
 val update_and_get : 'a t -> ('a -> 'a) -> 'a
 (** Like [update], but returns the new value.
 
-    [f] {b MUST be pure} and must be safe to run zero-to-many times. A CAS
+    [f] {b MUST be pure}. It runs at least once and may run many times. A CAS
     failure retries the operation and may evaluate [f] again. If [f] is
     effectful, retries multiply those effects, including logging, sends, and
     external increments. *)

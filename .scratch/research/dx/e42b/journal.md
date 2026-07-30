@@ -172,3 +172,116 @@ while waiting for success, and all-child failure returns the causes
 concurrently. Existing discriminating tests register the two added claims as
 R178 and R179. Actual surface delta: zero renamed/added/removed vals and one
 documentation-touched val, exactly as predicted.
+
+# Follow-up 1 review findings
+
+## F1 — callback cardinality
+
+**Justified.** `Mutable_ref.update` and `update_and_get` evaluate `f old`
+unconditionally before their first CAS, so every invocation runs the callback
+at least once; only the upper bound is unbounded under contention. The false
+“zero-to-many” phrase originated in the orchestrator's objective. I copied that
+adjudicated wording in good faith, even noting in the sealed reservation that a
+normal call runs at least once, but should have challenged the contradiction
+against the implementation. Both mli docs and API-DX now say at-least-once,
+possibly many, and R177 quotes the corrected claim.
+
+## F2 — tier rules and complete re-derivation
+
+**Justified; resolution (a).** `eta_stream`'s primary contract is Eta-owned
+streams/mailboxes/channels/queues; `from_eio_stream` is the explicitly fenced
+H-W4 bridge, not the module's organizing contract. `eta_test` primarily provides
+deterministic Eta testing; its Eio switch/runtime types are native harness
+plumbing. Both therefore remain Batteries under the new primary-contract rule.
+An Integration is selected only when the package's primary public contract is
+an external boundary. `ppx_eta_sql` is unambiguously Integration because SQL
+language/protocol code generation is its primary contract.
+
+Applying the ordered rules to every root opam package re-derives all 48 rows:
+
+| package | derived tier | deciding primary contract |
+| --- | --- | --- |
+| `eta` | Core | universal backend-neutral Eta contract |
+| `eta_blocking` | Batteries | Eta-owned bounded blocking machinery |
+| `eta_cache` | Batteries | Eta-owned caching |
+| `eta_par` | Batteries | Eta-owned native parallel machinery |
+| `eta_redacted` | Batteries | Eta-owned safe value rendering |
+| `eta_router` | Batteries | general path matching, not HTTP transport/protocol |
+| `eta_schema` | Batteries | format-neutral schemas |
+| `eta_schema_test` | Batteries | general schema test support |
+| `eta_signal` | Batteries | Eta-owned reactive graphs |
+| `eta_stream` | Batteries | backend-neutral stream contract; Eio is one bridge |
+| `eta_test` | Batteries | Eta test contract; Eio is harness plumbing |
+| `ppx_eta` | Batteries | general Eta syntax/tooling |
+| `eta_ai` | Integrations | LLM service/protocol vocabulary |
+| `eta_ai_anthropic` | Integrations | Anthropic service protocol |
+| `eta_ai_kimi_coding` | Integrations | Kimi service/OAuth protocols |
+| `eta_ai_moonshot` | Integrations | Moonshot service protocol |
+| `eta_ai_openai` | Integrations | OpenAI service protocols |
+| `eta_ai_openai_codec` | Integrations | OpenAI wire codecs |
+| `eta_ai_openai_codex` | Integrations | Codex service/OAuth protocols |
+| `eta_ai_openai_compat` | Integrations | provider service protocols |
+| `eta_ai_openai_realtime_eio` | Integrations | OpenAI WebSocket/Eio boundary |
+| `eta_ai_openrouter` | Integrations | OpenRouter service protocol |
+| `eta_duckdb` | Integrations | DuckDB driver |
+| `eta_eio` | Integrations | Eio runtime adapter |
+| `eta_exa` | Integrations | Exa service client |
+| `eta_http` | Integrations | HTTP protocol/client contract |
+| `eta_http_eio` | Integrations | Eio HTTP transport |
+| `eta_http_h1` | Integrations | HTTP/1 codec |
+| `eta_http_h2` | Integrations | HTTP/2 implementation |
+| `eta_http_js` | Integrations | browser Fetch adapter |
+| `eta_http_service` | Integrations | HTTP server contract |
+| `eta_http_service_eio` | Integrations | Eio HTTP serving adapter |
+| `eta_http_tls_openssl` | Integrations | OpenSSL TLS driver |
+| `eta_http_ws` | Integrations | WebSocket protocol codec |
+| `eta_js` | Integrations | js_of_ocaml platform facade |
+| `eta_js_stream` | Integrations | js_of_ocaml stream platform API |
+| `eta_js_test` | Integrations | js_of_ocaml/Node test platform API |
+| `eta_jsoo` | Integrations | js_of_ocaml runtime backend |
+| `eta_ladybug` | Integrations | LadybugDB driver |
+| `eta_linux_input` | Integrations | Linux evdev/uinput platform API |
+| `eta_otel` | Integrations | OpenTelemetry protocol exporter |
+| `eta_schema_yojson` | Integrations | Yojson codec |
+| `eta_sql` | Integrations | SQLite driver/SQL surface |
+| `eta_sql_driver` | Integrations | external SQL-driver contract |
+| `eta_sql_dsl` | Integrations | SQL language builder |
+| `eta_turso` | Integrations | Turso database driver |
+| `eta_utop` | Integrations | UTop/Eio developer-runtime adapter |
+| `ppx_eta_sql` | Integrations | SQL language/protocol code generation |
+
+The two red-team attempts still resolve uniquely. `eta_eio` cannot be Core
+because its primary contract is the external Eio runtime adapter, while
+`eta_schema_yojson` cannot be Batteries because its primary contract is a
+Yojson codec. The new bridge rule also closes the review's two counterexamples
+without becoming a fallback: primary-contract ownership is the deciding test
+for every row.
+
+## F3 — stale SQL README preprocessor
+
+**Justified.** The README had a correct `ppx_eta_sql` instruction at lines
+183-189 and a second stale `(pps ppx_eta)` block later in the same section. The
+second block now also says `(pps ppx_eta_sql)`, and a whole-file search finds no
+remaining stale table-preprocessor instruction.
+
+## F4 — shifted registry pointers
+
+**Justified.** R43 pointed at the newly inserted MutableRef registration rather
+than its Queue test. R43-R51 and R98 now point to the exact Queue registrations;
+a full registry search found no other `core_common_suites.ml` pointer requiring
+that shift. The registry header now makes whole-file pointer refresh mandatory
+whenever a test is inserted mid-file. The later F5 test expansion also triggered
+and received a complete refresh of every shifted `effect_common_suites.ml`
+pointer, exercising that rule immediately.
+
+## F5 — qualified race winner and error coverage
+
+**Justified.** A value is selected first, but a cancelled loser's cleanup
+diagnostic replaces it with an error. The interface now states that
+qualification. It also states the implementation's actual branch rule: every
+`Exit.Error` category—typed failure, defect, interruption, or finalizer
+cause—loses while race waits for success. The renamed test
+`race ignores every early error until success` executes all four categories.
+The all-failure test now additionally checks a four-cause mixed census, so R179
+keeps its broad wording honestly rather than narrowing to typed failures. R180
+registers the post-winner loser-finalizer replacement path.
