@@ -92,3 +92,22 @@ dependency graph, and focused runtime-observability benchmark artifacts are in
 `evidence/`. The exact full quick benchmark failed twice on a pre-existing
 TypeScript Effect API mismatch (`Effect.with_scope` is unavailable); the raw
 failure is preserved without changing that adjacent benchmark implementation.
+
+## Docs-first boundary decision
+
+- Selected the flat SDK surface. It preserves the current combinator call shape
+  and keeps the mechanical migration auditable; `Log`/`Span`/`Metric` nesting
+  would add call-site structure without changing ownership or invariants.
+- Root owns every runtime-local key it reads. The SDK receives behavior through
+  `Spi.Expert` functions rather than raw keys, so the exposed shared-key count is
+  zero. This deliberately preserves scoped daemon logging and SPI metric
+  interception instead of weakening those protocols to make the split easier.
+- The public modules `Logger`, `Meter`, `Tracer`, `Log_level`, and
+  `Trace_context` move wholesale. Private noop capabilities and minimal
+  trace-context sampling/validation remain interpreter substrate, not public
+  root SDK concepts.
+- The new interface moves all 40 current observability vals, including the
+  advanced trace-context surface and the three vals omitted from the approximate
+  objective census. Existing executable-law registrations were repointed to the
+  moved contract; mixed capability row R88 was split into root R88a and SDK R88b
+  so each source pointer names exactly one package boundary.

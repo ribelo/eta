@@ -1,6 +1,6 @@
 # Eta Package Map
 
-Eta ships as a monorepo of opam packages. Each package publishes exactly one
+Eta ships 49 opam packages from one monorepo. Each package publishes exactly one
 public Dune library with a matching OCaml top-level module. Pick only the
 packages you need.
 
@@ -38,12 +38,13 @@ empty tier is intentional rather than an invitation to infer instability.
 | --- | --- |
 | `eta` | Backend-neutral effect description, runtime contract, failures, scopes, and concurrency shared by every Eta program. |
 
-### Batteries (11)
+### Batteries (12)
 
 | package | why |
 | --- | --- |
 | `eta_blocking` | General bounded blocking-worker machinery, independent of any external service or protocol. |
 | `eta_cache` | General effect-integrated caching and refreshable values. |
+| `eta_observability` | General tracing, structured logging, metrics, and propagation over Eta capability contracts. |
 | `eta_par` | General native CPU parallelism over Eta effects. |
 | `eta_redacted` | General secret-wrapping values for safe rendering. |
 | `eta_router` | General path matching; it does not implement an HTTP protocol or transport. |
@@ -101,9 +102,11 @@ No package is currently designated unstable or experimental.
 
 ## Core boundary
 
-`eta` is the effect description layer: `Effect`, `Runtime`, `Cause`, `Exit`,
-schedules, resources, supervisors, channels, queues, and the runtime contract.
-It depends only on OCaml and Dune.
+`eta` is the effect description and interpreter-contract layer: `Effect`,
+`Runtime`, `Cause`, `Exit`, schedules, resources, supervisors, channels,
+queues, capability payload types, and the runtime contract. Application-facing
+tracing, logging, metrics, and propagation live in `eta_observability`. Root
+`eta` depends only on OCaml and Dune.
 
 `eta` describes effects; it does not run them. A runnable program needs a
 runtime backend:
@@ -209,7 +212,8 @@ they use.
 
 | opam package | OCaml module | what it adds | extra deps |
 | --- | --- | --- | --- |
-| `eta_otel` | `Eta_otel` | OTLP/JSON exporter for tracer, logger, and meter | `eta_stream`, `eta_http`, `yojson` |
+| `eta_observability` | `Eta_observability` | tracing, structured logging, metrics, propagation, and built-in capability implementations | — |
+| `eta_otel` | `Eta_otel` | OTLP/JSON exporter for tracer, logger, and meter | `eta_observability`, `eta_stream`, `eta_http`, `yojson` |
 
 `eta_otel` is an exporter, not a runtime. It needs a `runtime_factory` (usually
 from `eta_eio`) and usually an `eta_http_eio` client to send data.
@@ -319,9 +323,10 @@ request.
 ### HTTP client with retries and tracing
 
 ```dune
-(executable (name app) (libraries eta eta_http eta_http_eio eta_otel))
+(executable (name app) (libraries eta eta_observability eta_http eta_http_eio eta_otel))
 ```
 
+`eta_observability` supplies the tracing DSL and capability implementations;
 `eta_otel` needs a runtime factory and an HTTP client; see `lib/otel/README.md`.
 
 ### SQLite
@@ -369,6 +374,9 @@ may depend on Eta; Eta core libraries under `lib/` must never depend on them.
   `eta_http_eio` or a custom adapter.
 - **`eta_otel` is an exporter, not a runtime.** It needs a `runtime_factory`
   (typically `Eta_eio.Runtime.create`) and usually an `eta_http_eio` client.
+- **Observability calls require `eta_observability`.** Root `eta` accepts
+  hand-written capability records but does not expose the tracing, logging,
+  metrics, propagation, or built-in implementation SDK.
 - **Native C-stub packages split build-time and runtime requirements.**
   `eta_sql` and `eta_http` use `pkg-config` at build time for SQLite and
   OpenSSL. `eta_turso`, `eta_duckdb`, and `eta_ladybug` have C stubs that load
@@ -377,5 +385,5 @@ may depend on Eta; Eta core libraries under `lib/` must never depend on them.
 - **JS packages are disabled under +ox.** They are skipped in the pinned
   `5.2.0+ox` Nix shell.
 - **`ppx_eta` is compile-time tooling.** It adds `ppxlib` to the build; the
-  generated code may still reference the normal runtime libraries used by the
-  source being rewritten.
+  generated `[%eta.sync]` and `[%eta.result]` code references
+  `eta_observability`, which must be a dependency of the rewritten source.
