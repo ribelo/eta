@@ -172,7 +172,8 @@ let run_ws_echo_server ~messages flow =
 
 let pp_ws_error fmt = function
   | `Connect message -> Format.fprintf fmt "connect %s" message
-  | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+  | `Upgrade_failed failure ->
+      Format.fprintf fmt "upgrade %d" failure.Eta_http_eio.Ws.Client.status
   | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
   | `Protocol message -> Format.fprintf fmt "protocol %s" message
   | `Timeout -> Format.pp_print_string fmt "timeout"
