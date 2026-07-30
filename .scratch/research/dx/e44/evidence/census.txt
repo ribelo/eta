@@ -1,0 +1,25 @@
+DX-E44 census
+=============
+
+| Measure | Before (`31c4d93a`) | After | Delta |
+| --- | ---: | ---: | ---: |
+| `lib/eta/effect.mli` `val` declarations | 119 | 79 | -40 |
+| `lib/observability/eta_observability.mli` `val` declarations | 0 | 40 | +40 |
+| Root opam package files | 48 | 49 | +1 |
+
+Commands:
+
+  rg -c '^val ' lib/eta/effect.mli
+  rg -c '^val ' lib/observability/eta_observability.mli
+  find . -maxdepth 1 -type f -name '*.opam' | wc -l
+
+The split moved every current observability val rather than targeting the
+orchestrator's approximate `85±3` root-val estimate. The total effect/SDK val
+count remains 119.
+
+Migration footprint from the pre-implementation commit through the migration
+commit: 245 changed files. A diff census found 1,050 removed stale-path lines
+outside root `lib/eta`, the new SDK, and forbidden research paths; this includes
+tests, generated/typecheck fixtures, examples, benches, and current docs, so it
+is intentionally broader than the orchestrator's approximate 510 call-line
+estimate.

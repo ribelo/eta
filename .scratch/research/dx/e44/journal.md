@@ -132,6 +132,23 @@ failure is preserved without changing that adjacent benchmark implementation.
   `effect`, which is accepted by OxCaml but reserved by upstream OCaml 5.4, to
   `effect_of_public`.
 
+## Performance follow-up
+
+The first focused comparison exposed deterministic per-operation allocations
+from optional SPI arguments and log admission, plus wall measurements polluted
+by host-wide drift. The hot seam was narrowed without exposing keys:
+
+- `observability_named` now receives the already-captured kind and printer
+  option as required arguments;
+- hot behavioral calls carry targeted definition-site inline attributes;
+- log admission no longer allocates an option block;
+- metric construction remains behind the enabled gate.
+
+Fifteen alternating before/after pairs (45 samples per side) put every affected
+wall-time regression below 2%; the maximum is +1.936%. Allocation is equal or
+lower on every changed row. Raw results and the method are in
+`evidence/bench-pairs/`, `bench-parity.csv`, and `bench-parity.md`.
+
 ## Procedural deviation
 
 An exclusion search was run from the repository root without excluding

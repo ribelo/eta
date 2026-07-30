@@ -1,0 +1,30 @@
+DX-E44 required gates
+=====================
+
+All commands were rerun after committed performance follow-up `9745169e`.
+
+PASS (exit 0):
+
+  nix develop -c dune build @install
+
+PASS (exit 0):
+
+  nix develop -c dune runtest --force
+
+The first post-follow-up run hit the existing flaky test `timeout closes from
+file` once. `nix develop -c dune runtest test/stream --force` passed all 16
+stream tests immediately, and the second exact full command passed. This used
+two attempts for that failure class, below the protocol limit of three.
+
+PASS (exit 0):
+
+  nix develop -c eta-oxcaml-test-shipped
+
+PASS (exit 0):
+
+  nix develop .#mainline -c dune build \
+    --build-dir=_build-mainline test/cache_jsoo test/js_jsoo
+
+The mainline gate compiles and runs the shared js_of_ocaml package/test surface
+against the same root `eta` and single `eta_observability` package; no JS SDK
+copy or substrate divergence was introduced.
