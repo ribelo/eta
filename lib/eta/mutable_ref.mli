@@ -10,11 +10,20 @@ val make : 'a -> 'a t
 val get : 'a t -> 'a
 val set : 'a t -> 'a -> unit
 val update : 'a t -> ('a -> 'a) -> unit
-(** [update t f] applies [f] to the current value and stores the result,
-    retrying on CAS failure until it succeeds. *)
+(** [update t f] applies [f] to the current value and stores the result.
+
+    [f] {b MUST be pure}. It runs at least once and may run many times. A CAS
+    failure retries the operation and may evaluate [f] again. If [f] is
+    effectful, retries multiply those effects, including logging, sends, and
+    external increments. *)
 
 val update_and_get : 'a t -> ('a -> 'a) -> 'a
-(** Like [update] but returns the new value. *)
+(** Like [update], but returns the new value.
+
+    [f] {b MUST be pure}. It runs at least once and may run many times. A CAS
+    failure retries the operation and may evaluate [f] again. If [f] is
+    effectful, retries multiply those effects, including logging, sends, and
+    external increments. *)
 
 val get_and_set : 'a t -> 'a -> 'a
 (** [get_and_set t v] atomically stores [v] and returns the previous value. *)

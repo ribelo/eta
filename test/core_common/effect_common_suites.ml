@@ -3178,24 +3178,25 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.yield ();
     Alcotest.(check bool) "slow cancelled" false !slow_done
 
-  let test_effect_race_ignores_early_failure_until_success () =
-    B.with_test_clock @@ fun ctx clock rt ->
-    let delayed_success ms value =
-      Effect.pure value |> Effect.delay (Duration.ms ms)
+  let test_effect_race_ignores_every_early_error_until_success () =
+    B.with_runtime @@ fun _ctx rt ->
+    let interrupted =
+      Effect.async ~register:(fun resume ->
+          resume (Exit.Error Cause.interrupt);
+          None)
     in
-    let eff =
-      Effect.race
-        [
-          Effect.fail `Boom |> Effect.delay Duration.zero;
-          delayed_success 200 200;
-          delayed_success 100 100;
-        ]
+    let finalizer =
+      Effect.finally (Effect.fail "cleanup") (Effect.pure 0)
     in
-    let promise = B.fork_run ctx rt eff in
-    wait_for_sleepers clock 2;
-    Alcotest.(check int) "race sleepers registered" 2 (B.sleeper_count clock);
-    B.adjust_clock clock (Duration.ms 100);
-    check_exit_ok Alcotest.int "first success wins" 100 (B.await promise)
+    [
+      ("typed failure", Effect.fail "typed");
+      ("defect", Effect.die_message "defect");
+      ("interruption", interrupted);
+      ("finalizer", finalizer);
+    ]
+    |> List.iter (fun (label, error) ->
+           let actual = run_ok rt (Effect.race [ error; Effect.pure 100 ]) in
+           Alcotest.(check int) (label ^ " loses to success") 100 actual)
 
   let test_effect_race_cancels_losers_after_first_success () =
     B.with_test_clock @@ fun ctx clock rt ->
@@ -3227,7 +3228,40 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.adjust_clock clock (Duration.ms 10);
     check_exit_error string_cause "failures combined"
       (Cause.Concurrent [ Cause.Fail "first"; Cause.Fail "second" ])
-      (B.await promise)
+      (B.await promise);
+    let interrupted =
+      Effect.async ~register:(fun resume ->
+          resume (Exit.Error Cause.interrupt);
+          None)
+    in
+    let finalizer =
+      Effect.finally (Effect.fail "cleanup") (Effect.pure 0)
+    in
+    match
+      B.run rt
+        (Effect.race
+           [
+             Effect.fail "typed";
+             Effect.die_message "defect";
+             interrupted;
+             finalizer;
+           ])
+    with
+    | Exit.Ok _ -> Alcotest.fail "mixed all-failure race unexpectedly succeeded"
+    | Exit.Error (Cause.Concurrent causes) ->
+        Alcotest.(check int) "every mixed failure retained" 4
+          (List.length causes);
+        Alcotest.(check bool) "typed failure retained" true
+          (List.exists (Cause.equal String.equal (Cause.Fail "typed")) causes);
+        Alcotest.(check bool) "defect retained" true
+          (List.exists (function Cause.Die _ -> true | _ -> false) causes);
+        Alcotest.(check bool) "interruption retained" true
+          (List.exists (function Cause.Interrupt _ -> true | _ -> false) causes);
+        Alcotest.(check bool) "finalizer retained" true
+          (List.exists (function Cause.Finalizer _ -> true | _ -> false) causes)
+    | Exit.Error cause ->
+        Alcotest.failf "expected concurrent mixed causes, got %a"
+          (Cause.pp Format.pp_print_string) cause
 
   let test_effect_race_releases_scoped_loser_resource () =
     B.with_runtime @@ fun _ctx rt ->
@@ -4000,8 +4034,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_map_par_simultaneous_failures_baseline;
           Alcotest.test_case "map_par finalizer cancellation baseline"
             `Quick test_map_par_finalizer_failure_during_sibling_cancellation;
-          Alcotest.test_case "race ignores early failure until success" `Quick
-            test_effect_race_ignores_early_failure_until_success;
+          Alcotest.test_case "race ignores every early error until success"
+            `Quick test_effect_race_ignores_every_early_error_until_success;
           Alcotest.test_case "race cancels losers after first success" `Quick
             test_effect_race_cancels_losers_after_first_success;
           Alcotest.test_case

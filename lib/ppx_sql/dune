@@ -1,0 +1,5 @@
+(library
+ (name ppx_eta_sql)
+ (public_name ppx_eta_sql)
+ (kind ppx_rewriter)
+ (libraries ppxlib))

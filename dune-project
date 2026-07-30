@@ -567,7 +567,19 @@
  (name ppx_eta)
  (synopsis "PPX syntax helpers for Eta")
  (description
-  "ppx_eta provides Eta effect syntax helpers, typed-error printers, and Eta SQL table declarations.")
+  "ppx_eta provides Eta effect syntax helpers and typed-error printers.")
+ (depends
+  (ocaml (>= 5.2.0))
+  ppxlib
+  (eta :with-test)
+  (eio_main :with-test)
+  (alcotest :with-test)))
+
+(package
+ (name ppx_eta_sql)
+ (synopsis "PPX table declarations for Eta SQL")
+ (description
+  "ppx_eta_sql provides Eta SQL table declaration syntax.")
  (depends
   (ocaml (>= 5.2.0))
   ppxlib

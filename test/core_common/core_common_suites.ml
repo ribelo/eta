@@ -184,6 +184,37 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "concurrent updates converge" (2 * updates)
       (Mutable_ref.get r)
 
+  let test_mutable_ref_cas_retry_reexecutes_callbacks () =
+    let check label apply =
+      let r = Mutable_ref.make 0 in
+      let ready = Atomic.make 0 in
+      let calls_left = Atomic.make 0 in
+      let calls_right = Atomic.make 0 in
+      let callback calls value =
+        let attempt = Atomic.fetch_and_add calls 1 + 1 in
+        if attempt = 1 then (
+          ignore (Atomic.fetch_and_add ready 1 : int);
+          while Atomic.get ready < 2 do
+            Domain.cpu_relax ()
+          done);
+        value + 1
+      in
+      let spawn =
+        (Domain.spawn [@alert "-do_not_spawn_domains"]
+          [@alert "-unsafe_multidomain"])
+      in
+      let left = spawn (fun () -> apply r (callback calls_left)) in
+      let right = spawn (fun () -> apply r (callback calls_right)) in
+      Domain.join left;
+      Domain.join right;
+      Alcotest.(check int) (label ^ " committed updates") 2 (Mutable_ref.get r);
+      Alcotest.(check int) (label ^ " callback evaluations") 3
+        (Atomic.get calls_left + Atomic.get calls_right)
+    in
+    check "update" Mutable_ref.update;
+    check "update_and_get" (fun r f ->
+        ignore (Mutable_ref.update_and_get r f : int))
+
   let test_mutable_ref_incr_decr () =
     let r = Mutable_ref.make 0 in
     Mutable_ref.incr r;
@@ -1801,6 +1832,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_mutable_ref_compare_and_set;
           Alcotest.test_case "concurrent update" `Quick
             test_mutable_ref_concurrent_update;
+          Alcotest.test_case "CAS retry may re-execute callbacks" `Quick
+            test_mutable_ref_cas_retry_reexecutes_callbacks;
           Alcotest.test_case "incr decr" `Quick test_mutable_ref_incr_decr;
         ] );
       ( "Queue",
