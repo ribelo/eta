@@ -5699,3 +5699,61 @@ propagate — the objective is a contract, and its phrases get copied
 verbatim; the review layer exists precisely for this.
 
 **Wave progress:** 10/14 done. Next: E44 (observability full split).
+
+---
+
+## V-DX-E44-001 — 2026-07-26 — research/dx-e44-observability-split — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at results.
+
+**Shape (predicted).** New package `eta_observability` (public library
+`eta_observability`, top module `Eta_observability`). Moves: `Logger`,
+`Meter`, `Tracer`, `Log_level`, `Trace_context` modules + the full
+`Effect`-level observability DSL (~29 vals: `log`/`logf`/`log_trace..log_fatal`,
+`annotate`/`annotate_all`/`annotate_all_lazy`, `annotate_logs`,
+`with_minimum_log_level`, `intercept_log`, `with_logger`, `with_tracer`,
+`metric_update`/`metric_counter`/`metric_gauge`/`metric_frequency`/
+`metric_histogram`/`metric_summary`/`metric_timer`/`metric`/`metric_updates`/
+`metric_updates_lazy`, `intercept_metric`, `named`, `fn`). Stays in root:
+`Capabilities` (contract payload types the interpreter consumes),
+`Runtime_contract`, `Spi.Expert`, and the interpreter's minimal diagnostic
+write path (defect→span annotation machinery; `die_context`).
+Census: `Effect.mli` 119 vals → 85±3. Package count +1. Dependency
+direction: `eta` ← `eta_observability` ← {`eta_otel`, `eta_test`,
+`eta_http*`, `eta_sql`, examples}; `ppx_eta` generated code gains an
+`eta_observability` dependency (`[%eta.sync]`/`[%eta.result]` expand into
+`fn`/`named`) — flagged as breaking in the changelog.
+
+**Feasibility basis (measured).** The blueprint ADT is `Pure | Fail |
+Custom | Map | Bind`; every observability leaf is already a `Custom`
+closure — no interpreter coupling forces the DSL to live in core.
+`runtime_observability.ml` holds the shared fiber-local keys;
+`effect_observability.ml` is already a separate compilation unit. Zero
+observability duplication exists in `lib/jsoo`/`lib/js` — predict a single
+backend-neutral package serves both substrates (`Runtime_contract` is the
+substrate seam).
+
+**Migration size (measured).** ~510 DSL call lines (`Effect.named` 310,
+`annotate*` 78, `log*` 58, `with_logger/tracer/minimum_log_level` 48,
+`metric_*` 10, `fn` 5) + module-qualified uses (`Tracer` 21 files,
+`Meter` 13, `Logger` 12, `Trace_context` 8, `Log_level` 3) + PPX expansion
+snapshots. Effort L.
+
+**Runtime cost.** Zero-delta expected — same `Custom`-leaf mechanism, same
+eval closures; watchlist parity within noise (< 2%).
+
+**Crux (predicted).** The fiber-local key seam: `log_attrs_key`,
+`minimum_log_level_key`, interceptor keys, and `die_context` are read by
+BOTH the core defect path and the DSL leaves. Predict the resolution:
+interpreter-contract keys stay (defect/span write path), DSL-facing keys
+move; at most one Spi-exposed shared key. If core ends up depending on SDK
+concepts (dependency inversion leak), that is the hold trigger.
+
+**Kill/hold gates.** Hold if the key seam forces root to depend on SDK
+concepts, or if jsoo requires a duplicated SDK (substrate divergence).
+Kill only if the interpreter's minimal contract proves unstateable without
+the SDK — evidence recorded, decision reverts to namespace-split.
+
+**Outcome (predicted).** Promote with one rework round (seam discipline
+surprises in a migration this size). Review: PR-style oracle; predict
+verdict promote-with-reservations on first pass.
