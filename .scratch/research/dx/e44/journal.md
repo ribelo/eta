@@ -1,0 +1,86 @@
+# DX-E44 observability split journal
+
+## Predictions (sealed)
+
+Sealed before production code, package metadata, or package documentation was
+changed. This section is immutable after the commit
+`docs(dx-e44): seal predictions`.
+
+### Baseline verified
+
+- `lib/eta/effect_core.ml` defines exactly `Pure | Fail | Custom | Map | Bind`;
+  observability operations are implemented as `Custom` evaluators through
+  `Effect_core.make`/`preserve` (apart from pure constructors and convenience
+  aliases).
+- `lib/jsoo` contains no observability implementation. `lib/js` only re-exports
+  the current root `Log_level` and `Trace_context` modules; it does not duplicate
+  the runtime or DSL.
+- Baseline census: 119 `val` declarations in `lib/eta/effect.mli`, 48 root opam
+  package files, and no `eta_observability` public library.
+- The required read-first path `.scratch/research/dx-ledger.md` is absent in this
+  worktree. The similarly named `docs/research/dx-ledger.md` was not substituted
+  because `objective.md` explicitly forbids reading `docs/research/`.
+
+### Expected result
+
+1. The package census will become 49, with one Batteries package named
+   `eta_observability`, one public library of the same name, and the top module
+   `Eta_observability`.
+2. The public API will be flat (`Eta_observability.named`,
+   `Eta_observability.log_info`, and so on). This is expected to minimize the
+   migration to path replacement and preserve current call shape better than
+   introducing `Log`/`Span`/`Metric` submodules.
+3. A literal full split of the current observability surface is expected to move
+   40 `Effect` vals, producing 79 root `Effect.mli` vals rather than the
+   orchestrator's approximate `85±3`. The likely source of the difference is
+   the advanced tracing/context surface plus `with_error_pp`,
+   `suppress_observability`, and `here_attr`, which are present in the current
+   implementation but omitted from the objective's approximate 29-val list.
+   The implementation will follow the semantic boundary rather than target a
+   count.
+4. The root package will have no Dune or opam dependency on
+   `eta_observability`; `eta_observability` will depend directly on `eta`.
+   Packages that call the moved SDK will depend on both as required.
+5. The DSL will continue to construct the same `Custom` leaves. No interpreter
+   execution branch or blueprint constructor should change, so runtime
+   observability watchlist results should remain within 2% noise.
+
+### Expected fiber-local seam
+
+- Interpreter-owned or interpreter-read state remains private in root:
+  `active_span_key`, `sampled_key`, `trace_context_key`, `die_context_key`, the
+  capability override keys, and the log/metric scope and interceptor keys used
+  by daemon diagnostics or `Spi.Expert` emissions.
+- SDK-only code will manipulate that state through narrow `Spi.Expert`
+  operations. No raw key is expected to be exposed, satisfying the "at most one"
+  limit with zero exposed shared keys while preserving daemon log attributes,
+  filtering, and interceptor behavior.
+- Root-owned private noop logger/tracer/meter capabilities will replace root's
+  current dependency on the public implementation modules. Root's minimal W3C
+  trace-context validation/sampling needed by span parenting will remain a
+  private interpreter helper; the moved public `Trace_context` API will build on
+  root substrate helpers rather than create a root-to-SDK edge.
+- If this cannot be stated without importing an SDK module into root, the
+  objective's hold trigger applies.
+
+### Two likeliest break classes
+
+1. Root-private coupling will surface first: `runtime_core.ml` currently uses
+   `Logger.noop`, `Meter.noop`, and `Tracer.noop`; `runtime_instrument.ml` uses
+   `Trace_context`; and `effect_supervisor_scope.ml` calls
+   `Effect_observability.named`. Removing those modules without changing runtime
+   semantics is the highest-risk seam work.
+2. Mechanical dependency completeness will break next: PPX expansions currently
+   emit `Eta.Effect.fn`/`named`, while HTTP, OTel, AI, tests, benches, examples,
+   and JS facade re-exports rely on old paths. Missing one package dependency or
+   generated snapshot is expected to appear as an unbound-module or unavailable
+   library failure, especially in the mainline js_of_ocaml gate.
+
+### Evidence that would overturn these predictions
+
+- Any root Dune closure containing `eta_observability`.
+- A required SDK key/type that cannot be expressed in `Capabilities`,
+  `Runtime_contract`, or a narrow root `Spi.Expert` operation.
+- A js_of_ocaml-specific observability implementation or duplicated SDK.
+- A repeatable runtime watchlist regression above 2% after controlling for
+  benchmark noise.
