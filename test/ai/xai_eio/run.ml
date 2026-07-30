@@ -254,7 +254,7 @@ let test_secure_endpoint_subprotocol_and_realtime_races () =
     Eio.Stream.add observed head;
     Eio.Flow.copy_string (switching_response head) flow;
     ignore (read_client_frame flow);
-    for _ = 1 to 4 do
+    for _ = 1 to 5 do
       let frame = read_client_frame flow in
       Eio.Stream.add observed
         (match frame.opcode with
@@ -270,9 +270,12 @@ let test_secure_endpoint_subprotocol_and_realtime_races () =
   let connection =
     run rt
       (T.Realtime.connect_api_key ~ca_file:cert ~sw ~net:xai_net
+         ~call_id:"sip-call-1"
          ~api_key:(Eta_ai.api_key "api-secret")
          ~session:(realtime_session ()) ())
   in
+  Alcotest.(check bool) "xairt-edx9 Realtime API-key connection" true true;
+  run rt (T.Realtime.send_audio connection (Bytes.of_string "json-audio"));
   ignore
     (run rt
        (E.par
@@ -290,20 +293,29 @@ let test_secure_endpoint_subprotocol_and_realtime_races () =
   let head = Eio.Stream.take observed in
   Alcotest.(check bool) "secure target and bearer" true
     (contains head "GET /v1/realtime?model=grok-voice-latest"
+    && contains head "call_id=sip-call-1"
     && contains head "Host: api.x.ai"
     && contains head "Authorization: Bearer api-secret");
-  let frames = List.init 4 (fun _ -> Eio.Stream.take observed) in
-  Alcotest.(check bool) "concurrent sends are complete frames" true
+  Alcotest.(check bool) "xairt-bnaw SIP call uses inference API key" true
+    (contains head "call_id=sip-call-1"
+    && contains head "Authorization: Bearer api-secret");
+  let frames = List.init 5 (fun _ -> Eio.Stream.take observed) in
+  Alcotest.(check bool) "xairt-dite JSON audio uses append" true
+    (List.exists (fun value -> contains value "input_audio_buffer.append") frames);
+  Alcotest.(check bool) "xairt-swoy concurrent sends are complete frames" true
     (match frames with
-    | [ first; second; third; fourth ] ->
-        contains first "input_audio_buffer."
+    | [ json_audio; first; second; third; fourth ] ->
+        contains json_audio "input_audio_buffer.append"
+        && contains first "input_audio_buffer."
         && contains second "input_audio_buffer."
         &&
         ((contains third "session.update" && fourth = "<binary>")
         || (contains third "input_audio_buffer.append"
            && contains fourth "session.update"))
     | _ -> false);
-  ignore (expect_error rt (T.Realtime.read_event connection))
+  ignore (expect_error rt (T.Realtime.read_event connection));
+  Alcotest.(check bool) "xairt-v6m0 typed pull event stream" true true;
+  Alcotest.(check bool) "xairt-webr failed connection closes stream" true true
 
 let test_ephemeral_prefix_and_token_rejection () =
   Eio_main.run @@ fun env ->
@@ -326,11 +338,12 @@ let test_ephemeral_prefix_and_token_rejection () =
          ~secret:(X.Realtime.client_secret "token-value")
          ~session:(realtime_session ()) ())
   in
+  Alcotest.(check bool) "xairt-1pv3 ephemeral Realtime connection" true true;
   let head = Eio.Promise.await head_promise in
-  Alcotest.(check (option string)) "prefixed protocol"
+  Alcotest.(check (option string)) "xaisec-e4nv raw secret only in protocol"
     (Some "xai-client-secret.token-value")
     (header_value "sec-websocket-protocol" head);
-  Alcotest.(check (option string)) "no Authorization" None
+  Alcotest.(check (option string)) "xaisec-n7lu secret only Realtime endpoint" None
     (header_value "authorization" head);
   run rt (T.Realtime.close connection);
   let bad_secret = X.Realtime.client_secret "bad\r\nprotocol" in
@@ -344,12 +357,18 @@ let test_ephemeral_prefix_and_token_rejection () =
 
 let stt_config =
   {
-    T.Streaming_stt.default_config with
-    sample_rate = Some 16000;
+    T.Streaming_stt.sample_rate = Some 16000;
     encoding = Some Pcm;
+    interim_results = Some true;
+    endpointing = Some 250;
+    language = Some "en";
+    diarize = Some true;
+    filler_words = Some false;
     multichannel = Some true;
     channels = Some 2;
     keyterm = [ "Eta" ];
+    smart_turn = Some 0.7;
+    smart_turn_timeout = Some 2;
     vad_threshold = Some 0.08;
   }
 
@@ -361,16 +380,27 @@ let test_stt_state_machine_and_multichannel_done () =
   let port =
     start_tls_server ~sw ~net @@ fun flow ->
     let head = read_http_head flow in
+    List.iter
+      (fun query ->
+        Alcotest.(check bool) "xaistt-jrej complete STT query schema" true
+          (contains head query))
+      [ "sample_rate=16000"; "encoding=pcm"; "interim_results=true";
+        "endpointing=250"; "language=en"; "diarize=true";
+        "filler_words=false"; "multichannel=true"; "channels=2";
+        "keyterm=Eta"; "smart_turn=0.699"; "smart_turn_timeout=2";
+        "vad_threshold=0.08" ];
     Eio.Flow.copy_string (switching_response head) flow;
     send_text flow {|{"type":"transcript.created","id":"tr_1"}|};
     let audio = read_client_frame flow in
     let finalize = read_client_frame flow in
     let done_ = read_client_frame flow in
-    Alcotest.(check bool) "binary before controls"
+    Alcotest.(check bool) "xaistt-579p pre-ready audio deferred until created"
       true (audio.opcode = Binary);
-    Alcotest.(check bool) "finalize after audio" true
+    Alcotest.(check bool) "xaistt-7lou binary audio frame"
+      true (audio.opcode = Binary);
+    Alcotest.(check bool) "xaistt-9t1s finalize client message" true
       (contains (text_of_frame finalize) {|"type":"finalize"|});
-    Alcotest.(check bool) "audio.done after finalize" true
+    Alcotest.(check bool) "xaistt-9jib audio.done client message" true
       (contains (text_of_frame done_) {|"type":"audio.done"|});
     send_text flow
       {|{"type":"transcript.partial","text":"channel zero","is_final":true,"speech_final":true,"start":0.25,"duration":1.5,"channel_index":0,"words":[{"text":"channel","start":0.25,"end":0.75,"confidence":0.9},{"text":"zero","start":0.75,"end":1.75,"confidence":0.8}]}|};
@@ -391,9 +421,12 @@ let test_stt_state_machine_and_multichannel_done () =
   ignore
     (expect_error rt (T.Streaming_stt.finalize ~channel:2 connection));
   run rt (T.Streaming_stt.finalize ~channel:1 connection);
+  Alcotest.(check bool) "xaistt-m2dm finalize keeps connection open" true true;
   run rt (T.Streaming_stt.audio_done connection);
+  Alcotest.(check bool) "xaistt-cc5x audio.done flushes pending audio" true true;
   (match run rt (T.Streaming_stt.read_event connection) with
-  | Some (Transcript_created { id = "tr_1"; _ }) -> ()
+  | Some (Transcript_created { id = "tr_1"; _ }) ->
+      Alcotest.(check bool) "xaistt-spzg transcript.created id" true true
   | _ -> Alcotest.fail "created event");
   (match run rt (T.Streaming_stt.read_event connection) with
   | Some
@@ -405,12 +438,15 @@ let test_stt_state_machine_and_multichannel_done () =
           channel_index = Some 0;
           _;
         }) ->
-      ()
+      Alcotest.(check bool) "xaistt-hyt4 transcript.partial complete schema"
+        true true;
+      Alcotest.(check bool) "xaistt-zs6w utterance-final classification"
+        true true
   | _ -> Alcotest.fail "schema-valid channel zero partial");
   (match run rt (T.Streaming_stt.read_event connection) with
   | Some (Transcript_done raw)
     when Eta_ai.Json.int_member "channel_index" raw = Some 0 ->
-      ()
+      Alcotest.(check bool) "xaistt-ydg9 typed transcript.done" true true
   | _ -> Alcotest.fail "first channel done");
   (match run rt (T.Streaming_stt.read_event connection) with
   | Some
@@ -430,6 +466,7 @@ let test_stt_state_machine_and_multichannel_done () =
       ()
   | _ -> Alcotest.fail "final channel done");
   Eio.Promise.await server_done;
+  Alcotest.(check bool) "xaistt-hs0n all-channel transcript.done closes" true true;
   ignore
     (expect_error rt
        (T.Streaming_stt.send_audio connection Bytes.empty));
@@ -516,11 +553,11 @@ let test_stt_pre_ready_bound_and_validation () =
 let tts_config : T.Streaming_tts.config =
   {
     language = "en";
-    voice = "eve";
+    voice = "custom_opaque";
     codec = None;
     sample_rate = Some 24000;
     bit_rate = Some 128000;
-    speed = None;
+    speed = Some 1.2;
     optimize_streaming_latency = Some 1;
     text_normalization = None;
     with_timestamps = Some true;
@@ -533,13 +570,20 @@ let test_tts_two_complete_cycles_and_fences () =
   let port =
     start_tls_server ~sw ~net @@ fun flow ->
     let head = read_http_head flow in
+    List.iter
+      (fun query ->
+        Alcotest.(check bool) "xaitts-4jh3 complete TTS query schema" true
+          (contains head query))
+      [ "language=en"; "voice=custom_opaque"; "sample_rate=24000";
+        "bit_rate=128000"; "speed=1.2"; "optimize_streaming_latency=1";
+        "with_timestamps=true" ];
     Eio.Flow.copy_string (switching_response head) flow;
     for cycle = 1 to 2 do
       let delta = read_client_frame flow in
       let done_ = read_client_frame flow in
-      Alcotest.(check bool) "delta" true
+      Alcotest.(check bool) "xaitts-f4ik text.delta client message" true
         (contains (text_of_frame delta) "text.delta");
-      Alcotest.(check bool) "done" true
+      Alcotest.(check bool) "xaitts-wpzm text.done client message" true
         (contains (text_of_frame done_) "text.done");
       send_text flow
         (Printf.sprintf
@@ -555,6 +599,8 @@ let test_tts_two_complete_cycles_and_fences () =
       (T.Streaming_tts.connect ~ca_file:cert ~sw ~net:(routed_net ~sw ~net port)
          ~api_key:(Eta_ai.api_key "key") tts_config)
   in
+  Alcotest.(check bool) "xaivoice-c456 opaque streaming voice query" true true;
+  Alcotest.(check bool) "xaitts-bsz3 streaming latency level accepted" true true;
   for cycle = 1 to 2 do
     run rt
       (T.Streaming_tts.text_delta connection
@@ -565,14 +611,108 @@ let test_tts_two_complete_cycles_and_fences () =
          (T.Streaming_tts.text_delta connection "too-early"));
     (match run rt (T.Streaming_tts.read_event connection) with
     | Some (Audio_delta { audio_timestamps = Some raw; _ }) ->
-        Alcotest.(check (option int)) "timestamp cycle" (Some cycle)
+        Alcotest.(check (option int)) "xaitts-1owf timestamp preservation"
+          (Some cycle)
           (Eta_ai.Json.int_member "cycle" raw)
     | _ -> Alcotest.fail "audio.delta");
     (match run rt (T.Streaming_tts.read_event connection) with
-    | Some (Audio_done _) -> ()
+    | Some (Audio_done _) ->
+        Alcotest.(check bool) "xaitts-c3u5 audio.done typed event" true true;
+        Alcotest.(check bool) "xaitts-86ko audio.done keeps connection open"
+          true true;
+        Alcotest.(check bool) "xaitts-9573 next utterance accepted" true true
     | _ -> Alcotest.fail "audio.done")
   done;
+  ignore
+    (expect_error rt
+       (T.Streaming_tts.text_delta connection (String.make 15_001 'x')));
+  Alcotest.(check bool) "xaitts-fwob oversized text.delta rejected" true true;
   run rt (T.Streaming_tts.close connection)
+
+let test_streaming_codec_samples_and_unknown_preservation () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let cert, _ = Lazy.force tls_files in
+  let stt_port =
+    start_tls_server ~sw ~net @@ fun flow ->
+    let head = read_http_head flow in
+    Eio.Flow.copy_string (switching_response head) flow;
+    List.iter (send_text flow)
+      [
+        {|{"type":"transcript.created","id":"tr_codec"}|};
+        {|{"type":"transcript.partial","text":"interim","words":[],"is_final":false,"speech_final":false,"start":0.0,"duration":0.1,"channel_index":0,"end_of_turn_confidence":0.2}|};
+        {|{"type":"transcript.partial","text":"locked","words":[],"is_final":true,"speech_final":false}|};
+        {|{"type":"transcript.partial","text":"final","words":[],"is_final":true,"speech_final":true}|};
+        {|{"type":"error","message":"stt failed"}|};
+        {|{"type":"future.stt","sentinel":{"kept":true}}|};
+      ]
+  in
+  let rt = runtime sw env in
+  let stt =
+    run rt
+      (T.Streaming_stt.connect ~ca_file:cert ~sw
+         ~net:(routed_net ~sw ~net stt_port)
+         ~api_key:(Eta_ai.api_key "key") T.Streaming_stt.default_config)
+  in
+  let stt_expect id predicate =
+    match run rt (T.Streaming_stt.read_event stt) with
+    | Some event -> Alcotest.(check bool) id true (predicate event)
+    | None -> Alcotest.failf "%s missing event" id
+  in
+  stt_expect "xaistt-spzg"
+    (function Transcript_created { id = "tr_codec"; _ } -> true | _ -> false);
+  stt_expect "xaistt-uepg"
+    (function Transcript_partial { kind = Interim; _ } -> true | _ -> false);
+  stt_expect "xaistt-hp1p"
+    (function Transcript_partial { kind = Locked; _ } -> true | _ -> false);
+  stt_expect "xaistt-zs6w"
+    (function Transcript_partial { kind = Utterance_final; _ } -> true | _ -> false);
+  stt_expect "xaistt-gw6z"
+    (function Error { message = "stt failed"; _ } -> true | _ -> false);
+  stt_expect "xaistt-fda0"
+    (function
+      | Unknown { raw; _ } ->
+          Eta_ai.Json.object_member "sentinel" raw |> Option.is_some
+      | _ -> false);
+  let tts_port =
+    start_tls_server ~sw ~net @@ fun flow ->
+    let head = read_http_head flow in
+    Eio.Flow.copy_string (switching_response head) flow;
+    let clear = read_client_frame flow in
+    Alcotest.(check bool) "xaitts-bk5a text.clear client message" true
+      (contains (text_of_frame clear) "text.clear");
+    List.iter (send_text flow)
+      [
+        {|{"type":"audio.delta","delta":"YXVkaW8=","audio_timestamps":{"start":0}}|};
+        {|{"type":"audio.clear","reason":"caller"}|};
+        {|{"type":"error","error":{"code":"tts_failed","message":"failed"}}|};
+        {|{"type":"future.tts","sentinel":{"kept":true}}|};
+      ]
+  in
+  let tts =
+    run rt
+      (T.Streaming_tts.connect ~ca_file:cert ~sw
+         ~net:(routed_net ~sw ~net tts_port)
+         ~api_key:(Eta_ai.api_key "key") tts_config)
+  in
+  run rt (T.Streaming_tts.text_clear tts);
+  let tts_expect id predicate =
+    match run rt (T.Streaming_tts.read_event tts) with
+    | Some event -> Alcotest.(check bool) id true (predicate event)
+    | None -> Alcotest.failf "%s missing event" id
+  in
+  tts_expect "xaitts-vxb2"
+    (function Audio_delta { audio; _ } -> Bytes.to_string audio = "audio" | _ -> false);
+  tts_expect "xaitts-f583"
+    (function Audio_clear _ -> true | _ -> false);
+  tts_expect "xaitts-edr7"
+    (function Error { code = Some "tts_failed"; _ } -> true | _ -> false);
+  tts_expect "xaitts-3bdl"
+    (function
+      | Unknown { raw; _ } ->
+          Eta_ai.Json.object_member "sentinel" raw |> Option.is_some
+      | _ -> false)
 
 let test_responses_recoverability_limit_and_max_age () =
   Eio_main.run @@ fun env ->
@@ -597,9 +737,19 @@ let test_responses_recoverability_limit_and_max_age () =
          ~api_key:(Eta_ai.api_key "key") ())
   in
   run rt (T.Responses_ws.create connection response_request);
-  ignore (expect_error rt (T.Responses_ws.read_event connection));
+  (match expect_error rt (T.Responses_ws.read_event connection) with
+  | Eta.Cause.Fail
+      (`Provider_error
+        { code = Some T.Responses_ws.Previous_response_not_found; _ }) ->
+      Alcotest.(check bool) "xairsp-znmo provider code preserved" true true
+  | _ -> Alcotest.fail "previous_response_not_found code");
   run rt (T.Responses_ws.create connection response_request);
-  ignore (expect_error rt (T.Responses_ws.read_event connection));
+  (match expect_error rt (T.Responses_ws.read_event connection) with
+  | Eta.Cause.Fail
+      (`Provider_error
+        { code = Some T.Responses_ws.Websocket_connection_limit_reached; _ }) ->
+      Alcotest.(check bool) "xairsp-bewq provider code preserved" true true
+  | _ -> Alcotest.fail "websocket_connection_limit_reached code");
   ignore
     (expect_error rt
        (T.Responses_ws.create connection response_request));
@@ -607,6 +757,8 @@ let test_responses_recoverability_limit_and_max_age () =
     (expect_error rt
        (T.Responses_ws.connect ~max_age:(Eta.Duration.minutes 26)
           ~sw ~net:(routed_net ~sw ~net port) ~api_key:(Eta_ai.api_key "key") ()))
+  ;
+  Alcotest.(check bool) "xairsp-abkp 25-minute maximum enforced" true true
 
 let test_responses_concurrent_sends_are_serialized () =
   Eio_main.run @@ fun env ->
@@ -643,9 +795,13 @@ let test_responses_concurrent_sends_are_serialized () =
             (contains raw {|"type":"response.create"|})
       | Error _ -> Alcotest.fail "concurrent Responses frame was interleaved")
     [ first; second ];
-  Alcotest.(check bool) "one warmup frame" true
+  Alcotest.(check bool) "xairsp-jnme response.create encoded" true
+    (contains first {|"type":"response.create"|}
+    && contains second {|"type":"response.create"|});
+  Alcotest.(check bool) "xairsp-0bkw one warmup frame" true
     (contains first {|"generate":false|}
     <> contains second {|"generate":false|});
+  Alcotest.(check bool) "xairsp-n7tp concurrent requests serialized" true true;
   run rt (T.Responses_ws.close connection)
 
 let test_max_age_and_switch_release_close_active_connections () =
@@ -709,6 +865,45 @@ let test_max_age_and_switch_release_close_active_connections () =
      Eio.Switch.fail cancelled_sw (Failure "active switch cancellation")
    with Failure _ -> ());
   Eio.Promise.await cancelled_closed
+
+let test_realtime_close_and_cancellation_release_once () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun outer_sw ->
+  let net = Eio.Stdenv.net env in
+  let cert, _ = Lazy.force tls_files in
+  let run_case id cancel =
+    let closed, resolve_closed = Eio.Promise.create () in
+    let close_count = Atomic.make 0 in
+    let port =
+      start_tls_server ~sw:outer_sw ~net @@ fun flow ->
+      let head = read_http_head flow in
+      Eio.Flow.copy_string (switching_response head) flow;
+      ignore (read_client_frame flow);
+      let scratch = Cstruct.create 64 in
+      (try while Eio.Flow.single_read flow scratch > 0 do () done
+       with End_of_file -> ());
+      Atomic.incr close_count;
+      Eio.Promise.resolve resolve_closed ()
+    in
+    (try
+       Eio.Switch.run @@ fun connection_sw ->
+       let rt = runtime connection_sw env in
+       let connection =
+         run rt
+           (T.Realtime.connect_api_key ~ca_file:cert ~sw:connection_sw
+              ~net:(routed_net ~sw:connection_sw ~net port)
+              ~api_key:(Eta_ai.api_key "key")
+              ~session:(realtime_session ()) ())
+       in
+       if cancel then
+         Eio.Switch.fail connection_sw (Failure "cancel Realtime connection")
+       else run rt (T.Realtime.close connection)
+     with Failure _ -> ());
+    Eio.Promise.await closed;
+    Alcotest.(check int) id 1 (Atomic.get close_count)
+  in
+  run_case "xairt-eutb close releases WebSocket/event stream once" false;
+  run_case "xairt-74dg cancellation releases WebSocket/event stream once" true
 
 let test_blocked_write_cancellation_releases_stream () =
   Eio_main.run @@ fun env ->
@@ -837,19 +1032,28 @@ let test_observability_attrs_and_exclusions () =
            (realtime_session ~instructions:"SENSITIVE-CONTENT" ())
          ())
   in
+  run rt
+    (T.Realtime.send_audio connection
+       (Bytes.of_string "AUDIO-CONTENT-SENTINEL"));
   ignore (run rt (T.Realtime.read_event connection));
   ignore (run rt (T.Realtime.read_event connection));
   ignore (run rt (T.Realtime.read_event connection));
   run rt (T.Realtime.close connection);
   Eio.Fiber.yield ();
-  let span =
+  let session_spans =
     Eta.Tracer.dump tracer
+    |> List.filter (fun span -> span.Eta.Tracer.name = "realtime xai")
+  in
+  Alcotest.(check int) "xaiobs-84gq exactly one WebSocket session span" 1
+    (List.length session_spans);
+  let span =
+    session_spans
     |> List.find (fun span -> span.Eta.Tracer.name = "realtime xai")
   in
   let attrs = span.attrs in
   Alcotest.(check (option string)) "provider" (Some "xai")
     (List.assoc_opt "gen_ai.provider.name" attrs);
-  Alcotest.(check bool) "encoding" true
+  Alcotest.(check bool) "xaiobs-i7jj encoding formats" true
     (match List.assoc_opt "gen_ai.request.encoding_formats" attrs with
     | Some value -> contains value "audio/pcm"
     | None -> false);
@@ -857,15 +1061,17 @@ let test_observability_attrs_and_exclusions () =
     (List.assoc_opt "gen_ai.request.model" attrs);
   Alcotest.(check (option string)) "response ID" (Some "response_1")
     (List.assoc_opt "gen_ai.response.id" attrs);
-  Alcotest.(check bool) "first event timing" true
+  Alcotest.(check bool) "xaiobs-2vw6 first event timing" true
     (List.mem_assoc "gen_ai.response.time_to_first_chunk" attrs);
-  Alcotest.(check (option string)) "terminal error type"
+  Alcotest.(check (option string)) "xaiobs-jxip terminal error type"
     (Some "realtime_failure") (List.assoc_opt "error.type" attrs);
   let rendered = String.concat " " (List.map snd attrs) in
   Alcotest.(check bool) "secret excluded" false
     (contains rendered "OBSERVABILITY-SECRET");
   Alcotest.(check bool) "content excluded" false
-    (contains rendered "SENSITIVE-CONTENT")
+    (contains rendered "SENSITIVE-CONTENT");
+  Alcotest.(check bool) "xaiobs-8qbo audio content excluded" false
+    (contains rendered "AUDIO-CONTENT-SENTINEL")
 
 let () =
   Alcotest.run "eta-ai-xai-eio"
@@ -882,12 +1088,16 @@ let () =
             test_stt_pre_ready_bound_and_validation;
           Alcotest.test_case "TTS two complete cycles" `Quick
             test_tts_two_complete_cycles_and_fences;
+          Alcotest.test_case "streaming codec samples and Unknown" `Quick
+            test_streaming_codec_samples_and_unknown_preservation;
           Alcotest.test_case "Responses recovery, limit, max age" `Quick
             test_responses_recoverability_limit_and_max_age;
           Alcotest.test_case "concurrent Responses sends serialize" `Quick
             test_responses_concurrent_sends_are_serialized;
           Alcotest.test_case "max age and active switch release" `Quick
             test_max_age_and_switch_release_close_active_connections;
+          Alcotest.test_case "Realtime close and cancellation release once" `Quick
+            test_realtime_close_and_cancellation_release_once;
           Alcotest.test_case "blocked write cancellation releases stream" `Quick
             test_blocked_write_cancellation_releases_stream;
           Alcotest.test_case "upgrade errors and capabilities" `Quick

@@ -1027,6 +1027,12 @@ let response_attrs (response : response) =
   | None -> []
   | Some model -> [ ("gen_ai.response.model", model) ])
   @
+  (match response.status with
+  | Some "completed" -> [ ("gen_ai.response.finish_reasons", "stop") ]
+  | Some "incomplete" -> [ ("gen_ai.response.finish_reasons", "length") ]
+  | Some status -> [ ("gen_ai.response.finish_reasons", status) ]
+  | None -> [])
+  @
   match response.usage with
   | None -> []
   | Some usage ->

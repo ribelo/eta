@@ -1,0 +1,5 @@
+# requirement-id	path	registered Alcotest case
+xairsp-0eyc	test/ai/openai/openai_common_suites.ml	xairsp-0eyc/2a4x distinct request
+xairsp-2a4x	test/ai/openai/openai_common_suites.ml	xairsp-0eyc/2a4x distinct request
+airealtime-02ky	test/ai/openai/openai_common_suites.ml	airealtime shared codec contract
+airealtime-nfad	test/ai/openai/openai_common_suites.ml	airealtime-nfad transport lifecycle

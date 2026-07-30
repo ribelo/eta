@@ -549,6 +549,16 @@ type server_event =
       delta : string option;
       raw : A.Json.t;
     }
+  | Response_function_call_arguments_done of {
+      event_id : string option;
+      response_id : string option;
+      item_id : string option;
+      output_index : int option;
+      call_id : string;
+      name : string;
+      arguments : string;
+      raw : A.Json.t;
+    }
   | Response_done of A.Json.t
   | Dtmf_event_received of A.Json.t
   | Error of server_error
@@ -617,6 +627,29 @@ let decode_json_event json =
       Ok
         (Response_output_text_delta
            { delta = Json.string_member "delta" json; raw = json })
+  | Some "response.function_call_arguments.done" -> (
+      match
+        ( Json.string_member "call_id" json,
+          Json.string_member "name" json,
+          Json.string_member "arguments" json )
+      with
+      | Some call_id, Some name, Some arguments ->
+          Ok
+            (Response_function_call_arguments_done
+               {
+                 event_id = Json.string_member "event_id" json;
+                 response_id = Json.string_member "response_id" json;
+                 item_id = Json.string_member "item_id" json;
+                 output_index = Json.int_member "output_index" json;
+                 call_id;
+                 name;
+                 arguments;
+                 raw = json;
+               })
+      | _ ->
+          Error
+            (Invalid_json
+               "response.function_call_arguments.done requires call_id, name, and arguments"))
   | Some "response.done" -> Ok (Response_done json)
   | Some "input_audio_buffer.dtmf_event_received" ->
       Ok (Dtmf_event_received json)

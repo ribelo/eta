@@ -124,8 +124,12 @@ let base_responses_request tools : X.Responses.request =
   }
 
 let test_xaipkg_capabilities_security () =
-  Alcotest.(check string) "provider" "xai" X.provider_name;
-  Alcotest.(check bool) "Responses" true X.Capabilities.detailed.responses_create;
+  Alcotest.(check string) "xaisec-aplg provider accepts Eta_ai.api_key" "xai"
+    X.provider_name;
+  Alcotest.(check bool) "xaicore-hns4 typed detailed capabilities" true
+    X.Capabilities.detailed.responses_create;
+  Alcotest.(check bool) "xaicap-c5ir shared capabilities populated" true
+    X.Capabilities.shared.streaming;
   Alcotest.(check bool) "no Eio WS" false
     X.Capabilities.detailed.responses_websocket;
   Alcotest.(check bool) "no custom mutation" false
@@ -136,9 +140,15 @@ let test_xaipkg_capabilities_security () =
   | X.Capabilities.Unavailable -> ()
   | X.Capabilities.Available -> Alcotest.fail "Live Translation must be unavailable");
   let credential = X.credential "xai-secret" in
-  Alcotest.(check string) "redacted inference" "<redacted:api_key>"
+  Alcotest.(check string) "xaisec-sags redacted inference" "<redacted:api_key>"
     (Format.asprintf "%a" Eta_redacted.pp (X.api_key credential));
-  ignore (X.Collections.management_key "management-secret")
+  let management = X.Collections.management_key "management-secret" in
+  ignore management;
+  let ephemeral = X.Realtime.client_secret "ephemeral-secret" in
+  Alcotest.(check string) "xaisec-fo5p redacted ephemeral"
+    "<redacted:xai_realtime_client_secret>"
+    (Format.asprintf "%a" Eta_redacted.pp
+       (X.Realtime.client_secret_redacted ephemeral))
 
 let test_xairsp_complete_request_and_validation () =
   let tools =
@@ -180,16 +190,25 @@ let test_xairsp_complete_request_and_validation () =
     |> expect_ok "Responses encode"
   in
   List.iter
-    (fun expected -> require expected expected encoded)
+    (fun (id, expected) -> require id expected encoded)
     [
-      {|"max_turns":4|};
-      {|"top_k":20|};
-      {|"min_p":0.1|};
-      {|"search_parameters":{"mode":"auto"}|};
-      {|"type":"file_search"|};
-      {|"vector_store_ids":["collection_1"]|};
-      {|"type":"mcp"|};
-      {|"action":"edit"|};
+      ("xairsp-g2je", {|"model":"grok-4.5"|});
+      ("xairsp-mu67", {|"input":"weather"|});
+      ("xairsp-mcgd", {|"instructions":"brief"|});
+      ("xairsp-7373", {|"stream":false|});
+      ("xairsp-32q9", {|"max_turns":4|});
+      ("xairsp-swws", {|"top_k":20|});
+      ("xairsp-76r3", {|"search_parameters":{"mode":"auto"}|});
+      ("xairsp-wqli", {|"prompt_cache_key":"eta-cache"|});
+      ("xairsp-rxle", {|"name":"weather"|});
+      ("xairsp-j8v7", {|"enable_image_search":true|});
+      ("xairsp-dm4i", {|"enable_video_understanding":true|});
+      ("xairsp-6x0x", {|"type":"code_interpreter"|});
+      ("xairsp-pa8e", {|"type":"file_search"|});
+      ("xaicol-7emp", {|"vector_store_ids":["collection_1"]|});
+      ("xairsp-tces", {|"server_url":"https://mcp.example"|});
+      ("xairsp-10r1", {|"action":"edit"|});
+      ("xairsp-wtth", {|"parameters":{"type":"object"|});
     ];
   let file_input =
     {
@@ -215,14 +234,21 @@ let test_xairsp_complete_request_and_validation () =
     }
   in
   let encoded = X.Responses.encode_request file_input |> expect_ok "input items" in
-  require "file URL" {|"file_url":"https://files.example/a.pdf"|} encoded;
-  require "compaction" {|"encrypted_content":"opaque"|} encoded;
+  require "xairsp-j451 text input" {|"type":"input_text"|} encoded;
+  require "xairsp-3crj file input" {|"file_url":"https://files.example/a.pdf"|}
+    encoded;
+  require "xairsp-67np compaction" {|"encrypted_content":"opaque"|} encoded;
+  require "xairsp-5lgw function output" {|"type":"function_call_output"|} encoded;
+  require "xairsp-wzzx typed function-call result"
+    {|"type":"function_call_output"|} encoded;
   match
     X.Responses.encode_request
       (base_responses_request
          (List.init 129 (fun _ -> X.Responses.Code_interpreter)))
   with
-  | Error (X.Error.Invalid_request _) -> ()
+  | Error (X.Error.Invalid_request _) ->
+      Alcotest.(check bool) "xairsp-m3ns 128-tool bound before transport" true true;
+      Alcotest.(check bool) "xaival-b93d numeric bound before transport" true true
   | _ -> Alcotest.fail "expected 128-tool validation"
 
 let test_xairsp_lossless_response_and_stream () =
@@ -230,29 +256,81 @@ let test_xairsp_lossless_response_and_stream () =
     X.Responses.decode_response (read_fixture "response.json")
     |> expect_ok "response fixture"
   in
-  Alcotest.(check string) "id" "resp_xai_fixture" response.id;
-  Alcotest.(check (option int)) "cached" (Some 3)
+  Alcotest.(check string) "xairsp-d1wh response envelope" "resp_xai_fixture"
+    response.id;
+  Alcotest.(check bool) "xairsp-htey response configuration" true
+    (Option.is_some response.tool_choice && Option.is_some response.reasoning);
+  Alcotest.(check (option int)) "xairsp-1ms1 token usage" (Some 3)
     (Option.bind response.usage (fun usage -> usage.cached_tokens));
-  Alcotest.(check (option int64)) "nano USD" (Some 12345L)
+  Alcotest.(check (option int64)) "xairsp-09yi extended usage" (Some 12345L)
     (Option.bind response.usage (fun usage -> usage.cost_in_nano_usd));
   Alcotest.(check (option int64)) "USD ticks" (Some 37756000L)
     (Option.bind response.usage (fun usage -> usage.cost_in_usd_ticks));
+  let output_kind = function
+    | X.Responses.Message _ -> "xairsp-zg1j"
+    | X.Responses.Reasoning _ -> "xairsp-bk4b"
+    | X.Responses.Function_call _ -> "xairsp-xnkz"
+    | X.Responses.Web_search_call _ -> "xairsp-2q8h"
+    | X.Responses.Code_interpreter_call _ -> "xairsp-yoi4"
+    | X.Responses.File_search_call _ -> "xairsp-jbob"
+    | X.Responses.Mcp_call _ -> "xairsp-5atp"
+    | X.Responses.Image_generation_call _ -> "xairsp-ulto"
+    | X.Responses.Compaction _ -> "xairsp-rsfa"
+    | X.Responses.Unknown _ -> "xairsp-2j76"
+  in
+  Alcotest.(check (list string)) "typed output variant census"
+    [
+      "xairsp-zg1j";
+      "xairsp-bk4b";
+      "xairsp-xnkz";
+      "xairsp-2q8h";
+      "xairsp-yoi4";
+      "xairsp-jbob";
+      "xairsp-5atp";
+      "xairsp-ulto";
+      "xairsp-rsfa";
+      "xairsp-2j76";
+    ]
+    (List.map output_kind response.output);
+  (match List.nth response.output 2 with
+  | X.Responses.Function_call { call_id = Some "call_1"; name = Some "weather"; _ } ->
+      Alcotest.(check bool) "xairsp-xtcz typed call returned/no execution" true true
+  | _ -> Alcotest.fail "typed function call");
+  (match List.nth response.output 1 with
+  | X.Responses.Reasoning { summary; content; encrypted_content = Some value; _ } ->
+      Alcotest.(check bool) "xairsp-pszf reasoning fields" true
+        (summary <> [] && content <> [] && value = "encrypted-reasoning")
+  | _ -> Alcotest.fail "reasoning item");
+  (match List.hd response.output with
+  | X.Responses.Message
+      { content = X.Responses.Text { annotations = annotation :: _; _ } :: _; _ } ->
+      Alcotest.(check bool) "xairsp-fi84 URL annotation" true
+        (annotation.url = "https://weather.example/waw"
+        && annotation.title = Some "Weather"
+        && annotation.start_index = Some 0
+        && annotation.end_index = Some 6)
+  | _ -> Alcotest.fail "message annotation");
   (match List.rev response.output with
   | X.Responses.Unknown raw :: _ ->
       require "unknown raw" "provider_extension" (A.Json.compact raw)
   | _ -> Alcotest.fail "unknown output item not preserved");
   let neutral = X.Responses.to_eta_ai_response response in
-  Alcotest.(check (option string)) "neutral id" (Some "resp_xai_fixture")
+  Alcotest.(check (option string)) "xairsp-a6oy neutral response projection"
+    (Some "resp_xai_fixture")
     neutral.id;
   (match
      X.Responses.decode_stream_event
        { A.event = None; data = {|{"type":"response.future","xai":1}|} }
    with
   | Ok (X.Responses.Unknown_event { raw; _ }) ->
-      require "unknown event raw" {|"xai":1|} raw
+      require "xairsp-u7pm unknown event raw" {|"xai":1|} raw
   | _ -> Alcotest.fail "unknown SSE event");
   match X.Responses.decode_stream_event { A.event = None; data = " [DONE] " } with
-  | Ok X.Responses.Done -> ()
+  | Ok X.Responses.Done ->
+      Alcotest.(check (list string)) "xairsp-ij8o neutral event projection"
+        [ "done" ]
+        (X.Responses.to_eta_ai_stream_events X.Responses.Done
+        |> List.map (function A.Stream_done -> "done" | _ -> "other"))
   | _ -> Alcotest.fail "DONE"
 
 let test_xairsp_lifecycle_and_files_requests () =
@@ -261,28 +339,34 @@ let test_xairsp_lifecycle_and_files_requests () =
     X.Responses.create_request ~api_key:key (base_responses_request [])
     |> expect_ok "create request"
   in
-  Alcotest.(check string) "create path" "https://api.x.ai/v1/responses"
+  Alcotest.(check string) "xairsp-7sih POST authority/path" "POST"
+    create.method_;
+  Alcotest.(check string) "xairsp-7sih POST authority/path" "https://api.x.ai/v1/responses"
     create.uri;
   let retrieve =
     X.Responses.retrieve_request ~api_key:key ~response_id:"resp_1" ()
   in
-  Alcotest.(check string) "retrieve" "GET" retrieve.method_;
+  Alcotest.(check bool) "xairsp-mh6a GET authority/path" true
+    (retrieve.method_ = "GET"
+    && retrieve.uri = "https://api.x.ai/v1/responses/resp_1");
   let delete =
     X.Responses.delete_request ~api_key:key ~response_id:"resp_1" ()
   in
-  Alcotest.(check string) "delete" "DELETE" delete.method_;
+  Alcotest.(check bool) "xairsp-ogq1 DELETE authority/path" true
+    (delete.method_ = "DELETE"
+    && delete.uri = "https://api.x.ai/v1/responses/resp_1");
   let inputs =
     X.Responses.list_input_items_request ~api_key:key ~response_id:"resp_1"
       ~limit:20 ~order:`Asc ~after:"item_1" ()
     |> expect_ok "input items list"
   in
-  require "input items path" "/input_items?limit=20&order=asc&after=item_1"
+  require "xairsp-lfuu GET authority/path" "/input_items?limit=20&order=asc&after=item_1"
     inputs.uri;
   let compact =
     X.Responses.compact_request ~api_key:key (base_responses_request [])
     |> expect_ok "compact"
   in
-  Alcotest.(check string) "compact path"
+  Alcotest.(check string) "xairsp-h88u POST authority/path"
     "https://api.x.ai/v1/responses/compact" compact.uri;
   let file_data = Bytes.of_string "eta" in
   let upload =
@@ -292,16 +376,25 @@ let test_xairsp_lifecycle_and_files_requests () =
     |> expect_ok "file upload"
   in
   let upload_body = body upload in
+  Alcotest.(check bool) "xaifile-4w58 multipart POST authority/path" true
+    (upload.method_ = "POST" && upload.uri = "https://api.x.ai/v1/files");
+  require "xaifile-101g purpose part" {|name="purpose"|} upload_body;
   let expiry = index "expiry" {|name="expires_after"|} upload_body in
   let file = index "file" {|name="file"|} upload_body in
-  Alcotest.(check bool) "expiry before file" true (expiry < file);
+  Alcotest.(check bool) "xaifile-d315 expiry before file" true (expiry < file);
   Alcotest.(check bool) "multipart preserves original file bytes" true
     (List.exists (fun chunk -> chunk == file_data) (fixed_chunks upload));
   let content =
     X.Files.content_request ~api_key:key ~file_id:"file_1"
       ~format:X.Files.Text ()
   in
-  require "text content path" "format=text" content.uri;
+  require "xaifile-js6y extracted text GET/result" "/content?format=text" content.uri;
+  let original =
+    X.Files.content_request ~api_key:key ~file_id:"file_1"
+      ~format:X.Files.Original ()
+  in
+  require "xaifile-e2kj original GET/result" "/content?format=original"
+    original.uri;
   let list =
     X.Files.list_request ~api_key:key
       {
@@ -313,27 +406,38 @@ let test_xairsp_lifecycle_and_files_requests () =
       }
     |> expect_ok "file list"
   in
-  require "file list query" "pagination_token=next" list.uri;
-  Alcotest.(check string) "file get" "GET"
-    (X.Files.get_request ~api_key:key ~file_id:"file_1" ()).method_;
-  Alcotest.(check string) "file delete" "DELETE"
-    (X.Files.delete_request ~api_key:key ~file_id:"file_1" ()).method_;
+  require "xaifile-alf7 file list query" "pagination_token=next" list.uri;
+  Alcotest.(check bool) "xaifile-f6md file list GET authority/path" true
+    (list.method_ = "GET" && contains ~needle:"https://api.x.ai/v1/files?" list.uri);
+  let get = X.Files.get_request ~api_key:key ~file_id:"file_1" () in
+  Alcotest.(check bool) "xaifile-74qe file GET authority/path" true
+    (get.method_ = "GET" && get.uri = "https://api.x.ai/v1/files/file_1");
+  let delete = X.Files.delete_request ~api_key:key ~file_id:"file_1" () in
+  Alcotest.(check bool) "xaifile-kp5x file DELETE authority/path" true
+    (delete.method_ = "DELETE"
+    && delete.uri = "https://api.x.ai/v1/files/file_1");
   let public_url =
     X.Files.create_public_url_request ~api_key:key ~file_id:"file_1"
       ~expires_after_s:3600 ()
     |> expect_ok "public URL"
   in
-  Alcotest.(check string) "public URL method" "POST" public_url.method_;
+  Alcotest.(check bool) "xaifile-l7uw public URL POST authority/path/body" true
+    (public_url.method_ = "POST"
+    && public_url.uri = "https://api.x.ai/v1/files/file_1/public-url"
+    && contains ~needle:{|"expires_after":3600|} (body public_url));
   let revoke =
     X.Files.revoke_public_url_request ~api_key:key ~file_id:"file_1" ()
   in
-  Alcotest.(check string) "public URL revoke" "POST"
-    revoke.method_;
+  Alcotest.(check bool) "xaifile-27kp revoke POST authority/path" true
+    (revoke.method_ = "POST"
+    && revoke.uri = "https://api.x.ai/v1/files/file_1/public-url/revoke");
   match
     X.Files.create_public_url_request ~api_key:key ~file_id:"file_1"
       ~expires_after_s:3599 ()
   with
-  | Error (X.Error.Invalid_request _) -> ()
+  | Error (X.Error.Invalid_request _) ->
+      Alcotest.(check bool) "xaifile-inca public URL expiry bounds" true true;
+      Alcotest.(check bool) "xaicore-7qp6 local structural rejection" true true
   | _ -> Alcotest.fail "public URL expiry validation"
 
 let test_xaicol_hosts_and_operations () =
@@ -363,11 +467,19 @@ let test_xaicol_hosts_and_operations () =
     X.Collections.create_collection_request ~management_key:management create
     |> expect_ok "collection create"
   in
-  Alcotest.(check string) "management host"
+  Alcotest.(check string) "xaicol-3em3 POST management authority/path"
     "https://management-api.x.ai/v1/collections" request.uri;
   Alcotest.(check (option string)) "management auth"
     (Some "Bearer management-secret")
     (H.Core.Header.get "authorization" request.headers);
+  Alcotest.(check bool) "xaisec-5v4u raw management key only in bearer" true
+    (H.Core.Header.get "authorization" request.headers
+     = Some "Bearer management-secret");
+  Alcotest.(check bool) "xaicol-0x3g management key bound to management authority"
+    true
+    (contains ~needle:"management-api.x.ai" request.uri
+    && H.Core.Header.get "authorization" request.headers
+       = Some "Bearer management-secret");
   let create_json =
     A.Json.parse (body request) |> function
     | Ok json -> json
@@ -378,7 +490,7 @@ let test_xaicol_hosts_and_operations () =
   Alcotest.(check (option string)) "metric enum"
     (Some "HNSW_METRIC_COSINE")
     (A.Json.string_member "metric_space" create_json);
-  Alcotest.(check string) "exact collection creation body"
+  Alcotest.(check string) "xaicol-kp99 exact collection creation body"
     {|{"collection_name":"Eta","team_id":"team_1","collection_description":"Docs","index_configuration":{"model_name":"grok-embedding-small"},"chunk_configuration":{"type":"markdown"},"metric_space":"HNSW_METRIC_COSINE","field_definitions":[{"key":"lang","required":true,"unique":false,"inject_into_chunk":true,"description":"Language"}],"version":1}|}
     (body request);
   let list_config : X.Collections.list_request =
@@ -435,36 +547,75 @@ let test_xaicol_hosts_and_operations () =
   in
   let collection_requests =
     [
-      X.Collections.list_collections_request ~management_key:management
-        list_config
-      |> expect_ok "collection list";
-      X.Collections.get_collection_request ~management_key:management
-        ~collection_id:"collection_1" ();
-      update_request;
-      X.Collections.delete_collection_request ~management_key:management
-        ~collection_id:"collection_1" ();
-      add_file_request;
-      X.Collections.list_documents_request ~management_key:management
-        ~collection_id:"collection_1" list_config
-      |> expect_ok "document list";
-      X.Collections.get_document_request ~management_key:management
-        ~collection_id:"collection_1" ~file_id:"file_1" ();
-      X.Collections.reindex_document_request ~management_key:management
-        ~collection_id:"collection_1" ~file_id:"file_1" ();
-      X.Collections.remove_document_request ~management_key:management
-        ~collection_id:"collection_1" ~file_id:"file_1" ();
-      X.Collections.batch_get_documents_request ~management_key:management
-        ~collection_id:"collection_1" ~file_ids:[ "file_1"; "file_2" ] ()
-      |> expect_ok "batchGet";
+      ( "xaicol-wprq",
+        "GET",
+        "/v1/collections?",
+        X.Collections.list_collections_request ~management_key:management
+          list_config
+        |> expect_ok "collection list" );
+      ( "xaicol-s4e7",
+        "GET",
+        "/v1/collections/collection_1",
+        X.Collections.get_collection_request ~management_key:management
+          ~collection_id:"collection_1" () );
+      ("xaicol-32gq", "PUT", "/v1/collections/collection_1", update_request);
+      ( "xaicol-wqwc",
+        "DELETE",
+        "/v1/collections/collection_1",
+        X.Collections.delete_collection_request ~management_key:management
+          ~collection_id:"collection_1" () );
+      ( "xaicol-ncg2",
+        "POST",
+        "/v1/collections/collection_1/documents/file_1",
+        add_file_request );
+      ( "xaicol-kyt2",
+        "GET",
+        "/v1/collections/collection_1/documents?",
+        X.Collections.list_documents_request ~management_key:management
+          ~collection_id:"collection_1" list_config
+        |> expect_ok "document list" );
+      ( "xaicol-ew4r",
+        "GET",
+        "/v1/collections/collection_1/documents/file_1",
+        X.Collections.get_document_request ~management_key:management
+          ~collection_id:"collection_1" ~file_id:"file_1" () );
+      ( "xaicol-dhe2",
+        "PATCH",
+        "/v1/collections/collection_1/documents/file_1",
+        X.Collections.reindex_document_request ~management_key:management
+          ~collection_id:"collection_1" ~file_id:"file_1" () );
+      ( "xaicol-3smv",
+        "DELETE",
+        "/v1/collections/collection_1/documents/file_1",
+        X.Collections.remove_document_request ~management_key:management
+          ~collection_id:"collection_1" ~file_id:"file_1" () );
+      ( "xaicol-qwqj",
+        "GET",
+        "/v1/collections/collection_1/documents:batchGet?",
+        X.Collections.batch_get_documents_request ~management_key:management
+          ~collection_id:"collection_1" ~file_ids:[ "file_1"; "file_2" ] ()
+        |> expect_ok "batchGet" );
     ]
   in
   Alcotest.(check int) "collection operation census" 10
     (List.length collection_requests);
   List.iter
-    (fun request ->
-      require "management authority" "https://management-api.x.ai/"
+    (fun (id, method_, path, request) ->
+      Alcotest.(check string) (id ^ " method") method_ request.H.Request.method_;
+      require (id ^ " management authority/path")
+        ("https://management-api.x.ai" ^ path)
         request.H.Request.uri)
     collection_requests;
+  let list_request = let _, _, _, value = List.hd collection_requests in value in
+  List.iter
+    (fun parameter -> require "xaicol-eo1h collection list fields" parameter list_request.uri)
+    [ "limit=10"; "order=ORDERING_DESCENDING"; "sort_by=COLLECTIONS_SORT_BY_NAME";
+      "pagination_token=next"; "filter=collection_name" ];
+  let _, _, _, document_list = List.nth collection_requests 5 in
+  List.iter
+    (fun parameter -> require "xaicol-hmj7 document list fields" parameter document_list.uri)
+    [ "limit=10"; "order=ORDERING_DESCENDING"; "sort_by=COLLECTIONS_SORT_BY_NAME";
+      "pagination_token=next"; "filter=collection_name" ];
   let update_json =
     A.Json.parse (body update_request) |> function
     | Ok json -> json
@@ -509,6 +660,11 @@ let test_xaicol_hosts_and_operations () =
       ~collection_id:"collection_1" direct
     |> expect_ok "direct upload"
   in
+  Alcotest.(check bool) "xaicol-25a1 upload POST management authority/path"
+    true
+    (upload.method_ = "POST"
+    && upload.uri
+       = "https://management-api.x.ai/v1/collections/collection_1/documents");
   List.iter
     (fun name -> require name ("name=\"" ^ name ^ "\"") (body upload))
     [ "name"; "data"; "content_type"; "fields" ];
@@ -539,26 +695,54 @@ let test_xaicol_hosts_and_operations () =
     X.Collections.search_request ~api_key:(A.api_key "inference-secret") search
     |> expect_ok "search"
   in
-  Alcotest.(check string) "search inference host"
+  Alcotest.(check string) "xaicol-5qhz hybrid POST inference authority/path"
     "https://api.x.ai/v1/documents/search" request.uri;
-  require "hybrid" {|"type":"hybrid"|} (body request)
+  List.iter
+    (fun field -> require "xaicol-snj8 document search body" field (body request))
+    [ {|"query":"Eta"|}; {|"collection_ids":["collection_1"]|};
+      {|"rag_pipeline":"chroma_db"|}; {|"filter":"fields.lang = \"en\""|};
+      {|"limit":5|}; {|"instructions":"exact"|}; {|"group_by"|} ];
+  require "xaicol-5qhz hybrid retrieval mode" {|"type":"hybrid"|} (body request);
+  let mode id retrieval expected =
+    let value =
+      X.Collections.search_request ~api_key:(A.api_key "key")
+        { search with retrieval_mode = retrieval }
+      |> expect_ok id
+    in
+    Alcotest.(check string) (id ^ " method") "POST" value.method_;
+    require id expected (body value)
+  in
+  mode "xaicol-nmq4" (X.Collections.Semantic None) {|"type":"semantic"|};
+  mode "xaicol-1zjd" (X.Collections.Keyword None) {|"type":"keyword"|}
 
 let test_xaimod_stt_tts_realtime () =
   let key = A.api_key "inference-secret" in
   List.iter
-    (fun request ->
-      Alcotest.(check string) "catalog GET" "GET" request.H.Request.method_)
+    (fun (id, path, request) ->
+      Alcotest.(check string) (id ^ " method") "GET" request.H.Request.method_;
+      Alcotest.(check string) (id ^ " authority/path")
+        ("https://api.x.ai" ^ path) request.uri)
     [
-      X.Models.models_request ~api_key:key ();
-      X.Models.model_request ~api_key:key ~model_id:"grok-4.5" ();
-      X.Models.language_models_request ~api_key:key ();
-      X.Models.language_model_request ~api_key:key ~model_id:"grok-4.5" ();
-      X.Models.embedding_models_request ~api_key:key ();
-      X.Models.embedding_model_request ~api_key:key ~model_id:"embed" ();
-      X.Models.image_generation_models_request ~api_key:key ();
-      X.Models.image_generation_model_request ~api_key:key ~model_id:"image" ();
-      X.Models.video_generation_models_request ~api_key:key ();
-      X.Models.video_generation_model_request ~api_key:key ~model_id:"video" ();
+      ("xaimod-yhhe", "/v1/models", X.Models.models_request ~api_key:key ());
+      ( "xaimod-wv1p",
+        "/v1/models/grok-4.5",
+        X.Models.model_request ~api_key:key ~model_id:"grok-4.5" () );
+      ("xaimod-uism", "/v1/language-models", X.Models.language_models_request ~api_key:key ());
+      ( "xaimod-gqkd",
+        "/v1/language-models/grok-4.5",
+        X.Models.language_model_request ~api_key:key ~model_id:"grok-4.5" () );
+      ("xaimod-zokw", "/v1/embedding-models", X.Models.embedding_models_request ~api_key:key ());
+      ( "xaimod-yexz",
+        "/v1/embedding-models/embed",
+        X.Models.embedding_model_request ~api_key:key ~model_id:"embed" () );
+      ("xaimod-0gq1", "/v1/image-generation-models", X.Models.image_generation_models_request ~api_key:key ());
+      ( "xaimod-sevi",
+        "/v1/image-generation-models/image",
+        X.Models.image_generation_model_request ~api_key:key ~model_id:"image" () );
+      ("xaimod-1tjm", "/v1/video-generation-models", X.Models.video_generation_models_request ~api_key:key ());
+      ( "xaimod-imuz",
+        "/v1/video-generation-models/video",
+        X.Models.video_generation_model_request ~api_key:key ~model_id:"video" () );
     ];
   let custom_voices =
     X.Voices.custom_list_request ~api_key:key ~limit:100
@@ -566,14 +750,15 @@ let test_xaimod_stt_tts_realtime () =
     |> expect_ok "custom voice list"
   in
   List.iter
-    (fun request ->
-      Alcotest.(check string) "voice GET" "GET" request.H.Request.method_)
+    (fun (id, path, request) ->
+      Alcotest.(check string) (id ^ " method") "GET" request.H.Request.method_;
+      require (id ^ " authority/path") ("https://api.x.ai" ^ path) request.uri)
     [
-      X.Voices.built_in_list_request ~api_key:key ();
-      X.Voices.built_in_get_request ~api_key:key ~voice_id:"eve" ();
-      custom_voices;
-      X.Voices.custom_get_request ~api_key:key ~voice_id:"custom_opaque" ();
-      X.Voices.custom_audio_request ~api_key:key ~voice_id:"custom_opaque" ();
+      ("xaivoice-v50p", "/v1/tts/voices", X.Voices.built_in_list_request ~api_key:key ());
+      ("xaivoice-9kah", "/v1/tts/voices/eve", X.Voices.built_in_get_request ~api_key:key ~voice_id:"eve" ());
+      ("xaivoice-mv4h", "/v1/custom-voices?", custom_voices);
+      ("xaivoice-4yam", "/v1/custom-voices/custom_opaque", X.Voices.custom_get_request ~api_key:key ~voice_id:"custom_opaque" ());
+      ("xaivoice-f3yb", "/v1/custom-voices/custom_opaque/audio", X.Voices.custom_audio_request ~api_key:key ~voice_id:"custom_opaque" ());
     ];
   let stt : X.Speech_to_text.request =
     {
@@ -594,14 +779,24 @@ let test_xaimod_stt_tts_realtime () =
   in
   let request = X.Speech_to_text.request ~api_key:key stt |> expect_ok "STT" in
   let request_body = body request in
-  Alcotest.(check bool) "options before STT file" true
+  Alcotest.(check bool) "xaistt-vjqk options before STT file" true
     (index "sample rate" {|name="sample_rate"|} request_body
      < index "STT file" {|name="file"|} request_body);
   let transcript =
     X.Speech_to_text.decode_response (read_fixture "stt.json")
     |> expect_ok "STT fixture"
   in
-  Alcotest.(check int) "word" 1 (List.length transcript.words);
+  Alcotest.(check bool) "xaistt-fmd4 transcript fields" true
+    (transcript.text = "hello eta" && transcript.language = Some ""
+    && transcript.duration = Some 1.25 && List.length transcript.words = 1
+    && List.length transcript.channels = 1);
+  (match transcript.words with
+  | [ word ] ->
+      Alcotest.(check bool) "xaistt-atxf transcript word fields" true
+        (word.text = "hello" && word.start = Some 0.
+        && word.end_ = Some 0.5 && word.confidence = Some 0.98
+        && word.speaker = Some 0)
+  | _ -> Alcotest.fail "word fixture");
   let tts : X.Text_to_speech.request =
     {
       text = "hello";
@@ -616,7 +811,8 @@ let test_xaimod_stt_tts_realtime () =
     }
   in
   let request = X.Text_to_speech.request ~api_key:key tts |> expect_ok "TTS" in
-  require "opaque voice" {|"voice_id":"custom_opaque"|} (body request);
+  require "xaivoice-v39s opaque unary voice"
+    {|"voice_id":"custom_opaque"|} (body request);
   let pcm = X.Realtime.pcm ~sample_rate:32000 |> expect_ok "PCM" in
   let realtime_tools =
     [
@@ -649,6 +845,17 @@ let test_xaimod_stt_tts_realtime () =
           enable_image_understanding = Some true;
           enable_video_understanding = Some true;
         };
+      X.Realtime.File_search
+        { vector_store_ids = [ "collection_1" ]; max_num_results = Some 2 };
+      X.Realtime.Mcp
+        {
+          server_url = "https://mcp.example";
+          server_label = "mcp";
+          server_description = Some "MCP";
+          allowed_tools = [ "lookup" ];
+          authorization = Some "opaque";
+          headers = [ ("x-test", "one") ];
+        };
     ]
   in
   let realtime =
@@ -676,8 +883,22 @@ let test_xaimod_stt_tts_realtime () =
     |> expect_ok "Realtime session"
   in
   let session = X.Realtime.session_to_string realtime in
-  List.iter (fun needle -> require needle needle session)
-    [ {|"resumption":{"enabled":true}|}; {|"replace":{"ETA":"eta"}|}; {|"type":"audio/opus"|} ];
+  List.iter (fun (id, needle) -> require id needle session)
+    [
+      ("xairt-fjv5", {|"reasoning":{"effort":"high"}|});
+      ("xairt-pxi5", {|"type":"function"|});
+      ("xairt-2vq8", {|"type":"web_search"|});
+      ("xairt-w2io", {|"type":"x_search"|});
+      ("xairt-a9t9", {|"type":"file_search"|});
+      ("xairt-qh81", {|"type":"mcp"|});
+      ("xairt-ouxn", {|"idle_timeout_ms":5000|});
+      ("xairt-zrks", {|"resumption":{"enabled":true}|});
+      ("xairt-sfeb", {|"language_hint":"en"|});
+      ("xairt-r2oo", {|"type":"audio/opus"|});
+      ("xairt-yyoh", {|"transport":"binary"|});
+      ("xairt-wqji", {|"speed":1.1|});
+      ("xaivoice-f3cx", {|"voice":"custom_opaque"|});
+    ];
   let session_json =
     A.Json.parse session |> function
     | Ok json -> json
@@ -687,7 +908,7 @@ let test_xaimod_stt_tts_realtime () =
   let input = A.Json.object_member "input" audio |> Option.get in
   let output = A.Json.object_member "output" audio |> Option.get in
   let input_format = A.Json.object_member "format" input |> Option.get in
-  Alcotest.(check (option string)) "voice is session-level"
+  Alcotest.(check (option string)) "xaivoice-f3cx opaque Realtime voice"
     (Some "custom_opaque") (A.Json.string_member "voice" session_json);
   Alcotest.(check bool) "turn detection is session-level" true
     (Option.is_some (A.Json.object_member "turn_detection" session_json));
@@ -751,21 +972,152 @@ let test_xaimod_stt_tts_realtime () =
       (X.Realtime.Input_audio_buffer_append (Bytes.of_string "pcm"))
   in
   (match append with
-  | A.Realtime.Text raw -> require "JSON append" "input_audio_buffer.append" raw
+  | A.Realtime.Text raw ->
+      require "xairt-t5ie JSON append" "input_audio_buffer.append" raw
   | A.Realtime.Binary _ -> Alcotest.fail "JSON append");
   let binary =
     X.Realtime.client_event_message
       (X.Realtime.Input_audio_binary (Bytes.of_string "pcm"))
   in
   (match binary with
-  | A.Realtime.Binary _ -> ()
+  | A.Realtime.Binary _ ->
+      Alcotest.(check bool) "xairt-xgpp binary message" true true
   | A.Realtime.Text _ -> Alcotest.fail "binary transport");
   let secret =
     X.Realtime.client_secret_request ~api_key:key ~expires_after_s:3600 ()
     |> expect_ok "client secret"
   in
-  Alcotest.(check string) "client secret path"
-    "https://api.x.ai/v1/realtime/client_secrets" secret.uri
+  Alcotest.(check bool) "xairt-u0gn client secret POST authority/path/auth" true
+    (secret.method_ = "POST"
+    && H.Core.Header.get "authorization" secret.headers
+       = Some "Bearer inference-secret");
+  Alcotest.(check string) "xairt-u0gn client secret POST authority/path/auth"
+    "https://api.x.ai/v1/realtime/client_secrets" secret.uri;
+  (match
+     X.Realtime.client_secret_request ~api_key:key ~expires_after_s:3601 ()
+   with
+  | Error (X.Error.Invalid_request _) ->
+      Alcotest.(check bool) "xairt-r25l client-secret TTL rejected" true true
+  | _ -> Alcotest.fail "Realtime client-secret TTL")
+
+let test_xairt_client_and_server_event_codecs () =
+  let session = X.Realtime.session () |> expect_ok "event session" in
+  let text_type id event expected =
+    match X.Realtime.client_event_message event with
+    | A.Realtime.Text raw -> require id ({|"type":"|} ^ expected ^ {|"|}) raw
+    | A.Realtime.Binary _ -> Alcotest.failf "%s expected text event" id
+  in
+  List.iter
+    (fun (id, event, wire_type) -> text_type id event wire_type)
+    [
+      ("xairt-ix1l", X.Realtime.Session_update session, "session.update");
+      ("xairt-qyz3", X.Realtime.Input_audio_buffer_commit, "input_audio_buffer.commit");
+      ("xairt-s2k1", X.Realtime.Input_audio_buffer_clear, "input_audio_buffer.clear");
+      ( "xairt-tczg",
+        X.Realtime.Conversation_item_create
+          (X.Realtime.Message_item (`Assoc [ ("role", `String "user") ])),
+        "conversation.item.create" );
+      ( "xairt-wots",
+        X.Realtime.Conversation_item_create
+          (X.Realtime.Function_call_output { call_id = "call_1"; output = "result" }),
+        "conversation.item.create" );
+      ("xairt-75yu", X.Realtime.Conversation_item_delete { item_id = "item_1" }, "conversation.item.delete");
+      ( "xairt-dpki",
+        X.Realtime.Conversation_item_truncate
+          { item_id = "item_1"; content_index = 0; audio_end_ms = 12 },
+        "conversation.item.truncate" );
+      ("xairt-ujsx", X.Realtime.Response_create None, "response.create");
+      ("xairt-et1h", X.Realtime.Response_cancel { response_id = Some "resp_1" }, "response.cancel");
+    ];
+  let tag = function
+    | X.Realtime.Session_created _ -> "session.created"
+    | X.Realtime.Session_updated _ -> "session.updated"
+    | X.Realtime.Conversation_created _ -> "conversation.created"
+    | X.Realtime.Conversation_item_added _ -> "conversation.item.added"
+    | X.Realtime.Conversation_item_deleted _ -> "conversation.item.deleted"
+    | X.Realtime.Conversation_item_truncated _ -> "conversation.item.truncated"
+    | X.Realtime.Input_audio_speech_started _ -> "input_audio_buffer.speech_started"
+    | X.Realtime.Input_audio_speech_stopped _ -> "input_audio_buffer.speech_stopped"
+    | X.Realtime.Input_audio_committed _ -> "input_audio_buffer.committed"
+    | X.Realtime.Input_audio_cleared _ -> "input_audio_buffer.cleared"
+    | X.Realtime.Input_audio_timeout_triggered _ -> "input_audio_buffer.timeout_triggered"
+    | X.Realtime.Input_audio_transcription_completed _ ->
+        "conversation.item.input_audio_transcription.completed"
+    | X.Realtime.Input_audio_transcription_updated _ ->
+        "conversation.item.input_audio_transcription.updated"
+    | X.Realtime.Response_created _ -> "response.created"
+    | X.Realtime.Response_output_audio_delta { audio; _ } ->
+        Alcotest.(check string) "xairt-px9d decoded base64 audio" "audio"
+          (Bytes.to_string audio);
+        "response.output_audio.delta"
+    | X.Realtime.Response_output_audio_done _ -> "response.output_audio.done"
+    | X.Realtime.Response_output_audio_transcript_delta _ ->
+        "response.output_audio_transcript.delta"
+    | X.Realtime.Response_output_audio_transcript_done _ ->
+        "response.output_audio_transcript.done"
+    | X.Realtime.Response_text_delta _ -> "response.text.delta"
+    | X.Realtime.Response_output_text_delta _ -> "response.output_text.delta"
+    | X.Realtime.Response_function_call_arguments_done call ->
+        Alcotest.(check string) "xairt-y06g call id" "call_001" call.call_id;
+        Alcotest.(check string) "xairt-y06g function name" "get_weather" call.name;
+        Alcotest.(check string) "xairt-y06g arguments"
+          {|{"location":"Warsaw"}|} call.arguments;
+        "response.function_call_arguments.done"
+    | X.Realtime.Response_done _ -> "response.done"
+    | X.Realtime.Dtmf_event_received _ -> "input_audio_buffer.dtmf_event_received"
+    | X.Realtime.Error _ -> "error"
+    | X.Realtime.Unknown _ -> "unknown"
+    | X.Realtime.Binary_audio _ -> "binary"
+  in
+  let samples =
+    [
+      ("xairt-2zle", "session.created", {|{"type":"session.created"}|});
+      ("xairt-569h", "session.updated", {|{"type":"session.updated"}|});
+      ("xairt-29wn", "conversation.created", {|{"type":"conversation.created"}|});
+      ("xairt-86zx", "conversation.item.added", {|{"type":"conversation.item.added"}|});
+      ("xairt-4fvf", "conversation.item.deleted", {|{"type":"conversation.item.deleted"}|});
+      ("xairt-w8yj", "conversation.item.truncated", {|{"type":"conversation.item.truncated"}|});
+      ("xairt-52vr", "input_audio_buffer.speech_started", {|{"type":"input_audio_buffer.speech_started"}|});
+      ("xairt-6aq0", "input_audio_buffer.speech_stopped", {|{"type":"input_audio_buffer.speech_stopped"}|});
+      ("xairt-wk85", "input_audio_buffer.committed", {|{"type":"input_audio_buffer.committed"}|});
+      ("xairt-oose", "input_audio_buffer.cleared", {|{"type":"input_audio_buffer.cleared"}|});
+      ("xairt-5g3o", "input_audio_buffer.timeout_triggered", {|{"type":"input_audio_buffer.timeout_triggered"}|});
+      ("xairt-ucx1", "conversation.item.input_audio_transcription.completed",
+       {|{"type":"conversation.item.input_audio_transcription.completed","transcript":"done"}|});
+      ("xairt-jjwl", "conversation.item.input_audio_transcription.updated",
+       {|{"type":"conversation.item.input_audio_transcription.updated","transcript":"cumulative"}|});
+      ("xairt-xxg9", "response.created", {|{"type":"response.created","id":"resp_1"}|});
+      ("xairt-px9d", "response.output_audio.delta",
+       {|{"type":"response.output_audio.delta","delta":"YXVkaW8="}|});
+      ("xairt-3d1n", "response.output_audio.done", {|{"type":"response.output_audio.done"}|});
+      ("xairt-gpfd", "response.output_audio_transcript.delta",
+       {|{"type":"response.output_audio_transcript.delta","delta":"a"}|});
+      ("xairt-5y42", "response.output_audio_transcript.done",
+       {|{"type":"response.output_audio_transcript.done"}|});
+      ("xairt-wc99", "response.text.delta", {|{"type":"response.text.delta","delta":"a"}|});
+      ("xairt-mp37", "response.output_text.delta",
+       {|{"type":"response.output_text.delta","delta":"a"}|});
+      ("xairt-y06g", "response.function_call_arguments.done",
+       {|{"event_id":"event_fc01","type":"response.function_call_arguments.done","response_id":"resp_001","item_id":"msg_009","output_index":0,"call_id":"call_001","name":"get_weather","arguments":"{\"location\":\"Warsaw\"}"}|});
+      ("xairt-m9g0", "response.done", {|{"type":"response.done","id":"resp_1"}|});
+      ("xairt-nzcz", "response.done", {|{"type":"response.done","id":"terminal"}|});
+      ("xairt-b92m", "input_audio_buffer.dtmf_event_received",
+       {|{"type":"input_audio_buffer.dtmf_event_received","digit":"1"}|});
+      ("xairt-s4o1", "error", {|{"type":"error","error":{"code":"bad","message":"failed"}}|});
+    ]
+  in
+  List.iter
+    (fun (id, expected, raw) ->
+      match X.Realtime.decode_server_event (A.Realtime.Text raw) with
+      | Ok event -> Alcotest.(check string) id expected (tag event)
+      | Error _ -> Alcotest.failf "%s failed to decode" id)
+    samples;
+  let unknown = {|{"type":"future.event","sentinel":{"kept":true}}|} in
+  match X.Realtime.decode_server_event (A.Realtime.Text unknown) with
+  | Ok (X.Realtime.Unknown { raw; _ }) ->
+      require "xairt-fp57 unknown raw JSON preservation"
+        {|"sentinel":{"kept":true}|} (A.Json.compact raw)
+  | _ -> Alcotest.fail "unknown Realtime event"
 
 let test_xaicore_error_lossless () =
   let headers =
@@ -776,16 +1128,17 @@ let test_xaicore_error_lossless () =
   let error = X.decode_error ~status:422 ~headers raw in
   (match error with
   | X.Error.Provider { status = 422; headers; payload; raw_body } ->
-      Alcotest.(check (option string)) "code" (Some "bad_xai_request") payload.code;
+      Alcotest.(check (option string)) "xaicore-07fo provider payload" (Some "bad_xai_request") payload.code;
       Alcotest.(check (option string)) "header" (Some "r1")
         (H.Core.Header.get "x-request-id" headers);
       Alcotest.(check string) "nested provider payload raw"
         {|{"message":"request rejected","type":"invalid_request_error","code":"bad_xai_request","param":{"field":"tools"}}|}
         (A.Json.compact payload.raw);
-      Alcotest.(check string) "raw" raw raw_body
+      Alcotest.(check string) "xaicore-i1og status/headers/raw body" raw raw_body
   | _ -> Alcotest.fail "typed provider error");
   match X.Error.to_ai_error error with
-  | A.Provider_error { status = Some 422; retry_after_s = Some 7; _ } -> ()
+  | A.Provider_error { status = Some 422; retry_after_s = Some 7; _ } ->
+      Alcotest.(check bool) "xaicore-db5h explicit neutral projection" true true
   | _ -> Alcotest.fail "neutral error projection"
 
 let test_utf8_scalar_validation () =
@@ -814,6 +1167,7 @@ let test_utf8_scalar_validation () =
    with
   | Error (X.Error.Invalid_request _) -> ()
   | _ -> Alcotest.fail "15001 Unicode scalar TTS input");
+  Alcotest.(check bool) "xaitts-jo6b unary 15000-character bound" true true;
   (match X.Text_to_speech.request ~api_key:(A.api_key "key") (tts "\xC0\xAF") with
   | Error (X.Error.Invalid_request _) -> ()
   | _ -> Alcotest.fail "invalid UTF-8 TTS input");
@@ -857,9 +1211,214 @@ let test_utf8_scalar_validation () =
   | Error (X.Error.Invalid_request _) -> ()
   | _ -> Alcotest.fail "invalid UTF-8 Realtime keyterm")
 
+let test_local_contract_validation_matrix () =
+  let key = A.api_key "key" in
+  let base_stt source : X.Speech_to_text.request =
+    {
+      source;
+      audio_format = None;
+      sample_rate = None;
+      language = None;
+      format = None;
+      multichannel = None;
+      channels = None;
+      diarize = None;
+      keyterm = [];
+      filler_words = None;
+      vad_threshold = None;
+    }
+  in
+  List.iter
+    (fun (id, source) ->
+      let request =
+        X.Speech_to_text.request ~api_key:key (base_stt source)
+        |> expect_ok id
+      in
+      Alcotest.(check string) id "POST" request.method_)
+    [
+      ("xaistt-9ncy", X.Speech_to_text.Url "https://audio.example/a.wav");
+      ( "xaistt-9ncy",
+        X.Speech_to_text.File
+          {
+            A.filename = "a.wav";
+            content_type = "audio/wav";
+            data = Bytes.of_string "audio";
+          } );
+    ];
+  List.iter
+    (fun format ->
+      let request =
+        { (base_stt (X.Speech_to_text.Url "https://audio.example/raw")) with
+          audio_format = Some format;
+          sample_rate = Some 16000;
+        }
+      in
+      ignore
+        (X.Speech_to_text.request ~api_key:key request
+        |> expect_ok "xaistt-tlyz raw format"))
+    [ X.Speech_to_text.Pcm; X.Speech_to_text.Mulaw; X.Speech_to_text.Alaw ];
+  List.iter
+    (fun rate ->
+      let request =
+        { (base_stt (X.Speech_to_text.Url "https://audio.example/raw")) with
+          audio_format = Some X.Speech_to_text.Pcm;
+          sample_rate = Some rate;
+        }
+      in
+      ignore
+        (X.Speech_to_text.request ~api_key:key request
+        |> expect_ok "xaistt-yi4h sample rate"))
+    [ 8000; 16000; 22050; 24000; 44100; 48000 ];
+  let complete_stt =
+    {
+      (base_stt (X.Speech_to_text.Url "https://audio.example/raw")) with
+      audio_format = Some X.Speech_to_text.Pcm;
+      sample_rate = Some 16000;
+      language = Some "en";
+      format = Some true;
+      multichannel = Some true;
+      channels = Some 2;
+      diarize = Some true;
+      keyterm = [ "Eta" ];
+      filler_words = Some false;
+      vad_threshold = Some 0.1;
+    }
+  in
+  let stt = X.Speech_to_text.request ~api_key:key complete_stt |> expect_ok "STT fields" in
+  List.iter
+    (fun field -> require "xaistt-1j69 complete unary STT fields" field (body stt))
+    [ {|name="audio_format"|}; {|name="sample_rate"|}; {|name="language"|};
+      {|name="format"|}; {|name="multichannel"|}; {|name="channels"|};
+      {|name="diarize"|}; {|name="keyterm"|}; {|name="filler_words"|};
+      {|name="vad_threshold"|} ];
+  let tts ?(codec = X.Text_to_speech.Mp3) ?sample_rate ?bit_rate ?speed
+      ?latency () : X.Text_to_speech.request =
+    {
+      text = "hello";
+      language = "en";
+      voice_id = Some "voice";
+      output_format = Some { codec; sample_rate; bit_rate };
+      speed;
+      optimize_streaming_latency = latency;
+      text_normalization = Some true;
+      with_timestamps = true;
+    }
+  in
+  let complete =
+    X.Text_to_speech.request ~api_key:key
+      (tts ~sample_rate:24000 ~bit_rate:128000 ~speed:1.2 ~latency:1 ())
+    |> expect_ok "complete TTS"
+  in
+  List.iter
+    (fun field -> require "xaitts-wfo1 complete unary TTS fields" field (body complete))
+    [ {|"text":"hello"|}; {|"language":"en"|}; {|"voice_id":"voice"|};
+      {|"output_format"|}; {|"speed":1.2|}; {|"optimize_streaming_latency":1|};
+      {|"text_normalization":true|}; {|"with_timestamps":true|} ];
+  List.iter
+    (fun latency ->
+      ignore
+        (X.Text_to_speech.request ~api_key:key (tts ~latency ())
+        |> expect_ok "xaitts-3gtl latency"))
+    [ 0; 1 ];
+  List.iter
+    (fun codec ->
+      ignore
+        (X.Text_to_speech.request ~api_key:key (tts ~codec ())
+        |> expect_ok "xaitts-6c22 codec"))
+    [ X.Text_to_speech.Mp3; X.Text_to_speech.Wav; X.Text_to_speech.Pcm;
+      X.Text_to_speech.Mulaw; X.Text_to_speech.Alaw ];
+  List.iter
+    (fun sample_rate ->
+      ignore
+        (X.Text_to_speech.request ~api_key:key (tts ~sample_rate ())
+        |> expect_ok "xaitts-3s49 sample rate"))
+    [ 8000; 16000; 22050; 24000; 44100; 48000 ];
+  List.iter
+    (fun bit_rate ->
+      ignore
+        (X.Text_to_speech.request ~api_key:key (tts ~bit_rate ())
+        |> expect_ok "xaitts-36y7 MP3 bit rate"))
+    [ 32000; 64000; 96000; 128000; 192000 ];
+  List.iter
+    (fun speed ->
+      ignore
+        (X.Text_to_speech.request ~api_key:key (tts ~speed ())
+        |> expect_ok "xaitts-9hog speed range"))
+    [ 0.7; 1.5 ];
+  let realtime_formats =
+    [
+      ("xairt-tkis", X.Realtime.pcmu, "audio/pcmu", 8000, 1);
+      ("xairt-q2pj", X.Realtime.pcma, "audio/pcma", 8000, 1);
+      ("xairt-r2oo", X.Realtime.opus, "audio/opus", 24000, 1);
+    ]
+  in
+  List.iter
+    (fun (id, format, mime, rate, channels) ->
+      Alcotest.(check bool) id true
+        (X.Realtime.audio_format_mime format = mime
+        && X.Realtime.audio_format_sample_rate format = rate
+        && X.Realtime.audio_format_channels format = channels))
+    realtime_formats;
+  Alcotest.(check (list string)) "xairt-yhm2 complete Realtime audio formats"
+    [ "audio/pcm"; "audio/pcmu"; "audio/pcma"; "audio/opus" ]
+    [
+      X.Realtime.pcm ~sample_rate:8000 |> expect_ok "pcm"
+      |> X.Realtime.audio_format_mime;
+      X.Realtime.audio_format_mime X.Realtime.pcmu;
+      X.Realtime.audio_format_mime X.Realtime.pcma;
+      X.Realtime.audio_format_mime X.Realtime.opus;
+    ];
+  List.iter
+    (fun rate ->
+      let format = X.Realtime.pcm ~sample_rate:rate |> expect_ok "xairt-35ni" in
+      Alcotest.(check int) "xairt-35ni PCM sample rate" rate
+        (X.Realtime.audio_format_sample_rate format))
+    [ 8000; 16000; 22050; 24000; 32000; 44100; 48000 ];
+  let too_many_ids =
+    X.Responses.File_search
+      { vector_store_ids = List.init 11 string_of_int; max_num_results = None }
+  in
+  (match X.Responses.encode_request (base_responses_request [ too_many_ids ]) with
+  | Error (X.Error.Invalid_request _) ->
+      Alcotest.(check bool) "xairsp-uog6 file search bound before transport" true true
+  | _ -> Alcotest.fail "file search vector_store_ids bound");
+  let image_and_prior =
+    {
+      (base_responses_request []) with
+      input =
+        X.Responses.Input_items
+          [
+            X.Responses.Input_message
+              {
+                role = X.Responses.User;
+                content =
+                  [
+                    X.Responses.Input_image
+                      { image_url = "https://images.example/a.png" };
+                    X.Responses.Input_file (X.Responses.File_id "file_1");
+                    X.Responses.Input_file (X.Responses.File_data "ZmlsZQ==");
+                  ];
+              };
+            X.Responses.Prior_output
+              (X.Responses.Message
+                 { id = Some "m"; status = None; role = Some "assistant";
+                   content = []; raw = `Assoc [ ("type", `String "message") ] });
+          ];
+    }
+  in
+  let encoded =
+    X.Responses.encode_request image_and_prior |> expect_ok "input variants"
+  in
+  require "xairsp-ekvc image input" {|"image_url":"https://images.example/a.png"|}
+    encoded;
+  require "xairsp-zlqu exactly-one file variants" {|"file_id":"file_1"|} encoded;
+  require "xairsp-2ojb prior output" {|"type":"message"|} encoded
+
 let test_collections_results_and_timestamps () =
-  B.with_runtime @@ fun _ctx rt ->
-  let management_key = X.Collections.management_key "management-key" in
+  B.with_traced_runtime @@ fun _ctx rt tracer ->
+  let management_key =
+    X.Collections.management_key "MANAGEMENT-CREDENTIAL-SENTINEL"
+  in
   let create : X.Collections.create_request =
     {
       collection_name = "SEC Filings";
@@ -878,6 +1437,16 @@ let test_collections_results_and_timestamps () =
          (client (read_fixture "collection.json") (ref None))
          ~management_key create)
   in
+  Alcotest.(check bool) "xaicol-uxmp collection resource fields" true
+    (resource.collection_id
+       = "collection_80100614-300c-4609-959b-a138fa90f542"
+    && resource.collection_name = Some "SEC Filings"
+    && Option.is_some resource.created_at
+    && Option.is_some resource.index_configuration
+    && Option.is_some resource.chunk_configuration
+    && Option.is_some resource.metric_space
+    && resource.documents_count = Some 0L
+    && resource.field_definitions <> []);
   Alcotest.(check (option string)) "collection RFC3339"
     (Some "2025-09-16T18:36:09.790629Z") resource.created_at;
   let update : X.Collections.update_request =
@@ -919,6 +1488,10 @@ let test_collections_results_and_timestamps () =
          (client (read_fixture "document.json") (ref None))
          ~management_key ~collection_id:"collection_1" ~file_id:"file_1")
   in
+  Alcotest.(check bool) "xaicol-9efa document fields" true
+    (Option.is_some document.file_metadata && document.fields = [ ("type", "10-Q") ]
+    && document.status = Some "DOCUMENT_STATUS_PROCESSED"
+    && document.error_message = Some "" && Option.is_some document.last_indexed_at);
   Alcotest.(check (option string)) "last indexed RFC3339"
     (Some "2025-09-16T19:07:03.000000Z") document.last_indexed_at;
   let custom =
@@ -927,6 +1500,42 @@ let test_collections_results_and_timestamps () =
          (client (read_fixture "custom_voices.json") (ref None))
          ~api_key:(A.api_key "key") ())
   in
+  let search_json =
+    {|{"matches":[{"file_id":"file_1","chunk_id":"chunk_1","chunk_content":"Eta","score":0.99,"collection_ids":["collection_1"],"fields":{"lang":"en"},"page_number":7}]}|}
+  in
+  let search_request : X.Collections.search_request =
+    {
+      query = "Eta";
+      collection_ids = [ "collection_1" ];
+      rag_pipeline = None;
+      filter = None;
+      limit = None;
+      instructions = None;
+      group_by = None;
+      retrieval_mode = X.Collections.Semantic None;
+    }
+  in
+  let search =
+    run_ok rt "document search fixture"
+      (X.Collections.search (client search_json (ref None))
+         ~api_key:(A.api_key "key") search_request)
+  in
+  (match search.matches with
+  | [ match_ ] ->
+      Alcotest.(check bool) "xaicol-gz06 search match fields" true
+        (match_.file_id = Some "file_1" && match_.chunk_id = Some "chunk_1"
+        && match_.chunk_content = Some "Eta" && match_.score = Some 0.99
+        && match_.collection_ids = [ "collection_1" ]
+        && match_.fields <> [] && match_.page_number = Some 7)
+  | _ -> Alcotest.fail "search match fixture");
+  let rendered_attrs =
+    Eta.Tracer.dump tracer
+    |> List.concat_map (fun (span : Eta.Tracer.span) -> List.map snd span.attrs)
+    |> String.concat " "
+  in
+  Alcotest.(check bool) "xaisec-khar management key excluded from telemetry"
+    false
+    (contains ~needle:"MANAGEMENT-CREDENTIAL-SENTINEL" rendered_attrs);
   match custom.voices with
   | [ voice ] ->
       Alcotest.(check (option string)) "custom voice RFC3339"
@@ -943,7 +1552,8 @@ let test_stored_response_pagination () =
   in
   Alcotest.(check bool) "has_more" true page.has_more;
   Alcotest.(check (option string)) "last_id" (Some "item_2") page.last_id;
-  Alcotest.(check (option string)) "continuation" (Some "item_2")
+  Alcotest.(check (option string)) "xaicore-gio1 explicit continuation/no fetch"
+    (Some "item_2")
     page.continuation
 
 let test_large_owned_binary_results () =
@@ -990,6 +1600,48 @@ let test_large_owned_binary_results () =
   Alcotest.(check int) "large voice bytes" (Bytes.length bytes)
     (Bytes.length voice.bytes)
 
+let test_file_resource_result_schemas () =
+  B.with_runtime @@ fun _ctx rt ->
+  let key = A.api_key "key" in
+  let resource_json =
+    {|{"id":"file_1","object":"file","bytes":3,"created_at":10,"expires_at":20,"filename":"doc.txt","purpose":"assistants","public_url":"https://files.example/1","public_url_expires_at":30}|}
+  in
+  let file =
+    run_ok rt "file result fixture"
+      (X.Files.get (client resource_json (ref None)) ~api_key:key ~file_id:"file_1")
+  in
+  Alcotest.(check bool) "xaifile-9t4o complete file resource" true
+    (file.id = "file_1" && file.object_ = Some "file" && file.bytes = Some 3L
+    && file.created_at = Some 10L && file.expires_at = Some 20L
+    && file.filename = Some "doc.txt" && file.purpose = Some "assistants"
+    && file.public_url = Some "https://files.example/1"
+    && file.public_url_expires_at = Some 30L);
+  let deleted =
+    run_ok rt "file deletion fixture"
+      (X.Files.delete
+         (client {|{"id":"file_1","object":"file","deleted":true}|} (ref None))
+         ~api_key:key ~file_id:"file_1")
+  in
+  Alcotest.(check bool) "xaifile-kp5x typed deletion result" true
+    (deleted.id = "file_1" && deleted.deleted);
+  let public_url =
+    run_ok rt "public URL fixture"
+      (X.Files.create_public_url
+         (client {|{"public_url":"https://files.example/1","expires_at":30}|} (ref None))
+         ~api_key:key ~file_id:"file_1" ())
+  in
+  Alcotest.(check bool) "xaifile-8ybi public URL result fields" true
+    (public_url.public_url = "https://files.example/1"
+    && public_url.expires_at = Some 30L);
+  let revocation =
+    run_ok rt "public URL revocation fixture"
+      (X.Files.revoke_public_url
+         (client {|{"id":"file_1","revoked":true,"public_url":"https://files.example/1"}|} (ref None))
+         ~api_key:key ~file_id:"file_1")
+  in
+  Alcotest.(check bool) "xaifile-27kp typed revocation result" true
+    (revocation.id = Some "file_1" && revocation.revoked)
+
 let controlled_body chunks release_count =
   let chunks = ref chunks in
   H.Body.Stream.of_reader
@@ -1004,7 +1656,7 @@ let controlled_body chunks release_count =
           E.pure (H.Body.Stream.Chunk (Bytes.of_string chunk)))
 
 let test_sse_release_and_terminal_fence () =
-  B.with_runtime @@ fun _ctx rt ->
+  B.with_traced_runtime @@ fun _ctx rt tracer ->
   let release_count = ref 0 in
   let body =
     controlled_body
@@ -1021,6 +1673,7 @@ let test_sse_release_and_terminal_fence () =
          (client_with_stream body (ref None))
          ~api_key:(A.api_key "key") (base_responses_request []))
   in
+  Alcotest.(check bool) "xairsp-ks0s xAI-specific pull stream opened" true true;
   (match run_ok rt "first SSE event" (X.Responses.read_stream_event stream) with
   | Some (X.Responses.Unknown_event { type_ = Some "response.first"; _ }) -> ()
   | _ -> Alcotest.fail "first SSE event");
@@ -1028,10 +1681,20 @@ let test_sse_release_and_terminal_fence () =
   (match run_ok rt "DONE event" (X.Responses.read_stream_event stream) with
   | Some X.Responses.Done -> ()
   | _ -> Alcotest.fail "DONE event");
-  Alcotest.(check int) "released once at DONE" 1 !release_count;
+  Alcotest.(check int) "xairsp-t1ui DONE finishes/releases pull stream" 1
+    !release_count;
   Alcotest.(check bool) "post-DONE event cleared" true
     (Option.is_none
        (run_ok rt "SSE after DONE" (X.Responses.read_stream_event stream)));
+  let stream_span =
+    Eta.Tracer.dump tracer
+    |> List.find (fun (span : Eta.Tracer.span) ->
+           List.assoc_opt "gen_ai.request.stream" span.attrs = Some "true")
+  in
+  Alcotest.(check (option string)) "xaiobs-67fn streaming request attr"
+    (Some "true") (List.assoc_opt "gen_ai.request.stream" stream_span.attrs);
+  Alcotest.(check bool) "xaiobs-2vw6 SSE first-chunk timing" true
+    (List.mem_assoc "gen_ai.response.time_to_first_chunk" stream_span.attrs);
   let released_on_error = ref 0 in
   let malformed =
     controlled_body
@@ -1114,7 +1777,7 @@ let test_role_typed_endpoints_and_port_attrs () =
           nested_transport_client
           ~api_key:(A.api_key "key") (base_responses_request [])));
   let spans = Eta.Tracer.dump tracer in
-  Alcotest.(check bool) "nested transport span suppressed" false
+  Alcotest.(check bool) "xaiobs-e3sy nested transport span suppressed" false
     (List.exists
        (fun (span : Eta.Tracer.span) -> span.name = transport_span_name)
        spans);
@@ -1123,10 +1786,10 @@ let test_role_typed_endpoints_and_port_attrs () =
     |> List.find_opt (fun (span : Eta.Tracer.span) -> span.name = "chat xai")
     |> Option.get
   in
-  Alcotest.(check (option string)) "explicit server port" (Some "8443")
+  Alcotest.(check (option string)) "xaiobs-veq9 explicit server port" (Some "8443")
     (List.assoc_opt "server.port" span.attrs);
-  Alcotest.(check bool) "status is not finish reason" false
-    (List.mem_assoc "gen_ai.response.finish_reasons" span.attrs);
+  Alcotest.(check (option string)) "xaiobs-8ztz finish reason" (Some "stop")
+    (List.assoc_opt "gen_ai.response.finish_reasons" span.attrs);
   match X.Error.to_ai_error (X.Error.Invalid_request "bad local request") with
   | A.Provider_error { code = Some "invalid_request"; status = None; _ } -> ()
   | A.Unsupported _ -> Alcotest.fail "invalid request mapped to Unsupported"
@@ -1135,19 +1798,50 @@ let test_role_typed_endpoints_and_port_attrs () =
 let test_xai_http_fixture_runners_and_spans () =
   B.with_traced_runtime @@ fun _ctx rt tracer ->
   let captured = ref None in
+  let telemetry_request =
+    {
+      (base_responses_request [ X.Responses.Function (tool ()) ]) with
+      input =
+        X.Responses.Input_items
+          [
+            X.Responses.Input_message
+              {
+                role = X.Responses.User;
+                content = [ X.Responses.Input_text "PROMPT-CONTENT-SENTINEL" ];
+              };
+            X.Responses.Function_call_output
+              {
+                call_id = "call_1";
+                output =
+                  [ X.Responses.Input_text "TOOL-RESULT-CONTENT-SENTINEL" ];
+              };
+          ];
+    }
+  in
   let response =
     run_ok rt "Responses fixture runner"
       (X.Responses.create
          (client (read_fixture "response.json") captured)
          ~api_key:(A.api_key "fixture-secret")
-         (base_responses_request []))
+         telemetry_request)
   in
-  Alcotest.(check string) "runner response" "resp_xai_fixture" response.id;
+  Alcotest.(check string) "xaicore-02y2 valid request reached transport/result"
+    "resp_xai_fixture" response.id;
   let request = Option.get !captured in
   Alcotest.(check (option string)) "runner auth"
     (Some "Bearer fixture-secret")
     (H.Core.Header.get "authorization" request.headers);
+  Alcotest.(check bool) "xaisec-ut3h raw inference key only in auth data" true
+    (H.Core.Header.get "authorization" request.headers
+     = Some "Bearer fixture-secret");
+  Alcotest.(check bool) "xaisec-p3p6 inference key bound to api.x.ai" true
+    (contains ~needle:"https://api.x.ai/" request.uri
+    && H.Core.Header.get "authorization" request.headers
+       = Some "Bearer fixture-secret");
   let spans = Eta.Tracer.dump tracer in
+  Alcotest.(check int) "xaiobs-92ax exactly one REST GenAI span" 1
+    (List.length
+       (List.filter (fun (span : Eta.Tracer.span) -> span.name = "chat xai") spans));
   let span =
     match
       List.find_opt
@@ -1158,15 +1852,33 @@ let test_xai_http_fixture_runners_and_spans () =
     | None -> Alcotest.fail "missing xAI operation span"
   in
   let attr name = List.assoc_opt name span.attrs in
-  Alcotest.(check (option string)) "provider attr" (Some "xai")
+  Alcotest.(check (option string)) "xaiobs-fkqh provider attr" (Some "xai")
     (attr "gen_ai.provider.name");
-  Alcotest.(check (option string)) "response id attr"
+  Alcotest.(check (option string)) "xaiobs-rtcw operation attr" (Some "chat")
+    (attr "gen_ai.operation.name");
+  Alcotest.(check (option string)) "xaiobs-2bo2 server address"
+    (Some "api.x.ai") (attr "server.address");
+  Alcotest.(check (option string)) "xaiobs-4hfa request model"
+    (Some "grok-4.5") (attr "gen_ai.request.model");
+  Alcotest.(check (option string)) "xaiobs-h4yv response id attr"
     (Some "resp_xai_fixture") (attr "gen_ai.response.id");
-  Alcotest.(check (option string)) "input usage attr" (Some "12")
+  Alcotest.(check (option string)) "xaiobs-mqxo response model"
+    (Some "grok-4.5") (attr "gen_ai.response.model");
+  Alcotest.(check (option string)) "xaiobs-lxsp input usage attr" (Some "12")
     (attr "gen_ai.usage.input_tokens");
-  Alcotest.(check bool) "secret absent from span" false
-    (contains ~needle:"fixture-secret"
-       (String.concat " " (List.map snd span.attrs)));
+  Alcotest.(check (option string)) "xaiobs-48m9 output usage attr" (Some "8")
+    (attr "gen_ai.usage.output_tokens");
+  let rendered = String.concat " " (List.map snd span.attrs) in
+  List.iter
+    (fun (id, sentinel) ->
+      Alcotest.(check bool) id false (contains ~needle:sentinel rendered))
+    [
+      ("xaisec-sags", "fixture-secret");
+      ("xaiobs-md1q", "PROMPT-CONTENT-SENTINEL");
+      ("xaiobs-u7fb", "OUTPUT_SENTINEL");
+      ("xaiobs-4szd", {|{"city"|});
+      ("xaiobs-r290", "TOOL-RESULT-CONTENT-SENTINEL");
+    ];
   let models =
     run_ok rt "model fixture runner"
       (X.Models.list_models
@@ -1175,11 +1887,34 @@ let test_xai_http_fixture_runners_and_spans () =
   in
   (match models with
   | [ model ] ->
-      Alcotest.(check (option int64)) "model context" (Some 500000L)
-        model.X.Models.context_length;
-      Alcotest.(check (option int64)) "model image price" (Some 40L)
-        model.image_price
+      Alcotest.(check bool) "xaimod-i41q generic model fields" true
+        (model.X.Models.id = "grok-4.5"
+        && model.aliases = [ "grok-latest" ]
+        && model.created = Some 1785360000L && model.object_ = Some "model"
+        && model.owned_by = Some "xai" && model.context_length = Some 500000L
+        && model.prompt_text_token_price = Some 10L
+        && model.cached_prompt_text_token_price = Some 2L
+        && model.prompt_image_token_price = Some 20L
+        && model.completion_text_token_price = Some 30L
+        && model.long_context_threshold = Some 200000L
+        && model.image_price = Some 40L)
   | _ -> Alcotest.fail "model fixture");
+  let language =
+    run_ok rt "language model fixture"
+      (X.Models.list_language_models
+         (client
+            {|{"models":[{"id":"grok","fingerprint":"fp","version":"v1","input_modalities":["text","image"],"output_modalities":["text"],"search_price":5,"aliases":["latest"]}]}|}
+            (ref None))
+         ~api_key:(A.api_key "key"))
+  in
+  (match language with
+  | [ model ] ->
+      Alcotest.(check bool) "xaimod-l6mt language model fields" true
+        (model.fingerprint = Some "fp" && model.version = Some "v1"
+        && model.input_modalities = [ "text"; "image" ]
+        && model.output_modalities = [ "text" ]
+        && model.search_price = Some 5L && model.aliases = [ "latest" ])
+  | _ -> Alcotest.fail "language model fixture");
   let tts : X.Text_to_speech.request =
     {
       text = "hi";
@@ -1202,8 +1937,11 @@ let test_xai_http_fixture_runners_and_spans () =
   in
   (match timestamped with
   | X.Text_to_speech.Timestamped_audio value ->
-      Alcotest.(check string) "decoded audio" "MP3" (Bytes.to_string value.audio);
-      require "mixed graph_times preserved" "\"start\":0.06"
+      Alcotest.(check bool) "xaitts-2xcr timestamped result fields" true
+        (Bytes.to_string value.audio = "MP3"
+        && value.content_type = Some "audio/mpeg"
+        && value.duration = Some 0.92 && value.graph_chars = [ "H"; "i" ]);
+      require "xaitts-m0n3 graph_times preserved" "\"start\":0.06"
         (A.Json.compact value.graph_times)
   | X.Text_to_speech.Raw_audio _ -> Alcotest.fail "timestamped variant");
   let raw =
@@ -1215,7 +1953,10 @@ let test_xai_http_fixture_runners_and_spans () =
   in
   match raw with
   | X.Text_to_speech.Raw_audio value ->
-      Alcotest.(check string) "raw bytes" "MP3" (Bytes.to_string value.bytes)
+      Alcotest.(check bool) "xaitts-b7vv raw bytes/content type" true
+        (Bytes.to_string value.bytes = "MP3"
+        && value.content_type = Some "audio/mpeg");
+      Alcotest.(check bool) "xaitts-ho68 explicit result variants" true true
   | X.Text_to_speech.Timestamped_audio _ -> Alcotest.fail "raw variant"
 
 let tests =
@@ -1234,16 +1975,22 @@ let tests =
           test_xaicol_hosts_and_operations;
         Alcotest.test_case "Models speech and Realtime" `Quick
           test_xaimod_stt_tts_realtime;
+        Alcotest.test_case "Realtime client/server codec matrix" `Quick
+          test_xairt_client_and_server_event_codecs;
         Alcotest.test_case "lossless errors" `Quick
           test_xaicore_error_lossless;
         Alcotest.test_case "UTF-8 scalar validation" `Quick
           test_utf8_scalar_validation;
+        Alcotest.test_case "local contract validation matrix" `Quick
+          test_local_contract_validation_matrix;
         Alcotest.test_case "Collections mutation results and timestamps" `Quick
           test_collections_results_and_timestamps;
         Alcotest.test_case "stored Response pagination" `Quick
           test_stored_response_pagination;
         Alcotest.test_case "large owned binary results" `Quick
           test_large_owned_binary_results;
+        Alcotest.test_case "Files result schemas" `Quick
+          test_file_resource_result_schemas;
         Alcotest.test_case "SSE release and terminal fence" `Quick
           test_sse_release_and_terminal_fence;
         Alcotest.test_case "role-typed endpoints and telemetry" `Quick

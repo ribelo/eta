@@ -15,3 +15,24 @@
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
+
+(rule
+ (alias runtest)
+ (deps
+  static_contracts.sh
+  coverage_audit.py
+  external_coverage.tsv
+  ../../../dune-project
+  ../../../eta.opam
+  ../../../eta_ai_xai.opam
+  ../../../eta_ai_xai_eio.opam
+  (source_tree ../../../docs/requirements/eta-ai-xai)
+  (source_tree ../../../lib/ai/xai)
+  (source_tree ../../../lib/ai/xai_eio)
+  ../../../lib/ai/eta_ai.mli
+  (source_tree ../openai)
+  (source_tree ../xai_eio))
+ (action
+  (progn
+   (run bash %{dep:static_contracts.sh})
+   (run python3 %{dep:coverage_audit.py}))))

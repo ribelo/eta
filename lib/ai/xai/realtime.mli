@@ -185,6 +185,16 @@ type server_event =
       delta : string option;
       raw : Eta_ai.Json.t;
     }
+  | Response_function_call_arguments_done of {
+      event_id : string option;
+      response_id : string option;
+      item_id : string option;
+      output_index : int option;
+      call_id : string;
+      name : string;
+      arguments : string;
+      raw : Eta_ai.Json.t;
+    }
   | Response_done of Eta_ai.Json.t
   | Dtmf_event_received of Eta_ai.Json.t
   | Error of server_error
