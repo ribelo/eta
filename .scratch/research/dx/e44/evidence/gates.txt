@@ -28,3 +28,19 @@ PASS (exit 0):
 The mainline gate compiles and runs the shared js_of_ocaml package/test surface
 against the same root `eta` and single `eta_observability` package; no JS SDK
 copy or substrate divergence was introduced.
+
+Post-independent-review rework (final tree)
+===========================================
+
+The review corrected only law-registry pointers/count prose and one stale
+`invalid_arg` operation name. The final committed code was revalidated:
+
+- `nix develop -c dune build @install` — PASS
+- `nix develop -c dune runtest test/core_eio --force` — PASS
+- `nix develop -c dune runtest --force` — PASS
+- `nix develop -c eta-oxcaml-test-shipped` — PASS
+- `nix develop .#mainline -c dune build --build-dir=_build-mainline test/cache_jsoo test/js_jsoo` — PASS
+
+The independent oracle then rechecked R90/R90b pointers, the 185-row census,
+the renamed error path, `git diff --check`, and worktree cleanliness and returned
+READY at HEAD `6a5d1e5d`.

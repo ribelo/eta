@@ -147,3 +147,10 @@ the full and shipped gates.
 All promote conditions are satisfied. The broad unstable SPI is the review's
 weakest design point, but it preserves the stronger boundary: root owns runtime
 state and protocols; the optional SDK owns application-facing observability.
+
+The independent final review initially blocked on R90b's incorrect executable
+pointer and the external-row headline count. Commit `b66c56ec` corrected those
+items and the stale `with_external_parent` error-path name. The reviewer
+recounted all 185 external rows, checked the exact named registrations, and
+returned **READY**. The final code then passed `@install`, focused core tests,
+the exact full suite, the shipped-package gate, and the mainline JS gate again.
