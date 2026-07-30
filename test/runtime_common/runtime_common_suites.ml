@@ -1309,23 +1309,55 @@ module Make (B : Runtime_backend.S) = struct
                 contract.Rc.local_with_binding local 5 (fun () ->
                     let child =
                       contract.Rc.run_scope @@ fun sw ->
-                      let promise, resolver = contract.Rc.create_promise () in
+                      let started, started_resolver =
+                        contract.Rc.create_promise ()
+                      in
+                      let observe, observe_resolver =
+                        contract.Rc.create_promise ()
+                      in
+                      let bound, bound_resolver =
+                        contract.Rc.create_promise ()
+                      in
+                      let release, release_resolver =
+                        contract.Rc.create_promise ()
+                      in
+                      let result, result_resolver =
+                        contract.Rc.create_promise ()
+                      in
                       contract.Rc.fork sw (fun () ->
+                          contract.Rc.resolve_promise started_resolver ();
+                          contract.Rc.await_promise observe;
                           let before = contract.Rc.local_get local in
                           let inner =
                             contract.Rc.local_with_binding local 6 (fun () ->
+                                contract.Rc.resolve_promise bound_resolver ();
+                                contract.Rc.await_promise release;
                                 contract.Rc.local_get local)
                           in
                           let after = contract.Rc.local_get local in
-                          contract.Rc.resolve_promise resolver
+                          contract.Rc.resolve_promise result_resolver
                             (before, inner, after));
-                      contract.Rc.await_promise promise
+                      contract.Rc.await_promise started;
+                      let parent_during_child_binding =
+                        contract.Rc.local_with_binding local 7 (fun () ->
+                            contract.Rc.resolve_promise observe_resolver ();
+                            contract.Rc.await_promise bound;
+                            let observed = contract.Rc.local_get local in
+                            contract.Rc.resolve_promise release_resolver ();
+                            observed)
+                      in
+                      ( contract.Rc.await_promise result,
+                        parent_during_child_binding )
                     in
                     (child, contract.Rc.local_get local))
               in
+              let child_observations, parent_during_child_binding = child in
               Alcotest.(check (triple (option int) (option int) (option int)))
                 "child fork snapshot and LIFO restoration"
-                (Some 5, Some 6, Some 5) child;
+                (Some 5, Some 6, Some 5) child_observations;
+              Alcotest.(check (option int))
+                "parent isolated while child binding active" (Some 7)
+                parent_during_child_binding;
               Alcotest.(check (option int)) "no child join-merge" (Some 5)
                 parent;
               check "absent after fork scope" None);

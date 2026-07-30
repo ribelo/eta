@@ -1102,24 +1102,61 @@ let tests =
             contract.Runtime_contract.local_with_binding local 5 (fun () ->
                 let child =
                   contract.Runtime_contract.run_scope @@ fun sw ->
-                  let promise, resolver =
+                  let started, started_resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  let observe, observe_resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  let bound, bound_resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  let release, release_resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  let result, result_resolver =
                     contract.Runtime_contract.create_promise ()
                   in
                   contract.Runtime_contract.fork sw (fun () ->
+                      contract.Runtime_contract.resolve_promise started_resolver
+                        ();
+                      contract.Runtime_contract.await_promise observe;
                       let before = contract.Runtime_contract.local_get local in
                       let inner =
                         contract.Runtime_contract.local_with_binding local 6
-                          (fun () -> contract.Runtime_contract.local_get local)
+                          (fun () ->
+                            contract.Runtime_contract.resolve_promise
+                              bound_resolver ();
+                            contract.Runtime_contract.await_promise release;
+                            contract.Runtime_contract.local_get local)
                       in
                       let after = contract.Runtime_contract.local_get local in
-                      contract.Runtime_contract.resolve_promise resolver
+                      contract.Runtime_contract.resolve_promise result_resolver
                         (before, inner, after));
-                  contract.Runtime_contract.await_promise promise
+                  contract.Runtime_contract.await_promise started;
+                  let parent_during_child_binding =
+                    contract.Runtime_contract.local_with_binding local 7
+                      (fun () ->
+                        contract.Runtime_contract.resolve_promise observe_resolver
+                          ();
+                        contract.Runtime_contract.await_promise bound;
+                        let observed =
+                          contract.Runtime_contract.local_get local
+                        in
+                        contract.Runtime_contract.resolve_promise release_resolver
+                          ();
+                        observed)
+                  in
+                  ( contract.Runtime_contract.await_promise result,
+                    parent_during_child_binding )
                 in
                 (child, contract.Runtime_contract.local_get local))
           in
-          if child <> (Some 5, Some 6, Some 5) then
+          let child_observations, parent_during_child_binding = child in
+          if child_observations <> (Some 5, Some 6, Some 5) then
             failwith "child fork snapshot or LIFO restoration diverged";
+          if parent_during_child_binding <> Some 7 then
+            failwith "child binding leaked into parent";
           if parent <> Some 5 then failwith "child binding joined into parent";
           require "absent after fork scope" None;
           Eta.Exit.Ok ()
