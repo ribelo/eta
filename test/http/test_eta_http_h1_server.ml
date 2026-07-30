@@ -32,8 +32,8 @@ let read_exact_string flow length =
   in
   loop 0
 
-let with_h1_connection ?time ?(config = Eta_http_eio.Server.Config.default)
-    handler client_action =
+let with_h1_connection ?time ?tracer
+    ?(config = Eta_http_eio.Server.Config.default) handler client_action =
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
@@ -45,7 +45,7 @@ let with_h1_connection ?time ?(config = Eta_http_eio.Server.Config.default)
   let port = tcp_port (Eio.Net.listening_addr socket) in
   let closed_stats, resolve_closed_stats = Eio.Promise.create () in
   let runtime_factory ~sw ~connection:_ () =
-    Eta_eio.Runtime.create ~sw ~clock ()
+    Eta_eio.Runtime.create ~sw ~clock ?tracer ()
   in
   Eio.Fiber.fork ~sw (fun () ->
       Eio.Switch.run @@ fun conn_sw ->
@@ -1642,11 +1642,14 @@ let test_h1_server_connection_emits_meter_metrics () =
         (has_int_metric "eta_http.server.protocol.errors" 1 meter))
 
 let test_h1_server_handler_exception_returns_500 () =
+  (* httpsrv-77jk *)
+  let tracer = Eta.Tracer.in_memory () in
   let handler (request : Eta_http.Server.Request.t) =
     if request.path = "/boom" then failwith "handler boom"
     else Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
   in
-  with_h1_connection handler (fun clock flow _closed_stats ->
+  with_h1_connection ~tracer:(Eta.Tracer.as_capability tracer) handler
+    (fun clock flow _closed_stats ->
       Eio.Flow.copy_string
         "GET /boom HTTP/1.1\r\nHost: example.test\r\n\r\nGET /ok \
          HTTP/1.1\r\nHost: example.test\r\n\r\n"
@@ -1657,7 +1660,54 @@ let test_h1_server_handler_exception_returns_500 () =
       Alcotest.(check string) "handler exception response"
         ("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n"
        ^ "Content-Length: 22\r\n\r\ninternal server error\n")
-        response)
+        response;
+      check_server_error_span ~path:"/boom" tracer)
+
+let test_h1_server_common_nested_failure_fallback () =
+  (* httpsrv-fooq, httpsrv-x8ru *)
+  let server_config =
+    { Eta_http.Server.Config.default with enable_otel = false }
+  in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let handler request =
+    nested_server_handler_failure ~protocol:Eta_http.Server.Error.H1 request
+  in
+  with_h1_connection ~config handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    ("GET /nested-handler-failure HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Connection: close\r\n\r\n")
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "first primary typed failure response"
+    ("HTTP/1.1 417 Expectation Failed\r\nConnection: close\r\n"
+   ^ "Content-Length: 19\r\n\r\nexpectation failed\n")
+    response;
+  ignore
+    (Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+         Eio.Promise.await closed_stats))
+
+let test_h1_server_common_handler_observability () =
+  (* httpsrv-77jk *)
+  let tracer = Eta.Tracer.in_memory () in
+  let handler _request =
+    Eta.Effect.pure (Eta_http.Server.Response.text "observed\n")
+  in
+  with_h1_connection ~tracer:(Eta.Tracer.as_capability tracer) handler
+  @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    ("GET /observed-handler HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Connection: close\r\n\r\n")
+    flow;
+  ignore
+    (Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow));
+  ignore
+    (Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+         Eio.Promise.await closed_stats));
+  check_server_span ~path:"/observed-handler" tracer
 
 let test_h1_server_stream_response_releases_after_body_written () =
   (* zio-http HttpApp.test.ts "stream" - response stream finalization. *)

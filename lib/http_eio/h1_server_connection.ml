@@ -246,10 +246,8 @@ let request_timeout_error t timeout =
        { timeout_ms = Option.map Eta.Duration.to_ms timeout })
 
 let handler_timeout_error t request timeout =
-  Server.Error.make ~protocol:t.connection.protocol
-    ~method_:request.Server.Request.method_ ~target:request.target
-    (Handler_timeout
-       { timeout_ms = Option.map Eta.Duration.to_ms timeout })
+  Server_connection_common.handler_timeout_error
+    ~protocol:t.connection.protocol request timeout
 
 let request_parse_error t parse_error =
   let message =
@@ -261,10 +259,8 @@ let response_write_error t message =
   error t (Response_write_failed { message })
 
 let response_body_timeout_error t request timeout =
-  Server.Error.make ~protocol:t.connection.protocol
-    ~method_:request.Server.Request.method_ ~target:request.target
-    (Response_body_timeout
-       { timeout_ms = Option.map Eta.Duration.to_ms timeout })
+  Server_connection_common.response_body_timeout_error
+    ~protocol:t.connection.protocol request timeout
 
 let write_response_wire t ~blit ~len =
   try
@@ -329,26 +325,9 @@ let record_protocol_error t =
   Server_stats.H1.protocol_error t.stats;
   emit_connection t (fun metrics -> Server_metrics.protocol_errors metrics 1)
 
-let find_failure cause =
-  let rec loop = function
-    | Eta.Cause.Fail error -> Some error
-    | Die _ | Interrupt _ | Finalizer _ -> None
-    | Sequential causes | Concurrent causes -> List.find_map loop causes
-    | Suppressed { primary; _ } -> loop primary
-  in
-  loop cause
-
 let fallback_error_response t request cause =
-  let message = Format.asprintf "%a" (Eta.Cause.pp Server.Error.pp) cause in
-  let error =
-    match find_failure cause with
-    | Some error -> error
-    | None ->
-        Server.Error.make ~protocol:t.connection.protocol
-          ~method_:request.Server.Request.method_ ~target:request.target
-          (Handler_failed { message })
-  in
-  Server.Handler.default_error_response error
+  Server_connection_common.fallback_error_response
+    ~protocol:t.connection.protocol request cause
 
 let min_positive left right =
   if left <= 0 then right else if right <= 0 then left else min left right
@@ -974,7 +953,7 @@ let response_write_failure ?(response_started = false) error =
   Error { error; response_started }
 
 let response_error_of_cause t cause =
-  match find_failure cause with
+  match Server_connection_common.find_failure cause with
   | Some error -> error
   | None ->
       response_write_error t
@@ -1057,12 +1036,6 @@ let with_released_response_stream rt stream f =
           release_once ();
           error)
 
-let handler_failed_error t request exn =
-  let message = Printexc.to_string exn in
-  Server.Error.make ~protocol:t.connection.protocol
-    ~method_:request.Server.Request.method_ ~target:request.target
-    (Handler_failed { message })
-
 let run_response_body_effect t request rt effect_thunk =
   let run () =
     try
@@ -1076,7 +1049,8 @@ let run_response_body_effect t request rt effect_thunk =
     | Eio.Cancel.Cancelled _ as exn -> raise exn
     | exn ->
         response_write_failure ~response_started:true
-          (handler_failed_error t request exn)
+          (Server_connection_common.handler_exception_error
+             ~protocol:t.connection.protocol request exn)
   in
   match t.config.server.timeouts.response_body_timeout with
   | Some timeout -> (
@@ -1237,14 +1211,10 @@ let request_metrics t rt request =
   else None
 
 let safe_handler_effect t request handler =
-  try
-    Eta_http.Observability.Server.Tracer.request
-      ~enabled:t.config.server.enable_otel
-      ~emit_url_full:t.config.server.emit_url_full
-      handler request
-  with
-  | Eio.Cancel.Cancelled _ as exn -> raise exn
-  | exn -> Eta.Effect.fail (handler_failed_error t request exn)
+  Server_connection_common.fenced_handler_effect
+    ~protocol:t.connection.protocol
+    ~enable_otel:t.config.server.enable_otel
+    ~emit_url_full:t.config.server.emit_url_full request handler
 
 (* Per-connection handler-timeout watchdog. The in-flight handler registers a
    deadline + its cancel context in [t.handler_watch]; this single daemon polls

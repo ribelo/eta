@@ -238,6 +238,11 @@ let () =
             test_h1_server_connection_rejects_header_smuggling_vectors;
           Alcotest.test_case "handler exception returns 500" `Quick
             test_h1_server_handler_exception_returns_500;
+          Alcotest.test_case
+            "common nested failure fallback" `Quick
+            test_h1_server_common_nested_failure_fallback;
+          Alcotest.test_case "common handler observability" `Quick
+            test_h1_server_common_handler_observability;
           Alcotest.test_case "accepts OPTIONS asterisk target" `Quick
             test_h1_server_connection_accepts_options_asterisk_target;
           Alcotest.test_case "normalizes absolute-form target" `Quick
@@ -662,6 +667,11 @@ let () =
             test_h2c_server_rejects_control_char_header_values;
           Alcotest.test_case "h2c handler exception returns 500" `Quick
             test_h2c_server_handler_exception_returns_500;
+          Alcotest.test_case
+            "h2c common nested failure fallback" `Quick
+            test_h2c_server_common_nested_failure_fallback;
+          Alcotest.test_case "h2c common handler observability" `Quick
+            test_h2c_server_common_handler_observability;
           Alcotest.test_case "h2c handler timeout returns 503" `Quick
             test_h2c_server_handler_timeout_returns_503;
           Alcotest.test_case "h2c streaming response exception resets stream"

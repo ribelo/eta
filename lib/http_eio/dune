@@ -20,6 +20,6 @@
   ipaddr
   faraday
   yojson)
- (private_modules probe_samples))
+ (private_modules probe_samples server_connection_common))
 
 (include_subdirs unqualified)

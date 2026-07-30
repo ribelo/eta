@@ -666,10 +666,8 @@ let request_timeout_error t timeout =
        { timeout_ms = Option.map Eta.Duration.to_ms timeout })
 
 let handler_timeout_error t request timeout =
-  Server.Error.make ~protocol:t.connection.protocol
-    ~method_:request.Server.Request.method_ ~target:request.target
-    (Handler_timeout
-       { timeout_ms = Option.map Eta.Duration.to_ms timeout })
+  Server_connection_common.handler_timeout_error
+    ~protocol:t.connection.protocol request timeout
 
 let request_body_too_large_error t ~limit ~length =
   Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
@@ -708,10 +706,8 @@ let response_write_timeout_error t =
   response_write_error t ~message:"response write timed out" ()
 
 let response_body_timeout_error t request timeout =
-  Server.Error.make ~protocol:t.connection.protocol
-    ~method_:request.Server.Request.method_ ~target:request.target
-    (Response_body_timeout
-       { timeout_ms = Option.map Eta.Duration.to_ms timeout })
+  Server_connection_common.response_body_timeout_error
+    ~protocol:t.connection.protocol request timeout
 
 let security_error t kind =
   let http_error =
@@ -1650,26 +1646,9 @@ let fixed_response_stream chunks length =
     release = (fun () -> Eta.Effect.unit);
   }
 
-let find_failure cause =
-  let rec loop = function
-    | Eta.Cause.Fail error -> Some error
-    | Die _ | Interrupt _ | Finalizer _ -> None
-    | Sequential causes | Concurrent causes -> List.find_map loop causes
-    | Suppressed { primary; _ } -> loop primary
-  in
-  loop cause
-
 let fallback_error_response t request cause =
-  let message = Format.asprintf "%a" (Eta.Cause.pp Server.Error.pp) cause in
-  let error =
-    match find_failure cause with
-    | Some error -> error
-    | None ->
-        Server.Error.make ~protocol:t.connection.protocol
-          ~method_:request.Server.Request.method_ ~target:request.target
-          (Handler_failed { message })
-  in
-  Server.Handler.default_error_response error
+  Server_connection_common.fallback_error_response
+    ~protocol:t.connection.protocol request cause
 
 let respond_fixed reqd response =
   match response.body with
@@ -3194,7 +3173,7 @@ let await_owner_write t make =
       with Eio.Time.Timeout -> Error (response_write_timeout_error t))
 
 let response_error_of_cause t cause =
-  match find_failure cause with
+  match Server_connection_common.find_failure cause with
   | Some error -> error
   | None -> response_failure_of_cause t cause
 
@@ -3214,12 +3193,6 @@ let release_prepared_response_body rt response =
       release_response_stream rt stream
   | Response_no_body None | Response_fixed _ -> ()
 
-let handler_failed_error t request exn =
-  let message = Printexc.to_string exn in
-  Server.Error.make ~protocol:t.connection.protocol
-    ~method_:request.Server.Request.method_ ~target:request.target
-    (Handler_failed { message })
-
 let run_response_body_effect t rt request effect_thunk =
   let run () =
     try
@@ -3228,8 +3201,14 @@ let run_response_body_effect t rt request effect_thunk =
       | Eta.Exit.Ok value -> Ok value
       | Eta.Exit.Error cause -> Error (response_error_of_cause t cause)
     with
-    | Eio.Cancel.Cancelled _ as exn -> Error (handler_failed_error t request exn)
-    | exn -> Error (handler_failed_error t request exn)
+    | Eio.Cancel.Cancelled _ as exn ->
+        Error
+          (Server_connection_common.handler_exception_error
+             ~protocol:t.connection.protocol request exn)
+    | exn ->
+        Error
+          (Server_connection_common.handler_exception_error
+             ~protocol:t.connection.protocol request exn)
   in
   match t.config.server.timeouts.response_body_timeout with
   | Some timeout -> (
@@ -3311,14 +3290,10 @@ let rec pump_response_stream t rt ordinal request response stream written =
                       fail_stream_response t rt ordinal stream error))))
 
 let safe_handler_effect t request handler =
-  try
-    Eta_http.Observability.Server.Tracer.request
-      ~enabled:t.config.server.enable_otel
-      ~emit_url_full:t.config.server.emit_url_full
-      handler request
-  with
-  | Eio.Cancel.Cancelled _ as exn -> raise exn
-  | exn -> Eta.Effect.fail (handler_failed_error t request exn)
+  Server_connection_common.fenced_handler_effect
+    ~protocol:t.connection.protocol
+    ~enable_otel:t.config.server.enable_otel
+    ~emit_url_full:t.config.server.emit_url_full request handler
 
 let run_handler_body t ordinal request handler =
   let rt = t.runtime in

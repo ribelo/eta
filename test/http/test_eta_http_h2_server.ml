@@ -5276,6 +5276,7 @@ let test_h2c_server_rejects_control_char_header_values () =
         received)
 
 let test_h2c_server_handler_exception_returns_500 () =
+  (* httpsrv-77jk *)
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
@@ -5289,9 +5290,15 @@ let test_h2c_server_handler_exception_returns_500 () =
     if request.path = "/boom" then failwith "handler boom"
     else Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
   in
+  let tracer = Eta.Tracer.in_memory () in
+  let runtime_factory ~sw ~connection:_ () =
+    Eta_eio.Runtime.create ~sw ~clock
+      ~tracer:(Eta.Tracer.as_capability tracer) ()
+  in
   let stop, resolve_stop = Eio.Promise.create () in
   Eio.Fiber.fork ~sw (fun () ->
-      Eta_http_eio.Server.run_h2c_on_socket ~sw ~clock ~stop ~socket handler);
+      Eta_http_eio.Server.run_h2c_on_socket ~sw ~clock ~stop ~socket
+        ~runtime_factory handler);
   let flow =
     Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
   in
@@ -5326,7 +5333,103 @@ let test_h2c_server_handler_exception_returns_500 () =
             await_h2_response connection request2)
       in
       Alcotest.(check int) "subsequent request status" 200 status2;
-      Alcotest.(check string) "subsequent request body" "ok\n" body2)
+      Alcotest.(check string) "subsequent request body" "ok\n" body2;
+      check_server_error_span ~path:"/boom" tracer)
+
+let test_h2c_server_common_nested_failure_fallback () =
+  (* httpsrv-fooq, httpsrv-x8ru *)
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let server_config =
+    { Eta_http.Server.Config.default with enable_otel = false }
+  in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let handler request =
+    nested_server_handler_failure ~protocol:Eta_http.Server.Error.H2c request
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~config ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw ~now_ms:(fun () -> 0L)
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let request =
+        h2_request ~scheme:"http"
+          ~headers:( [ ":authority", "127.0.0.1" ])
+          `GET "/nested-handler-failure"
+      in
+      let status, body =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response connection request)
+      in
+      Alcotest.(check int) "first primary typed failure status" 417 status;
+      Alcotest.(check string) "first primary typed failure body"
+        "expectation failed\n" body)
+
+let test_h2c_server_common_handler_observability () =
+  (* httpsrv-77jk *)
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let tracer = Eta.Tracer.in_memory () in
+  let runtime_factory ~sw ~connection:_ () =
+    Eta_eio.Runtime.create ~sw ~clock
+      ~tracer:(Eta.Tracer.as_capability tracer) ()
+  in
+  let handler _request =
+    Eta.Effect.pure (Eta_http.Server.Response.text "observed\n")
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~runtime_factory ~socket
+      handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw ~now_ms:(fun () -> 0L)
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let request =
+        h2_request ~scheme:"http"
+          ~headers:( [ ":authority", "127.0.0.1" ])
+          `GET "/observed-handler"
+      in
+      ignore
+        (Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+             await_h2_response connection request));
+      check_server_span ~path:"/observed-handler" tracer)
 
 
 let test_h2c_server_handler_timeout_returns_503 () =

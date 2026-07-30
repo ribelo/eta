@@ -81,3 +81,67 @@ let retry_client responses =
                released = 0;
              }))
       ~shutdown:(fun () -> Eta.Effect.unit) )
+
+let nested_server_handler_failure ~protocol
+    (request : Eta_http.Server.Request.t) =
+  let primary =
+    Eta_http.Server.Error.make ~protocol ~method_:request.method_
+      ~target:request.target
+      (Expectation_failed { expectation = "nested-handler-failure" })
+  in
+  let finalizer_error =
+    Eta_http.Server.Error.make ~protocol ~method_:request.method_
+      ~target:request.target
+      (Bad_request { message = "finalizer must not win" })
+  in
+  let later =
+    Eta_http.Server.Error.make ~protocol ~method_:request.method_
+      ~target:request.target
+      (Handler_timeout { timeout_ms = Some 1 })
+  in
+  let finalizer =
+    Eta.Cause.Finalizer.Fail
+      { error = finalizer_error; rendered = "finalizer must not win" }
+  in
+  let cause =
+    Eta.Cause.concurrent
+      [
+        Eta.Cause.sequential
+          [
+            Eta.Cause.suppressed ~primary:(Eta.Cause.fail primary) ~finalizer;
+            Eta.Cause.fail later;
+          ];
+      ]
+  in
+  Eta.Spi.Expert.make ~leaf_name:"test.http.server.nested-handler-failure"
+    (fun _context -> Eta.Exit.Error cause)
+
+let server_span ~path tracer =
+  match
+    Eta.Tracer.dump tracer
+    |> List.filter (fun span ->
+           span.Eta.Tracer.kind = Eta.Tracer.Server
+           && List.assoc_opt "url.path" span.attrs = Some path)
+  with
+  | [ span ] -> span
+  | spans ->
+      Alcotest.failf "expected one HTTP server span for %s, got %d" path
+        (List.length spans)
+
+let check_server_span ~path tracer =
+  ignore (server_span ~path tracer : Eta.Tracer.span)
+
+let check_server_error_span ~path tracer =
+  let span = server_span ~path tracer in
+  Alcotest.(check (option string)) "server span error type"
+    (Some "handler_failed")
+    (List.assoc_opt "error.type" span.attrs);
+  Alcotest.(check (option string)) "server span error kind"
+    (Some "Handler_failed")
+    (List.assoc_opt "eta_http.error.kind" span.attrs);
+  Alcotest.(check (option string)) "server span error layer" (Some "handler")
+    (List.assoc_opt "eta_http.error.layer" span.attrs);
+  match span.status with
+  | Eta.Tracer.Error _ -> ()
+  | Ok -> Alcotest.fail "expected errored HTTP server span, got Ok"
+  | Cancelled -> Alcotest.fail "expected errored HTTP server span, got Cancelled"
