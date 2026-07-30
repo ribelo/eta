@@ -110,7 +110,7 @@ let test_client ?(with_http_span = false) response captured =
     captured := Some http_request;
     let eff = E.pure response in
     if with_http_span then
-      E.named ~kind:Eta.Capabilities.Client "HTTP POST" eff
+      Eta_observability.named ~kind:Eta.Capabilities.Client "HTTP POST" eff
     else eff
   in
   H.Client.make_custom ~protocol:H.Client.H1 ~request
@@ -256,16 +256,16 @@ let test_runner_suppresses_transport_span () =
   in
   Alcotest.(check string)
     "uri" "https://api.together.xyz/v1/chat/completions" request.uri;
-  let spans = Eta.Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   Alcotest.(check bool)
     "transport span suppressed" false
     (List.exists
-       (fun (span : Eta.Tracer.span) -> String.equal span.name "HTTP POST")
+       (fun (span : Eta_observability.Tracer.span) -> String.equal span.name "HTTP POST")
        spans);
   Alcotest.(check bool)
     "chat span provider model" true
     (List.exists
-       (fun (span : Eta.Tracer.span) ->
+       (fun (span : Eta_observability.Tracer.span) ->
          String.equal span.name
            "chat meta-llama/Llama-3.3-70B-Instruct-Turbo")
        spans)

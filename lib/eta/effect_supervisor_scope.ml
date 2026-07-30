@@ -222,7 +222,7 @@ let with_supervised_background ?name background use =
   let background =
     match name with
     | None -> background
-    | Some name -> Effect_observability.named name background
+    | Some name -> Effect_instrument.named_internal name background
   in
   supervisor_scoped
     {
@@ -263,7 +263,7 @@ let with_background ?name background use =
   let background =
     match name with
     | None -> background
-    | Some name -> Effect_observability.named name background
+    | Some name -> Effect_instrument.named_internal name background
   in
   make ~leaf_name:"Effect.with_background" @@ fun frame ->
   let exception Stop in

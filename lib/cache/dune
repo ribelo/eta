@@ -2,4 +2,4 @@
  (name eta_cache)
  (public_name eta_cache)
  (synopsis "Refreshable values and effect-integrated keyed caches for Eta")
- (libraries eta))
+ (libraries eta eta_observability))

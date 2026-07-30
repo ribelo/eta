@@ -369,7 +369,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let attempts = ref 0 in
     let attempt =
-      Effect.named "interrupt"
+      Eta_observability.named "interrupt"
         (Effect.sync (fun () -> incr attempts)
         |> Effect.bind (fun () -> runtime_interrupt_effect ()))
     in
@@ -388,7 +388,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_effect_repeat_schedule () =
     B.with_runtime @@ fun _ctx rt ->
     let ticks = ref 0 in
-    let tick = Effect.named "tick" (Effect.sync (fun () -> incr ticks)) in
+    let tick = Eta_observability.named "tick" (Effect.sync (fun () -> incr ticks)) in
     ignore (run_ok rt (Effect.repeat ~schedule:(Schedule.recurs 3) tick) : int);
     Alcotest.(check int) "initial run plus three repeats" 4 !ticks
 
@@ -423,7 +423,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let promise =
       B.fork_run ctx rt
-        (Effect.named "tick" (Effect.sync (fun () -> incr ticks))
+        (Eta_observability.named "tick" (Effect.sync (fun () -> incr ticks))
         |> Effect.repeat ~schedule:schedule)
     in
     B.yield ();
@@ -598,7 +598,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let attempts = ref 0 in
     let attempt =
-      Effect.named "attempt"
+      Eta_observability.named "attempt"
         (Effect.sync (fun () ->
              incr attempts;
              !attempts))
@@ -618,7 +618,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Schedule.both (Schedule.recurs 5) (Schedule.spaced (Duration.ms 5))
     in
     let attempt =
-      Effect.named "attempt"
+      Eta_observability.named "attempt"
         (Effect.sync (fun () ->
              incr attempts;
              !attempts))
@@ -804,7 +804,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       |> Schedule.jittered ~min:1.0 ~max:2.0
     in
     let attempt =
-      Effect.named "attempt"
+      Eta_observability.named "attempt"
         (Effect.sync (fun () ->
              incr attempts;
              !attempts))

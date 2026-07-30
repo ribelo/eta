@@ -17,13 +17,23 @@
   (ocaml (>= 5.2.0))))
 
 (package
+ (name eta_observability)
+ (synopsis "Tracing, structured logging, metrics, and W3C propagation for Eta")
+ (description
+  "eta_observability provides Eta's optional application-facing tracing, structured logging, metrics, in-memory capability implementations, and W3C trace-context propagation helpers.")
+ (depends
+  (ocaml (>= 5.2.0))
+  eta))
+
+(package
  (name eta_cache)
  (synopsis "Effect-integrated keyed cache for Eta")
  (description
   "eta_cache provides refreshable values and a bounded keyed cache with Eta single-flight lookup sharing, per-result TTL, typed-failure caching, lazy expiry, invalidation, refresh, and stats.")
  (depends
   (ocaml (>= 5.2.0))
-  eta))
+  eta
+  eta_observability))
 
 (package
  (name eta_signal)
@@ -34,6 +44,7 @@
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
+  eta_observability
   eta_stream))
 
 (package
@@ -45,6 +56,7 @@
  (depends
   (ocaml (>= 5.2.0))
   eta
+  eta_observability
   eta_cache
   eta_jsoo
   (js_of_ocaml (>= 5.0))))
@@ -143,6 +155,7 @@
  (depends
   (ocaml (>= 5.2.0))
   eta
+  eta_observability
   (eio (>= 1.0))
   (cstruct (>= 6.0.0))))
 
@@ -199,6 +212,7 @@
  (depends
   (ocaml (>= 5.2.0))
   eta
+  eta_observability
   (yojson (>= 2.0))
   (crowbar :with-test)
   domain-name
@@ -380,6 +394,7 @@
  (depends
   (ocaml (>= 5.2.0))
   eta
+  eta_observability
   eta_blocking
   eta_eio
   (eio (>= 1.0))
@@ -405,6 +420,7 @@
  (depends
   (ocaml (>= 5.2.0))
   eta
+  eta_observability
   eta_stream
   eta_http
   (mtime (>= 2.0))
@@ -418,6 +434,7 @@
  (depends
   (ocaml (>= 5.2.0))
   eta
+  eta_observability
   eta_redacted
   eta_http
   (yojson (>= 2.0))))
@@ -440,6 +457,7 @@
  (depends
   (ocaml (>= 5.2.0))
   eta
+  eta_observability
   eta_ai
   eta_ai_openai_codec
   eta_redacted
@@ -572,6 +590,7 @@
   (ocaml (>= 5.2.0))
   ppxlib
   (eta :with-test)
+  (eta_observability :with-test)
   (eio_main :with-test)
   (alcotest :with-test)))
 

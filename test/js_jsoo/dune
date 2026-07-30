@@ -5,6 +5,7 @@
  (modes js)
  (libraries
   eta
+  eta_observability
   eta_jsoo
   eta_effect_async_shared_tests
   eta_effect_interruptible_shared_tests

@@ -1197,11 +1197,11 @@ let test_h1_pool_request_cancellation_releases_checkout () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
-  let logger = Eta.Logger.in_memory () in
+  let logger = Eta_observability.Logger.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Eta_test.Test_clock.sleep clock)
-      ~logger:(Eta.Logger.as_capability logger) ()
+      ~logger:(Eta_observability.Logger.as_capability logger) ()
   in
   let pool =
     Eta_http_eio.H1.Client.make_pool ~max_size:1 ~sw ~net url
@@ -1239,9 +1239,9 @@ let test_h1_pool_request_cancellation_releases_checkout () =
     Eta_test.Async.yield ()
   done;
   let daemon_failures =
-    Eta.Logger.dump logger
+    Eta_observability.Logger.dump logger
     |> List.filter (fun record ->
-           String.equal record.Eta.Logger.body "eta.daemon.failure")
+           String.equal record.Eta_observability.Logger.body "eta.daemon.failure")
   in
   Alcotest.(check int) "cancellation logged no daemon failure" 0
     (List.length daemon_failures)

@@ -1,0 +1,3 @@
+(executable
+ (name probe)
+ (libraries eta eta_eio eio_main))

@@ -128,12 +128,12 @@ let with_logger_test_clock f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
-  let logger = Eta.Logger.in_memory () in
+  let logger = Eta_observability.Logger.in_memory () in
   let runtime =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
       ~sleep:(Eta_test.Test_clock.sleep clock)
       ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
-      ~logger:(Eta.Logger.as_capability logger) ()
+      ~logger:(Eta_observability.Logger.as_capability logger) ()
   in
   f sw clock runtime logger
 
@@ -2189,10 +2189,10 @@ let test_stream_bridge_full_queue_drops_newest () =
   (match !drops with
    | [ S.Changed { old_value = 1; new_value = 2 } ] -> ()
    | _ -> Alcotest.fail "expected newest stream update to be dropped");
-  (match Eta.Logger.dump logger with
+  (match Eta_observability.Logger.dump logger with
    | [ record ] ->
        Alcotest.(check bool) "drop hook diagnostic level" true
-         (record.level = Eta.Logger.Error);
+         (record.level = Eta_observability.Logger.Error);
        Alcotest.(check string) "drop hook diagnostic body"
          "eta_signal.stream.on_drop_failure" record.body;
        Alcotest.(check (option string))

@@ -19,9 +19,9 @@ let random_trace_id random =
   loop ()
 
 let trace_context_of_span_info (info : Capabilities.span_info) =
-  Trace_context.make ~trace_id:info.trace_id ~span_id:info.span_id
+  Runtime_trace_context.make ~trace_id:info.trace_id ~span_id:info.span_id
     ~trace_flags:info.trace_flags ~trace_state:info.trace_state
-    ~baggage:info.baggage ()
+    ~baggage:info.baggage
 
 let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
   let contract = runtime.contract in
@@ -49,7 +49,7 @@ let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
         ~default:
           (match ambient_context with
           | None -> true
-          | Some ctx -> Trace_context.sampled ctx)
+          | Some ctx -> Runtime_trace_context.sampled ctx)
     in
     let same_tracer =
       match parent with

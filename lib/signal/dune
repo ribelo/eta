@@ -18,4 +18,4 @@
   eta_signal_timer_policy
   eta_signal_transaction
   eta_signal_stabilization)
- (libraries eta eta_stream))
+ (libraries eta eta_observability eta_stream))

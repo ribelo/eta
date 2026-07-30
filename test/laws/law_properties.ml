@@ -176,13 +176,13 @@ let apply_fn fn value =
   | Log_add n ->
       E.bind
         (fun () -> E.pure (value + n))
-        (E.log_info (Printf.sprintf "fn:%d:%d" n value))
+        (Eta_observability.log_info (Printf.sprintf "fn:%d:%d" n value))
   | Fail_even error -> if value mod 2 = 0 then E.fail error else E.pure value
 
 let rec effect_of = function
   | Pure n -> E.pure n
   | Fail error -> E.fail error
-  | Log n -> E.bind (fun () -> E.pure n) (E.log_info (Printf.sprintf "bp:%d" n))
+  | Log n -> E.bind (fun () -> E.pure n) (Eta_observability.log_info (Printf.sprintf "bp:%d" n))
   | Yield n -> E.bind (fun () -> E.pure n) E.yield
   | Map (n, body) -> E.map (fun value -> value + n) (effect_of body)
   | Bind (fn, body) -> E.bind (apply_fn fn) (effect_of body)
@@ -191,7 +191,7 @@ let rec effect_of = function
       E.fold ~ok:(fun value -> value + ok) ~error:(fun value -> value + error)
         (effect_of body)
   | Finally (tag, body) ->
-      E.finally (E.log_info (Printf.sprintf "cleanup:%d" tag)) (effect_of body)
+      E.finally (Eta_observability.log_info (Printf.sprintf "cleanup:%d" tag)) (effect_of body)
   | Delay (ms, body) -> E.delay (Eta.Duration.ms ms) (effect_of body)
 
 let run program = Run.run ~seed:runtime_seed program
@@ -233,10 +233,10 @@ let raises_invalid_argument f =
   | exception Invalid_argument _ -> true
   | _ -> false
 
-let log_bodies outcome = List.map (fun record -> record.Eta.Logger.body) outcome.Run.logs
+let log_bodies outcome = List.map (fun record -> record.Eta_observability.Logger.body) outcome.Run.logs
 let count_log body outcome =
   List.fold_left
-    (fun count record -> if record.Eta.Logger.body = body then count + 1 else count)
+    (fun count record -> if record.Eta_observability.Logger.body = body then count + 1 else count)
     0 outcome.Run.logs
 
 let yields count body =
@@ -244,7 +244,7 @@ let yields count body =
 
 let complete_after ~delay ~event value =
   E.delay (Eta.Duration.ms delay)
-    (E.bind (fun () -> E.pure value) (E.log_info event))
+    (E.bind (fun () -> E.pure value) (Eta_observability.log_info event))
 
 type exit_kind = Success | Typed_failure | Defect | Cancellation
 
@@ -461,13 +461,13 @@ let property_par_fail_fast =
         let left_release = "par-release:left-failure" in
         let right_release = "par-release:right-failure" in
         let fail_at delay event error release =
-          E.finally (E.log_info release)
+          E.finally (Eta_observability.log_info release)
             (E.delay (Eta.Duration.ms delay)
-               (E.bind (fun () -> E.fail error) (E.log_info event)))
+               (E.bind (fun () -> E.fail error) (Eta_observability.log_info event)))
         in
         let left = fail_at left_delay left_event first_error left_release in
         let right = fail_at right_delay right_event second_error right_release in
-        let pending = E.finally (E.log_info pending_release) E.never in
+        let pending = E.finally (Eta_observability.log_info pending_release) E.never in
         let outcome =
           run (E.discard (E.par left (E.par right pending)))
         in
@@ -570,11 +570,11 @@ let par_n_fail_fast_property ~arity ~name make_product =
           in
           let delay = if index = winner then base_delay else base_delay + 1 in
           E.finally
-            (E.log_info (Printf.sprintf "par%d-release:%d" arity index))
+            (Eta_observability.log_info (Printf.sprintf "par%d-release:%d" arity index))
             (E.delay (Eta.Duration.ms delay)
                (E.bind
                   (fun () -> E.fail error)
-                  (E.log_info (Printf.sprintf "par%d-failure:%d" arity index))))
+                  (Eta_observability.log_info (Printf.sprintf "par%d-failure:%d" arity index))))
         in
         let outcome = run (E.discard (make_product child)) in
         let release index = Printf.sprintf "par%d-release:%d" arity index in
@@ -661,7 +661,7 @@ let property_map_par_fail_fast =
                  (E.sync (fun () ->
                       acquired.(index) <- true;
                       index))
-               ~release:(fun resource -> E.log_info (released resource)))
+               ~release:(fun resource -> Eta_observability.log_info (released resource)))
       in
       let outcome = run (E.discard (E.map_par ~max_concurrent:3 branch [ 0; 1; 2 ])) in
       let exit_ok =
@@ -950,7 +950,7 @@ let property_all_bounded_input_order =
             in
             E.bind
               (fun () -> complete_after ~delay ~event:(completion index) value)
-              (E.log_info (start index)))
+              (Eta_observability.log_info (start index)))
           values
       in
       let outcome = run (E.all_bounded ~max_concurrent:2 children) in
@@ -983,15 +983,15 @@ let all_fail_fast_observation ~bounded first_error first_delay =
   let tail_event = "all-tail:unadmitted" in
   let fail_at delay event error =
     E.delay (Eta.Duration.ms delay)
-      (E.bind (fun () -> E.fail error) (E.log_info event))
+      (E.bind (fun () -> E.fail error) (Eta_observability.log_info event))
   in
   let first = fail_at first_delay first_event first_error in
   let later =
-    E.finally (E.log_info later_release)
+    E.finally (Eta_observability.log_info later_release)
       (fail_at (first_delay + 1) later_event later_error)
   in
-  let pending = E.finally (E.log_info pending_release) E.never in
-  let tail = E.log_info tail_event in
+  let pending = E.finally (Eta_observability.log_info pending_release) E.never in
+  let tail = Eta_observability.log_info tail_event in
   let collection =
     if bounded then
       E.all_bounded ~max_concurrent:3 [ first; later; pending; tail; tail ]
@@ -1138,7 +1138,7 @@ let property_race_loser_cancellation =
                        winner))
                 ~release:(fun _ ->
                   E.bind
-                    (fun () -> E.log_info release_event)
+                    (fun () -> Eta_observability.log_info release_event)
                     (E.sync (fun () -> released := true)))))
       in
       let outcome = run (E.race [ loser; E.delay (Eta.Duration.ms delay) (E.pure winner) ]) in
@@ -1165,8 +1165,8 @@ let property_finally_exactly_once =
                       E.sync (fun () -> body_exit_seen := exit_has_kind kind exit))
                     terminal
                 in
-                E.finally (E.log_info finalizer)
-                  (E.bind (fun () -> terminal) (E.log_info body_event)))
+                E.finally (Eta_observability.log_info finalizer)
+                  (E.bind (fun () -> terminal) (Eta_observability.log_info body_event)))
             |> run
           in
           !body_exit_seen
@@ -1183,7 +1183,7 @@ let property_finally_cleanup_failure_after_success =
     (fun (value, cleanup_error) ->
       let outcome =
         E.finally (E.fail cleanup_error) (E.pure value)
-        |> E.with_error_pp Format.pp_print_int |> run
+        |> Eta_observability.with_error_pp Format.pp_print_int |> run
       in
       (match outcome.exit with
       | Eta.Exit.Error actual ->
@@ -1200,7 +1200,7 @@ let property_finally_cleanup_failure_suppressed =
     (fun (primary_error, cleanup_error) ->
       let outcome =
         E.finally (E.fail cleanup_error) (E.fail primary_error)
-        |> E.with_error_pp Format.pp_print_int |> run
+        |> Eta_observability.with_error_pp Format.pp_print_int |> run
       in
       (match outcome.exit with
       | Eta.Exit.Error actual ->
@@ -1219,7 +1219,7 @@ let property_scope_lifo =
     (fun resources ->
       let acquire resource =
         E.acquire_release ~acquire:(E.pure resource)
-          ~release:(fun resource -> E.log_info (Printf.sprintf "release:%d" resource))
+          ~release:(fun resource -> Eta_observability.log_info (Printf.sprintf "release:%d" resource))
       in
       let program =
         List.fold_right
@@ -1247,17 +1247,17 @@ let property_nested_scope_release_boundary =
       let inner =
         E.with_scope
           (E.bind
-             (fun _ -> E.log_info inner_body)
+             (fun _ -> Eta_observability.log_info inner_body)
              (E.acquire_release ~acquire:(E.pure inner_tag)
-                ~release:(fun _ -> E.log_info inner_release)))
+                ~release:(fun _ -> Eta_observability.log_info inner_release)))
       in
       let program =
         E.with_scope
           (E.bind
              (fun _ ->
-               E.bind (fun () -> E.log_info outer_continuation) inner)
+               E.bind (fun () -> Eta_observability.log_info outer_continuation) inner)
              (E.acquire_release ~acquire:(E.pure outer_tag)
-                ~release:(fun _ -> E.log_info outer_release)))
+                ~release:(fun _ -> Eta_observability.log_info outer_release)))
       in
       let outcome = run program in
       outcome.exit = Eta.Exit.Ok ()
@@ -1278,7 +1278,7 @@ let property_with_scope_release_all_exits =
                   (E.bind
                      (fun _ -> terminal)
                      (E.acquire_release ~acquire:(E.pure tag)
-                        ~release:(fun _ -> E.log_info released))))
+                        ~release:(fun _ -> Eta_observability.log_info released))))
             |> run
           in
           lifecycle_root_has_kind kind outcome.exit
@@ -1304,8 +1304,8 @@ let property_with_resource_all_exits =
                     terminal
                 in
                 E.with_resource ~acquire:(E.pure tag)
-                  ~release:(fun _ -> E.log_info released)
-                  (fun _ -> E.bind (fun () -> terminal) (E.log_info body_event)))
+                  ~release:(fun _ -> Eta_observability.log_info released)
+                  (fun _ -> E.bind (fun () -> terminal) (Eta_observability.log_info body_event)))
             |> run
           in
           !body_exit_seen
@@ -1329,7 +1329,7 @@ let property_with_resource_release_failure_after_success =
       let outcome =
         E.with_resource ~acquire:(E.pure resource) ~release (fun actual ->
             E.pure (body_value + (actual - resource)))
-        |> E.with_error_pp Format.pp_print_int |> run
+        |> Eta_observability.with_error_pp Format.pp_print_int |> run
       in
       (match outcome.exit with
       | Eta.Exit.Error actual ->
@@ -1356,7 +1356,7 @@ let property_acquire_use_release_failure_suppressed =
         E.acquire_use_release ~acquire:(E.pure resource) ~release (fun actual ->
             if actual = resource then E.fail primary_error
             else E.fail (primary_error + 1))
-        |> E.with_error_pp Format.pp_print_int |> run
+        |> Eta_observability.with_error_pp Format.pp_print_int |> run
       in
       (match outcome.exit with
       | Eta.Exit.Error actual ->
@@ -1724,7 +1724,7 @@ let property_semaphore_cancellation =
              let waiter =
                Eta.Semaphore.acquire semaphore requested
                |> E.map (fun () -> `Acquired)
-               |> E.finally (E.log_info "semaphore-waiter-finalized")
+               |> E.finally (Eta_observability.log_info "semaphore-waiter-finalized")
              in
              let winner = E.delay (Eta.Duration.ms delay) (E.pure `Cancelled) in
              let outcome = run (E.race [ waiter; winner ]) in
@@ -1754,7 +1754,7 @@ let property_semaphore_fifo_wake =
                 E.map
                   (fun () -> value)
                   (E.sync (fun () -> Eta.Semaphore.release semaphore 1)))
-              (E.log_info (Printf.sprintf "semaphore-acquired:%d" index)))
+              (Eta_observability.log_info (Printf.sprintf "semaphore-acquired:%d" index)))
           (Eta.Semaphore.acquire semaphore 1)
       in
       let waiters = List.mapi waiter values in
@@ -2511,7 +2511,7 @@ let property_queue_shutdown_wakes_blocked_operations =
               (Eta.Queue.await_shutdown shutdown_queue))
           (E.bind
              (fun () -> E.sync (fun () -> await_started := true))
-             (E.log_info "queue-shutdown:await-started"))
+             (Eta_observability.log_info "queue-shutdown:await-started"))
       in
       let shutdown =
         E.delay (Eta.Duration.ms 1)
@@ -2784,8 +2784,8 @@ let probe name =
   E.bind
     (fun now ->
       E.bind
-        (fun () -> E.map (fun () -> now) (E.named name E.unit))
-        (E.log_info name))
+        (fun () -> E.map (fun () -> now) (Eta_observability.named name E.unit))
+        (Eta_observability.log_info name))
     E.now_ms
 
 let one_span = function [ span ] -> Some span | _ -> None
@@ -2795,9 +2795,9 @@ let property_override_restoration =
     ~name:"dynamic override restoration across each exit kind" ~count
     QCheck.(pair (int_range 10 100) (int_range 100 1000))
     (fun (overridden_now, override_seed) ->
-      let baseline = run (E.named "base-random-reference" E.unit) in
+      let baseline = run (Eta_observability.named "base-random-reference" E.unit) in
       let baseline_trace_id =
-        Option.map (fun span -> span.Eta.Tracer.trace_id)
+        Option.map (fun span -> span.Eta_observability.Tracer.trace_id)
           (one_span baseline.spans)
       in
       let override_trace_id = ref None in
@@ -2805,20 +2805,20 @@ let property_override_restoration =
         (fun kind ->
           let inside = Printf.sprintf "override-inside:%d" overridden_now in
           let after = "after-override" in
-          let logger = Eta.Logger.in_memory () in
-          let tracer = Eta.Tracer.in_memory () in
+          let logger = Eta_observability.Logger.in_memory () in
+          let tracer = Eta_observability.Tracer.in_memory () in
           let body_exit_seen = ref false in
           let body terminal =
             E.bind (fun _ -> terminal) (probe inside)
             |> E.on_exit (fun exit ->
                    E.sync (fun () -> body_exit_seen := exit_has_kind kind exit))
             |> E.finally
-                 (if kind = Cancellation then E.log_info "override-cancel-finalizer"
+                 (if kind = Cancellation then Eta_observability.log_info "override-cancel-finalizer"
                   else E.unit)
             |> E.with_clock (fixed_clock overridden_now)
             |> E.with_random (Eta.Capabilities.random_of_seed override_seed)
-            |> E.with_logger (Eta.Logger.as_capability logger)
-            |> E.with_tracer (Eta.Tracer.as_capability tracer)
+            |> Eta_observability.with_logger (Eta_observability.Logger.as_capability logger)
+            |> Eta_observability.with_tracer (Eta_observability.Tracer.as_capability tracer)
           in
           let scoped =
             match kind with
@@ -2835,8 +2835,8 @@ let property_override_restoration =
                        E.bind
                          (fun () ->
                            E.map (fun () -> (scoped_exit, now))
-                             (E.named after E.unit))
-                         (E.log_info after))
+                             (Eta_observability.named after E.unit))
+                         (Eta_observability.log_info after))
                      E.now_ms)
                  (E.to_exit scoped))
           in
@@ -2854,25 +2854,25 @@ let property_override_restoration =
                 && after_now = expected_outer_now
             | Eta.Exit.Error _ -> false
           in
-          let override_logs = Eta.Logger.dump logger in
+          let override_logs = Eta_observability.Logger.dump logger in
           let expected_override_bodies =
             if kind = Cancellation then [ inside; "override-cancel-finalizer" ]
             else [ inside ]
           in
           let logger_ok =
-            List.map (fun record -> record.Eta.Logger.body) override_logs
+            List.map (fun record -> record.Eta_observability.Logger.body) override_logs
               = expected_override_bodies
             && List.for_all
-                 (fun record -> record.Eta.Logger.ts_ms = overridden_now)
+                 (fun record -> record.Eta_observability.Logger.ts_ms = overridden_now)
                  override_logs
             && (match outcome.logs with
                | [ record ] ->
-                   record.Eta.Logger.body = after
+                   record.Eta_observability.Logger.body = after
                    && record.ts_ms = if kind = Cancellation then 1 else 0
                | _ -> false)
           in
           let tracer_ok =
-            match (one_span (Eta.Tracer.dump tracer), one_span outcome.spans) with
+            match (one_span (Eta_observability.Tracer.dump tracer), one_span outcome.spans) with
             | Some inner_span, Some after_span ->
                 let seeded =
                   match !override_trace_id with
@@ -2898,30 +2898,30 @@ let property_override_sibling_isolation =
       let execute override_left =
         let override_name = if override_left then "override-left" else "override-right" in
         let base_name = if override_left then "base-right" else "base-left" in
-        let logger = Eta.Logger.in_memory () in
-        let tracer = Eta.Tracer.in_memory () in
+        let logger = Eta_observability.Logger.in_memory () in
+        let tracer = Eta_observability.Tracer.in_memory () in
         let overridden =
           yields yield_count (probe override_name)
           |> E.with_clock (fixed_clock overridden_now)
           |> E.with_random (Eta.Capabilities.random_of_seed override_seed)
-          |> E.with_logger (Eta.Logger.as_capability logger)
-          |> E.with_tracer (Eta.Tracer.as_capability tracer)
+          |> Eta_observability.with_logger (Eta_observability.Logger.as_capability logger)
+          |> Eta_observability.with_tracer (Eta_observability.Tracer.as_capability tracer)
         in
         let base = yields yield_count (probe base_name) in
         let program = if override_left then E.par overridden base else E.par base overridden in
         let expected = if override_left then (overridden_now, 0) else (0, overridden_now) in
         let outcome = run program in
         match
-          ( Eta.Logger.dump logger,
+          ( Eta_observability.Logger.dump logger,
             outcome.logs,
-            one_span (Eta.Tracer.dump tracer),
+            one_span (Eta_observability.Tracer.dump tracer),
             one_span outcome.spans )
         with
         | [ override_log ], [ base_log ], Some override_span, Some base_span
           when outcome.exit = Eta.Exit.Ok expected
-               && override_log.Eta.Logger.body = override_name
+               && override_log.Eta_observability.Logger.body = override_name
                && override_log.ts_ms = overridden_now
-               && base_log.Eta.Logger.body = base_name
+               && base_log.Eta_observability.Logger.body = base_name
                && base_log.ts_ms = 0
                && override_span.name = override_name
                && base_span.name = base_name
@@ -2942,7 +2942,7 @@ let property_nested_clock_override =
     (fun (outer_now, inner_now) ->
       let read name =
         E.bind
-          (fun now -> E.map (fun () -> now) (E.log_info name))
+          (fun now -> E.map (fun () -> now) (Eta_observability.log_info name))
           E.now_ms
       in
       let nested =
@@ -2970,7 +2970,7 @@ let property_nested_clock_override =
       in
       outcome.exit = Eta.Exit.Ok (outer_now, inner_now, outer_now, 0)
       && List.map
-           (fun record -> (record.Eta.Logger.body, record.ts_ms))
+           (fun record -> (record.Eta_observability.Logger.body, record.ts_ms))
            outcome.logs
          = [
              ("nested-clock:outer-before", outer_now);
@@ -2982,7 +2982,7 @@ let property_nested_clock_override =
 
 let span_trace_fingerprints spans =
   List.map
-    (fun span -> (span.Eta.Tracer.name, span.trace_id))
+    (fun span -> (span.Eta_observability.Tracer.name, span.trace_id))
     spans
 
 let property_nested_observability_random_override =
@@ -2994,46 +2994,46 @@ let property_nested_observability_random_override =
       let inner_name = "nested-cap:inner" in
       let base_name = "nested-cap:base-after" in
       let reference seed names =
-        let tracer = Eta.Tracer.in_memory () in
+        let tracer = Eta_observability.Tracer.in_memory () in
         let outcome =
-          List.map (fun name -> E.named name E.unit) names |> E.concat
+          List.map (fun name -> Eta_observability.named name E.unit) names |> E.concat
           |> E.with_random (Eta.Capabilities.random_of_seed seed)
-          |> E.with_tracer (Eta.Tracer.as_capability tracer)
+          |> Eta_observability.with_tracer (Eta_observability.Tracer.as_capability tracer)
           |> run
         in
-        (span_trace_fingerprints (Eta.Tracer.dump tracer), outcome)
+        (span_trace_fingerprints (Eta_observability.Tracer.dump tracer), outcome)
       in
       let expected_outer, outer_reference = reference outer_seed outer_names in
       let expected_inner, inner_reference = reference inner_seed [ inner_name ] in
-      let base_reference = run (E.named base_name E.unit) in
-      let outer_logger = Eta.Logger.in_memory () in
-      let inner_logger = Eta.Logger.in_memory () in
-      let outer_tracer = Eta.Tracer.in_memory () in
-      let inner_tracer = Eta.Tracer.in_memory () in
+      let base_reference = run (Eta_observability.named base_name E.unit) in
+      let outer_logger = Eta_observability.Logger.in_memory () in
+      let inner_logger = Eta_observability.Logger.in_memory () in
+      let outer_tracer = Eta_observability.Tracer.in_memory () in
+      let inner_tracer = Eta_observability.Tracer.in_memory () in
       let probe name =
-        E.bind (fun () -> E.named name E.unit) (E.log_info name)
+        E.bind (fun () -> Eta_observability.named name E.unit) (Eta_observability.log_info name)
       in
       let inner =
         probe inner_name
         |> E.with_random (Eta.Capabilities.random_of_seed inner_seed)
-        |> E.with_logger (Eta.Logger.as_capability inner_logger)
-        |> E.with_tracer (Eta.Tracer.as_capability inner_tracer)
+        |> Eta_observability.with_logger (Eta_observability.Logger.as_capability inner_logger)
+        |> Eta_observability.with_tracer (Eta_observability.Tracer.as_capability inner_tracer)
       in
       let outer =
         E.concat [ probe (List.hd outer_names); inner; probe (List.hd (List.tl outer_names)) ]
         |> E.with_random (Eta.Capabilities.random_of_seed outer_seed)
-        |> E.with_logger (Eta.Logger.as_capability outer_logger)
-        |> E.with_tracer (Eta.Tracer.as_capability outer_tracer)
+        |> Eta_observability.with_logger (Eta_observability.Logger.as_capability outer_logger)
+        |> Eta_observability.with_tracer (Eta_observability.Tracer.as_capability outer_tracer)
       in
       let outcome = run (E.bind (fun () -> probe base_name) outer) in
       outcome.exit = Eta.Exit.Ok ()
       && log_bodies outcome = [ base_name ]
-      && List.map (fun record -> record.Eta.Logger.body) (Eta.Logger.dump outer_logger)
+      && List.map (fun record -> record.Eta_observability.Logger.body) (Eta_observability.Logger.dump outer_logger)
          = outer_names
-      && List.map (fun record -> record.Eta.Logger.body) (Eta.Logger.dump inner_logger)
+      && List.map (fun record -> record.Eta_observability.Logger.body) (Eta_observability.Logger.dump inner_logger)
          = [ inner_name ]
-      && span_trace_fingerprints (Eta.Tracer.dump outer_tracer) = expected_outer
-      && span_trace_fingerprints (Eta.Tracer.dump inner_tracer) = expected_inner
+      && span_trace_fingerprints (Eta_observability.Tracer.dump outer_tracer) = expected_outer
+      && span_trace_fingerprints (Eta_observability.Tracer.dump inner_tracer) = expected_inner
       && span_trace_fingerprints outcome.spans
          = span_trace_fingerprints base_reference.spans
       && no_pending outer_reference
@@ -3050,18 +3050,18 @@ let property_log_pipeline =
       let attrs_seen = ref [] in
       let transform record =
         incr transform_calls;
-        attrs_seen := record.Eta.Logger.attrs;
-        E.Replace { record with body = "transformed" }
+        attrs_seen := record.Eta_observability.Logger.attrs;
+        Eta_observability.Replace { record with body = "transformed" }
       in
       let program =
         E.bind
-          (fun () -> E.log_warn ~attrs:[ ("call", string_of_int call_value) ] "kept")
-          (E.log_info "filtered")
-        |> E.intercept_log transform
-        |> E.annotate_logs [ ("inner", string_of_int inner_value) ]
-        |> E.with_minimum_log_level Eta.Capabilities.Warn
-        |> E.annotate_logs [ ("outer", string_of_int outer_value) ]
-        |> E.with_minimum_log_level Eta.Capabilities.Info
+          (fun () -> Eta_observability.log_warn ~attrs:[ ("call", string_of_int call_value) ] "kept")
+          (Eta_observability.log_info "filtered")
+        |> Eta_observability.intercept_log transform
+        |> Eta_observability.annotate_logs [ ("inner", string_of_int inner_value) ]
+        |> Eta_observability.with_minimum_log_level Eta.Capabilities.Warn
+        |> Eta_observability.annotate_logs [ ("outer", string_of_int outer_value) ]
+        |> Eta_observability.with_minimum_log_level Eta.Capabilities.Info
       in
       let outcome = run program in
       let expected_attrs =
@@ -3084,22 +3084,22 @@ let property_nested_log_interceptor_order =
     ~name:"nested log interceptors run outermost first and pass replacements inward"
     ~count bounded_int (fun tag ->
       let calls = ref [] in
-      let outer (record : Eta.Logger.record) =
+      let outer (record : Eta_observability.Logger.record) =
         calls := !calls @ [ "outer" ];
-        E.Replace
+        Eta_observability.Replace
           {
             record with
-            Eta.Logger.body = record.body ^ Printf.sprintf ":outer:%d" tag;
+            Eta_observability.Logger.body = record.body ^ Printf.sprintf ":outer:%d" tag;
           }
       in
-      let inner (record : Eta.Logger.record) =
+      let inner (record : Eta_observability.Logger.record) =
         calls := !calls @ [ "inner" ];
-        E.Replace { record with Eta.Logger.body = record.body ^ ":inner" }
+        Eta_observability.Replace { record with Eta_observability.Logger.body = record.body ^ ":inner" }
       in
       let outcome =
         run
-          (E.intercept_log outer
-             (E.intercept_log inner (E.log_info "intercepted")))
+          (Eta_observability.intercept_log outer
+             (Eta_observability.intercept_log inner (Eta_observability.log_info "intercepted")))
       in
       !calls = [ "outer"; "inner" ]
       && log_bodies outcome
@@ -3138,13 +3138,13 @@ let property_log_interceptor_drop =
           (fun position (body_shape, attr_shapes) record ->
             calls.(position) <- calls.(position) + 1;
             records_seen :=
-              !records_seen @ [ (record.Eta.Logger.body, record.attrs) ];
-            if position = drop_position then E.Drop
+              !records_seen @ [ (record.Eta_observability.Logger.body, record.attrs) ];
+            if position = drop_position then Eta_observability.Drop
             else
-              E.Replace
+              Eta_observability.Replace
                 {
                   record with
-                  Eta.Logger.body =
+                  Eta_observability.Logger.body =
                     record.body ^ Printf.sprintf ":interceptor:%d" body_shape;
                   attrs =
                     record.attrs
@@ -3153,8 +3153,8 @@ let property_log_interceptor_drop =
           interceptor_shapes
       in
       let program =
-        List.fold_right E.intercept_log interceptors
-          (E.log_info ~attrs:initial_attrs initial_body)
+        List.fold_right Eta_observability.intercept_log interceptors
+          (Eta_observability.log_info ~attrs:initial_attrs initial_body)
       in
       let outcome = run program in
       let rec expected_model position body attrs_seen =
@@ -3185,7 +3185,7 @@ let property_log_interceptor_drop =
         match (expected_sink, outcome.logs) with
         | None, [] -> true
         | Some (body, attrs), [ record ] ->
-            record.Eta.Logger.body = body && record.attrs = attrs
+            record.Eta_observability.Logger.body = body && record.attrs = attrs
         | None, _ | Some _, _ -> false
       in
       Array.to_list calls = Array.to_list expected_calls

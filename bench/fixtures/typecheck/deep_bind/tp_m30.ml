@@ -4,7 +4,7 @@ let program services =
   Tp_m29.program services
   |> Effect.bind (fun acc -> Effect.sync (fun () -> services#billing_charge acc))
   |> Effect.bind (fun acc -> if false then Effect.fail (`Validation "m30") else Effect.pure acc)
-  |> Effect.bind (fun acc -> Effect.sync (fun () -> services#billing_refund acc) |> Effect.annotate ~key:"module" ~value:"30" |> Effect.named "m30.named")
+  |> Effect.bind (fun acc -> Effect.sync (fun () -> services#billing_refund acc) |> Eta_observability.annotate ~key:"module" ~value:"30" |> Eta_observability.named "m30.named")
   |> Effect.bind (fun acc -> Effect.par (Effect.sync (fun () -> services#audit_log acc)) (Effect.sync (fun () -> services#cache_get acc)) |> Effect.map (fun (a, b) -> a + b))
   |> Effect.bind (fun acc -> Effect.all [ Effect.pure acc; Effect.sync (fun () -> services#cache_set acc); Effect.sync (fun () -> services#search_query acc) ] |> Effect.map (List.fold_left ( + ) 0))
   |> Effect.bind (fun acc -> Effect.all_settled [ Effect.pure acc; Effect.fail (`Cache "m30"); Effect.pure (acc + 1) ] |> Effect.map (List.fold_left (fun n -> function Ok v -> n + v | Error _ -> n) 0))

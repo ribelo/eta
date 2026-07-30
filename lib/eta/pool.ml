@@ -70,16 +70,29 @@ let make_attrs name kind =
 let attrs t = t.attrs
 
 let span t name e =
-  Effect.named ~kind:Capabilities.Internal name
-    (Effect.annotate_all t.attrs e)
+  let annotated =
+    Spi.Expert.make (fun context ->
+        Spi.Expert.observability_annotate_all context t.attrs e)
+  in
+  Spi.Expert.make ~leaf_name:name (fun context ->
+      Spi.Expert.observability_named context ~kind:Capabilities.Internal
+        ~error_pp:None name annotated)
 
 let log t ?(level = Capabilities.Debug) body =
-  Effect.log ~level ~attrs:(attrs t) body
+  Spi.Expert.make ~leaf_name:"Effect.log" (fun context ->
+      Spi.Expert.observability_log context ~level ~attrs:(attrs t) body;
+      Exit.Ok ())
+
+let metric_point t ~name ~kind ~unit_ value =
+  Spi.Expert.make ~leaf_name:"Effect.metric_update" (fun context ->
+      Spi.Expert.record_metric context ~name ~description:"" ~unit_ ~kind
+        ~attrs:t.attrs ~value;
+      Exit.Ok ())
 
 let metric_int t ~name ~kind ~unit_ value =
   Effect.sync value
   |> Effect.bind (fun value ->
-         Effect.metric_update ~attrs:t.attrs ~name ~kind ~unit_
+         metric_point t ~name ~kind ~unit_
            (Capabilities.Number (Capabilities.Int value)))
 
 let stats_locked t =
@@ -101,17 +114,17 @@ let emit_gauges t =
   |> Effect.bind (fun (s : stats) ->
          Effect.all
            [
-             Effect.metric_update ~attrs:t.attrs ~name:"eta.pool.active"
-               ~kind:Capabilities.Gauge ~unit_:"{connection}"
+             metric_point t ~name:"eta.pool.active" ~kind:Capabilities.Gauge
+               ~unit_:"{connection}"
                (Capabilities.Number (Capabilities.Int s.active));
-             Effect.metric_update ~attrs:t.attrs ~name:"eta.pool.idle"
-               ~kind:Capabilities.Gauge ~unit_:"{connection}"
+             metric_point t ~name:"eta.pool.idle" ~kind:Capabilities.Gauge
+               ~unit_:"{connection}"
                (Capabilities.Number (Capabilities.Int s.idle));
-             Effect.metric_update ~attrs:t.attrs ~name:"eta.pool.waiting"
-               ~kind:Capabilities.Gauge ~unit_:"{waiter}"
+             metric_point t ~name:"eta.pool.waiting" ~kind:Capabilities.Gauge
+               ~unit_:"{waiter}"
                (Capabilities.Number (Capabilities.Int s.waiting));
-             Effect.metric_update ~attrs:t.attrs ~name:"eta.pool.max_size"
-               ~kind:Capabilities.Gauge ~unit_:"{connection}"
+             metric_point t ~name:"eta.pool.max_size" ~kind:Capabilities.Gauge
+               ~unit_:"{connection}"
                (Capabilities.Number (Capabilities.Int s.max_size));
            ])
   |> Effect.map ignore

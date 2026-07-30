@@ -3,6 +3,7 @@
  (modules anthropic_common_suites)
  (libraries
   eta
+  eta_observability
   eta_ai
   eta_ai_anthropic
   eta_http

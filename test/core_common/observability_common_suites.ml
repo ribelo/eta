@@ -37,27 +37,27 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     loop 20
 
-  let attr key span = List.assoc_opt key span.Tracer.attrs
+  let attr key span = List.assoc_opt key span.Eta_observability.Tracer.attrs
 
   let link_span_id span =
-    List.map (fun link -> link.Tracer.link_span_id) span.Tracer.links
+    List.map (fun link -> link.Eta_observability.Tracer.link_span_id) span.Eta_observability.Tracer.links
 
   let only_span tracer =
-    match Tracer.dump tracer with
+    match Eta_observability.Tracer.dump tracer with
     | [ span ] -> span
     | spans ->
         Alcotest.failf "expected one span, got %d" (List.length spans)
 
   let check_status name expected actual =
     match (expected, actual) with
-    | Tracer.Ok, Tracer.Ok -> ()
-    | Tracer.Cancelled, Tracer.Cancelled -> ()
-    | Tracer.Error _, Tracer.Error _ -> ()
+    | Eta_observability.Tracer.Ok, Eta_observability.Tracer.Ok -> ()
+    | Eta_observability.Tracer.Cancelled, Eta_observability.Tracer.Cancelled -> ()
+    | Eta_observability.Tracer.Error _, Eta_observability.Tracer.Error _ -> ()
     | _ -> Alcotest.failf "%s: unexpected span status" name
 
   let check_error_message name expected actual =
     match actual with
-    | Tracer.Error msg -> Alcotest.(check string) name expected msg
+    | Eta_observability.Tracer.Error msg -> Alcotest.(check string) name expected msg
     | _ -> Alcotest.failf "%s: expected Error status" name
 
   let is_lower_hex ~len value =
@@ -71,56 +71,56 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | None -> Alcotest.fail "expected current span"
 
   let only_log logger =
-    match Logger.dump logger with
+    match Eta_observability.Logger.dump logger with
     | [ record ] -> record
     | records -> Alcotest.failf "expected one log, got %d" (List.length records)
 
-  let log_attr key record = List.assoc_opt key record.Logger.attrs
-  let log_bodies logger = List.map (fun record -> record.Logger.body) (Logger.dump logger)
+  let log_attr key record = List.assoc_opt key record.Eta_observability.Logger.attrs
+  let log_bodies logger = List.map (fun record -> record.Eta_observability.Logger.body) (Eta_observability.Logger.dump logger)
 
   type observability_err = [ `Boom | `Db of int | `Inner | `Outer ]
 
   let test_tracer_manual_spans () =
     B.with_runtime_contract @@ fun _ctx contract ->
-    Tracer.with_task_context contract @@ fun () ->
-    let tracer = Tracer.in_memory () in
-    let t = Tracer.as_capability tracer in
+    Eta_observability.Tracer.with_task_context contract @@ fun () ->
+    let tracer = Eta_observability.Tracer.in_memory () in
+    let t = Eta_observability.Tracer.as_capability tracer in
     t#add_attr contract ~key:"pending" ~value:"yes";
     let parent = t#begin_span contract ~name:"parent" ~started_ms:1 () in
     t#add_attr contract ~key:"inside" ~value:"parent";
     let child = t#begin_span contract ~name:"child" ~started_ms:2 () in
-    t#end_span contract ~span_id:child ~status:Tracer.Ok ~ended_ms:3;
-    t#end_span contract ~span_id:parent ~status:(Tracer.Error "boom")
+    t#end_span contract ~span_id:child ~status:Eta_observability.Tracer.Ok ~ended_ms:3;
+    t#end_span contract ~span_id:parent ~status:(Eta_observability.Tracer.Error "boom")
       ~ended_ms:4;
-    match Tracer.dump tracer with
+    match Eta_observability.Tracer.dump tracer with
     | [ child_span; parent_span ] ->
         Alcotest.(check int) "child parent" parent
-          (Option.get child_span.Tracer.parent_id);
+          (Option.get child_span.Eta_observability.Tracer.parent_id);
         Alcotest.(check (option string)) "pending attr" (Some "yes")
           (attr "pending" parent_span);
         Alcotest.(check (option string)) "inside attr" (Some "parent")
           (attr "inside" parent_span);
-        check_status "child" Tracer.Ok child_span.status;
-        check_status "parent" (Tracer.Error "boom") parent_span.status
+        check_status "child" Eta_observability.Tracer.Ok child_span.status;
+        check_status "parent" (Eta_observability.Tracer.Error "boom") parent_span.status
     | spans -> Alcotest.failf "expected two spans, got %d" (List.length spans)
 
   let test_observability_named_ok () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
-    let eff = Effect.named "foo" (Effect.pure 1) in
+    let eff = Eta_observability.named "foo" (Effect.pure 1) in
     Alcotest.(check int) "value" 1 (run_ok rt eff);
     let span = only_span tracer in
     Alcotest.(check string) "name" "foo" span.name;
-    check_status "status" Tracer.Ok span.status
+    check_status "status" Eta_observability.Tracer.Ok span.status
 
   let test_observability_span_kind () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
-    run_ok rt (Effect.named ~kind:Capabilities.Server "server" Effect.unit);
+    run_ok rt (Eta_observability.named ~kind:Capabilities.Server "server" Effect.unit);
     let span = only_span tracer in
-    Alcotest.(check bool) "server kind" true (span.kind = Tracer.Server)
+    Alcotest.(check bool) "server kind" true (span.kind = Eta_observability.Tracer.Server)
 
   let test_observability_fn_loc () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
-    let program = Effect.fn __POS__ __FUNCTION__ (Effect.pure ()) in
+    let program = Eta_observability.fn __POS__ __FUNCTION__ (Effect.pure ()) in
     run_ok rt program;
     let span = only_span tracer in
     Alcotest.(check string) "name" __FUNCTION__ span.name;
@@ -131,7 +131,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_observability_annotate_all_and_fn_attrs () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
     let program =
-      Effect.fn
+      Eta_observability.fn
         ~attrs:[ ("component", "ingest"); ("phase", "assets") ]
         __POS__ "ingest.assets" Effect.unit
     in
@@ -146,36 +146,36 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_observability_event_records_current_span () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
     let program =
-      Effect.named "ingest.assets"
-        (Effect.event ~attrs:[ ("batch", "1") ] "ingest.assets.progress")
+      Eta_observability.named "ingest.assets"
+        (Eta_observability.event ~attrs:[ ("batch", "1") ] "ingest.assets.progress")
     in
     run_ok rt program;
     let span = only_span tracer in
     match span.events with
     | [ event ] ->
         Alcotest.(check string) "event name" "ingest.assets.progress"
-          event.Tracer.ev_name;
+          event.Eta_observability.Tracer.ev_name;
         Alcotest.(check (option string)) "event attr" (Some "1")
-          (List.assoc_opt "batch" event.Tracer.ev_attrs)
+          (List.assoc_opt "batch" event.Eta_observability.Tracer.ev_attrs)
     | events ->
         Alcotest.failf "expected one span event, got %d" (List.length events)
 
   let test_observability_with_result_attrs () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
     let observe eff =
-      Effect.with_result_attrs
+      Eta_observability.with_result_attrs
         ~ok_attrs:(fun rows ->
           [ ("result", "ok"); ("row_count", string_of_int (List.length rows)) ])
         ~err_attrs:(fun (`Bad code) ->
           [ ("result", "error"); ("error.code", string_of_int code) ])
         eff
     in
-    let ok_effect = Effect.named "rows.ok" (observe (Effect.pure [ 1; 2; 3 ])) in
-    let err_effect = Effect.named "rows.err" (observe (Effect.fail (`Bad 7))) in
+    let ok_effect = Eta_observability.named "rows.ok" (observe (Effect.pure [ 1; 2; 3 ])) in
+    let err_effect = Eta_observability.named "rows.err" (observe (Effect.fail (`Bad 7))) in
     Alcotest.(check (list int)) "ok value" [ 1; 2; 3 ] (run_ok rt ok_effect);
     ignore (B.run rt err_effect : (int list, [ `Bad of int ]) Exit.t);
-    let spans = Tracer.dump tracer in
-    let find name = List.find (fun span -> String.equal span.Tracer.name name) spans in
+    let spans = Eta_observability.Tracer.dump tracer in
+    let find name = List.find (fun span -> String.equal span.Eta_observability.Tracer.name name) spans in
     let ok_span = find "rows.ok" in
     let err_span = find "rows.err" in
     Alcotest.(check (option string)) "ok result" (Some "ok")
@@ -194,12 +194,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       attr "k" (only_span tracer)
     in
     let inside =
-      Effect.pure () |> Effect.annotate ~key:"k" ~value:"inside"
-      |> Effect.named "span"
+      Effect.pure () |> Eta_observability.annotate ~key:"k" ~value:"inside"
+      |> Eta_observability.named "span"
     in
     let outside =
-      Effect.pure () |> Effect.named "span"
-      |> Effect.annotate ~key:"k" ~value:"outside"
+      Effect.pure () |> Eta_observability.named "span"
+      |> Eta_observability.annotate ~key:"k" ~value:"outside"
     in
     Alcotest.(check (option string)) "inside" (Some "inside") (run inside);
     Alcotest.(check (option string)) "outside" (Some "outside") (run outside)
@@ -207,7 +207,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_observability_statuses () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
     let fail_eff : (unit, observability_err) Effect.t =
-      Effect.named "fail" (Effect.fail `Boom)
+      Eta_observability.named "fail" (Effect.fail `Boom)
     in
     ignore (B.run rt fail_eff : (unit, observability_err) Exit.t);
     let render_db : Format.formatter -> observability_err -> unit =
@@ -216,33 +216,33 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       | _ -> Format.pp_print_string fmt "<unexpected>"
     in
     let custom_eff : (unit, observability_err) Effect.t =
-      Effect.named ~error_pp:render_db "custom" (Effect.fail (`Db 42))
+      Eta_observability.named ~error_pp:render_db "custom" (Effect.fail (`Db 42))
     in
     ignore (B.run rt custom_eff : (unit, observability_err) Exit.t);
-    let inner = Effect.named "inner" (Effect.fail `Inner) in
+    let inner = Eta_observability.named "inner" (Effect.fail `Inner) in
     let render_outer : Format.formatter -> observability_err -> unit =
      fun fmt -> function
       | `Outer -> Format.pp_print_string fmt "outer"
       | _ -> Format.pp_print_string fmt "<unexpected>"
     in
     let outer : (unit, observability_err) Effect.t =
-      Effect.named ~error_pp:render_outer "outer"
+      Eta_observability.named ~error_pp:render_outer "outer"
         (Effect.bind_error (function `Inner -> Effect.fail `Outer) inner)
     in
     ignore (B.run rt outer : (unit, observability_err) Exit.t);
     ignore
       (B.run rt
-         (Effect.named "die" (Effect.sync (fun () -> failwith "boom"))) :
+         (Eta_observability.named "die" (Effect.sync (fun () -> failwith "boom"))) :
         (unit, _) Exit.t);
-    let spans = Tracer.dump tracer in
-    let find name = List.find (fun span -> span.Tracer.name = name) spans in
+    let spans = Eta_observability.Tracer.dump tracer in
+    let find name = List.find (fun span -> span.Eta_observability.Tracer.name = name) spans in
     let fail_span = find "fail" in
     check_error_message "fail default" "<typed failure>" fail_span.status;
     (match fail_span.events with
     | [ event ] ->
         Alcotest.(check (option string))
           "fail exception message" (Some "<typed failure>")
-          (List.assoc_opt "exception.message" event.Tracer.ev_attrs)
+          (List.assoc_opt "exception.message" event.Eta_observability.Tracer.ev_attrs)
     | events ->
         Alcotest.failf "expected one fail exception event, got %d"
           (List.length events));
@@ -252,23 +252,23 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | [ event ] ->
         Alcotest.(check (option string))
           "custom exception message" (Some "db:42")
-          (List.assoc_opt "exception.message" event.Tracer.ev_attrs)
+          (List.assoc_opt "exception.message" event.Eta_observability.Tracer.ev_attrs)
     | events ->
         Alcotest.failf "expected one custom exception event, got %d"
           (List.length events));
     check_error_message "inner default" "<unexpected>" (find "inner").status;
     check_error_message "outer custom" "outer" (find "outer").status;
-    check_status "die" (Tracer.Error "") (find "die").status
+    check_status "die" (Eta_observability.Tracer.Error "") (find "die").status
 
   let test_observability_nested_spans () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
     let eff =
-      Effect.named "outer"
-        (Effect.named "inner-a" (Effect.pure ())
-        |> Effect.bind (fun () -> Effect.named "inner-b" (Effect.pure ())))
+      Eta_observability.named "outer"
+        (Eta_observability.named "inner-a" (Effect.pure ())
+        |> Effect.bind (fun () -> Eta_observability.named "inner-b" (Effect.pure ())))
     in
     run_ok rt eff;
-    match Tracer.dump tracer with
+    match Eta_observability.Tracer.dump tracer with
     | [ a; b; outer ] ->
         Alcotest.(check string) "outer" "outer" outer.name;
         Alcotest.(check (option int)) "a parent" (Some outer.span_id)
@@ -281,7 +281,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_traced_runtime @@ fun _ctx rt tracer ->
     let render _fmt _ = failwith "renderer exploded" in
     let eff =
-      Effect.named ~error_pp:render "renderer-fails"
+      Eta_observability.named ~error_pp:render "renderer-fails"
         (Effect.fail "original")
     in
     (match B.run rt eff with
@@ -295,7 +295,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok _ -> Alcotest.fail "expected failure");
     let span = only_span tracer in
     (* Span still closes; status comes from the defect, not a swallowed fallback. *)
-    check_status "defect status" (Tracer.Error "") span.status
+    check_status "defect status" (Eta_observability.Tracer.Error "") span.status
 
   let test_observability_named_error_pp_domain_string () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
@@ -303,7 +303,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       | `Db_down -> Format.pp_print_string fmt "db.save: connection refused"
     in
     let eff =
-      Effect.named ~error_pp:pp_err "db.save" (Effect.fail `Db_down)
+      Eta_observability.named ~error_pp:pp_err "db.save" (Effect.fail `Db_down)
     in
     ignore (B.run rt eff : (unit, [ `Db_down ]) Exit.t);
     let span = only_span tracer in
@@ -313,7 +313,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.(check (option string))
           "domain exception message"
           (Some "db.save: connection refused")
-          (List.assoc_opt "exception.message" event.Tracer.ev_attrs)
+          (List.assoc_opt "exception.message" event.Eta_observability.Tracer.ev_attrs)
     | events ->
         Alcotest.failf "expected one exception event, got %d" (List.length events)
 
@@ -325,7 +325,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Format.pp_print_string fmt err
     in
     let eff =
-      Effect.named ~error_pp:pp_err "once" (Effect.fail "boom-once")
+      Eta_observability.named ~error_pp:pp_err "once" (Effect.fail "boom-once")
     in
     ignore (B.run rt eff : (unit, string) Exit.t);
     let span = only_span tracer in
@@ -334,7 +334,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | [ event ] ->
         Alcotest.(check (option string))
           "exception message" (Some "boom-once")
-          (List.assoc_opt "exception.message" event.Tracer.ev_attrs)
+          (List.assoc_opt "exception.message" event.Eta_observability.Tracer.ev_attrs)
     | events ->
         Alcotest.failf "expected one exception event, got %d" (List.length events));
     Alcotest.(check int) "render once" 1 !calls
@@ -342,36 +342,36 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_observability_named_optional_omission_yields_effects () =
     (* Compile-time erasure probe: optional omission still yields Effect.t. *)
     let _omit : (unit, string) Effect.t =
-      Effect.named "x" (Effect.fail "e")
+      Eta_observability.named "x" (Effect.fail "e")
     in
     let _kind_only : (unit, string) Effect.t =
-      Effect.named ~kind:Capabilities.Client "x" (Effect.fail "e")
+      Eta_observability.named ~kind:Capabilities.Client "x" (Effect.fail "e")
     in
     let pp fmt s = Format.pp_print_string fmt s in
     let _pp_only : (unit, string) Effect.t =
-      Effect.named ~error_pp:pp "x" (Effect.fail "e")
+      Eta_observability.named ~error_pp:pp "x" (Effect.fail "e")
     in
     let _both : (unit, string) Effect.t =
-      Effect.named ~kind:Capabilities.Client ~error_pp:pp "x" (Effect.fail "e")
+      Eta_observability.named ~kind:Capabilities.Client ~error_pp:pp "x" (Effect.fail "e")
     in
     ()
 
   let test_observability_concurrent_status () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
     let eff =
-      Effect.named "concurrent"
+      Eta_observability.named "concurrent"
         (Effect.race [ Effect.fail "a"; Effect.fail "b" ])
     in
     ignore (B.run rt eff : (unit, string) Exit.t);
     let span = only_span tracer in
-    check_status "concurrent" (Tracer.Error "") span.status
+    check_status "concurrent" (Eta_observability.Tracer.Error "") span.status
 
   let test_observability_par_children_inherit_parent () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
-    let child name = Effect.named name (Effect.pure ()) in
-    let eff = Effect.named "parent" (Effect.par (child "a") (child "b")) in
+    let child name = Eta_observability.named name (Effect.pure ()) in
+    let eff = Eta_observability.named "parent" (Effect.par (child "a") (child "b")) in
     ignore (run_ok rt eff);
-    match Tracer.dump tracer with
+    match Eta_observability.Tracer.dump tracer with
     | [ a; b; parent ] ->
         Alcotest.(check (option int)) "a parent" (Some parent.span_id)
           a.parent_id;
@@ -382,20 +382,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_observability_cancelled_parallel_child_status () =
     B.with_traced_test_clock @@ fun ctx clock rt tracer ->
     let slow =
-      Effect.named "slow" (Effect.pure () |> Effect.delay (Duration.ms 10))
+      Eta_observability.named "slow" (Effect.pure () |> Effect.delay (Duration.ms 10))
     in
     let promise = B.fork_run ctx rt (Effect.race [ slow; Effect.pure () ]) in
     wait_for_sleepers clock 1;
     check_exit_ok Alcotest.unit "race done" () (B.await promise);
     let slow_span =
-      List.find (fun span -> span.Tracer.name = "slow") (Tracer.dump tracer)
+      List.find (fun span -> span.Eta_observability.Tracer.name = "slow") (Eta_observability.Tracer.dump tracer)
     in
-    check_status "slow cancelled" Tracer.Cancelled slow_span.status
+    check_status "slow cancelled" Eta_observability.Tracer.Cancelled slow_span.status
 
   let test_observability_uninterruptible_parallel_child_status () =
     B.with_traced_test_clock @@ fun ctx clock rt tracer ->
     let slow =
-      Effect.named "slow"
+      Eta_observability.named "slow"
         (Effect.pure () |> Effect.delay (Duration.ms 10)
        |> Effect.uninterruptible)
     in
@@ -407,18 +407,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.adjust_clock clock (Duration.ms 10);
     check_exit_ok Alcotest.unit "race done" () (B.await promise);
     let slow_span =
-      List.find (fun span -> span.Tracer.name = "slow") (Tracer.dump tracer)
+      List.find (fun span -> span.Eta_observability.Tracer.name = "slow") (Eta_observability.Tracer.dump tracer)
     in
-    check_status "slow ok" Tracer.Ok slow_span.status
+    check_status "slow ok" Eta_observability.Tracer.Ok slow_span.status
 
   let test_observability_par_pending_attrs_links_are_fiber_local () =
     B.with_traced_test_clock @@ fun ctx clock rt tracer ->
     let branch ~name ~delay ~attr_key ~link_span_id =
       Effect.pure ()
-      |> Effect.named name
+      |> Eta_observability.named name
       |> Effect.delay (Duration.ms delay)
-      |> Effect.link_span ~trace_id:("trace-" ^ name) ~span_id:link_span_id
-      |> Effect.annotate ~key:attr_key ~value:"yes"
+      |> Eta_observability.link_span ~trace_id:("trace-" ^ name) ~span_id:link_span_id
+      |> Eta_observability.annotate ~key:attr_key ~value:"yes"
     in
     let promise =
       B.fork_run ctx rt
@@ -435,9 +435,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     check_exit_ok
       (Alcotest.pair Alcotest.unit Alcotest.unit)
       "par done" ((), ()) (B.await promise);
-    let spans = Tracer.dump tracer in
-    let left = List.find (fun span -> span.Tracer.name = "left") spans in
-    let right = List.find (fun span -> span.Tracer.name = "right") spans in
+    let spans = Eta_observability.Tracer.dump tracer in
+    let left = List.find (fun span -> span.Eta_observability.Tracer.name = "left") spans in
+    let right = List.find (fun span -> span.Eta_observability.Tracer.name = "right") spans in
     Alcotest.(check (option string)) "left has left attr" (Some "yes")
       (attr "left" left);
     Alcotest.(check (option string)) "left has no right attr" None
@@ -453,53 +453,53 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_observability_sampler_always_off () =
     B.with_sampled_traced_runtime Sampler.always_off @@ fun _ctx rt tracer ->
-    run_ok rt (Effect.named "off" Effect.unit);
-    Alcotest.(check int) "no spans" 0 (List.length (Tracer.dump tracer))
+    run_ok rt (Eta_observability.named "off" Effect.unit);
+    Alcotest.(check int) "no spans" 0 (List.length (Eta_observability.Tracer.dump tracer))
 
   let test_observability_sampler_ratio () =
     B.with_sampled_traced_runtime (Sampler.ratio 0.5) @@ fun _ctx rt tracer ->
     let spans =
       List.init 1_000 (fun i ->
-          Effect.named ("span-" ^ string_of_int i) Effect.unit)
+          Eta_observability.named ("span-" ^ string_of_int i) Effect.unit)
     in
     run_ok rt (Effect.concat spans);
-    let count = List.length (Tracer.dump tracer) in
+    let count = List.length (Eta_observability.Tracer.dump tracer) in
     Alcotest.(check bool) "roughly half sampled" true (count > 350 && count < 650)
 
   let test_observability_sampler_ratio_same_name_uses_trace_id () =
     B.with_seeded_sampled_traced_runtime ~seed:0x51a7 (Sampler.ratio 0.5)
     @@ fun _ctx rt tracer ->
-    let spans = List.init 200 (fun _ -> Effect.named "same" Effect.unit) in
+    let spans = List.init 200 (fun _ -> Eta_observability.named "same" Effect.unit) in
     run_ok rt (Effect.concat spans);
-    let count = List.length (Tracer.dump tracer) in
+    let count = List.length (Eta_observability.Tracer.dump tracer) in
     Alcotest.(check bool) "same-name roots mixed" true (count > 0 && count < 200)
 
   let test_observability_sampler_parent_based () =
     B.with_sampled_traced_runtime (Sampler.parent_based ()) @@ fun _ctx rt tracer ->
-    run_ok rt (Effect.named "parent" (Effect.named "child" Effect.unit));
+    run_ok rt (Eta_observability.named "parent" (Eta_observability.named "child" Effect.unit));
     Alcotest.(check int) "parent and child sampled" 2
-      (List.length (Tracer.dump tracer));
+      (List.length (Eta_observability.Tracer.dump tracer));
     B.with_sampled_traced_runtime
       (Sampler.parent_based ~root:Sampler.always_off ())
     @@ fun _ctx rt tracer ->
-    run_ok rt (Effect.named "parent" (Effect.named "child" Effect.unit));
+    run_ok rt (Eta_observability.named "parent" (Eta_observability.named "child" Effect.unit));
     Alcotest.(check int) "unsampled parent suppresses child" 0
-      (List.length (Tracer.dump tracer))
+      (List.length (Eta_observability.Tracer.dump tracer))
 
   let test_observability_sampler_unsampled_parent_suppresses_par_children () =
     B.with_sampled_traced_runtime Sampler.always_off @@ fun _ctx rt tracer ->
-    let child name = Effect.named name Effect.unit in
+    let child name = Eta_observability.named name Effect.unit in
     ignore
-      (run_ok rt (Effect.named "parent" (Effect.par (child "a") (child "b"))));
-    Alcotest.(check int) "no spans" 0 (List.length (Tracer.dump tracer))
+      (run_ok rt (Eta_observability.named "parent" (Effect.par (child "a") (child "b"))));
+    Alcotest.(check int) "no spans" 0 (List.length (Eta_observability.Tracer.dump tracer))
 
   let test_observability_noop_runtime_keeps_die_diagnostics () =
     B.with_runtime @@ fun _ctx rt ->
     let exn = Failure "noop diagnostic" in
     let eff =
       Effect.sync (fun () -> raise exn)
-      |> Effect.annotate ~key:"request.id" ~value:"noop-1"
-      |> Effect.named "noop.span"
+      |> Eta_observability.annotate ~key:"request.id" ~value:"noop-1"
+      |> Eta_observability.named "noop.span"
     in
     match B.run rt eff with
     | Exit.Error (Cause.Die die) ->
@@ -515,7 +515,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let exn = Failure "annotate_all diagnostic" in
     let eff =
       Effect.sync (fun () -> raise exn)
-      |> Effect.annotate_all [ ("first", "1"); ("second", "2") ]
+      |> Eta_observability.annotate_all [ ("first", "1"); ("second", "2") ]
     in
     match B.run rt eff with
     | Exit.Error (Cause.Die die) ->
@@ -528,63 +528,63 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_observability_annotate_logs_propagates () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let program =
-      Effect.log "request.started"
-      |> Effect.annotate_logs [ ("request.id", "req-1") ]
+      Eta_observability.log "request.started"
+      |> Eta_observability.annotate_logs [ ("request.id", "req-1") ]
     in
     run_ok rt program;
     let record = only_log logger in
-    Alcotest.(check string) "body" "request.started" record.Logger.body;
+    Alcotest.(check string) "body" "request.started" record.Eta_observability.Logger.body;
     Alcotest.(check (option string)) "request id" (Some "req-1")
       (log_attr "request.id" record)
 
   let test_observability_annotate_logs_nested_composition () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let program =
-      Effect.log "nested"
-      |> Effect.annotate_logs [ ("inner", "yes") ]
-      |> Effect.annotate_logs [ ("outer", "yes") ]
+      Eta_observability.log "nested"
+      |> Eta_observability.annotate_logs [ ("inner", "yes") ]
+      |> Eta_observability.annotate_logs [ ("outer", "yes") ]
     in
     run_ok rt program;
     let record = only_log logger in
     Alcotest.(check (list (pair string string)))
-      "attrs" [ ("outer", "yes"); ("inner", "yes") ] record.Logger.attrs
+      "attrs" [ ("outer", "yes"); ("inner", "yes") ] record.Eta_observability.Logger.attrs
 
   let test_observability_annotate_logs_merges_per_call_attrs () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let program =
-      Effect.log ~attrs:[ ("call", "yes") ] "merged"
-      |> Effect.annotate_logs [ ("scope", "yes") ]
+      Eta_observability.log ~attrs:[ ("call", "yes") ] "merged"
+      |> Eta_observability.annotate_logs [ ("scope", "yes") ]
     in
     run_ok rt program;
     let record = only_log logger in
     Alcotest.(check (list (pair string string)))
-      "attrs" [ ("scope", "yes"); ("call", "yes") ] record.Logger.attrs
+      "attrs" [ ("scope", "yes"); ("call", "yes") ] record.Eta_observability.Logger.attrs
 
   let test_observability_annotate_logs_is_fiber_local () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let branch name =
       Effect.yield
-      |> Effect.bind (fun () -> Effect.log name)
-      |> Effect.annotate_logs [ ("branch", name) ]
+      |> Effect.bind (fun () -> Eta_observability.log name)
+      |> Eta_observability.annotate_logs [ ("branch", name) ]
     in
     let program = Effect.par (branch "left") (branch "right") in
     ignore (run_ok rt program : unit * unit);
-    let records = Logger.dump logger in
+    let records = Eta_observability.Logger.dump logger in
     Alcotest.(check int) "log count" 2 (List.length records);
     List.iter
       (fun record ->
         Alcotest.(check (option string))
-          ("branch attr for " ^ record.Logger.body)
-          (Some record.Logger.body)
+          ("branch attr for " ^ record.Eta_observability.Logger.body)
+          (Some record.Eta_observability.Logger.body)
           (log_attr "branch" record))
       records
 
   let test_observability_span_annotate_does_not_affect_logs () =
     B.with_observed_runtime @@ fun _ctx rt tracer logger _meter ->
     let program =
-      Effect.named "span"
-        (Effect.log "inside"
-        |> Effect.annotate ~key:"span.attr" ~value:"yes")
+      Eta_observability.named "span"
+        (Eta_observability.log "inside"
+        |> Eta_observability.annotate ~key:"span.attr" ~value:"yes")
     in
     run_ok rt program;
     let span = only_span tracer in
@@ -592,25 +592,25 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (attr "span.attr" span);
     let record = only_log logger in
     Alcotest.(check (list (pair string string))) "log attrs" []
-      record.Logger.attrs
+      record.Eta_observability.Logger.attrs
 
   let test_observability_log_level_helpers () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let cases =
       [
-        (Capabilities.Trace, Effect.log_trace ~attrs:[ ("case", "trace") ] "trace");
-        (Capabilities.Debug, Effect.log_debug "debug");
-        (Capabilities.Info, Effect.log_info "info");
-        (Capabilities.Warn, Effect.log_warn "warn");
-        (Capabilities.Error, Effect.log_error "error");
-        (Capabilities.Fatal, Effect.log_fatal "fatal");
+        (Capabilities.Trace, Eta_observability.log_trace ~attrs:[ ("case", "trace") ] "trace");
+        (Capabilities.Debug, Eta_observability.log_debug "debug");
+        (Capabilities.Info, Eta_observability.log_info "info");
+        (Capabilities.Warn, Eta_observability.log_warn "warn");
+        (Capabilities.Error, Eta_observability.log_error "error");
+        (Capabilities.Fatal, Eta_observability.log_fatal "fatal");
       ]
     in
     run_ok rt (Effect.concat (List.map snd cases));
     Alcotest.(check (list log_level))
       "levels" (List.map fst cases)
-      (List.map (fun record -> record.Logger.level) (Logger.dump logger));
-    match Logger.dump logger with
+      (List.map (fun record -> record.Eta_observability.Logger.level) (Eta_observability.Logger.dump logger));
+    match Eta_observability.Logger.dump logger with
     | first :: _ ->
         Alcotest.(check (option string)) "helper attrs" (Some "trace")
           (log_attr "case" first)
@@ -638,23 +638,23 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let program =
       Effect.concat
         (List.map
-           (Effect.logf ~level:Capabilities.Debug)
+           (Eta_observability.logf ~level:Capabilities.Debug)
            [ builtin; user; thunk ])
     in
     (B.with_runtime @@ fun _ctx rt -> run_ok rt program);
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let observe _record =
       incr intercept_calls;
-      Effect.Keep
+      Eta_observability.Keep
     in
     run_ok rt
-      (program |> Effect.intercept_log observe
-      |> Effect.with_minimum_log_level Capabilities.Warn);
+      (program |> Eta_observability.intercept_log observe
+      |> Eta_observability.with_minimum_log_level Capabilities.Warn);
     Alcotest.(check int) "builtin calls" 0 !builtin_calls;
     Alcotest.(check int) "user printer calls" 0 !user_calls;
     Alcotest.(check int) "thunk printer calls" 0 !thunk_calls;
     Alcotest.(check int) "intercept calls" 0 !intercept_calls;
-    Alcotest.(check int) "sink calls" 0 (List.length (Logger.dump logger))
+    Alcotest.(check int) "sink calls" 0 (List.length (Eta_observability.Logger.dump logger))
 
   let test_logf_enabled_invokes_builtin_user_and_thunk_exactly_once () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
@@ -675,7 +675,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Format.pp_print_string fmt "thunk"
     in
     let thunk fmt = Format.fprintf fmt "value %t" print_thunk in
-    run_ok rt (Effect.concat (List.map Effect.logf [ builtin; user; thunk ]));
+    run_ok rt (Effect.concat (List.map Eta_observability.logf [ builtin; user; thunk ]));
     Alcotest.(check int) "builtin calls" 1 !builtin_calls;
     Alcotest.(check int) "user printer calls" 1 !user_calls;
     Alcotest.(check int) "thunk printer calls" 1 !thunk_calls;
@@ -690,10 +690,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Format.fprintf fmt "%1000000d" 1
     in
     run_ok rt
-      (Effect.logf ~level:Capabilities.Debug print
-      |> Effect.with_minimum_log_level Capabilities.Warn);
+      (Eta_observability.logf ~level:Capabilities.Debug print
+      |> Eta_observability.with_minimum_log_level Capabilities.Warn);
     Alcotest.(check int) "formatter calls" 0 !formatter_calls;
-    Alcotest.(check int) "sink calls" 0 (List.length (Logger.dump logger))
+    Alcotest.(check int) "sink calls" 0 (List.length (Eta_observability.Logger.dump logger))
 
   let test_logf_composes_attrs_and_intercepts () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
@@ -703,19 +703,19 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         "attrs before intercept"
         [ ("request.id", "req-1"); ("table", "users") ]
         record.attrs;
-      Effect.Replace { record with body = record.body ^ "!" }
+      Eta_observability.Replace { record with body = record.body ^ "!" }
     in
     let program =
-      Effect.logf ~attrs:[ ("table", "users") ] (fun fmt ->
+      Eta_observability.logf ~attrs:[ ("table", "users") ] (fun fmt ->
           incr formatter_calls;
           Format.fprintf fmt "retry %d" 3)
-      |> Effect.annotate_logs [ ("request.id", "req-1") ]
-      |> Effect.intercept_log transform
+      |> Eta_observability.annotate_logs [ ("request.id", "req-1") ]
+      |> Eta_observability.intercept_log transform
     in
     run_ok rt program;
     Alcotest.(check int) "formatter calls" 1 !formatter_calls;
     Alcotest.(check string) "transformed body" "retry 3!"
-      (only_log logger).Logger.body
+      (only_log logger).Eta_observability.Logger.body
 
   let test_logf_drop_occurs_after_formatting () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
@@ -725,23 +725,23 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Format.fprintf fmt "secret %d" 1
     in
     let program =
-      Effect.logf print
-      |> Effect.intercept_log (fun _record -> Effect.Drop)
+      Eta_observability.logf print
+      |> Eta_observability.intercept_log (fun _record -> Eta_observability.Drop)
     in
     run_ok rt program;
     Alcotest.(check int) "formatter calls" 1 !formatter_calls;
-    Alcotest.(check int) "sink calls" 0 (List.length (Logger.dump logger))
+    Alcotest.(check int) "sink calls" 0 (List.length (Eta_observability.Logger.dump logger))
 
   let test_logf_raising_printer_becomes_defect () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let exn = Failure "logf printer failed" in
     let print _fmt () = raise exn in
     let write fmt = Format.fprintf fmt "broken %a" print () in
-    (match B.run rt (Effect.logf write) with
+    (match B.run rt (Eta_observability.logf write) with
     | Exit.Error (Cause.Die die) ->
         Alcotest.(check bool) "same exception" true (die.exn == exn)
     | _ -> Alcotest.fail "expected printer exception to become Die");
-    Alcotest.(check int) "sink calls" 0 (List.length (Logger.dump logger))
+    Alcotest.(check int) "sink calls" 0 (List.length (Eta_observability.Logger.dump logger))
 
   let test_logf_work_inside_formatter_is_deferred () =
     let inside_calls = ref 0 in
@@ -752,7 +752,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let value = outside () in
     let emit =
-      Effect.logf (fun fmt ->
+      Eta_observability.logf (fun fmt ->
           incr inside_calls;
           Format.fprintf fmt "len %d" value)
     in
@@ -763,14 +763,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_logger_runtime @@ fun _ctx rt logger ->
     run_ok rt emit;
     Alcotest.(check int) "inside after enabled run" 1 !inside_calls;
-    Alcotest.(check string) "body" "len 7" (only_log logger).Logger.body
+    Alcotest.(check string) "body" "len 7" (only_log logger).Eta_observability.Logger.body
 
   let test_logf_blueprint_retains_formatter_captures () =
     let make () =
       let captured = ref 7 in
       let weak = Weak.create 1 in
       Weak.set weak 0 (Some captured);
-      let emit = Effect.logf (fun fmt -> Format.fprintf fmt "%d" !captured) in
+      let emit = Eta_observability.logf (fun fmt -> Format.fprintf fmt "%d" !captured) in
       (emit, weak)
     in
     let emit, weak = make () in
@@ -784,11 +784,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let program =
       Effect.concat
         [
-          Effect.log ~level:Capabilities.Trace "trace";
-          Effect.log ~level:Capabilities.Debug "debug";
-          Effect.log ~level:Capabilities.Info "info";
+          Eta_observability.log ~level:Capabilities.Trace "trace";
+          Eta_observability.log ~level:Capabilities.Debug "debug";
+          Eta_observability.log ~level:Capabilities.Info "info";
         ]
-      |> Effect.with_minimum_log_level Capabilities.Warn
+      |> Eta_observability.with_minimum_log_level Capabilities.Warn
     in
     run_ok rt program;
     Alcotest.(check (list string)) "logs" [] (log_bodies logger)
@@ -798,11 +798,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let program =
       Effect.concat
         [
-          Effect.log ~level:Capabilities.Warn "warn";
-          Effect.log ~level:Capabilities.Error "error";
-          Effect.log ~level:Capabilities.Fatal "fatal";
+          Eta_observability.log ~level:Capabilities.Warn "warn";
+          Eta_observability.log ~level:Capabilities.Error "error";
+          Eta_observability.log ~level:Capabilities.Fatal "fatal";
         ]
-      |> Effect.with_minimum_log_level Capabilities.Warn
+      |> Eta_observability.with_minimum_log_level Capabilities.Warn
     in
     run_ok rt program;
     Alcotest.(check (list string))
@@ -813,27 +813,27 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let inner_strict =
       Effect.concat
         [
-          Effect.log ~level:Capabilities.Info "inner-info";
-          Effect.log ~level:Capabilities.Error "inner-error";
+          Eta_observability.log ~level:Capabilities.Info "inner-info";
+          Eta_observability.log ~level:Capabilities.Error "inner-error";
         ]
-      |> Effect.with_minimum_log_level Capabilities.Error
+      |> Eta_observability.with_minimum_log_level Capabilities.Error
     in
     let inner_loose =
       Effect.concat
         [
-          Effect.log ~level:Capabilities.Trace "loose-trace";
-          Effect.log ~level:Capabilities.Debug "loose-debug";
+          Eta_observability.log ~level:Capabilities.Trace "loose-trace";
+          Eta_observability.log ~level:Capabilities.Debug "loose-debug";
         ]
-      |> Effect.with_minimum_log_level Capabilities.Trace
+      |> Eta_observability.with_minimum_log_level Capabilities.Trace
     in
     let program =
       Effect.concat
         [
-          Effect.log ~level:Capabilities.Debug "outer-debug";
+          Eta_observability.log ~level:Capabilities.Debug "outer-debug";
           inner_strict;
           inner_loose;
         ]
-      |> Effect.with_minimum_log_level Capabilities.Debug
+      |> Eta_observability.with_minimum_log_level Capabilities.Debug
     in
     run_ok rt program;
     Alcotest.(check (list string))
@@ -845,11 +845,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let left =
       Effect.yield
       |> Effect.bind (fun () ->
-             Effect.concat [ Effect.log_debug "left-debug"; Effect.log_error "left-error" ])
-      |> Effect.with_minimum_log_level Capabilities.Error
+             Effect.concat [ Eta_observability.log_debug "left-debug"; Eta_observability.log_error "left-error" ])
+      |> Eta_observability.with_minimum_log_level Capabilities.Error
     in
     let right =
-      Effect.yield |> Effect.bind (fun () -> Effect.log_debug "right-debug")
+      Effect.yield |> Effect.bind (fun () -> Eta_observability.log_debug "right-debug")
     in
     ignore (run_ok rt (Effect.par left right) : unit * unit);
     let bodies = log_bodies logger in
@@ -866,11 +866,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let program =
       Effect.concat
         [
-          Effect.log_warn "warn";
-          Effect.log_error "error";
-          Effect.log_fatal "fatal";
+          Eta_observability.log_warn "warn";
+          Eta_observability.log_error "error";
+          Eta_observability.log_fatal "fatal";
         ]
-      |> Effect.with_minimum_log_level Capabilities.Error
+      |> Eta_observability.with_minimum_log_level Capabilities.Error
     in
     run_ok rt program;
     Alcotest.(check (list string)) "logs" [ "error"; "fatal" ]
@@ -879,13 +879,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_observability_annotate_logs_with_minimum_log_level () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let program =
-      Effect.concat [ Effect.log_debug "dropped"; Effect.log_warn "allowed" ]
-      |> Effect.annotate_logs [ ("request.id", "req-1") ]
-      |> Effect.with_minimum_log_level Capabilities.Warn
+      Effect.concat [ Eta_observability.log_debug "dropped"; Eta_observability.log_warn "allowed" ]
+      |> Eta_observability.annotate_logs [ ("request.id", "req-1") ]
+      |> Eta_observability.with_minimum_log_level Capabilities.Warn
     in
     run_ok rt program;
     let record = only_log logger in
-    Alcotest.(check string) "body" "allowed" record.Logger.body;
+    Alcotest.(check string) "body" "allowed" record.Eta_observability.Logger.body;
     Alcotest.(check (option string)) "request id" (Some "req-1")
       (log_attr "request.id" record)
 
@@ -903,20 +903,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             else (key, value))
           record.attrs
       in
-      Effect.Replace { record with attrs }
+      Eta_observability.Replace { record with attrs }
     in
     let inner (record : Capabilities.log_record) =
       calls := !calls @ [ "inner" ];
       Alcotest.(check (option string)) "inner sees outer transform"
         (Some "[redacted]")
         (List.assoc_opt "password" record.attrs);
-      Effect.Keep
+      Eta_observability.Keep
     in
     let program =
-      Effect.log ~attrs:[ ("password", "open-sesame") ] "login"
-      |> Effect.annotate_logs [ ("request.id", "req-1") ]
-      |> Effect.intercept_log inner
-      |> Effect.intercept_log outer
+      Eta_observability.log ~attrs:[ ("password", "open-sesame") ] "login"
+      |> Eta_observability.annotate_logs [ ("request.id", "req-1") ]
+      |> Eta_observability.intercept_log inner
+      |> Eta_observability.intercept_log outer
     in
     run_ok rt program;
     Alcotest.(check (list string)) "outermost first" [ "outer"; "inner" ]
@@ -929,44 +929,44 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let calls = ref [] in
     let drop (_ : Capabilities.log_record) =
       calls := !calls @ [ "drop" ];
-      Effect.Drop
+      Eta_observability.Drop
     in
     let later record =
       calls := !calls @ [ "later" ];
-      Effect.Keep
+      Eta_observability.Keep
     in
     let program =
-      Effect.log "secret"
-      |> Effect.intercept_log later
-      |> Effect.intercept_log drop
+      Eta_observability.log "secret"
+      |> Eta_observability.intercept_log later
+      |> Eta_observability.intercept_log drop
     in
     run_ok rt program;
     Alcotest.(check (list string)) "short-circuit" [ "drop" ] !calls;
-    Alcotest.(check int) "sink not called" 0 (List.length (Logger.dump logger))
+    Alcotest.(check int) "sink not called" 0 (List.length (Eta_observability.Logger.dump logger))
 
   let test_observability_intercept_log_runs_after_filter () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let calls = ref 0 in
     let observe record =
       incr calls;
-      Effect.Keep
+      Eta_observability.Keep
     in
     let program =
-      Effect.log_debug "filtered"
-      |> Effect.intercept_log observe
-      |> Effect.with_minimum_log_level Capabilities.Warn
+      Eta_observability.log_debug "filtered"
+      |> Eta_observability.intercept_log observe
+      |> Eta_observability.with_minimum_log_level Capabilities.Warn
     in
     run_ok rt program;
     Alcotest.(check int) "intercept not called" 0 !calls;
-    Alcotest.(check int) "sink not called" 0 (List.length (Logger.dump logger))
+    Alcotest.(check int) "sink not called" 0 (List.length (Eta_observability.Logger.dump logger))
 
   let test_observability_intercept_log_is_fiber_local () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let redact (record : Capabilities.log_record) =
-      Effect.Replace { record with body = "redacted" }
+      Eta_observability.Replace { record with body = "redacted" }
     in
-    let left = Effect.intercept_log redact (Effect.log "left") in
-    let right = Effect.yield |> Effect.bind (fun () -> Effect.log "right") in
+    let left = Eta_observability.intercept_log redact (Eta_observability.log "left") in
+    let right = Effect.yield |> Effect.bind (fun () -> Eta_observability.log "right") in
     ignore (run_ok rt (Effect.par left right) : unit * unit);
     let bodies = log_bodies logger in
     Alcotest.(check bool) "left transformed" true (List.mem "redacted" bodies);
@@ -974,52 +974,52 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_observability_intercept_log_with_logger_both_orders () =
     B.with_logger_runtime @@ fun _ctx rt base_logger ->
-    let inside_logger = Logger.in_memory () in
-    let outside_logger = Logger.in_memory () in
+    let inside_logger = Eta_observability.Logger.in_memory () in
+    let outside_logger = Eta_observability.Logger.in_memory () in
     let scrub (record : Capabilities.log_record) =
-      Effect.Replace { record with body = "[redacted]" }
+      Eta_observability.Replace { record with body = "[redacted]" }
     in
-    let sink logger = Logger.as_capability logger in
+    let sink logger = Eta_observability.Logger.as_capability logger in
     let logger_inside =
-      Effect.intercept_log scrub
-        (Effect.with_logger (sink inside_logger) (Effect.log "secret-1"))
+      Eta_observability.intercept_log scrub
+        (Eta_observability.with_logger (sink inside_logger) (Eta_observability.log "secret-1"))
     in
     let logger_outside =
-      Effect.with_logger (sink outside_logger)
-        (Effect.intercept_log scrub (Effect.log "secret-2"))
+      Eta_observability.with_logger (sink outside_logger)
+        (Eta_observability.intercept_log scrub (Eta_observability.log "secret-2"))
     in
     run_ok rt (Effect.concat [ logger_inside; logger_outside ]);
     Alcotest.(check string) "logger inside" "[redacted]"
-      (only_log inside_logger).Logger.body;
+      (only_log inside_logger).Eta_observability.Logger.body;
     Alcotest.(check string) "logger outside" "[redacted]"
-      (only_log outside_logger).Logger.body;
+      (only_log outside_logger).Eta_observability.Logger.body;
     Alcotest.(check int) "base bypassed" 0
-      (List.length (Logger.dump base_logger))
+      (List.length (Eta_observability.Logger.dump base_logger))
 
   let test_observability_intercept_log_raise_becomes_defect () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let exn = Failure "intercept failed" in
     let program =
-      Effect.intercept_log (fun _ -> raise exn) (Effect.log "not emitted")
+      Eta_observability.intercept_log (fun _ -> raise exn) (Eta_observability.log "not emitted")
     in
     (match B.run rt program with
     | Exit.Error (Cause.Die die) ->
         Alcotest.(check bool) "same exception" true (die.exn == exn)
     | _ -> Alcotest.fail "expected intercept exception to become Die");
-    Alcotest.(check int) "sink not called" 0 (List.length (Logger.dump logger))
+    Alcotest.(check int) "sink not called" 0 (List.length (Eta_observability.Logger.dump logger))
 
   let test_observability_intercept_metric_enriches_subtree () =
     B.with_observed_runtime @@ fun _ctx rt _tracer _logger meter ->
     let enrich (point : Capabilities.metric_point) =
-      Effect.Replace { point with attrs = point.attrs @ [ ("tenant", "acme") ] }
+      Eta_observability.Replace { point with attrs = point.attrs @ [ ("tenant", "acme") ] }
     in
     let program =
-      Effect.metric_counter ~name:"requests" ~monotonic:true
+      Eta_observability.metric_counter ~name:"requests" ~monotonic:true
         (Capabilities.Int 1)
-      |> Effect.intercept_metric enrich
+      |> Eta_observability.intercept_metric enrich
     in
     run_ok rt program;
-    match Meter.dump meter with
+    match Eta_observability.Meter.dump meter with
     | [ point ] ->
         Alcotest.(check (option string)) "tenant" (Some "acme")
           (List.assoc_opt "tenant" point.attrs)
@@ -1030,20 +1030,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let calls = ref [] in
     let drop (_ : Capabilities.metric_point) =
       calls := !calls @ [ "drop" ];
-      Effect.Drop
+      Eta_observability.Drop
     in
     let later point =
       calls := !calls @ [ "later" ];
-      Effect.Keep
+      Eta_observability.Keep
     in
     let program =
-      Effect.metric_gauge ~name:"queue.depth" (Capabilities.Int 3)
-      |> Effect.intercept_metric later
-      |> Effect.intercept_metric drop
+      Eta_observability.metric_gauge ~name:"queue.depth" (Capabilities.Int 3)
+      |> Eta_observability.intercept_metric later
+      |> Eta_observability.intercept_metric drop
     in
     run_ok rt program;
     Alcotest.(check (list string)) "short-circuit" [ "drop" ] !calls;
-    Alcotest.(check int) "meter not called" 0 (List.length (Meter.dump meter))
+    Alcotest.(check int) "meter not called" 0 (List.length (Eta_observability.Meter.dump meter))
 
   let counting_noop_tracer count : Capabilities.tracer =
     object
@@ -1070,7 +1070,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_custom_tracer_runtime (counting_noop_tracer spans_started)
     @@ fun _ctx rt ->
     check_exit_ok Alcotest.unit "named" ()
-      (B.run rt (Effect.named "custom.noop" Effect.unit));
+      (B.run rt (Eta_observability.named "custom.noop" Effect.unit));
     Alcotest.(check int) "custom tracer enabled" 1 !spans_started
 
   let empty_id_tracer : Capabilities.tracer =
@@ -1104,11 +1104,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_scoped_tracer_empty_ids_use_ambient_parent () =
     B.with_custom_tracer_runtime empty_id_tracer @@ fun _ctx rt ->
-    let inner = Tracer.in_memory () in
+    let inner = Eta_observability.Tracer.in_memory () in
     let program =
-      Effect.named "outer"
-        (Effect.with_tracer (Tracer.as_capability inner)
-           (Effect.named "inner" Effect.unit))
+      Eta_observability.named "outer"
+        (Eta_observability.with_tracer (Eta_observability.Tracer.as_capability inner)
+           (Eta_observability.named "inner" Effect.unit))
     in
     run_ok rt program;
     let span = only_span inner in
@@ -1121,22 +1121,22 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let hidden =
       Effect.concat
         [
-          Effect.log "hidden log";
-          Effect.metric_update ~name:"hidden.metric"
-            ~kind:(Meter.Counter { monotonic = false })
-            (Meter.Number (Meter.Int 1));
+          Eta_observability.log "hidden log";
+          Eta_observability.metric_update ~name:"hidden.metric"
+            ~kind:(Eta_observability.Meter.Counter { monotonic = false })
+            (Eta_observability.Meter.Number (Eta_observability.Meter.Int 1));
         ]
-      |> Effect.named "hidden span"
-      |> Effect.suppress_observability
+      |> Eta_observability.named "hidden span"
+      |> Eta_observability.suppress_observability
     in
     run_ok rt hidden;
-    Alcotest.(check int) "spans" 0 (List.length (Tracer.dump tracer));
-    Alcotest.(check int) "logs" 0 (List.length (Logger.dump logger));
-    Alcotest.(check int) "metrics" 0 (List.length (Meter.dump meter))
+    Alcotest.(check int) "spans" 0 (List.length (Eta_observability.Tracer.dump tracer));
+    Alcotest.(check int) "logs" 0 (List.length (Eta_observability.Logger.dump logger));
+    Alcotest.(check int) "metrics" 0 (List.length (Eta_observability.Meter.dump meter))
 
   let test_trace_context_extract_inject () =
     let ctx =
-      Trace_context.extract
+      Eta_observability.Trace_context.extract
         [
           ( "TraceParent",
             "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" );
@@ -1156,11 +1156,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (List.assoc_opt "tenant" ctx.baggage);
         Alcotest.(check (option string)) "traceparent injected"
           (Some "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
-          (List.assoc_opt "traceparent" (Trace_context.inject ctx))
+          (List.assoc_opt "traceparent" (Eta_observability.Trace_context.inject ctx))
 
   let test_trace_context_extract_pair_scanner_edges () =
     let ctx =
-      Trace_context.extract
+      Eta_observability.Trace_context.extract
         [
           ( " TraceParent ",
             " 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01 " );
@@ -1187,7 +1187,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_trace_context_extracts_higher_version_traceparent () =
     let ctx =
-      Trace_context.extract
+      Eta_observability.Trace_context.extract
         [
           ( "traceparent",
             "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-09-extra" );
@@ -1208,25 +1208,25 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (List.assoc_opt "tenant" ctx.baggage);
         Alcotest.(check (option string)) "traceparent injected"
           (Some "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
-          (List.assoc_opt "traceparent" (Trace_context.inject ctx))
+          (List.assoc_opt "traceparent" (Eta_observability.Trace_context.inject ctx))
 
   let test_trace_context_rejects_malformed_traceparent () =
     let bad =
-      Trace_context.extract
+      Eta_observability.Trace_context.extract
         [
           ( "traceparent",
             "00-00000000000000000000000000000000-00f067aa0ba902b7-01" );
         ]
     in
     let with_extra_field =
-      Trace_context.extract
+      Eta_observability.Trace_context.extract
         [
           ( "traceparent",
             "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-extra" );
         ]
     in
     let forbidden_version =
-      Trace_context.extract
+      Eta_observability.Trace_context.extract
         [
           ( "traceparent",
             "ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" );
@@ -1242,13 +1242,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_traced_runtime @@ fun _ctx rt _tracer ->
     let ctx =
       Option.get
-        (Trace_context.make ~trace_id:"4bf92f3577b34da6a3ce929d0e0e4736"
+        (Eta_observability.Trace_context.make ~trace_id:"4bf92f3577b34da6a3ce929d0e0e4736"
            ~span_id:"00f067aa0ba902b7" ~trace_state:[ ("rojo", "1") ]
            ~baggage:[ ("tenant", "acme") ] ())
     in
-    let left = Effect.current_context in
-    let right = Effect.current_context in
-    let a, b = run_ok rt (Effect.with_context ctx (Effect.par left right)) in
+    let left = Eta_observability.current_context in
+    let right = Eta_observability.current_context in
+    let a, b = run_ok rt (Eta_observability.with_context ctx (Effect.par left right)) in
     let check name (ctx : Capabilities.trace_context option) =
       match ctx with
       | None -> Alcotest.fail (name ^ " missing context")
@@ -1262,7 +1262,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_in_memory_tracer_current_span_has_valid_ids () =
     B.with_traced_runtime @@ fun _ctx rt _tracer ->
     let info =
-      run_ok rt (Effect.named "root" Effect.current_span)
+      run_ok rt (Eta_observability.named "root" Eta_observability.current_span)
       |> require_current_span
     in
     Alcotest.(check bool)
@@ -1276,15 +1276,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_traced_runtime @@ fun _ctx rt _tracer ->
     let parent, child =
       run_ok rt
-        (Effect.named "parent"
+        (Eta_observability.named "parent"
            (Effect.bind
               (fun parent ->
-                Effect.named "child"
+                Eta_observability.named "child"
                   (Effect.map
                      (fun child ->
                        (require_current_span parent, require_current_span child))
-                     Effect.current_span))
-              Effect.current_span))
+                     Eta_observability.current_span))
+              Eta_observability.current_span))
     in
     Alcotest.(check string) "child trace_id" parent.trace_id child.trace_id;
     Alcotest.(check bool) "distinct span_id" true
@@ -1294,12 +1294,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_traced_runtime @@ fun _ctx rt _tracer ->
     let ctx =
       Option.get
-        (Trace_context.make ~trace_id:"4bf92f3577b34da6a3ce929d0e0e4736"
+        (Eta_observability.Trace_context.make ~trace_id:"4bf92f3577b34da6a3ce929d0e0e4736"
            ~span_id:"00f067aa0ba902b7" ())
     in
     let info =
       run_ok rt
-        (Effect.with_context ctx (Effect.named "external" Effect.current_span))
+        (Eta_observability.with_context ctx (Eta_observability.named "external" Eta_observability.current_span))
       |> require_current_span
     in
     Alcotest.(check string) "trace_id" ctx.trace_id info.trace_id;
@@ -1313,11 +1313,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let source_path =
       let candidates =
         [
-          "lib/eta/tracer.ml";
-          "../lib/eta/tracer.ml";
-          "../../lib/eta/tracer.ml";
-          "../../../lib/eta/tracer.ml";
-          "../../../../lib/eta/tracer.ml";
+          "lib/observability/tracer.ml";
+          "../lib/observability/tracer.ml";
+          "../../lib/observability/tracer.ml";
+          "../../../lib/observability/tracer.ml";
+          "../../../../lib/observability/tracer.ml";
         ]
       in
       match List.find_opt Sys.file_exists candidates with
@@ -1348,37 +1348,37 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_sampled_traced_runtime (Sampler.parent_based ()) @@ fun _ctx rt tracer ->
     let ctx =
       Option.get
-        (Trace_context.make ~trace_id:"4bf92f3577b34da6a3ce929d0e0e4736"
+        (Eta_observability.Trace_context.make ~trace_id:"4bf92f3577b34da6a3ce929d0e0e4736"
            ~span_id:"00f067aa0ba902b7" ~trace_flags:0 ())
     in
-    run_ok rt (Effect.with_context ctx (Effect.named "child" Effect.unit));
+    run_ok rt (Eta_observability.with_context ctx (Eta_observability.named "child" Effect.unit));
     Alcotest.(check int) "unsampled parent suppresses child span" 0
-      (List.length (Tracer.dump tracer))
+      (List.length (Eta_observability.Tracer.dump tracer))
 
   let test_observability_auto_instrument_default_off () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
     run_ok rt (Effect.sync (fun () -> ()));
-    Alcotest.(check int) "no spans" 0 (List.length (Tracer.dump tracer))
+    Alcotest.(check int) "no spans" 0 (List.length (Eta_observability.Tracer.dump tracer))
 
   let test_observability_auto_instrument_eval_leaves () =
     B.with_auto_traced_runtime true @@ fun _ctx rt tracer ->
-    let leaf name = Effect.named name (Effect.sync (fun () -> ())) in
+    let leaf name = Eta_observability.named name (Effect.sync (fun () -> ())) in
     run_ok rt
       (Effect.concat [ leaf "a"; Effect.sync (fun () -> ()); leaf "b"; leaf "c" ]);
     Alcotest.(check (list string)) "leaf spans" [ "a"; "b"; "c" ]
-      (List.map (fun span -> span.Tracer.name) (Tracer.dump tracer))
+      (List.map (fun span -> span.Eta_observability.Tracer.name) (Eta_observability.Tracer.dump tracer))
 
   let test_observability_auto_instrument_leaves_nest_under_named () =
     B.with_auto_traced_runtime true @@ fun _ctx rt tracer ->
-    let leaf name = Effect.named name (Effect.sync (fun () -> ())) in
+    let leaf name = Eta_observability.named name (Effect.sync (fun () -> ())) in
     run_ok rt
-      (Effect.named "outer" (Effect.concat [ leaf "a"; leaf "b"; leaf "c" ]));
-    let spans = Tracer.dump tracer in
-    let outer = List.find (fun span -> span.Tracer.name = "outer") spans in
-    let children = List.filter (fun span -> span.Tracer.name <> "outer") spans in
+      (Eta_observability.named "outer" (Effect.concat [ leaf "a"; leaf "b"; leaf "c" ]));
+    let spans = Eta_observability.Tracer.dump tracer in
+    let outer = List.find (fun span -> span.Eta_observability.Tracer.name = "outer") spans in
+    let children = List.filter (fun span -> span.Eta_observability.Tracer.name <> "outer") spans in
     List.iter
       (fun span ->
-        Alcotest.(check (option int)) span.Tracer.name (Some outer.span_id)
+        Alcotest.(check (option int)) span.Eta_observability.Tracer.name (Some outer.span_id)
           span.parent_id)
       children
 
@@ -1386,23 +1386,23 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_auto_traced_runtime true @@ fun _ctx rt tracer ->
     ignore
       (B.run rt
-         (Effect.named "boom" (Effect.sync (fun () -> failwith "boom"))) :
+         (Eta_observability.named "boom" (Effect.sync (fun () -> failwith "boom"))) :
         (unit, _) Exit.t);
     let span = only_span tracer in
-    check_status "leaf failed" (Tracer.Error "") span.status;
+    check_status "leaf failed" (Eta_observability.Tracer.Error "") span.status;
     match span.events with
     | [ event ] ->
         Alcotest.(check (option string)) "leaf cause path" (Some "cause")
-          (List.assoc_opt "eta.cause.path" event.Tracer.ev_attrs);
+          (List.assoc_opt "eta.cause.path" event.Eta_observability.Tracer.ev_attrs);
         Alcotest.(check bool) "leaf stacktrace" true
           (Option.is_some
-             (List.assoc_opt "exception.stacktrace" event.Tracer.ev_attrs))
+             (List.assoc_opt "exception.stacktrace" event.Eta_observability.Tracer.ev_attrs))
     | events ->
         Alcotest.failf "expected one exception event, got %d" (List.length events)
 
   let test_observability_all_for_each_supervisor_inherit_parent () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
-    let child name = Effect.named name (Effect.pure ()) in
+    let child name = Eta_observability.named name (Effect.pure ()) in
     let supervised =
       Supervisor.scoped {
         run =
@@ -1415,19 +1415,19 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       }
     in
     let eff =
-      Effect.named "parent"
+      Eta_observability.named "parent"
         (Effect.all [ child "all-a"; child "all-b" ]
         |> Effect.bind (fun _ ->
                Effect.map_par child [ "each-a"; "each-b" ])
         |> Effect.bind (fun _ -> supervised))
     in
     run_ok rt eff;
-    let spans = Tracer.dump tracer in
-    let parent = List.find (fun span -> span.Tracer.name = "parent") spans in
-    let children = List.filter (fun span -> span.Tracer.name <> "parent") spans in
+    let spans = Eta_observability.Tracer.dump tracer in
+    let parent = List.find (fun span -> span.Eta_observability.Tracer.name = "parent") spans in
+    let children = List.filter (fun span -> span.Eta_observability.Tracer.name <> "parent") spans in
     List.iter
       (fun span ->
-        Alcotest.(check (option int)) span.Tracer.name (Some parent.span_id)
+        Alcotest.(check (option int)) span.Eta_observability.Tracer.name (Some parent.span_id)
           span.parent_id)
       children
 
@@ -1579,6 +1579,73 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_observability_auto_instrument_failure_status;
           Alcotest.test_case "all map_par supervisor inherit parent" `Quick
             test_observability_all_for_each_supervisor_inherit_parent;
+          Alcotest.test_case "with_result_attrs callback failures" `Quick
+            (fun () ->
+              B.with_traced_runtime @@ fun _ctx rt _tracer ->
+              let ok_boom = Failure "ok_attrs" in
+              let ok_program =
+                Eta_observability.with_result_attrs
+                  ~ok_attrs:(fun () -> raise ok_boom)
+                  ~err_attrs:(fun _ -> []) Effect.unit
+              in
+              (match B.run rt ok_program with
+              | Exit.Error (Cause.Die die) ->
+                  Alcotest.(check bool) "success replaced" true
+                    (die.exn == ok_boom)
+              | _ -> Alcotest.fail "expected ok_attrs defect");
+              let err_boom = Failure "err_attrs" in
+              let err_program =
+                Eta_observability.with_result_attrs
+                  ~ok_attrs:(fun _ -> [])
+                  ~err_attrs:(fun `Bad -> raise err_boom)
+                  (Effect.fail `Bad)
+              in
+              match B.run rt err_program with
+              | Exit.Error
+                  (Cause.Suppressed
+                    {
+                      primary = Cause.Fail `Bad;
+                      finalizer = Cause.Finalizer.Die die;
+                    }) ->
+                  Alcotest.(check bool) "failure kept primary" true
+                    (die.exn == err_boom)
+              | _ -> Alcotest.fail "expected suppressed err_attrs defect");
+          Alcotest.test_case "with_context active parent precedence" `Quick
+            (fun () ->
+              B.with_traced_runtime @@ fun _ctx rt _tracer ->
+              let inbound =
+                Option.get
+                  (Eta_observability.Trace_context.make
+                     ~trace_id:"4bf92f3577b34da6a3ce929d0e0e4736"
+                     ~span_id:"00f067aa0ba902b7" ())
+              in
+              let parent, child =
+                run_ok rt
+                  (Eta_observability.named "parent"
+                     (Effect.bind
+                        (fun parent ->
+                          Eta_observability.with_context inbound
+                            (Eta_observability.named "child"
+                               (Effect.map
+                                  (fun child ->
+                                    ( require_current_span parent,
+                                      require_current_span child ))
+                                  Eta_observability.current_span)))
+                        Eta_observability.current_span))
+              in
+              Alcotest.(check string) "active parent trace wins" parent.trace_id
+                child.trace_id;
+              Alcotest.(check bool) "external trace did not replace parent" true
+                (not (String.equal inbound.trace_id child.trace_id)));
+          Alcotest.test_case "tracing admission observes suppression" `Quick
+            (fun () ->
+              B.with_traced_runtime @@ fun _ctx rt _tracer ->
+              Alcotest.(check bool) "installed tracer admitted" true
+                (run_ok rt Eta_observability.is_tracing_enabled);
+              Alcotest.(check bool) "suppressed tracer not admitted" false
+                (run_ok rt
+                   (Eta_observability.suppress_observability
+                      Eta_observability.is_tracing_enabled)));
         ] );
     ]
 end

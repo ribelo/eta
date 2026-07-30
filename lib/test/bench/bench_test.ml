@@ -11,7 +11,7 @@ let with_logger n =
   repeat n (fun _ ->
       Eta_test.with_logger (fun _sw rt logger ->
           ignore (Eta.Runtime.run rt Eta.Effect.unit : (unit, _) Eta.Exit.t);
-          ignore (Eta.Logger.dump logger)))
+          ignore (Eta_observability.Logger.dump logger)))
 
 let expect_ok n =
   repeat n (fun i ->

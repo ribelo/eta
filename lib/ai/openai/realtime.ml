@@ -136,7 +136,7 @@ let decode_client_secret raw =
 let create_client_secret ?base_url client ~api_key session =
   let request = client_secret_request ?base_url ~api_key session in
   Eta_http.request client request
-  |> E.suppress_observability
+  |> Eta_observability.suppress_observability
   |> E.bind_error (fun error -> E.fail (A.Eta_http_error error))
   |> E.bind (fun (response : Eta_http.Response.t) ->
          read_response_body response.Eta_http.Response.body

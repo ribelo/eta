@@ -16,7 +16,7 @@ let render_error = function
   | `Refresh_failed reason -> "refresh-failed:" ^ reason
 
 let load source =
-  Effect.named ~error_pp:pp_error "config.load"
+  Eta_observability.named ~error_pp:pp_error "config.load"
     (Effect.sync_result (fun () ->
          match !source with
          | [] -> Ok { version = 999; endpoint = "fallback" }

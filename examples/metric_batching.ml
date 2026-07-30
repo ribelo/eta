@@ -17,7 +17,7 @@ let snapshot calls =
   { active = 3; idle = 1; waiting = 2; max_size = 8 }
 
 let gauge ?(unit_ = "{connection}") name value =
-  Effect.metric ~name ~unit_ ~kind:Meter.gauge (Meter.number (Meter.Int value))
+  Eta_observability.metric ~name ~unit_ ~kind:Eta_observability.Meter.gauge (Eta_observability.Meter.number (Eta_observability.Meter.Int value))
 
 let metrics_of_stats stats =
   [
@@ -28,7 +28,7 @@ let metrics_of_stats stats =
   ]
 
 let emit_pool_gauges ~snapshot ~builds =
-  Effect.metric_updates_lazy (fun () ->
+  Eta_observability.metric_updates_lazy (fun () ->
       incr builds;
       snapshot () |> metrics_of_stats)
 
@@ -40,7 +40,7 @@ let run_ok rt eff =
       exit 1
 
 let point_named name point =
-  String.equal point.Meter.name name
+  String.equal point.Eta_observability.Meter.name name
 
 let () =
   Eio_main.run @@ fun stdenv ->
@@ -58,15 +58,15 @@ let () =
 
   let enabled_builds = ref 0 in
   let enabled_snapshots = ref 0 in
-  let meter = Meter.in_memory () in
+  let meter = Eta_observability.Meter.in_memory () in
   let enabled_rt =
-    Eta_eio.Runtime.create ~sw ~clock ~meter:(Meter.as_capability meter) ()
+    Eta_eio.Runtime.create ~sw ~clock ~meter:(Eta_observability.Meter.as_capability meter) ()
   in
   run_ok enabled_rt
     (emit_pool_gauges
        ~snapshot:(fun () -> snapshot enabled_snapshots)
        ~builds:enabled_builds);
-  let points = Meter.dump meter in
+  let points = Eta_observability.Meter.dump meter in
   require "enabled lazy thunk" (!enabled_builds = 1);
   require "enabled snapshot" (!enabled_snapshots = 1);
   require "batched point count" (List.length points = 4);

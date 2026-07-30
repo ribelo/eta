@@ -1,6 +1,6 @@
 (executable
  (name bench_test)
- (libraries bench_lib eta_test eta eio_main unix))
+ (libraries bench_lib eta_test eta eta_observability eio_main unix))
 
 (rule
  (alias bench)

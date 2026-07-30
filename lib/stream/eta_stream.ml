@@ -703,7 +703,7 @@ and fold_stream :
               (fun (acc, keep_going) ->
                 if keep_going then loop acc else Eta.Effect.pure (acc, false))
               (folder.emit acc value))
-          (Eta.Effect.named "Eta_stream.from_eio_stream.take" (Eta.Effect.sync (fun () ->
+          (Eta_observability.named "Eta_stream.from_eio_stream.take" (Eta.Effect.sync (fun () ->
                Eio.Stream.take stream)))
       in
       loop acc
@@ -734,7 +734,7 @@ and fold_stream :
                     if keep_going then loop acc
                     else Eta.Effect.pure (acc, false))
                   (folder.emit acc value))
-          (Eta.Effect.named "Eta_stream.Mailbox_internal.take" (Eta.Effect.sync (fun () ->
+          (Eta_observability.named "Eta_stream.Mailbox_internal.take" (Eta.Effect.sync (fun () ->
                Mailbox_internal.take mailbox)))
       in
       loop acc
@@ -749,7 +749,7 @@ and fold_stream :
                     if keep_going then loop acc
                     else Eta.Effect.pure (acc, false))
                   (folder.emit acc values))
-          (Eta.Effect.named "Eta_stream.Mailbox_internal.take_batch" (Eta.Effect.sync (fun () ->
+          (Eta_observability.named "Eta_stream.Mailbox_internal.take_batch" (Eta.Effect.sync (fun () ->
                Mailbox_internal.take_batch mailbox max)))
       in
       loop acc
@@ -757,7 +757,7 @@ and fold_stream :
       let queue = Eio.Stream.create file_queue_capacity in
       let stopped = Atomic.make false in
       let producer =
-        Eta.Effect.named "Eta_stream.from_file.read" (Eta.Effect.sync (fun () ->
+        Eta_observability.named "Eta_stream.from_file.read" (Eta.Effect.sync (fun () ->
             let operation = ref `Open in
             try
               Eio.Switch.run ~name:"Eta_stream.from_file" @@ fun sw ->
@@ -831,9 +831,9 @@ and fold_stream :
             (folder.emit acc i)
       in
       loop start acc
-  | Named (name, inner) -> Eta.Effect.named name (fold_stream inner acc folder)
+  | Named (name, inner) -> Eta_observability.named name (fold_stream inner acc folder)
   | Fn (file, line, col_start, col_end, name, inner) ->
-      Eta.Effect.fn (file, line, col_start, col_end) name
+      Eta_observability.fn (file, line, col_start, col_end) name
         (fold_stream inner acc folder)
 
 and fold_from_schedule :
@@ -957,7 +957,7 @@ fun duration inner acc folder ->
     let stopped = Atomic.make false in
     let producer =
       let publish_failure error =
-        Eta.Effect.named "Eta_stream.timeout.failed"
+        Eta_observability.named "Eta_stream.timeout.failed"
           (if Atomic.compare_and_set stopped false true then
              drain_channel queue
              |> Eta.Effect.bind (fun () ->
@@ -965,7 +965,7 @@ fun duration inner acc folder ->
            else Eta.Effect.unit)
       in
       let publish_done =
-        Eta.Effect.named "Eta_stream.timeout.done"
+        Eta_observability.named "Eta_stream.timeout.done"
           (Eta.Effect.sync (fun () -> Atomic.get stopped)
           |> Eta.Effect.bind (fun stopped ->
                  if stopped then Eta.Effect.unit
@@ -1038,7 +1038,7 @@ fun left right f acc folder ->
   let right_queue = Eta.Channel.create ~capacity:1 () in
   let stopped = Atomic.make false in
   let publish_failure error =
-    Eta.Effect.named "Eta_stream.zip.failed"
+    Eta_observability.named "Eta_stream.zip.failed"
       (if Atomic.compare_and_set stopped false true then
          drain_channel left_queue
          |> Eta.Effect.bind (fun () -> drain_channel right_queue)
@@ -1058,7 +1058,7 @@ fun left right f acc folder ->
   in
   let producer name queue ~signal_left stream =
     let publish_done =
-      Eta.Effect.named (name ^ ".done")
+      Eta_observability.named (name ^ ".done")
         (Eta.Effect.sync (fun () -> Atomic.get stopped)
         |> Eta.Effect.bind (fun stopped ->
                if stopped then Eta.Effect.unit
@@ -1169,7 +1169,7 @@ fun left right acc folder ->
   let stopped = Atomic.make false in
   let producer stream =
     let publish_failure error =
-      Eta.Effect.named "Eta_stream.merge.failed"
+      Eta_observability.named "Eta_stream.merge.failed"
         (if Atomic.compare_and_set stopped false true then
            drain_channel queue
            |> Eta.Effect.bind (fun () ->
@@ -1183,7 +1183,7 @@ fun left right acc folder ->
         |> Eta.Effect.map (fun () -> true)
     in
     let publish_done =
-      Eta.Effect.named "Eta_stream.merge.done"
+      Eta_observability.named "Eta_stream.merge.done"
         (Eta.Effect.sync (fun () -> Atomic.get stopped)
         |> Eta.Effect.bind (fun stopped ->
                if stopped then Eta.Effect.unit
@@ -1270,7 +1270,7 @@ fun ~max_concurrency inner f acc folder ->
     |> Eta.Effect.bind (fun () -> send_outer_done max_concurrency)
   in
   let publish_failure error =
-    Eta.Effect.named "Eta_stream.flat_map_par.failed"
+    Eta_observability.named "Eta_stream.flat_map_par.failed"
       (if Atomic.compare_and_set stopped false true then
          drain_channel output_queue
          |> Eta.Effect.bind (fun () ->
@@ -1281,7 +1281,7 @@ fun ~max_concurrency inner f acc folder ->
   in
   let outer_producer =
     let publish_done =
-      Eta.Effect.named "Eta_stream.flat_map_par.outer_done"
+      Eta_observability.named "Eta_stream.flat_map_par.outer_done"
         (Eta.Effect.sync (fun () -> Atomic.get stopped)
         |> Eta.Effect.bind (fun stopped ->
                if stopped then Eta.Effect.unit
@@ -1308,7 +1308,7 @@ fun ~max_concurrency inner f acc folder ->
   in
   let worker =
     let publish_done =
-      Eta.Effect.named "Eta_stream.flat_map_par.worker_done"
+      Eta_observability.named "Eta_stream.flat_map_par.worker_done"
         (Eta.Effect.sync (fun () -> Atomic.get stopped)
         |> Eta.Effect.bind (fun stopped ->
                if stopped then Eta.Effect.unit
@@ -1320,7 +1320,7 @@ fun ~max_concurrency inner f acc folder ->
       Eta.Effect.bind
         (function
           | Outer_done ->
-              Eta.Effect.named "Eta_stream.flat_map_par.rebroadcast_done"
+              Eta_observability.named "Eta_stream.flat_map_par.rebroadcast_done"
                 (Eta.Effect.sync (fun () -> Atomic.get stopped)
                 |> Eta.Effect.bind (fun stopped ->
                        if stopped then Eta.Effect.unit
@@ -1380,7 +1380,7 @@ fun ~max_concurrency inner f acc folder ->
           let* workers = start_workers max_concurrency [] in
           let stop_outer_producer () =
             lift
-              (Eta.Effect.named "Eta_stream.flat_map_par.stop_outer"
+              (Eta_observability.named "Eta_stream.flat_map_par.stop_outer"
                  (Eta.Effect.sync (fun () -> Atomic.set stopped true)
                  |> Eta.Effect.bind (fun () -> drain_channel outer_queue)))
           in
@@ -1389,7 +1389,7 @@ fun ~max_concurrency inner f acc folder ->
             let* () = cancel outer_child in
             let* () =
               lift
-                (Eta.Effect.named "Eta_stream.flat_map_par.wake_workers"
+                (Eta_observability.named "Eta_stream.flat_map_par.wake_workers"
                    (wake_workers ()))
             in
             cancel_all workers

@@ -39,8 +39,8 @@ let test_with_span_context_otlp () =
     let parent_trace = "abcdef0123456789abcdef0123456789" in
     let parent_span = "1122334455667788" in
     let program =
-      Effect.with_external_parent ~trace_id:parent_trace ~span_id:parent_span
-        (Effect.named "external-child" Effect.unit)
+      Eta_observability.with_external_parent ~trace_id:parent_trace ~span_id:parent_span
+        (Eta_observability.named "external-child" Effect.unit)
     in
     ignore (run_ok rt program : unit);
     Eta_otel.flush exporter

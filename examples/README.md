@@ -49,7 +49,7 @@ The current examples cover:
 - `service_composition.ml` - ordinary OCaml dependency injection with Eta
   managing only effectful construction and cleanup.
 - `source_locations.ml` - function-name spans and compiler source locations
-  with `Effect.fn`.
+  with `Eta_observability.fn`.
 - `tap_success.ml` - synchronous and effectful success-side observation that
   preserves the original value without hand-written bind.
 - `map_projection.ml` - success-value projection with `let+` instead of

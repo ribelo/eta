@@ -29,9 +29,9 @@ let test_terminal_exporter_runtime_adapters () =
   let program =
     Effect.concat
       [
-        Effect.named "live.span" (Effect.sync (fun () -> now := 125));
+        Eta_observability.named "live.span" (Effect.sync (fun () -> now := 125));
         Effect.sync (fun () -> now := 200);
-        Effect.metric_update ~name:"live.metric" ~description:"Live metric"
+        Eta_observability.metric_update ~name:"live.metric" ~description:"Live metric"
           ~unit_:"item" ~kind:Capabilities.Gauge
           ~attrs:[ ("source", "terminal-test") ]
           (Capabilities.Number (Capabilities.Int 7));

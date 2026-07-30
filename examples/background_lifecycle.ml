@@ -35,8 +35,8 @@ let program started stopped =
     (fun () ->
       let* () = wait_started started in
       Effect.par
-        (Effect.named ~error_pp:pp_error "load.left" (load_user "left"))
-        (Effect.named ~error_pp:pp_error "load.right" (load_user "right")))
+        (Eta_observability.named ~error_pp:pp_error "load.left" (load_user "left"))
+        (Eta_observability.named ~error_pp:pp_error "load.right" (load_user "right")))
 
 let () =
   Eio_main.run @@ fun stdenv ->

@@ -15,7 +15,7 @@ provider values. Applications pass dependencies and state in ordinary OCaml.
 - provider records with endpoint data and provider-local codecs;
 - raw JSON tool schemas until eta_schema can export JSON Schema;
 - SSE pull parsing over eta_http response bodies;
-- GenAI telemetry wrappers using Eta.Tracer;
+- GenAI telemetry wrappers using Eta_observability.Tracer;
 - redacted API-key handling.
 
 Core does not provide:

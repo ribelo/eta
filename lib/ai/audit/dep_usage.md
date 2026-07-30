@@ -160,20 +160,20 @@ Search:
 - lib/ai/observability.ml:68:  | Eta_http_error error -> Eta_http.Error.to_string error
 - lib/ai/observability.ml:77:  |> Eta.Effect.bind_error (fun error ->
 - lib/ai/observability.ml:78:         Eta.Effect.fail error
-- lib/ai/observability.ml:79:         |> Eta.Effect.annotate_all [ ("error.type", ai_error_type error) ])
-- lib/ai/observability.ml:82:  eff |> with_error_type |> Eta.Effect.annotate_all attrs
-- lib/ai/observability.ml:83:  |> Eta.Effect.named ~error_pp:ai_error_message ~kind name
+- lib/ai/observability.ml:79:         |> Eta_observability.annotate_all [ ("error.type", ai_error_type error) ])
+- lib/ai/observability.ml:82:  eff |> with_error_type |> Eta_observability.annotate_all attrs
+- lib/ai/observability.ml:83:  |> Eta_observability.named ~error_pp:ai_error_message ~kind name
 - lib/ai/observability.ml:88:    |> Eta.Effect.bind (fun response ->
 - lib/ai/observability.ml:89:           Eta.Effect.pure response
-- lib/ai/observability.ml:90:           |> Eta.Effect.annotate_all (response_attrs response))
+- lib/ai/observability.ml:90:           |> Eta_observability.annotate_all (response_attrs response))
 - lib/ai/observability.ml:96:  with_span ~kind:Eta.Capabilities.Client
 - lib/ai/observability.ml:108:  with_span ~kind:Eta.Capabilities.Client
 - lib/ai/observability.ml:127:    |> Eta.Effect.bind (fun response ->
 - lib/ai/observability.ml:128:           Eta.Effect.pure response
-- lib/ai/observability.ml:129:           |> Eta.Effect.annotate_all (embedding_response_attrs response))
+- lib/ai/observability.ml:129:           |> Eta_observability.annotate_all (embedding_response_attrs response))
 - lib/ai/observability.ml:136:  with_span ~kind:Eta.Capabilities.Client
 - lib/ai/observability.ml:149:  with_span ~kind:Eta.Capabilities.Internal
-- lib/ai/observability.ml:154:  Eta.Effect.suppress_observability
+- lib/ai/observability.ml:154:  Eta_observability.suppress_observability
 - lib/ai/openai/common.ml:49:  Eta_http.Core.Header.unsafe_of_list
 - lib/ai/openai/common.ml:51:      ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
 - lib/ai/openai/eta_ai_openai.mli:45:    (Eta_http.Request.t, Eta_ai.ai_error) result
@@ -315,7 +315,7 @@ Search:
 - lib/ai/transport.ml:88:  | Stdlib.Error error -> Eta.Effect.fail error
 - lib/ai/transport.ml:92:  | Stdlib.Error error -> Eta.Effect.fail error
 - lib/ai/transport.ml:96:  Eta_http.request client request
-- lib/ai/transport.ml:97:  |> Eta.Effect.suppress_observability
+- lib/ai/transport.ml:97:  |> Eta_observability.suppress_observability
 - lib/ai/transport.ml:98:  |> Eta.Effect.bind_error (fun error -> Eta.Effect.fail (Eta_http_error error))
 - lib/ai/transport.ml:102:  |> Eta.Effect.bind (fun response ->
 - lib/ai/transport.ml:104:           response.Eta_http.Response.status >= 200

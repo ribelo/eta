@@ -55,13 +55,13 @@ end = struct
   type t = { dsn : string; clock : clock }
 
   let open_ clock =
-    Effect.named "db.open" (Effect.sync (fun () -> { dsn = "db://local"; clock }))
+    Eta_observability.named "db.open" (Effect.sync (fun () -> { dsn = "db://local"; clock }))
 
   let close _db =
-    Effect.named "db.close" (Effect.sync (fun () -> ()))
+    Eta_observability.named "db.close" (Effect.sync (fun () -> ()))
 
   let query db sql =
-    Effect.named "db.query" (Effect.sync (fun () -> db.dsn ^ ":" ^ sql))
+    Eta_observability.named "db.query" (Effect.sync (fun () -> db.dsn ^ ":" ^ sql))
 end
 ```
 
@@ -106,7 +106,7 @@ A leaf effect closes over the dependencies it needs. There is no ambient
 
 ```ocaml
 let current_user auth =
-  Effect.named "auth.current_user" (Effect.sync (fun () -> Auth.current_user auth))
+  Eta_observability.named "auth.current_user" (Effect.sync (fun () -> Auth.current_user auth))
 ```
 
 If a leaf must run in a native island, make the pool, input, and callback

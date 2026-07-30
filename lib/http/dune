@@ -4,6 +4,7 @@
  (synopsis "Backend-neutral HTTP protocol and client contract for Eta")
  (libraries
   eta
+  eta_observability
   domain-name
   ipaddr
   bigstringaf

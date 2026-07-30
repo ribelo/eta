@@ -11,22 +11,22 @@ let expensive_attrs builds () =
 
 let hidden_export =
   let open Syntax in
-  Effect.named ~error_pp:pp_error "hidden.export"
-    (let* () = Effect.log "hidden.log" in
+  Eta_observability.named ~error_pp:pp_error "hidden.export"
+    (let* () = Eta_observability.log "hidden.log" in
      let* () =
-       Effect.metric_counter ~name:"hidden.metric" ~monotonic:false
-         (Meter.Int 1)
+       Eta_observability.metric_counter ~name:"hidden.metric" ~monotonic:false
+         (Eta_observability.Meter.Int 1)
      in
-     Effect.event "hidden.event")
-  |> Effect.suppress_observability
+     Eta_observability.event "hidden.event")
+  |> Eta_observability.suppress_observability
 
 let program attr_builds =
   let open Syntax in
-  Effect.named ~error_pp:pp_error "visible.request"
-    (let* tracing = Effect.is_tracing_enabled in
+  Eta_observability.named ~error_pp:pp_error "visible.request"
+    (let* tracing = Eta_observability.is_tracing_enabled in
      let* () =
-       Effect.annotate_all_lazy (expensive_attrs attr_builds)
-         (Effect.event "visible.event")
+       Eta_observability.annotate_all_lazy (expensive_attrs attr_builds)
+         (Eta_observability.event "visible.event")
      in
      let* () = hidden_export in
      Effect.pure tracing)
@@ -45,15 +45,15 @@ let has_attr key value attrs =
   | None -> false
 
 let span_named name span =
-  String.equal span.Tracer.name name
+  String.equal span.Eta_observability.Tracer.name name
 
 let event_named name event =
-  String.equal event.Tracer.ev_name name
+  String.equal event.Eta_observability.Tracer.ev_name name
 
 let verify_enabled attr_builds tracer logger meter tracing =
-  let spans = Tracer.dump tracer in
-  let logs = Logger.dump logger in
-  let metrics = Meter.dump meter in
+  let spans = Eta_observability.Tracer.dump tracer in
+  let logs = Eta_observability.Logger.dump logger in
+  let metrics = Eta_observability.Meter.dump meter in
   require "tracing enabled" tracing;
   require "lazy attrs built once" (!attr_builds = 1);
   require "hidden span suppressed"
@@ -81,13 +81,13 @@ let () =
   require "disabled lazy attrs" (!disabled_attrs = 0);
 
   let enabled_attrs = ref 0 in
-  let tracer = Tracer.in_memory () in
-  let logger = Logger.in_memory () in
-  let meter = Meter.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
+  let logger = Eta_observability.Logger.in_memory () in
+  let meter = Eta_observability.Meter.in_memory () in
   let enabled_rt =
     Eta_eio.Runtime.create ~sw ~clock
-      ~tracer:(Tracer.as_capability tracer)
-      ~logger:(Logger.as_capability logger) ~meter:(Meter.as_capability meter)
+      ~tracer:(Eta_observability.Tracer.as_capability tracer)
+      ~logger:(Eta_observability.Logger.as_capability logger) ~meter:(Eta_observability.Meter.as_capability meter)
       ()
   in
   let enabled_tracing = run_bool enabled_rt (program enabled_attrs) in
@@ -97,5 +97,5 @@ let () =
   Format.printf
     "observability-controls:disabled_trace=%b disabled_attrs=%d visible_spans=%d hidden_logs=%d hidden_metrics=%d@."
     disabled_tracing !disabled_attrs visible_spans
-    (List.length (Logger.dump logger))
-    (List.length (Meter.dump meter))
+    (List.length (Eta_observability.Logger.dump logger))
+    (List.length (Eta_observability.Meter.dump meter))

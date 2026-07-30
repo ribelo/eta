@@ -29,9 +29,9 @@ let test_log_otlp_live () =
         ~logger:(Eta_otel.logger exporter) ()
     in
     let program =
-      Effect.named "parent"
-        (Effect.log "hello from inside parent"
-        |> Effect.bind (fun () -> Effect.log "still inside"))
+      Eta_observability.named "parent"
+        (Eta_observability.log "hello from inside parent"
+        |> Effect.bind (fun () -> Eta_observability.log "still inside"))
     in
     ignore (Runtime.run rt program : (unit, 'err) Exit.t);
     Eta_otel.flush exporter

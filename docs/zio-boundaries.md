@@ -103,12 +103,12 @@ after the lexical override returns.
 
 Log interception is another fiber-local stage, not a sink replacement. The
 fixed pipeline is scoped minimum-level filter, scoped then per-call attributes,
-outermost-to-innermost `Effect.intercept_log` transforms, and finally the
+outermost-to-innermost `Eta_observability.intercept_log` transforms, and finally the
 currently bound logger. `Keep` passes the record unchanged, `Replace record`
 substitutes it, and `Drop` stops the remaining transforms and drops it.
 Consequently both
-`Effect.intercept_log scrub (Effect.with_logger sink body)` and
-`Effect.with_logger sink (Effect.intercept_log scrub body)` scrub records before
+`Eta_observability.intercept_log scrub (Eta_observability.with_logger sink body)` and
+`Eta_observability.with_logger sink (Eta_observability.intercept_log scrub body)` scrub records before
 `sink`; moving the logger override does not bypass interception. Metric
 interception follows the same nesting and drop rules after a metric point is
 built and before the current meter.
@@ -258,5 +258,5 @@ needs them.
 Eta uses OCaml naming and types: snake_case functions, module-owned types,
 polymorphic variants for typed errors, and ordinary OCaml backtraces for defect
 diagnostics. There is no implicit ZIO `Trace` parameter. Tracing, logging, and
-metrics are explicit runtime capabilities plus `Effect.named`,
-`Effect.annotate`, and related observability combinators.
+metrics are explicit runtime capabilities plus `Eta_observability.named`,
+`Eta_observability.annotate`, and related observability combinators.

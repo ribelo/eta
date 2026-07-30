@@ -22,7 +22,7 @@ let attr key attrs =
 
 let load_user id =
   let span_name = __FUNCTION__ in
-  Effect.fn ~error_pp:pp_error ~kind:Tracer.Client
+  Eta_observability.fn ~error_pp:pp_error ~kind:Eta_observability.Tracer.Client
     ~attrs:[ ("component", "accounts"); ("operation", span_name) ]
     __POS__ span_name
     (Effect.sync_result (fun () ->
@@ -35,7 +35,7 @@ let program =
   (span_name, String.uppercase_ascii user)
 
 let only_span tracer =
-  match Tracer.dump tracer with
+  match Eta_observability.Tracer.dump tracer with
   | [ span ] -> span
   | spans ->
       failwith
@@ -45,13 +45,13 @@ let only_span tracer =
 let verify tracer (span_name, result) =
   let span = only_span tracer in
   let loc =
-    match attr "loc" span.Tracer.attrs with
+    match attr "loc" span.Eta_observability.Tracer.attrs with
     | Some loc -> loc
     | None -> failwith "source locations check failed: missing loc attr"
   in
   require "function name present" (not (String.equal span_name ""));
   require "span name" (String.equal span.name span_name);
-  require "client kind" (span.kind = Tracer.Client);
+  require "client kind" (span.kind = Eta_observability.Tracer.Client);
   require "component attr"
     (attr "component" span.attrs = Some "accounts");
   require "operation attr"
@@ -64,10 +64,10 @@ let verify tracer (span_name, result) =
 let () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let tracer = Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Tracer.as_capability tracer)
+      ~tracer:(Eta_observability.Tracer.as_capability tracer)
       ()
   in
   match Eta_eio.Runtime.run rt program with

@@ -7,11 +7,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Error _ -> Alcotest.fail "expected Ok"
 
   let only_span tracer =
-    match Tracer.dump tracer with
+    match Eta_observability.Tracer.dump tracer with
     | [ span ] -> span
     | spans -> Alcotest.failf "expected one span, got %d" (List.length spans)
 
-  let attr key span = List.assoc_opt key span.Tracer.attrs
+  let attr key span = List.assoc_opt key span.Eta_observability.Tracer.attrs
 
   let contains haystack needle =
     let haystack_len = String.length haystack in
@@ -82,15 +82,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_traced_runtime @@ fun _ctx rt tracer ->
     let auth = { Auth.user = "alice" } in
     Alcotest.(check string) "value" "alice" (run_ok rt (current_user auth));
-    let spans = Tracer.dump tracer in
+    let spans = Eta_observability.Tracer.dump tracer in
     Alcotest.(check int) "span count" 2 (List.length spans);
-    let find name = List.find (fun span -> String.equal span.Tracer.name name) spans in
+    let find name = List.find (fun span -> String.equal span.Eta_observability.Tracer.name name) spans in
     let leaf = find "auth.current_user" in
     let fn =
       List.find
         (fun span ->
-          not (String.equal span.Tracer.name "auth.current_user")
-          && contains span.Tracer.name "current_user")
+          not (String.equal span.Eta_observability.Tracer.name "auth.current_user")
+          && contains span.Eta_observability.Tracer.name "current_user")
         spans
     in
     Alcotest.(check (option int)) "leaf parent" (Some fn.span_id) leaf.parent_id
@@ -114,22 +114,22 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       [%eta.result "db.find" (Db.find_ok ())]
     in
     let result_hand_ok : (string, err) Effect.t =
-      Effect.fn __POS__ __FUNCTION__
-        (Effect.named "db.find" (Effect.sync_result (fun () -> Db.find_ok ())))
+      Eta_observability.fn __POS__ __FUNCTION__
+        (Eta_observability.named "db.find" (Effect.sync_result (fun () -> Db.find_ok ())))
     in
     let result_sugar_err : (string, err) Effect.t =
       [%eta.result "db.find" (Db.find_err ())]
     in
     let result_hand_err : (string, err) Effect.t =
-      Effect.fn __POS__ __FUNCTION__
-        (Effect.named "db.find" (Effect.sync_result (fun () -> Db.find_err ())))
+      Eta_observability.fn __POS__ __FUNCTION__
+        (Eta_observability.named "db.find" (Effect.sync_result (fun () -> Db.find_err ())))
     in
     let result_sugar_raise : (string, err) Effect.t =
       [%eta.result "db.find" (Db.find_raise ())]
     in
     let result_hand_raise : (string, err) Effect.t =
-      Effect.fn __POS__ __FUNCTION__
-        (Effect.named "db.find"
+      Eta_observability.fn __POS__ __FUNCTION__
+        (Eta_observability.named "db.find"
            (Effect.sync_result (fun () -> Db.find_raise ())))
     in
     let check_ok label program =
@@ -139,12 +139,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     check_ok "sugar ok" result_sugar_ok;
     check_ok "hand ok" result_hand_ok;
-    let spans = Tracer.dump tracer in
+    let spans = Eta_observability.Tracer.dump tracer in
     let leaf_spans =
-      List.filter (fun span -> String.equal span.Tracer.name "db.find") spans
+      List.filter (fun span -> String.equal span.Eta_observability.Tracer.name "db.find") spans
     in
     Alcotest.(check int) "ok leaf spans" 2 (List.length leaf_spans);
-    (* loc is attached by Effect.fn / here_attr on the outer span, not the leaf. *)
+    (* loc is attached by Eta_observability.fn / here_attr on the outer span, not the leaf. *)
     let loc_spans =
       List.filter
         (fun span ->
@@ -172,9 +172,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_eta_error_span_status () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
-    let before = Effect.named "db.save.before" (Effect.fail (`Db 7)) in
+    let before = Eta_observability.named "db.save.before" (Effect.fail (`Db 7)) in
     let after =
-      Effect.named ~error_pp:pp_err "db.save" (Effect.fail (`Db 7))
+      Eta_observability.named ~error_pp:pp_err "db.save" (Effect.fail (`Db 7))
     in
     let run label program =
       match B.run rt program with
@@ -183,13 +183,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     run "default" before;
     run "derived" after;
-    let spans = Tracer.dump tracer in
+    let spans = Eta_observability.Tracer.dump tracer in
     let find name =
-      List.find (fun span -> String.equal span.Tracer.name name) spans
+      List.find (fun span -> String.equal span.Eta_observability.Tracer.name name) spans
     in
     let status name =
       match (find name).status with
-      | Tracer.Error message -> message
+      | Eta_observability.Tracer.Error message -> message
       | _ -> Alcotest.failf "expected error span status for %s" name
     in
     Alcotest.(check string)
@@ -202,7 +202,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Effect.with_scope
         (Effect.acquire_release ~acquire:Effect.unit
            ~release:(fun () -> Effect.fail (`Db 7)))
-      |> Effect.with_error_pp pp_err
+      |> Eta_observability.with_error_pp pp_err
     in
     match B.run rt program with
     | Exit.Error cause ->
@@ -230,7 +230,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_eta_error_raising_renderer_becomes_defect () =
     B.with_traced_runtime @@ fun _ctx rt _tracer ->
     let program =
-      Effect.named ~error_pp:pp_raising_err "db.save"
+      Eta_observability.named ~error_pp:pp_raising_err "db.save"
         (Effect.fail (`Custom "payload"))
     in
     match B.run rt program with
@@ -249,7 +249,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Effect.with_scope
         (Effect.acquire_release ~acquire:Effect.unit
            ~release:(fun () -> Effect.fail (`Custom "release")))
-      |> Effect.with_error_pp pp_raising_err
+      |> Eta_observability.with_error_pp pp_raising_err
     in
     match B.run rt program with
     | Exit.Error (Cause.Die die) ->
@@ -263,7 +263,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let program : (unit, raising_err) Effect.t =
       Effect.finally (Effect.fail (`Custom "cleanup")) Effect.unit
-      |> Effect.with_error_pp pp_raising_err
+      |> Eta_observability.with_error_pp pp_raising_err
     in
     match B.run rt program with
     | Exit.Error (Cause.Die die) ->

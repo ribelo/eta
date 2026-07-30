@@ -6,12 +6,14 @@
   effect_erasure
   effect_concurrent
   effect_core
-  effect_observability
+  effect_instrument
   effect_resource
   effect_schedule
   effect_supervisor_scope
   runtime_core
   runtime_erasure
   runtime_instrument
+  runtime_capabilities
   runtime_observability
+  runtime_trace_context
   runtime_supervisor))

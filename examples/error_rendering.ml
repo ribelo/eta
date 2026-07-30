@@ -12,24 +12,24 @@ let attr key attrs =
   List.assoc_opt key attrs
 
 let charge_payment =
-  Effect.with_error_pp pp_error
-    (Effect.named ~error_pp:pp_error "payment.charge"
+  Eta_observability.with_error_pp pp_error
+    (Eta_observability.named ~error_pp:pp_error "payment.charge"
        (Effect.fail (`Declined "card")))
 
 let ledger_use =
-  Effect.with_error_pp pp_error
-    (Effect.named ~error_pp:pp_error "payment.ledger"
+  Eta_observability.with_error_pp pp_error
+    (Eta_observability.named ~error_pp:pp_error "payment.ledger"
        (Effect.with_resource ~acquire:(Effect.pure "payments")
           ~release:(fun ledger -> Effect.fail (`Ledger_close_failed ledger))
           (fun ledger -> Effect.pure ledger)))
 
 let find_span name spans =
-  match List.find_opt (fun span -> String.equal span.Tracer.name name) spans with
+  match List.find_opt (fun span -> String.equal span.Eta_observability.Tracer.name name) spans with
   | Some span -> span
   | None -> failwith ("error rendering check failed: missing span " ^ name)
 
 let event_message span =
-  match span.Tracer.events with
+  match span.Eta_observability.Tracer.events with
   | [ event ] -> attr "exception.message" event.ev_attrs
   | events ->
       failwith
@@ -38,8 +38,8 @@ let event_message span =
            (List.length events))
 
 let status_message span =
-  match span.Tracer.status with
-  | Tracer.Error message -> message
+  match span.Eta_observability.Tracer.status with
+  | Eta_observability.Tracer.Error message -> message
   | _ -> failwith "error rendering check failed: expected error span"
 
 let verify charge_exit ledger_exit tracer =
@@ -54,7 +54,7 @@ let verify charge_exit ledger_exit tracer =
         rendered
     | _ -> failwith "error rendering check failed: expected finalizer failure"
   in
-  let spans = Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   let charge_span = find_span "payment.charge" spans in
   let ledger_span = find_span "payment.ledger" spans in
   let charge_status = status_message charge_span in
@@ -73,10 +73,10 @@ let verify charge_exit ledger_exit tracer =
 let () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let tracer = Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Tracer.as_capability tracer)
+      ~tracer:(Eta_observability.Tracer.as_capability tracer)
       ()
   in
   let charge_exit = Eta_eio.Runtime.run rt charge_payment in

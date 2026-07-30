@@ -1130,7 +1130,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let delayed_counted_source produced =
     Eta_stream.Stream.from_iterable (List.init 1_000 (fun i -> i))
     |> Eta_stream.Stream.map_effect (fun value ->
-           Eta.Effect.named "stream.produced"
+           Eta_observability.named "stream.produced"
              (Eta.Effect.sync (fun () -> incr produced))
            |> Eta.Effect.bind (fun () ->
                   Eta.Effect.delay (Eta.Duration.ms 5)
@@ -1335,14 +1335,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let row_pipeline clock db () =
     let clock_stream =
       Eta_stream.Stream.from_effect
-        (Eta.Effect.named "clock"
+        (Eta_observability.named "clock"
            (Eta.Effect.sync (fun () ->
                 clock#sleep (Eta.Duration.ms 0);
                 1)))
     in
     let db_stream =
       Eta_stream.Stream.from_effect
-        (Eta.Effect.named "db" (Eta.Effect.sync (fun () -> db#get)))
+        (Eta_observability.named "db" (Eta.Effect.sync (fun () -> db#get)))
     in
     Eta_stream.Stream.merge clock_stream db_stream
     |> Eta_stream.Stream.flat_map_par ~max_concurrency:2 (fun value ->

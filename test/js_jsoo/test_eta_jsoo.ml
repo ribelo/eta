@@ -744,15 +744,15 @@ let test_scoped_clock_and_logger_parity done_ =
       method sleep _duration = ()
     end
   in
-  let logger = Eta.Logger.in_memory () in
+  let logger = Eta_observability.Logger.in_memory () in
   let open Eta.Syntax in
   let program =
     let* before = Eta.Effect.now_ms in
     let* inner = Eta.Effect.with_clock (clock 22) Eta.Effect.now_ms in
     let* after = Eta.Effect.now_ms in
     let+ () =
-      Eta.Effect.with_logger (Eta.Logger.as_capability logger)
-        (Eta.Effect.log "jsoo")
+      Eta_observability.with_logger (Eta_observability.Logger.as_capability logger)
+        (Eta_observability.log "jsoo")
     in
     (before, inner, after)
   in
@@ -760,8 +760,8 @@ let test_scoped_clock_and_logger_parity done_ =
     ~on_result:
       (finish done_ (function
         | Eta.Exit.Ok (11, 22, 11) -> (
-            match Eta.Logger.dump logger with
-            | [ record ] when record.Eta.Logger.body = "jsoo" -> ()
+            match Eta_observability.Logger.dump logger with
+            | [ record ] when record.Eta_observability.Logger.body = "jsoo" -> ()
             | records ->
                 fail
                   (Printf.sprintf "expected one jsoo override log, got %d"
@@ -773,22 +773,22 @@ let test_scoped_clock_and_logger_parity done_ =
                  (Eta.Cause.pp pp_err) cause)))
 
 let test_intercept_log_parity done_ =
-  let logger = Eta.Logger.in_memory () in
+  let logger = Eta_observability.Logger.in_memory () in
   let calls = ref [] in
   let outer (record : Eta.Capabilities.log_record) =
     calls := !calls @ [ "outer:" ^ record.body ];
-    Eta.Effect.Replace { record with body = "scrubbed:" ^ record.body }
+    Eta_observability.Replace { record with body = "scrubbed:" ^ record.body }
   in
   let inner (record : Eta.Capabilities.log_record) =
     calls := !calls @ [ "inner:" ^ record.body ];
-    if String.equal record.body "scrubbed:drop" then Eta.Effect.Drop
-    else Eta.Effect.Keep
+    if String.equal record.body "scrubbed:drop" then Eta_observability.Drop
+    else Eta_observability.Keep
   in
   let program =
-    Eta.Effect.concat [ Eta.Effect.log "keep"; Eta.Effect.log "drop" ]
-    |> Eta.Effect.intercept_log inner
-    |> Eta.Effect.intercept_log outer
-    |> Eta.Effect.with_logger (Eta.Logger.as_capability logger)
+    Eta.Effect.concat [ Eta_observability.log "keep"; Eta_observability.log "drop" ]
+    |> Eta_observability.intercept_log inner
+    |> Eta_observability.intercept_log outer
+    |> Eta_observability.with_logger (Eta_observability.Logger.as_capability logger)
   in
   run program
     ~on_result:
@@ -804,8 +804,8 @@ let test_intercept_log_parity done_ =
             in
             if !calls <> expected_calls then
               fail "jsoo intercept order differed";
-            match Eta.Logger.dump logger with
-            | [ record ] when record.Eta.Logger.body = "scrubbed:keep" -> ()
+            match Eta_observability.Logger.dump logger with
+            | [ record ] when record.Eta_observability.Logger.body = "scrubbed:keep" -> ()
             | records ->
                 fail
                   (Printf.sprintf "expected one intercepted jsoo log, got %d"
@@ -872,7 +872,7 @@ let test_raising_release_error_pp_becomes_die done_ =
     Eta.Effect.with_scope
       (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
          ~release:(fun () -> Eta.Effect.fail `Release))
-    |> Eta.Effect.with_error_pp raising_release_pp
+    |> Eta_observability.with_error_pp raising_release_pp
   in
   run program
     ~on_result:
@@ -890,7 +890,7 @@ let test_raising_release_error_pp_becomes_die done_ =
 let test_raising_finally_error_pp_becomes_die done_ =
   let program : (unit, [ `Release ]) Eta.Effect.t =
     Eta.Effect.finally (Eta.Effect.fail `Release) Eta.Effect.unit
-    |> Eta.Effect.with_error_pp raising_release_pp
+    |> Eta_observability.with_error_pp raising_release_pp
   in
   run program
     ~on_result:
@@ -1063,6 +1063,112 @@ let tests =
       test_supervised_background_does_not_cancel_use );
     ( "with_background same-release exits choose one winner",
       test_background_same_release_has_one_winner );
+    ( "runtime local binding contract",
+      fun done_ ->
+        let local = Runtime_contract.create_local () in
+        let eff =
+          Eta.Spi.Expert.make @@ fun context ->
+          let contract = Eta.Spi.Expert.contract context in
+          let require label expected =
+            if contract.Runtime_contract.local_get local <> expected then
+              failwith label
+          in
+          require "initially absent" None;
+          contract.Runtime_contract.local_with_binding local 1 (fun () ->
+              require "outer installed" (Some 1);
+              contract.Runtime_contract.local_with_binding local 2 (fun () ->
+                  require "inner installed" (Some 2));
+              require "outer restored after inner" (Some 1));
+          require "absent after normal return" None;
+          let raised = Failure "binding exception" in
+          (try
+             contract.Runtime_contract.local_with_binding local 3 (fun () ->
+                 raise raised)
+           with exn when exn == raised -> ());
+          require "absent after exception" None;
+          let cancelled = Failure "binding cancellation" in
+          contract.Runtime_contract.cancel_sub (fun cancel_context ->
+              try
+                contract.Runtime_contract.local_with_binding local 4 @@ fun () ->
+                contract.Runtime_contract.cancel cancel_context cancelled;
+                contract.Runtime_contract.check ();
+                failwith "expected cancellation"
+              with exn ->
+                match contract.Runtime_contract.cancellation_reason exn with
+                | Some reason when reason == cancelled -> ()
+                | _ -> raise exn);
+          require "absent after cancellation" None;
+          let child, parent =
+            contract.Runtime_contract.local_with_binding local 5 (fun () ->
+                let child =
+                  contract.Runtime_contract.run_scope @@ fun sw ->
+                  let started, started_resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  let observe, observe_resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  let bound, bound_resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  let release, release_resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  let result, result_resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  contract.Runtime_contract.fork sw (fun () ->
+                      contract.Runtime_contract.resolve_promise started_resolver
+                        ();
+                      contract.Runtime_contract.await_promise observe;
+                      let before = contract.Runtime_contract.local_get local in
+                      let inner =
+                        contract.Runtime_contract.local_with_binding local 6
+                          (fun () ->
+                            contract.Runtime_contract.resolve_promise
+                              bound_resolver ();
+                            contract.Runtime_contract.await_promise release;
+                            contract.Runtime_contract.local_get local)
+                      in
+                      let after = contract.Runtime_contract.local_get local in
+                      contract.Runtime_contract.resolve_promise result_resolver
+                        (before, inner, after));
+                  contract.Runtime_contract.await_promise started;
+                  let parent_during_child_binding =
+                    contract.Runtime_contract.local_with_binding local 7
+                      (fun () ->
+                        contract.Runtime_contract.resolve_promise observe_resolver
+                          ();
+                        contract.Runtime_contract.await_promise bound;
+                        let observed =
+                          contract.Runtime_contract.local_get local
+                        in
+                        contract.Runtime_contract.resolve_promise release_resolver
+                          ();
+                        observed)
+                  in
+                  ( contract.Runtime_contract.await_promise result,
+                    parent_during_child_binding )
+                in
+                (child, contract.Runtime_contract.local_get local))
+          in
+          let child_observations, parent_during_child_binding = child in
+          if child_observations <> (Some 5, Some 6, Some 5) then
+            failwith "child fork snapshot or LIFO restoration diverged";
+          if parent_during_child_binding <> Some 7 then
+            failwith "child binding leaked into parent";
+          if parent <> Some 5 then failwith "child binding joined into parent";
+          require "absent after fork scope" None;
+          Eta.Exit.Ok ()
+        in
+        run eff
+          ~on_result:
+            (finish done_ (function
+              | Eta.Exit.Ok () -> ()
+              | Eta.Exit.Error cause ->
+                  fail
+                    (Format.asprintf "local binding contract failed: %a"
+                       (Eta.Cause.pp pp_err) cause))) );
   ]
   @ Async_shared.tests
   @ Interruptible_shared.tests

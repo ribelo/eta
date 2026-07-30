@@ -1,0 +1,24 @@
+DX-E44 dependency-direction proof
+=================================
+
+Command:
+
+  nix develop -c sh -c \
+    'dune describe workspace > .scratch/research/dx/e44/evidence/dependency-after.txt'
+
+Relevant `dune describe` records:
+
+  ((name eta)
+   (uid 4959d989cd769579373219a9cc44899f)
+   (local true)
+   (requires ()))
+
+  ((name eta_observability)
+   (uid 9590a6e6350c01e87f118721d299baad)
+   (local true)
+   (requires (4959d989cd769579373219a9cc44899f)))
+
+The SDK's sole required UID is `eta`; root `eta` requires no library. Therefore
+the edge is exactly `eta_observability -> eta`, with no root-to-SDK edge and no
+cycle. The complete machine-readable before/after workspaces are
+`dependency-before.txt` and `dependency-after.txt`.

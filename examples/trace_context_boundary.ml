@@ -13,9 +13,9 @@ let headers =
 
 let program ctx =
   let open Syntax in
-  Effect.with_context ctx
-    (Effect.named ~error_pp:pp_error "boundary.request"
-       (let* current = Effect.current_context in
+  Eta_observability.with_context ctx
+    (Eta_observability.named ~error_pp:pp_error "boundary.request"
+       (let* current = Eta_observability.current_context in
         match current with
         | None -> Effect.fail `Missing_context
         | Some current -> Effect.pure current))
@@ -28,31 +28,31 @@ let has_assoc key value xs =
 let () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  match Trace_context.extract headers with
+  match Eta_observability.Trace_context.extract headers with
   | None ->
       Format.eprintf "trace context extraction failed@.";
       exit 1
   | Some ctx -> (
-      let tracer = Tracer.in_memory () in
+      let tracer = Eta_observability.Tracer.in_memory () in
       let rt =
         Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-          ~tracer:(Tracer.as_capability tracer)
+          ~tracer:(Eta_observability.Tracer.as_capability tracer)
           ()
       in
       match Eta_eio.Runtime.run rt (program ctx) with
       | Exit.Ok current -> (
-          let injected = Trace_context.inject ctx in
-          let spans = Tracer.dump tracer in
+          let injected = Eta_observability.Trace_context.inject ctx in
+          let spans = Eta_observability.Tracer.dump tracer in
           match spans with
           | [ span ] ->
               let preserves_context =
                 String.equal current.trace_id ctx.trace_id
-                && Trace_context.sampled current
+                && Eta_observability.Trace_context.sampled current
                 && has_assoc "congo" "t61rcWkgMzE" current.trace_state
                 && has_assoc "tenant" "acme" current.baggage
               in
               let external_parent =
-                match span.Tracer.external_parent with
+                match span.Eta_observability.Tracer.external_parent with
                 | None -> false
                 | Some parent ->
                     String.equal parent.trace_id ctx.trace_id
@@ -68,7 +68,7 @@ let () =
                 Format.printf
                   "trace-context:sampled=%b trace=%s parent=%s baggage=%s \
                    spans=%d@."
-                  (Trace_context.sampled current)
+                  (Eta_observability.Trace_context.sampled current)
                   current.trace_id
                   (Option.value (List.assoc_opt "congo" current.trace_state)
                      ~default:"missing")

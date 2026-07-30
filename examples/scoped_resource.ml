@@ -33,8 +33,8 @@ let program released =
   let open Syntax in
   Effect.with_scope
     (let* session = session_scope released in
-     let* config = Effect.named ~error_pp:pp_error "load.config" (load session "config") in
-     let* profile = Effect.named ~error_pp:pp_error "load.profile" (load session "profile") in
+     let* config = Eta_observability.named ~error_pp:pp_error "load.config" (load session "config") in
+     let* profile = Eta_observability.named ~error_pp:pp_error "load.profile" (load session "profile") in
      let+ still_open = Effect.sync (fun () -> not session.closed) in
      (config, profile, still_open))
 

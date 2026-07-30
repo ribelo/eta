@@ -1,0 +1,5 @@
+(library
+ (name eta_observability)
+ (public_name eta_observability)
+ (synopsis "Tracing, structured logging, metrics, and W3C propagation for Eta")
+ (libraries eta))

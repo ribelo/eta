@@ -988,20 +988,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     ignore (run_ok rt (Pool.with_resource pool pool_use) : int);
     run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool);
-    let metric_names = List.map (fun p -> p.Meter.name) (Meter.dump meter) in
+    let metric_names = List.map (fun p -> p.Eta_observability.Meter.name) (Eta_observability.Meter.dump meter) in
     let has_metric name = List.exists (String.equal name) metric_names in
     Alcotest.(check bool) "active metric" true (has_metric "eta.pool.active");
     Alcotest.(check bool) "opened metric" true (has_metric "eta.pool.opened");
     Alcotest.(check bool) "closed metric" true (has_metric "eta.pool.closed");
     Alcotest.(check bool)
       "health metric" true (has_metric "eta.pool.health_rejected");
-    let span_names = List.map (fun s -> s.Tracer.name) (Tracer.dump tracer) in
+    let span_names = List.map (fun s -> s.Eta_observability.Tracer.name) (Eta_observability.Tracer.dump tracer) in
     let has_span name = List.exists (String.equal name) span_names in
     Alcotest.(check bool) "acquire span" true (has_span "eta.pool.acquire");
     Alcotest.(check bool) "health span" true (has_span "eta.pool.health_check");
     Alcotest.(check bool) "close span" true (has_span "eta.pool.close");
     Alcotest.(check bool) "shutdown span" true (has_span "eta.pool.shutdown");
-    let log_bodies = List.map (fun r -> r.Logger.body) (Logger.dump logger) in
+    let log_bodies = List.map (fun r -> r.Eta_observability.Logger.body) (Eta_observability.Logger.dump logger) in
     Alcotest.(check bool) "health log" true
       (List.exists (String.equal "eta.pool.health_rejected") log_bodies);
     Alcotest.(check bool) "shutdown log" true
@@ -1021,12 +1021,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "invalidated" 1 stats.Pool.invalidated;
     Alcotest.(check int) "closed" 1 stats.Pool.closed;
     Alcotest.(check int) "health not rejected" 0 stats.Pool.health_rejected;
-    let metric_names = List.map (fun p -> p.Meter.name) (Meter.dump meter) in
+    let metric_names = List.map (fun p -> p.Eta_observability.Meter.name) (Eta_observability.Meter.dump meter) in
     let has_metric name = List.exists (String.equal name) metric_names in
     Alcotest.(check bool)
       "invalidated metric" true (has_metric "eta.pool.invalidated");
     Alcotest.(check bool) "closed metric" true (has_metric "eta.pool.closed");
-    let log_bodies = List.map (fun r -> r.Logger.body) (Logger.dump logger) in
+    let log_bodies = List.map (fun r -> r.Eta_observability.Logger.body) (Eta_observability.Logger.dump logger) in
     Alcotest.(check bool) "invalidated log" true
       (List.exists (String.equal "eta.pool.invalidated") log_bodies);
     ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)

@@ -73,6 +73,12 @@ type t = {
   cancel : cancel_context -> exn -> unit;
   local_get : 'a. 'a local -> 'a option;
   local_with_binding : 'a 'b. 'a local -> 'a -> (unit -> 'b) -> 'b;
+  (** Run the callback with the supplied binding, then restore the exact previous
+      binding before returning normally or propagating an exception or
+      cancellation. Nested bindings restore in LIFO order. A fork snapshots
+      bindings whose keys use [Inherit]; later child changes are not merged back
+      at join. Bindings whose keys use [Fiber_local] are absent in children. *)
+
   current_fiber_id : unit -> int;
   with_fiber_identity : 'a. (unit -> 'a) -> 'a;
 }
@@ -211,6 +217,12 @@ module type RUNTIME = sig
   val cancel : cancel_context -> exn -> unit
   val local_get : 'a local -> 'a option
   val local_with_binding : 'a local -> 'a -> (unit -> 'b) -> 'b
+  (** Run the callback with the supplied binding, then restore the exact previous
+      binding before returning normally or propagating an exception or
+      cancellation. Nested bindings restore in LIFO order. A fork snapshots
+      bindings whose keys use [Inherit]; later child changes are not merged back
+      at join. Bindings whose keys use [Fiber_local] are absent in children. *)
+
   val current_fiber_id : unit -> int
   (** Stable identity for the current runtime fiber/task. The identity must be
       shared by nested Eta runtimes running on the same host fiber, and distinct

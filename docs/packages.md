@@ -1,6 +1,6 @@
 # Eta Package Map
 
-Eta ships as a monorepo of opam packages. Each package publishes exactly one
+Eta ships 49 opam packages from one monorepo. Each package publishes exactly one
 public Dune library with a matching OCaml top-level module. Pick only the
 packages you need.
 
@@ -38,19 +38,20 @@ empty tier is intentional rather than an invitation to infer instability.
 | --- | --- |
 | `eta` | Backend-neutral effect description, runtime contract, failures, scopes, and concurrency shared by every Eta program. |
 
-### Batteries (11)
+### Batteries (12)
 
 | package | why |
 | --- | --- |
 | `eta_blocking` | General bounded blocking-worker machinery, independent of any external service or protocol. |
 | `eta_cache` | General effect-integrated caching and refreshable values. |
+| `eta_observability` | General tracing, structured logging, metrics, and propagation over Eta capability contracts. |
 | `eta_par` | General native CPU parallelism over Eta effects. |
 | `eta_redacted` | General secret-wrapping values for safe rendering. |
 | `eta_router` | General path matching; it does not implement an HTTP protocol or transport. |
 | `eta_schema` | General schema descriptions without a wire-format dependency. |
 | `eta_schema_test` | General test assertions for `eta_schema`, not a service or protocol adapter. |
 | `eta_signal` | General explicit-stabilization reactive graphs. |
-| `eta_stream` | General backend-neutral streams, mailboxes, channels, and queues; `from_eio_stream` is an explicit bridge. |
+| `eta_stream` | General Eta streams, mailboxes, channels, and queues; Eio-backed plumbing and `from_eio_stream` are explicit native integration points. |
 | `eta_test` | General deterministic Eta test runtime and assertions; Eio types are native harness plumbing. |
 | `ppx_eta` | General Eta syntax and typed-error printer generation. |
 
@@ -101,9 +102,11 @@ No package is currently designated unstable or experimental.
 
 ## Core boundary
 
-`eta` is the effect description layer: `Effect`, `Runtime`, `Cause`, `Exit`,
-schedules, resources, supervisors, channels, queues, and the runtime contract.
-It depends only on OCaml and Dune.
+`eta` is the effect description and interpreter-contract layer: `Effect`,
+`Runtime`, `Cause`, `Exit`, schedules, resources, supervisors, channels,
+queues, capability payload types, and the runtime contract. Application-facing
+tracing, logging, metrics, and propagation live in `eta_observability`. Root
+`eta` depends only on OCaml and Dune.
 
 `eta` describes effects; it does not run them. A runnable program needs a
 runtime backend:
@@ -149,8 +152,9 @@ depends only on `eta` (or on nothing, for the pure DSL/PPX packages).
 
 | opam package | OCaml module | what it adds | extra deps |
 | --- | --- | --- | --- |
-| `eta_cache` | `Eta_cache` | effect-integrated keyed cache | — |
-| `eta_stream` | `Eta_stream` | pull streams, mailboxes, bounded queues | `eio`, `cstruct` |
+| `eta_cache` | `Eta_cache` | effect-integrated keyed cache | `eta_observability` |
+| `eta_signal` | `Eta_signal` | explicit-stabilization reactive graphs | `eta_observability`, `eta_stream` |
+| `eta_stream` | `Eta_stream` | pull streams, mailboxes, bounded queues | `eta_observability`, `eio`, `cstruct` |
 | `eta_redacted` | `Eta_redacted` | secret-wrapping types | — |
 | `eta_schema` | `Eta_schema` | lightweight schemas and JSON codecs | — |
 | `eta_schema_test` | `Eta_schema_test` | Alcotest helpers for schema tests | `eta_schema`, `alcotest` |
@@ -159,7 +163,7 @@ depends only on `eta` (or on nothing, for the pure DSL/PPX packages).
 
 | opam package | OCaml module | what it adds | extra deps |
 | --- | --- | --- | --- |
-| `eta_http` | `Eta_http` | backend-neutral HTTP model, client contract, URL/TLS policy, body streams, retry helpers | `yojson`, `domain-name`, `ipaddr`, `bigstringaf`, `decompress` |
+| `eta_http` | `Eta_http` | backend-neutral HTTP model, client contract, URL/TLS policy, body streams, retry helpers | `eta_observability`, `yojson`, `domain-name`, `ipaddr`, `bigstringaf`, `decompress` |
 | `eta_http_h1` | `Eta_http_h1` | HTTP/1 parser/writer helpers | `eta_http` |
 | `eta_http_h2` | `Eta_http_h2` | HTTP/2 protocol state machine | `eta_http`, `bigstringaf`, `cstruct`, `angstrom`, `faraday` |
 | `eta_http_tls_openssl` | `Eta_http_tls_openssl` | OpenSSL TLS state-machine bindings | `cstruct`, `conf-pkg-config`, `conf-openssl` |
@@ -193,9 +197,9 @@ where supported.
 
 | opam package | OCaml module | what it adds | extra deps |
 | --- | --- | --- | --- |
-| `eta_ai` | `Eta_ai` | provider-agnostic chat/streaming vocabulary, SSE parser, telemetry wrappers | `eta_redacted`, `eta_http`, `yojson` |
+| `eta_ai` | `Eta_ai` | provider-agnostic chat/streaming vocabulary, SSE parser, telemetry wrappers | `eta_observability`, `eta_redacted`, `eta_http`, `yojson` |
 | `eta_ai_openai_codec` | `Eta_ai_openai_codec` | shared OpenAI wire codecs | `eta_ai`, `base64` |
-| `eta_ai_openai` | `Eta_ai_openai` | OpenAI Responses/Chat Completions provider | `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `base64`, `yojson` |
+| `eta_ai_openai` | `Eta_ai_openai` | OpenAI Responses/Chat Completions provider | `eta_observability`, `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `base64`, `yojson` |
 | `eta_ai_openai_realtime_eio` | `Eta_ai_openai_realtime_eio` | Eio WebSocket adapter for OpenAI Realtime | `eta_ai`, `eta_ai_openai`, `eta_http`, `eta_http_eio`, `eta_redacted`, `eta_stream`, `eio` |
 | `eta_ai_anthropic` | `Eta_ai_anthropic` | Anthropic Messages provider | `eta_ai`, `eta_redacted`, `eta_http`, `yojson` |
 | `eta_ai_openrouter` | `Eta_ai_openrouter` | OpenRouter provider | `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `base64`, `yojson` |
@@ -209,7 +213,8 @@ they use.
 
 | opam package | OCaml module | what it adds | extra deps |
 | --- | --- | --- | --- |
-| `eta_otel` | `Eta_otel` | OTLP/JSON exporter for tracer, logger, and meter | `eta_stream`, `eta_http`, `yojson` |
+| `eta_observability` | `Eta_observability` | tracing, structured logging, metrics, propagation, and built-in capability implementations | — |
+| `eta_otel` | `Eta_otel` | OTLP/JSON exporter for tracer, logger, and meter | `eta_observability`, `eta_stream`, `eta_http`, `yojson` |
 
 `eta_otel` is an exporter, not a runtime. It needs a `runtime_factory` (usually
 from `eta_eio`) and usually an `eta_http_eio` client to send data.
@@ -219,7 +224,7 @@ from `eta_eio`) and usually an `eta_http_eio` client to send data.
 | opam package | OCaml module | what it adds | extra deps |
 | --- | --- | --- | --- |
 | `eta_linux_input` | `Eta_linux_input` | Linux evdev and uinput helpers | `eta_blocking` |
-| `eta_test` | `Eta_test` | virtual clock, deterministic random, cause-aware Alcotest assertions | `eta_eio`, `eio`, `eio_main`, `alcotest` |
+| `eta_test` | `Eta_test` | virtual clock, deterministic random, cause-aware Alcotest assertions | `eta_observability`, `eta_eio`, `eio`, `eio_main`, `alcotest` |
 | `ppx_eta` | `Ppx_eta` | syntax helpers and typed-error printers | `ppxlib` |
 | `ppx_eta_sql` | `Ppx_eta_sql` | SQL table declaration sugar | `ppxlib` |
 
@@ -228,7 +233,7 @@ from `eta_eio`) and usually an `eta_http_eio` client to send data.
 | opam package | OCaml module | what it adds | extra deps |
 | --- | --- | --- | --- |
 | `eta_jsoo` | `Eta_jsoo` | js_of_ocaml runtime backend | `js_of_ocaml` |
-| `eta_js` | `Eta_js` | js_of_ocaml facade | `eta_jsoo`, `js_of_ocaml` |
+| `eta_js` | `Eta_js` | js_of_ocaml facade | `eta_observability`, `eta_cache`, `eta_jsoo`, `js_of_ocaml` |
 | `eta_js_stream` | `Eta_js_stream` | pull streams for js_of_ocaml targets | `eta_js` |
 | `eta_js_test` | `Eta_js_test` | test helpers for `eta_js` | `eta_js`, `js_of_ocaml` |
 | `eta_http_js` | `Eta_http_js` | Fetch client adapter for eta-http | `eta_http`, `eta_jsoo`, `js_of_ocaml` |
@@ -319,9 +324,10 @@ request.
 ### HTTP client with retries and tracing
 
 ```dune
-(executable (name app) (libraries eta eta_http eta_http_eio eta_otel))
+(executable (name app) (libraries eta eta_observability eta_http eta_http_eio eta_otel))
 ```
 
+`eta_observability` supplies the tracing DSL and capability implementations;
 `eta_otel` needs a runtime factory and an HTTP client; see `lib/otel/README.md`.
 
 ### SQLite
@@ -369,6 +375,9 @@ may depend on Eta; Eta core libraries under `lib/` must never depend on them.
   `eta_http_eio` or a custom adapter.
 - **`eta_otel` is an exporter, not a runtime.** It needs a `runtime_factory`
   (typically `Eta_eio.Runtime.create`) and usually an `eta_http_eio` client.
+- **Observability calls require `eta_observability`.** Root `eta` accepts
+  hand-written capability records but does not expose the tracing, logging,
+  metrics, propagation, or built-in implementation SDK.
 - **Native C-stub packages split build-time and runtime requirements.**
   `eta_sql` and `eta_http` use `pkg-config` at build time for SQLite and
   OpenSSL. `eta_turso`, `eta_duckdb`, and `eta_ladybug` have C stubs that load
@@ -377,5 +386,5 @@ may depend on Eta; Eta core libraries under `lib/` must never depend on them.
 - **JS packages are disabled under +ox.** They are skipped in the pinned
   `5.2.0+ox` Nix shell.
 - **`ppx_eta` is compile-time tooling.** It adds `ppxlib` to the build; the
-  generated code may still reference the normal runtime libraries used by the
-  source being rewritten.
+  generated `[%eta.sync]` and `[%eta.result]` code references
+  `eta_observability`, which must be a dependency of the rewritten source.

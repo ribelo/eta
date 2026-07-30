@@ -124,9 +124,9 @@ let create_with_contract ~contract ?sleep ?now_ms ?tracer
   let tracing_enabled = Option.is_some tracer in
   let logging_enabled = Option.is_some logger in
   let metrics_enabled = Option.is_some meter in
-  let tracer = Option.value tracer ~default:Tracer.noop in
-  let logger = Option.value logger ~default:Logger.noop in
-  let meter = Option.value meter ~default:Meter.noop in
+  let tracer = Option.value tracer ~default:Runtime_capabilities.tracer in
+  let logger = Option.value logger ~default:Runtime_capabilities.logger in
+  let meter = Option.value meter ~default:Runtime_capabilities.meter in
   let sleep = Option.value sleep ~default:contract.Runtime_contract.sleep in
   let now_ms = Option.value now_ms ~default:contract.Runtime_contract.now_ms in
   let clock : Capabilities.clock =

@@ -9,11 +9,11 @@ let typed_program : (string, error) Effect.t =
   Effect.fail (`Rejected "bad input")
 
 let defect_program : (string, error) Effect.t =
-  Effect.named ~error_pp:pp_error "decode"
+  Eta_observability.named ~error_pp:pp_error "decode"
     (Effect.sync (fun () -> failwith "decoder exploded"))
 
 let cleanup_program : (string, error) Effect.t =
-  Effect.with_error_pp pp_error
+  Eta_observability.with_error_pp pp_error
     (Effect.with_resource ~acquire:(Effect.pure "handle")
        ~release:(fun _ -> Effect.fail `Close_failed)
        (fun handle -> Effect.pure handle))

@@ -19,7 +19,7 @@ internals.
 
 ## Decision
 
-eta-otel records self-metrics as internal Eta.Meter.point values:
+eta-otel records self-metrics as internal Eta_observability.Meter.point values:
 
 - Trace, log, and application metric exports enqueue one follow-up self-metric
   batch after each export attempt while the original batch is still counted as

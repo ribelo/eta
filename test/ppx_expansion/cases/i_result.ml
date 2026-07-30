@@ -1,9 +1,12 @@
 module Eta = struct
   module Effect = struct
-    let fn _pos _name body = body
-    let named _name body = body
     let sync_result f = f ()
   end
+end
+
+module Eta_observability = struct
+  let fn _pos _name body = body
+  let named _name body = body
 end
 
 module Db = struct

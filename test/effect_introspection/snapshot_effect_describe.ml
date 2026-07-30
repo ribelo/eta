@@ -6,7 +6,7 @@ let snapshot name eff =
 let () =
   snapshot "pure-map-chain"
     (Effect.pure 1 |> Effect.map (( + ) 1) |> Effect.map string_of_int);
-  snapshot "named-leaf" (Effect.named "user.load" (Effect.sync (fun () -> ())));
+  snapshot "named-leaf" (Eta_observability.named "user.load" (Effect.sync (fun () -> ())));
   snapshot "nested-bind"
     (Effect.unit
     |> Effect.bind (fun () -> Effect.unit)

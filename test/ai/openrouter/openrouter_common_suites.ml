@@ -123,7 +123,7 @@ let test_client ?(with_http_span = false) response captured =
     captured := Some http_request;
     let eff = E.pure response in
     if with_http_span then
-      E.named ~kind:Eta.Capabilities.Client "HTTP POST" eff
+      Eta_observability.named ~kind:Eta.Capabilities.Client "HTTP POST" eff
     else eff
   in
   H.Client.make_custom ~protocol:H.Client.H1 ~request
@@ -431,7 +431,7 @@ let stream_errors events =
        | A.Stream_error (A.Provider_error { message; _ }) -> Some message
        | _ -> None)
 
-let span_attr key (span : Eta.Tracer.span) = List.assoc_opt key span.attrs
+let span_attr key (span : Eta_observability.Tracer.span) = List.assoc_opt key span.attrs
 
 let require_span_attr span key expected =
   Alcotest.(check (option string)) key (Some expected) (span_attr key span)
@@ -466,16 +466,16 @@ let test_runner_suppresses_transport_span () =
   in
   require_contains "request routing" ~needle:"\"provider\":{"
     (request_body_string request);
-  let spans = Eta.Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   Alcotest.(check bool)
     "transport span suppressed" false
     (List.exists
-       (fun (span : Eta.Tracer.span) -> String.equal span.name "HTTP POST")
+       (fun (span : Eta_observability.Tracer.span) -> String.equal span.name "HTTP POST")
        spans);
   Alcotest.(check bool)
     "chat span emitted" true
     (List.exists
-       (fun (span : Eta.Tracer.span) ->
+       (fun (span : Eta_observability.Tracer.span) ->
          String.equal span.name "chat openrouter/auto")
        spans)
 
@@ -580,16 +580,16 @@ let test_embeddings_runner () =
     "uri" "https://openrouter.ai/api/v1/embeddings" request.uri;
   require_contains "request input type" ~needle:"\"input_type\":\"search_query\""
     (request_body_string request);
-  let spans = Eta.Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   Alcotest.(check bool)
     "transport span suppressed" false
     (List.exists
-       (fun (span : Eta.Tracer.span) -> String.equal span.name "HTTP POST")
+       (fun (span : Eta_observability.Tracer.span) -> String.equal span.name "HTTP POST")
        spans);
   let span =
     match
       List.find_opt
-        (fun (span : Eta.Tracer.span) ->
+        (fun (span : Eta_observability.Tracer.span) ->
           String.equal span.name "embeddings openai/text-embedding-3-small")
         spans
     with

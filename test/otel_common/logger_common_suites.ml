@@ -1,14 +1,14 @@
 (* Port of @eff/opentelemetry/test/Logger.test.ts.
 
    Effect-TS asserts that:
-   1. Effect.log emits log records to the configured logger; ten emissions
+   1. Eta_observability.log emits log records to the configured logger; ten emissions
       arrive at the InMemoryLogRecordExporter.
    2. Records emitted inside a withSpan carry spanId / traceId of the
       active span, and the timestamp comes from a swappable Clock.
 
-   Eta's equivalent: Logger.in_memory + Effect.log + Tracer.in_memory.
+   Eta's equivalent: Eta_observability.Logger.in_memory + Eta_observability.log + Eta_observability.Tracer.in_memory.
    For the active-span identity assertion we compare the log record with
-   Effect.current_span inside the active span. *)
+   Eta_observability.current_span inside the active span. *)
 
 open Eta
 
@@ -31,9 +31,9 @@ let with_logger_and_tracer f =
 (* ------------------------------------------------------------------ *)
 let test_emits_log_records () =
   with_logger @@ fun rt logger ->
-  let _ = B.run rt (Effect.repeat ~schedule:(Schedule.recurs 9) (Effect.log "test")) in
+  let _ = B.run rt (Effect.repeat ~schedule:(Schedule.recurs 9) (Eta_observability.log "test")) in
   Alcotest.(check int) "ten log records" 10
-    (List.length (Logger.dump logger))
+    (List.length (Eta_observability.Logger.dump logger))
 
 (* ------------------------------------------------------------------ *)
 (* Mirrors `it.eff("uses monotonic clock timestamps and keeps them
@@ -48,11 +48,11 @@ let test_log_carries_active_span_ids () =
   with_logger_and_tracer @@ fun rt logger tracer ->
   let active =
     B.run rt
-      (Effect.named "parent"
+      (Eta_observability.named "parent"
          (Effect.bind
             (fun active ->
-              Effect.map (fun () -> active) (Effect.log "test"))
-            Effect.current_span))
+              Effect.map (fun () -> active) (Eta_observability.log "test"))
+            Eta_observability.current_span))
   in
   let active =
     match active with
@@ -60,16 +60,16 @@ let test_log_carries_active_span_ids () =
     | Exit.Ok None -> Alcotest.fail "expected active span"
     | Exit.Error _ -> Alcotest.fail "expected successful log"
   in
-  let logs = Logger.dump logger in
-  let spans = Tracer.dump tracer in
+  let logs = Eta_observability.Logger.dump logger in
+  let spans = Eta_observability.Tracer.dump tracer in
   Alcotest.(check int) "one log" 1 (List.length logs);
   Alcotest.(check int) "one span" 1 (List.length spans);
   let log = List.hd logs in
   let span = List.hd spans in
   Alcotest.(check string) "log trace_id matches span trace_id"
-    span.Tracer.trace_id log.Logger.trace_id;
+    span.Eta_observability.Tracer.trace_id log.Eta_observability.Logger.trace_id;
   Alcotest.(check string) "log trace_id matches active span"
-    active.trace_id log.Logger.trace_id;
+    active.trace_id log.Eta_observability.Logger.trace_id;
   Alcotest.(check string) "log span_id matches active span" active.span_id
     log.span_id;
   Alcotest.(check bool) "log span_id is 16 lower hex" true
@@ -86,7 +86,7 @@ let test_log_carries_active_span_ids () =
 (* ------------------------------------------------------------------ *)
 let test_not_provided_log_dropped () =
   B.with_runtime @@ fun _ctx rt ->
-  let _ = B.run rt (Effect.log "test") in
+  let _ = B.run rt (Eta_observability.log "test") in
   (* No assertion target — the contract is "doesn't crash". *)
   Alcotest.(check pass) "noop logger silently drops" () ()
 

@@ -1,7 +1,7 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
 let record_metric ?(attrs = []) ~name ~description ~unit_ ~kind value =
-  Eta.Effect.metric_update ~name ~description ~unit_ ~attrs ~kind
+  Eta_observability.metric_update ~name ~description ~unit_ ~attrs ~kind
     (Eta.Capabilities.Number (Eta.Capabilities.Int value))
 
 let gauge ?attrs ~name ~description ~unit_ value =

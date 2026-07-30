@@ -1,0 +1,6 @@
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e44' is dirty
+Error: Dependency cycle between:
+   library "eta" in _build/default/lib/eta
+-> library "eta_observability" in _build/default/lib/observability
+-> library "eta" in _build/default/lib/eta
+PASS dune rejected eta <-> eta_observability cycle

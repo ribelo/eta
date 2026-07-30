@@ -203,7 +203,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       "4bf92f3577b34da6a3ce929d0e0e4736" ctx.trace_id;
     let replacement =
       Option.get
-        (Eta.Trace_context.make
+        (Eta_observability.Trace_context.make
            ~trace_id:"11111111111111111111111111111111"
            ~span_id:"2222222222222222" ())
     in
@@ -555,13 +555,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "status" 503 response.status;
     Alcotest.(check int) "attempts" 1 !attempts
 
-  let span_attr key span = List.assoc_opt key span.Eta.Tracer.attrs
+  let span_attr key span = List.assoc_opt key span.Eta_observability.Tracer.attrs
 
   let find_span name tracer =
     match
       List.filter
-        (fun span -> String.equal span.Eta.Tracer.name name)
-        (Eta.Tracer.dump tracer)
+        (fun span -> String.equal span.Eta_observability.Tracer.name name)
+        (Eta_observability.Tracer.dump tracer)
     with
     | span :: _ -> span
     | [] -> Alcotest.failf "missing span %s" name
@@ -707,15 +707,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     Alcotest.(check int) "status" 200 response.status;
     Alcotest.(check int) "attempts" 2 !attempts;
-    let spans = Eta.Tracer.dump tracer in
+    let spans = Eta_observability.Tracer.dump tracer in
     Alcotest.(check bool) "parent span" true
       (List.exists
-         (fun span -> String.equal span.Eta.Tracer.name "HTTP GET retry")
+         (fun span -> String.equal span.Eta_observability.Tracer.name "HTTP GET retry")
          spans);
     Alcotest.(check bool) "attempt span" true
       (List.exists
          (fun span ->
-           String.equal span.Eta.Tracer.name "HTTP GET"
+           String.equal span.Eta_observability.Tracer.name "HTTP GET"
            && Option.equal String.equal
                 (span_attr "http.request.resend_count" span)
                 (Some "1"))
@@ -765,13 +765,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (B.run rt
          (Eta_http.Observability.Tracer.request ~enabled:false client request)
       |> expect_ok);
-    Alcotest.(check int) "spans" 0 (List.length (Eta.Tracer.dump tracer))
+    Alcotest.(check int) "spans" 0 (List.length (Eta_observability.Tracer.dump tracer))
 
   let test_observability_recursion_disabled_suppresses_inner_spans () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
     let client =
       observability_client (fun _ ->
-          Eta.Effect.named "eta-http.internal"
+          Eta_observability.named "eta-http.internal"
             (Eta.Effect.pure (retry_response 200)))
     in
     let request =
@@ -781,7 +781,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (B.run rt
          (Eta_http.Observability.Tracer.request ~enabled:false client request)
       |> expect_ok);
-    Alcotest.(check int) "spans" 0 (List.length (Eta.Tracer.dump tracer))
+    Alcotest.(check int) "spans" 0 (List.length (Eta_observability.Tracer.dump tracer))
 
   let test_observability_pool_stats_meter () =
     B.with_meter_runtime @@ fun _ctx rt meter ->
@@ -790,7 +790,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     B.run rt (Eta_http.Observability.Meter.record_client_stats client)
     |> expect_ok;
-    let names = List.map (fun point -> point.Eta.Meter.name) (Eta.Meter.dump meter) in
+    let names = List.map (fun point -> point.Eta_observability.Meter.name) (Eta_observability.Meter.dump meter) in
     Alcotest.(check bool) "active metric" true
       (List.mem "eta_http.client.connections.active" names)
 

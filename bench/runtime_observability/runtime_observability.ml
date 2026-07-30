@@ -6,7 +6,7 @@ let chain n =
     else
       go (i - 1)
         (Effect.bind
-           (fun x -> Effect.named "bench.step" (Effect.pure (x + 1)))
+           (fun x -> Eta_observability.named "bench.step" (Effect.pure (x + 1)))
            acc)
   in
   go n (Effect.pure 0)
@@ -18,7 +18,7 @@ let log_chain n =
       go (i - 1)
         (Effect.bind
            (fun () ->
-             Effect.log ~level:Capabilities.Info
+             Eta_observability.log ~level:Capabilities.Info
                ~attrs:[ ("phase", "bench") ] "bench log")
            acc)
   in
@@ -31,12 +31,29 @@ let metric_chain n =
       go (i - 1)
         (Effect.bind
            (fun () ->
-             Effect.metric_update ~name:"bench.metric"
+             Eta_observability.metric_update ~name:"bench.metric"
                ~description:"bench" ~unit_:"1"
                ~attrs:[ ("phase", "bench") ]
                ~kind:(Capabilities.Counter { monotonic = true })
                (Capabilities.Number (Capabilities.Int 1)))
            acc)
+  in
+  go n Effect.unit
+
+let batch_metrics =
+  List.init 4 @@ fun i ->
+  Eta_observability.metric ~name:("bench.batch." ^ string_of_int i)
+    ~description:"bench" ~unit_:"1" ~attrs:[ ("phase", "bench") ]
+    ~kind:(Capabilities.Counter { monotonic = true })
+    (Capabilities.Number (Capabilities.Int 1))
+
+let metric_batch_chain ~lazy_ n =
+  let update =
+    if lazy_ then Eta_observability.metric_updates_lazy (fun () -> batch_metrics)
+    else Eta_observability.metric_updates batch_metrics
+  in
+  let rec go i acc =
+    if i = 0 then acc else go (i - 1) (Effect.bind (fun () -> update) acc)
   in
   go n Effect.unit
 
@@ -50,31 +67,31 @@ let run ?tracer ?logger ?meter ?(auto_instrument = false) program =
   ignore (Runtime.run rt program : (_, _) Exit.t)
 
 let run_in_memory ?(auto_instrument = false) program =
-  let tracer = Tracer.in_memory () in
-  run ~tracer:(Tracer.as_capability tracer) ~auto_instrument program;
-  ignore (Tracer.dump tracer)
+  let tracer = Eta_observability.Tracer.in_memory () in
+  run ~tracer:(Eta_observability.Tracer.as_capability tracer) ~auto_instrument program;
+  ignore (Eta_observability.Tracer.dump tracer)
 
 let run_in_memory_logger program =
-  let logger = Logger.in_memory () in
-  run ~logger:(Logger.as_capability logger) program;
-  ignore (Logger.dump logger)
+  let logger = Eta_observability.Logger.in_memory () in
+  run ~logger:(Eta_observability.Logger.as_capability logger) program;
+  ignore (Eta_observability.Logger.dump logger)
 
 let run_in_memory_meter program =
-  let meter = Meter.in_memory () in
-  run ~meter:(Meter.as_capability meter) program;
-  ignore (Meter.dump meter)
+  let meter = Eta_observability.Meter.in_memory () in
+  run ~meter:(Eta_observability.Meter.as_capability meter) program;
+  ignore (Eta_observability.Meter.dump meter)
 
 let attrs_work n =
   let rec go i acc =
     if i = 0 then acc
     else
       go (i - 1)
-        (Effect.named "bench.attrs"
-           (Effect.annotate ~key:"a" ~value:"1"
-              (Effect.annotate ~key:"b" ~value:"2"
-                 (Effect.annotate ~key:"c" ~value:"3"
-                    (Effect.annotate ~key:"d" ~value:"4"
-                       (Effect.annotate ~key:"e" ~value:"5" acc))))))
+        (Eta_observability.named "bench.attrs"
+           (Eta_observability.annotate ~key:"a" ~value:"1"
+              (Eta_observability.annotate ~key:"b" ~value:"2"
+                 (Eta_observability.annotate ~key:"c" ~value:"3"
+                    (Eta_observability.annotate ~key:"d" ~value:"4"
+                       (Eta_observability.annotate ~key:"e" ~value:"5" acc))))))
   in
   go n (Effect.pure 0)
 
@@ -107,7 +124,7 @@ let log i : Capabilities.log_record =
     span_id = Printf.sprintf "%016x" i;
   }
 
-let point i : Eta.Meter.point =
+let point i : Eta_observability.Meter.point =
   {
     name = "bench.metric";
     description = "bench";
@@ -152,9 +169,9 @@ let trace_context_roundtrip () =
       ("baggage", "userId=42,session=abc");
     ]
   in
-  match Trace_context.extract headers with
+  match Eta_observability.Trace_context.extract headers with
   | None -> ()
-  | Some ctx -> ignore (Trace_context.inject ctx)
+  | Some ctx -> ignore (Eta_observability.Trace_context.inject ctx)
 
 let repeat n f =
   for _ = 1 to n do
@@ -166,20 +183,28 @@ let workloads =
     { Bench_lib.name = "effect.observability." ^ name; run; samples = None }
   in
   [
-    item "noop_tracer.no_auto" (fun () -> run ~tracer:Tracer.noop (chain 10_000));
+    item "noop_tracer.no_auto" (fun () -> run ~tracer:Eta_observability.Tracer.noop (chain 10_000));
     item "noop_tracer.auto" (fun () ->
-        run ~tracer:Tracer.noop ~auto_instrument:true (chain 10_000));
+        run ~tracer:Eta_observability.Tracer.noop ~auto_instrument:true (chain 10_000));
     item "in_memory_tracer.no_auto" (fun () -> run_in_memory (chain 10_000));
     item "in_memory_tracer.auto" (fun () ->
         run_in_memory ~auto_instrument:true (chain 10_000));
     item "named_span_only" (fun () -> run_in_memory (chain 10_000));
     item "named_with_attrs" (fun () -> run_in_memory (attrs_work 10_000));
-    item "noop_logger.log" (fun () -> run ~logger:Logger.noop (log_chain 10_000));
+    item "noop_logger.log" (fun () -> run ~logger:Eta_observability.Logger.noop (log_chain 10_000));
     item "in_memory_logger.log" (fun () ->
         run_in_memory_logger (log_chain 10_000));
-    item "noop_meter.metric" (fun () -> run ~meter:Meter.noop (metric_chain 10_000));
+    item "noop_meter.metric" (fun () -> run ~meter:Eta_observability.Meter.noop (metric_chain 10_000));
     item "in_memory_meter.metric" (fun () ->
         run_in_memory_meter (metric_chain 10_000));
+    item "in_memory_meter.metric_updates.4x25000" (fun () ->
+        run_in_memory_meter (metric_batch_chain ~lazy_:false 25_000));
+    item "in_memory_meter.metric_updates_lazy.4x25000" (fun () ->
+        run_in_memory_meter (metric_batch_chain ~lazy_:true 25_000));
+    item "in_memory_meter.metric_updates_intercept_keep.4x25000" (fun () ->
+        run_in_memory_meter
+          (metric_batch_chain ~lazy_:false 25_000
+          |> Eta_observability.intercept_metric (fun _ -> Keep)));
     item "eta_otel.encoder.span.100" (fun () -> run_otel `Span 100);
     item "eta_otel.encoder.span.1000" (fun () -> run_otel `Span 1_000);
     item "eta_otel.encoder.log.100" (fun () -> run_otel `Log 100);

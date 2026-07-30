@@ -1,0 +1,78 @@
+DX-E44 required gates
+=====================
+
+All commands were rerun after committed performance follow-up `9745169e`.
+
+PASS (exit 0):
+
+  nix develop -c dune build @install
+
+PASS (exit 0):
+
+  nix develop -c dune runtest --force
+
+The first post-follow-up run hit the existing flaky test `timeout closes from
+file` once. `nix develop -c dune runtest test/stream --force` passed all 16
+stream tests immediately, and the second exact full command passed. This used
+two attempts for that failure class, below the protocol limit of three.
+
+PASS (exit 0):
+
+  nix develop -c eta-oxcaml-test-shipped
+
+PASS (exit 0):
+
+  nix develop .#mainline -c dune build \
+    --build-dir=_build-mainline test/cache_jsoo test/js_jsoo
+
+The mainline gate compiles the shared js_of_ocaml package/test surface
+against the same root `eta` and single `eta_observability` package; no JS SDK
+copy or substrate divergence was introduced.
+
+Post-independent-review rework (final tree)
+===========================================
+
+The review corrected only law-registry pointers/count prose and one stale
+`invalid_arg` operation name. The final committed code was revalidated:
+
+- `nix develop -c dune build @install` — PASS
+- `nix develop -c dune runtest test/core_eio --force` — PASS
+- `nix develop -c dune runtest --force` — PASS
+- `nix develop -c eta-oxcaml-test-shipped` — PASS
+- `nix develop .#mainline -c dune build --build-dir=_build-mainline test/cache_jsoo test/js_jsoo` — PASS
+
+The independent oracle then rechecked R90/R90b pointers, the then-current
+185-row census,
+the renamed error path, `git diff --check`, and worktree cleanliness and returned
+READY at HEAD `6a5d1e5d`.
+
+Follow-up 1 rework (F1-F4)
+==========================
+
+After the timestamp-aware batch producer, runtime-local contract tests, three
+SDK prose/test qualifications, and covariance changelog entry:
+
+- `nix develop -c dune build @install` — PASS
+- `nix develop -c dune runtest test/core_eio --force` — PASS
+- `nix develop -c dune runtest --force` — PASS
+- `nix develop -c eta-oxcaml-test-shipped` — PASS
+- `nix develop .#mainline -c dune build --build-dir=_build-mainline test/cache_jsoo test/js_jsoo` — PASS
+- `nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/js_jsoo --force` — PASS
+
+The focused JS run explicitly printed `ok: runtime local binding contract`, then
+`eta_jsoo ok` and `eta_js_jsoo ok`.
+
+Post-review blocker repair
+==========================
+
+After commit `c2249a62` strengthened fork-snapshot/parent-isolation
+discrimination and refreshed every shifted law pointer, the final tree reran:
+
+- `nix develop -c dune build @install` — PASS
+- `nix develop -c dune runtest --force` — PASS
+- `nix develop -c eta-oxcaml-test-shipped` — PASS
+- `nix develop .#mainline -c dune build --build-dir=_build-mainline test/cache_jsoo test/js_jsoo` — PASS
+- `nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/js_jsoo --force` — PASS
+
+The reviewer-of-record independently reran native runtime and mainline jsoo
+suites, checked all shifted pointers and the 186-row census, and returned READY.

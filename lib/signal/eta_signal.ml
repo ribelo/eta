@@ -110,7 +110,7 @@ module Stream_bridge = struct
           acknowledge_drop ~after_ack:[ after_drop_acknowledged ] update)
     in
     let report_on_drop_failure exn =
-      Effect.log_error
+      Eta_observability.log_error
         ~attrs:[ ("exception.message", Printexc.to_string exn) ]
         "eta_signal.stream.on_drop_failure"
     in
@@ -2844,9 +2844,11 @@ module Make (Observer_error : Observer_error) () = struct
                               (fun timer generation ~missed source ->
                                 Effect.sync (fun () ->
                                     add_int_capped (Var.value source) missed)
-                                |> Effect.annotate ~key:"eta_signal.timer.kind"
+                                |> Eta_observability.annotate
+                                     ~key:"eta_signal.timer.kind"
                                      ~value:"interval"
-                                |> Effect.named "eta_signal.time.interval"
+                                |> Eta_observability.named
+                                     "eta_signal.time.interval"
                                 |> Effect.bind (fun next ->
                                        timer_set_source timer generation source
                                          next
@@ -2869,10 +2871,11 @@ module Make (Observer_error : Observer_error) () = struct
                                   generation (fun () ->
                                     Effect.sync (fun () ->
                                         f ~missed (Var.value source))
-                                    |> Effect.annotate
+                                    |> Eta_observability.annotate
                                          ~key:"eta_signal.timer.kind"
                                          ~value:"step"
-                                    |> Effect.named "eta_signal.time.step"
+                                    |> Eta_observability.named
+                                         "eta_signal.time.step"
                                     |> Effect.bind (fun next ->
                                            timer_set_source timer generation
                                              source next
@@ -2894,10 +2897,10 @@ module Make (Observer_error : Observer_error) () = struct
                                 timer_run_user_update_if_continuing timer
                                   generation (fun () ->
                                     Effect.sync (fun () -> f (Var.value source))
-                                    |> Effect.annotate
+                                    |> Eta_observability.annotate
                                          ~key:"eta_signal.timer.kind"
                                          ~value:"step_replay"
-                                    |> Effect.named
+                                    |> Eta_observability.named
                                          "eta_signal.time.step_replay"
                                     |> Effect.bind (fun next ->
                                            timer_set_source timer generation

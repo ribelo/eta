@@ -159,7 +159,7 @@ module Make (B : Runtime_backend.S) = struct
       |> E.map (fun n -> n + 1)
       |> E.bind (fun n -> E.pure (n * 2))
       |> E.tap (fun n ->
-             E.named "tap"
+             Eta_observability.named "tap"
                (E.sync (fun () -> observed := n :: !observed)))
       |> E.map (fun n -> n + 1)
     in
@@ -227,7 +227,7 @@ module Make (B : Runtime_backend.S) = struct
   let test_run_exn_uses_captured_backtrace () =
     B.with_runtime @@ fun _ctx rt ->
     let exn = Failure "run_exn defect" in
-    match B.run_exn rt (E.named "die.run_exn" (E.sync (fun () -> raise exn))) with
+    match B.run_exn rt (Eta_observability.named "die.run_exn" (E.sync (fun () -> raise exn))) with
     | _ -> Alcotest.fail "expected exception"
     | exception actual ->
         Alcotest.(check bool) "same exception" true (actual == exn);
@@ -1143,12 +1143,12 @@ module Make (B : Runtime_backend.S) = struct
 
   let test_observability_named_span () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
-    B.run rt (E.named "shared.runtime.span" (E.pure 1))
+    B.run rt (Eta_observability.named "shared.runtime.span" (E.pure 1))
     |> check_ok Alcotest.int "value" 1;
-    match Tracer.dump tracer with
+    match Eta_observability.Tracer.dump tracer with
     | [ span ] ->
         Alcotest.(check string) "span name" "shared.runtime.span"
-          span.Tracer.name
+          span.Eta_observability.Tracer.name
     | spans ->
         Alcotest.failf "expected one span, got %d" (List.length spans)
 
@@ -1271,6 +1271,96 @@ module Make (B : Runtime_backend.S) = struct
       ( "Observability",
         [
           Alcotest.test_case "named span" `Quick test_observability_named_span;
+        ] );
+      ( "Runtime-local conformance",
+        [
+          Alcotest.test_case "runtime local binding contract" `Quick (fun () ->
+              B.with_runtime_contract @@ fun _ctx contract ->
+              let local = Rc.create_local () in
+              let check label expected =
+                Alcotest.(check (option int)) label expected
+                  (contract.Rc.local_get local)
+              in
+              check "initially absent" None;
+              contract.Rc.local_with_binding local 1 (fun () ->
+                  check "outer installed" (Some 1);
+                  contract.Rc.local_with_binding local 2 (fun () ->
+                      check "inner installed" (Some 2));
+                  check "outer restored after inner" (Some 1));
+              check "absent after normal return" None;
+              let raised = Failure "binding exception" in
+              (try
+                 contract.Rc.local_with_binding local 3 (fun () -> raise raised)
+               with exn when exn == raised -> ());
+              check "absent after exception" None;
+              let cancelled = Failure "binding cancellation" in
+              contract.Rc.cancel_sub (fun cancel_context ->
+                  try
+                    contract.Rc.local_with_binding local 4 @@ fun () ->
+                    contract.Rc.cancel cancel_context cancelled;
+                    contract.Rc.check ();
+                    Alcotest.fail "expected cancellation"
+                  with exn ->
+                    match contract.Rc.cancellation_reason exn with
+                    | Some reason when reason == cancelled -> ()
+                    | _ -> raise exn);
+              check "absent after cancellation" None;
+              let child, parent =
+                contract.Rc.local_with_binding local 5 (fun () ->
+                    let child =
+                      contract.Rc.run_scope @@ fun sw ->
+                      let started, started_resolver =
+                        contract.Rc.create_promise ()
+                      in
+                      let observe, observe_resolver =
+                        contract.Rc.create_promise ()
+                      in
+                      let bound, bound_resolver =
+                        contract.Rc.create_promise ()
+                      in
+                      let release, release_resolver =
+                        contract.Rc.create_promise ()
+                      in
+                      let result, result_resolver =
+                        contract.Rc.create_promise ()
+                      in
+                      contract.Rc.fork sw (fun () ->
+                          contract.Rc.resolve_promise started_resolver ();
+                          contract.Rc.await_promise observe;
+                          let before = contract.Rc.local_get local in
+                          let inner =
+                            contract.Rc.local_with_binding local 6 (fun () ->
+                                contract.Rc.resolve_promise bound_resolver ();
+                                contract.Rc.await_promise release;
+                                contract.Rc.local_get local)
+                          in
+                          let after = contract.Rc.local_get local in
+                          contract.Rc.resolve_promise result_resolver
+                            (before, inner, after));
+                      contract.Rc.await_promise started;
+                      let parent_during_child_binding =
+                        contract.Rc.local_with_binding local 7 (fun () ->
+                            contract.Rc.resolve_promise observe_resolver ();
+                            contract.Rc.await_promise bound;
+                            let observed = contract.Rc.local_get local in
+                            contract.Rc.resolve_promise release_resolver ();
+                            observed)
+                      in
+                      ( contract.Rc.await_promise result,
+                        parent_during_child_binding )
+                    in
+                    (child, contract.Rc.local_get local))
+              in
+              let child_observations, parent_during_child_binding = child in
+              Alcotest.(check (triple (option int) (option int) (option int)))
+                "child fork snapshot and LIFO restoration"
+                (Some 5, Some 6, Some 5) child_observations;
+              Alcotest.(check (option int))
+                "parent isolated while child binding active" (Some 7)
+                parent_during_child_binding;
+              Alcotest.(check (option int)) "no child join-merge" (Some 5)
+                parent;
+              check "absent after fork scope" None);
         ] );
     ]
 end

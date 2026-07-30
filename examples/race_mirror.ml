@@ -9,7 +9,7 @@ type error = [ `Mirror_down of string ]
 [@@deriving eta_error]
 
 let request mirror path =
-  Effect.named ~error_pp:pp_error ("mirror." ^ mirror.name)
+  Eta_observability.named ~error_pp:pp_error ("mirror." ^ mirror.name)
     (Effect.sync_result (fun () ->
          if mirror.available then Ok (mirror.name ^ ":" ^ path)
          else Error (`Mirror_down mirror.name)))

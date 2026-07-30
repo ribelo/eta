@@ -3,6 +3,7 @@
  (modules openai_common_suites)
  (libraries
   eta
+  eta_observability
   eta_ai
   eta_ai_openai
   eta_http

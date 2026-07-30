@@ -32,6 +32,7 @@ val daemon : (unit, 'err) Effect.t -> (unit, 'err) Effect.t
 
 module Expert : sig
   type context
+  type 'a intercept = Keep | Drop | Replace of 'a
 
   val make :
     ?leaf_name:string ->
@@ -59,6 +60,128 @@ module Expert : sig
 
   val instrument_leaf : context -> name:string -> (unit -> 'a) -> 'a
   (** Run a leaf body under Eta's standard runtime instrumentation. *)
+
+  val observability_with_error_pp :
+    context ->
+    (Format.formatter -> 'err -> unit) ->
+    ('a, 'err) Effect.t ->
+    ('a, 'err) Exit.t
+
+  val observability_suppress :
+    context -> ('a, 'err) Effect.t -> ('a, 'err) Exit.t
+
+  val observability_with_logger :
+    context ->
+    Capabilities.logger ->
+    ('a, 'err) Effect.t ->
+    ('a, 'err) Exit.t
+
+  val observability_with_tracer :
+    context ->
+    Capabilities.tracer ->
+    ('a, 'err) Effect.t ->
+    ('a, 'err) Exit.t
+
+  val observability_named :
+    context ->
+    kind:Capabilities.span_kind ->
+    error_pp:(Format.formatter -> 'err -> unit) option ->
+    string ->
+    ('a, 'err) Effect.t ->
+    ('a, 'err) Exit.t
+
+  val observability_annotate :
+    context ->
+    key:string ->
+    value:string ->
+    ('a, 'err) Effect.t ->
+    ('a, 'err) Exit.t
+
+  val observability_annotate_all :
+    context ->
+    (string * string) list ->
+    ('a, 'err) Effect.t ->
+    ('a, 'err) Exit.t
+
+  val observability_annotate_all_lazy :
+    context ->
+    (unit -> (string * string) list) ->
+    ('a, 'err) Effect.t ->
+    ('a, 'err) Exit.t
+
+  val observability_with_result_attrs :
+    context ->
+    ok_attrs:('a -> (string * string) list) ->
+    err_attrs:('err -> (string * string) list) ->
+    ('a, 'err) Effect.t ->
+    ('a, 'err) Exit.t
+
+  val observability_link_span :
+    context ->
+    trace_id:string ->
+    span_id:string ->
+    attrs:(string * string) list ->
+    ('a, 'err) Effect.t ->
+    ('a, 'err) Exit.t
+
+  val observability_with_context :
+    context ->
+    Capabilities.trace_context ->
+    ('a, 'err) Effect.t ->
+    ('a, 'err) Exit.t
+
+  val observability_tracing_enabled : context -> bool
+  val observability_current_span : context -> Capabilities.span_info option
+  val observability_current_context :
+    context -> Capabilities.trace_context option
+
+  val observability_annotate_logs :
+    context ->
+    (string * string) list ->
+    ('a, 'err) Effect.t ->
+    ('a, 'err) Exit.t
+
+  val observability_with_minimum_log_level :
+    context ->
+    Capabilities.log_level ->
+    ('a, 'err) Effect.t ->
+    ('a, 'err) Exit.t
+
+  val observability_intercept_log :
+    context ->
+    (Capabilities.log_record -> Capabilities.log_record intercept) ->
+    ('a, 'err) Effect.t ->
+    ('a, 'err) Exit.t
+
+  val observability_log :
+    context ->
+    level:Capabilities.log_level ->
+    attrs:(string * string) list ->
+    string ->
+    unit
+
+  val observability_logf :
+    context ->
+    level:Capabilities.log_level ->
+    attrs:(string * string) list ->
+    (Format.formatter -> unit) ->
+    unit
+
+  val observability_intercept_metric :
+    context ->
+    (Capabilities.metric_point -> Capabilities.metric_point intercept) ->
+    ('a, 'err) Effect.t ->
+    ('a, 'err) Exit.t
+
+  val observability_record_metrics_lazy :
+    context ->
+    (context -> ts_ms:int -> unit) ->
+    (unit, 'err) Exit.t
+
+  val observability_emit_metric :
+    context -> Capabilities.metric_point -> unit
+  (** Emit one already-admitted metric point. SDK producers call this only from
+      the callback supplied to {!observability_record_metrics_lazy}. *)
 
   val emit_trace_event :
     context -> name:string -> attrs:(string * string) list -> unit
@@ -93,6 +216,6 @@ module Expert : sig
   (** Convert an unchecked exception raised by a custom operation into Eta's
       diagnostic cause using the current runtime settings. *)
 end
-(** Narrow extension point for runtime packages. This module is intentionally
-    small: it lets optional packages implement backend-specific leaves while
-    keeping the root [Effect.t] representation private. *)
+(** Behavioral extension point for runtime packages. It lets optional packages
+    implement backend-specific leaves while keeping the root [Effect.t]
+    representation and runtime-local keys private. *)

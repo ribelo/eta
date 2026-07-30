@@ -119,7 +119,7 @@ let test_client ?(with_http_span = false) response captured =
     captured := Some http_request;
     let eff = E.pure response in
     if with_http_span then
-      E.named ~kind:Eta.Capabilities.Client "HTTP POST" eff
+      Eta_observability.named ~kind:Eta.Capabilities.Client "HTTP POST" eff
     else eff
   in
   H.Client.make_custom ~protocol:H.Client.H1 ~request
@@ -460,16 +460,16 @@ let test_responses_runner_uses_eta_http_and_suppresses_transport_span () =
     (request_body_string request);
   require_contains "request body input" ~needle:"\"input\":["
     (request_body_string request);
-  let spans = Eta.Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   Alcotest.(check bool)
     "transport span suppressed" false
     (List.exists
-       (fun (span : Eta.Tracer.span) -> String.equal span.name "HTTP POST")
+       (fun (span : Eta_observability.Tracer.span) -> String.equal span.name "HTTP POST")
        spans);
   Alcotest.(check bool)
     "chat span emitted" true
     (List.exists
-       (fun (span : Eta.Tracer.span) -> String.equal span.name "chat gpt-4o-mini")
+       (fun (span : Eta_observability.Tracer.span) -> String.equal span.name "chat gpt-4o-mini")
        spans)
 
 let test_responses_runner_provider_error () =
