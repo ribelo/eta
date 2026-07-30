@@ -14,3 +14,6 @@
   add `eta_observability` to their Dune libraries.
 - There are no compatibility modules or forwarding aliases. Update imports,
   call sites, and direct package dependencies together.
+- `Eta.Effect.t` now exposes covariance in its typed-error parameter as
+  `type ('a, +'err) t`, allowing separately compiled polymorphic SDK constants
+  to remain reusable at narrower consumer error types.

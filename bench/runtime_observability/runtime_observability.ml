@@ -40,6 +40,23 @@ let metric_chain n =
   in
   go n Effect.unit
 
+let batch_metrics =
+  List.init 4 @@ fun i ->
+  Eta_observability.metric ~name:("bench.batch." ^ string_of_int i)
+    ~description:"bench" ~unit_:"1" ~attrs:[ ("phase", "bench") ]
+    ~kind:(Capabilities.Counter { monotonic = true })
+    (Capabilities.Number (Capabilities.Int 1))
+
+let metric_batch_chain ~lazy_ n =
+  let update =
+    if lazy_ then Eta_observability.metric_updates_lazy (fun () -> batch_metrics)
+    else Eta_observability.metric_updates batch_metrics
+  in
+  let rec go i acc =
+    if i = 0 then acc else go (i - 1) (Effect.bind (fun () -> update) acc)
+  in
+  go n Effect.unit
+
 let run ?tracer ?logger ?meter ?(auto_instrument = false) program =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -180,6 +197,14 @@ let workloads =
     item "noop_meter.metric" (fun () -> run ~meter:Eta_observability.Meter.noop (metric_chain 10_000));
     item "in_memory_meter.metric" (fun () ->
         run_in_memory_meter (metric_chain 10_000));
+    item "in_memory_meter.metric_updates.4x2500" (fun () ->
+        run_in_memory_meter (metric_batch_chain ~lazy_:false 2_500));
+    item "in_memory_meter.metric_updates_lazy.4x2500" (fun () ->
+        run_in_memory_meter (metric_batch_chain ~lazy_:true 2_500));
+    item "in_memory_meter.metric_updates_intercept_keep.4x2500" (fun () ->
+        run_in_memory_meter
+          (metric_batch_chain ~lazy_:false 2_500
+          |> Eta_observability.intercept_metric (fun _ -> Keep)));
     item "eta_otel.encoder.span.100" (fun () -> run_otel `Span 100);
     item "eta_otel.encoder.span.1000" (fun () -> run_otel `Span 1_000);
     item "eta_otel.encoder.log.100" (fun () -> run_otel `Log 100);

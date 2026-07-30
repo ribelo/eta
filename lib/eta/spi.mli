@@ -175,7 +175,7 @@ module Expert : sig
 
   val observability_record_metrics_lazy :
     context ->
-    (unit -> Capabilities.metric_point list) ->
+    (ts_ms:int -> Capabilities.metric_point list) ->
     (unit, 'err) Exit.t
 
   val emit_trace_event :

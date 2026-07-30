@@ -1063,6 +1063,75 @@ let tests =
       test_supervised_background_does_not_cancel_use );
     ( "with_background same-release exits choose one winner",
       test_background_same_release_has_one_winner );
+    ( "runtime local binding contract",
+      fun done_ ->
+        let local = Runtime_contract.create_local () in
+        let eff =
+          Eta.Spi.Expert.make @@ fun context ->
+          let contract = Eta.Spi.Expert.contract context in
+          let require label expected =
+            if contract.Runtime_contract.local_get local <> expected then
+              failwith label
+          in
+          require "initially absent" None;
+          contract.Runtime_contract.local_with_binding local 1 (fun () ->
+              require "outer installed" (Some 1);
+              contract.Runtime_contract.local_with_binding local 2 (fun () ->
+                  require "inner installed" (Some 2));
+              require "outer restored after inner" (Some 1));
+          require "absent after normal return" None;
+          let raised = Failure "binding exception" in
+          (try
+             contract.Runtime_contract.local_with_binding local 3 (fun () ->
+                 raise raised)
+           with exn when exn == raised -> ());
+          require "absent after exception" None;
+          let cancelled = Failure "binding cancellation" in
+          contract.Runtime_contract.cancel_sub (fun cancel_context ->
+              try
+                contract.Runtime_contract.local_with_binding local 4 @@ fun () ->
+                contract.Runtime_contract.cancel cancel_context cancelled;
+                contract.Runtime_contract.check ();
+                failwith "expected cancellation"
+              with exn ->
+                match contract.Runtime_contract.cancellation_reason exn with
+                | Some reason when reason == cancelled -> ()
+                | _ -> raise exn);
+          require "absent after cancellation" None;
+          let child, parent =
+            contract.Runtime_contract.local_with_binding local 5 (fun () ->
+                let child =
+                  contract.Runtime_contract.run_scope @@ fun sw ->
+                  let promise, resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  contract.Runtime_contract.fork sw (fun () ->
+                      let before = contract.Runtime_contract.local_get local in
+                      let inner =
+                        contract.Runtime_contract.local_with_binding local 6
+                          (fun () -> contract.Runtime_contract.local_get local)
+                      in
+                      let after = contract.Runtime_contract.local_get local in
+                      contract.Runtime_contract.resolve_promise resolver
+                        (before, inner, after));
+                  contract.Runtime_contract.await_promise promise
+                in
+                (child, contract.Runtime_contract.local_get local))
+          in
+          if child <> (Some 5, Some 6, Some 5) then
+            failwith "child fork snapshot or LIFO restoration diverged";
+          if parent <> Some 5 then failwith "child binding joined into parent";
+          require "absent after fork scope" None;
+          Eta.Exit.Ok ()
+        in
+        run eff
+          ~on_result:
+            (finish done_ (function
+              | Eta.Exit.Ok () -> ()
+              | Eta.Exit.Error cause ->
+                  fail
+                    (Format.asprintf "local binding contract failed: %a"
+                       (Eta.Cause.pp pp_err) cause))) );
   ]
   @ Async_shared.tests
   @ Interruptible_shared.tests

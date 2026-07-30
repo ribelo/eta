@@ -80,8 +80,10 @@ val annotate_all_lazy :
     tracer is installed. When tracing is disabled the thunk is never called. *)
 
 val is_tracing_enabled : (bool, 'err) Effect.t
-(** Resolves to whether a tracer is installed in the active runtime. Use to skip
-    building span wrappers on hot paths when no tracer will record them. *)
+(** Resolves to effective tracing admission in the active runtime. It is [false]
+    when tracing is suppressed by {!suppress_observability}, even if a tracer is
+    installed. Use it to skip building span wrappers on hot paths when no tracer
+    will record them. *)
 
 val event : ?attrs:(string * string) list -> string -> (unit, 'err) Effect.t
 (** Add an event to the currently active span. If tracing is disabled or no span
@@ -98,7 +100,10 @@ val with_result_attrs :
 
     [ok_attrs] is evaluated after success. [err_attrs] is evaluated for every
     typed [Cause.Fail] in the failure cause. Defects and interruption are not
-    passed to [err_attrs].
+    passed to [err_attrs]. Both callbacks must be total. If [ok_attrs] raises,
+    its exception replaces the success as a defect. If [err_attrs] raises, the
+    original failure remains primary and the exception is attached as a
+    suppressed finalizer defect.
 
     The attributes are recorded only when a span is active at the point the
     wrapped eff settles. Put this combinator inside {!named} or {!fn} when
@@ -130,10 +135,11 @@ val with_external_parent :
 
 val with_context :
   Capabilities.trace_context -> ('a, 'err) Effect.t -> ('a, 'err) Effect.t
-(** Run [body] with an inbound or otherwise external trace context. The next
-    opened {!named} span uses this context as parent, parent-based sampling sees
-    its sampled flag, and baggage/tracestate remain visible through
-    {!current_context}. *)
+(** Run [body] with an inbound or otherwise external trace context. When no
+    active in-process span exists, the next opened {!named} span uses this
+    context as parent; an active in-process parent takes precedence.
+    Parent-based sampling sees the installed context's sampled flag, and
+    baggage/tracestate remain visible through {!current_context}. *)
 
 val current_span : (Capabilities.span_info option, 'err) Effect.t
 (** Yield the {!Capabilities.span_info} of the currently active span on this

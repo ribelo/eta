@@ -1579,6 +1579,73 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_observability_auto_instrument_failure_status;
           Alcotest.test_case "all map_par supervisor inherit parent" `Quick
             test_observability_all_for_each_supervisor_inherit_parent;
+          Alcotest.test_case "with_result_attrs callback failures" `Quick
+            (fun () ->
+              B.with_traced_runtime @@ fun _ctx rt _tracer ->
+              let ok_boom = Failure "ok_attrs" in
+              let ok_program =
+                Eta_observability.with_result_attrs
+                  ~ok_attrs:(fun () -> raise ok_boom)
+                  ~err_attrs:(fun _ -> []) Effect.unit
+              in
+              (match B.run rt ok_program with
+              | Exit.Error (Cause.Die die) ->
+                  Alcotest.(check bool) "success replaced" true
+                    (die.exn == ok_boom)
+              | _ -> Alcotest.fail "expected ok_attrs defect");
+              let err_boom = Failure "err_attrs" in
+              let err_program =
+                Eta_observability.with_result_attrs
+                  ~ok_attrs:(fun _ -> [])
+                  ~err_attrs:(fun `Bad -> raise err_boom)
+                  (Effect.fail `Bad)
+              in
+              match B.run rt err_program with
+              | Exit.Error
+                  (Cause.Suppressed
+                    {
+                      primary = Cause.Fail `Bad;
+                      finalizer = Cause.Finalizer.Die die;
+                    }) ->
+                  Alcotest.(check bool) "failure kept primary" true
+                    (die.exn == err_boom)
+              | _ -> Alcotest.fail "expected suppressed err_attrs defect");
+          Alcotest.test_case "with_context active parent precedence" `Quick
+            (fun () ->
+              B.with_traced_runtime @@ fun _ctx rt _tracer ->
+              let inbound =
+                Option.get
+                  (Eta_observability.Trace_context.make
+                     ~trace_id:"4bf92f3577b34da6a3ce929d0e0e4736"
+                     ~span_id:"00f067aa0ba902b7" ())
+              in
+              let parent, child =
+                run_ok rt
+                  (Eta_observability.named "parent"
+                     (Effect.bind
+                        (fun parent ->
+                          Eta_observability.with_context inbound
+                            (Eta_observability.named "child"
+                               (Effect.map
+                                  (fun child ->
+                                    ( require_current_span parent,
+                                      require_current_span child ))
+                                  Eta_observability.current_span)))
+                        Eta_observability.current_span))
+              in
+              Alcotest.(check string) "active parent trace wins" parent.trace_id
+                child.trace_id;
+              Alcotest.(check bool) "external trace did not replace parent" true
+                (not (String.equal inbound.trace_id child.trace_id)));
+          Alcotest.test_case "tracing admission observes suppression" `Quick
+            (fun () ->
+              B.with_traced_runtime @@ fun _ctx rt _tracer ->
+              Alcotest.(check bool) "installed tracer admitted" true
+                (run_ok rt Eta_observability.is_tracing_enabled);
+              Alcotest.(check bool) "suppressed tracer not admitted" false
+                (run_ok rt
+                   (Eta_observability.suppress_observability
+                      Eta_observability.is_tracing_enabled)));
         ] );
     ]
 end

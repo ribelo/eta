@@ -350,17 +350,16 @@ module Expert = struct
     Runtime_observability.with_metric_interceptor context.runtime.contract
       transform (fun () -> Effect_core.eval context (effect_of_public eff))
 
-  let record_metric_point context ~ts_ms point =
-    Runtime_observability.emit_metric context.runtime.contract
-      context.runtime.meter { point with Capabilities.ts_ms }
-
   let observability_record_metrics_lazy context make_points =
     if context.runtime.metrics_enabled then
       try
-        let points = make_points () in
         let clock = Runtime_core.current_clock context.runtime in
         let ts_ms = clock#now_ms () in
-        List.iter (record_metric_point context ~ts_ms) points;
+        let points = make_points ~ts_ms in
+        List.iter
+          (Runtime_observability.emit_metric context.runtime.contract
+             context.runtime.meter)
+          points;
         Effect_core.ok ()
       with
       | exn when Runtime_core.is_cancellation context.runtime.contract exn ->

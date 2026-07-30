@@ -1272,5 +1272,63 @@ module Make (B : Runtime_backend.S) = struct
         [
           Alcotest.test_case "named span" `Quick test_observability_named_span;
         ] );
+      ( "Runtime-local conformance",
+        [
+          Alcotest.test_case "runtime local binding contract" `Quick (fun () ->
+              B.with_runtime_contract @@ fun _ctx contract ->
+              let local = Rc.create_local () in
+              let check label expected =
+                Alcotest.(check (option int)) label expected
+                  (contract.Rc.local_get local)
+              in
+              check "initially absent" None;
+              contract.Rc.local_with_binding local 1 (fun () ->
+                  check "outer installed" (Some 1);
+                  contract.Rc.local_with_binding local 2 (fun () ->
+                      check "inner installed" (Some 2));
+                  check "outer restored after inner" (Some 1));
+              check "absent after normal return" None;
+              let raised = Failure "binding exception" in
+              (try
+                 contract.Rc.local_with_binding local 3 (fun () -> raise raised)
+               with exn when exn == raised -> ());
+              check "absent after exception" None;
+              let cancelled = Failure "binding cancellation" in
+              contract.Rc.cancel_sub (fun cancel_context ->
+                  try
+                    contract.Rc.local_with_binding local 4 @@ fun () ->
+                    contract.Rc.cancel cancel_context cancelled;
+                    contract.Rc.check ();
+                    Alcotest.fail "expected cancellation"
+                  with exn ->
+                    match contract.Rc.cancellation_reason exn with
+                    | Some reason when reason == cancelled -> ()
+                    | _ -> raise exn);
+              check "absent after cancellation" None;
+              let child, parent =
+                contract.Rc.local_with_binding local 5 (fun () ->
+                    let child =
+                      contract.Rc.run_scope @@ fun sw ->
+                      let promise, resolver = contract.Rc.create_promise () in
+                      contract.Rc.fork sw (fun () ->
+                          let before = contract.Rc.local_get local in
+                          let inner =
+                            contract.Rc.local_with_binding local 6 (fun () ->
+                                contract.Rc.local_get local)
+                          in
+                          let after = contract.Rc.local_get local in
+                          contract.Rc.resolve_promise resolver
+                            (before, inner, after));
+                      contract.Rc.await_promise promise
+                    in
+                    (child, contract.Rc.local_get local))
+              in
+              Alcotest.(check (triple (option int) (option int) (option int)))
+                "child fork snapshot and LIFO restoration"
+                (Some 5, Some 6, Some 5) child;
+              Alcotest.(check (option int)) "no child join-merge" (Some 5)
+                parent;
+              check "absent after fork scope" None);
+        ] );
     ]
 end
