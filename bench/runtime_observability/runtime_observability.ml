@@ -197,13 +197,13 @@ let workloads =
     item "noop_meter.metric" (fun () -> run ~meter:Eta_observability.Meter.noop (metric_chain 10_000));
     item "in_memory_meter.metric" (fun () ->
         run_in_memory_meter (metric_chain 10_000));
-    item "in_memory_meter.metric_updates.4x2500" (fun () ->
-        run_in_memory_meter (metric_batch_chain ~lazy_:false 2_500));
-    item "in_memory_meter.metric_updates_lazy.4x2500" (fun () ->
-        run_in_memory_meter (metric_batch_chain ~lazy_:true 2_500));
-    item "in_memory_meter.metric_updates_intercept_keep.4x2500" (fun () ->
+    item "in_memory_meter.metric_updates.4x25000" (fun () ->
+        run_in_memory_meter (metric_batch_chain ~lazy_:false 25_000));
+    item "in_memory_meter.metric_updates_lazy.4x25000" (fun () ->
+        run_in_memory_meter (metric_batch_chain ~lazy_:true 25_000));
+    item "in_memory_meter.metric_updates_intercept_keep.4x25000" (fun () ->
         run_in_memory_meter
-          (metric_batch_chain ~lazy_:false 2_500
+          (metric_batch_chain ~lazy_:false 25_000
           |> Eta_observability.intercept_metric (fun _ -> Keep)));
     item "eta_otel.encoder.span.100" (fun () -> run_otel `Span 100);
     item "eta_otel.encoder.span.1000" (fun () -> run_otel `Span 1_000);

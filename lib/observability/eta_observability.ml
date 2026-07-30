@@ -127,7 +127,7 @@ type metric = {
 let metric ?(description = "") ?(unit_ = "") ?(attrs = []) ~name ~kind value =
   { name; description; unit_; attrs; kind; value }
 
-let point_of_metric ~ts_ms metric =
+let[@inline always] point_of_metric ~ts_ms metric =
   {
     Capabilities.name = metric.name;
     description = metric.description;
@@ -137,6 +137,12 @@ let point_of_metric ~ts_ms metric =
     value = metric.value;
     ts_ms;
   }
+
+let rec emit_metric_points context ~ts_ms = function
+  | [] -> ()
+  | metric :: rest ->
+      Expert.observability_emit_metric context (point_of_metric ~ts_ms metric);
+      emit_metric_points context ~ts_ms rest
 
 let metric_update ?(description = "") ?(unit_ = "") ?(attrs = []) ~name ~kind
     value =
@@ -169,13 +175,13 @@ let metric_summary ?description ?unit_ ?attrs ~name ~quantiles ~max_age ~max_siz
     (Capabilities.Number (Capabilities.Float value))
 
 let metric_updates metrics =
-  let make_points ~ts_ms = List.map (point_of_metric ~ts_ms) metrics in
+  let make_points context ~ts_ms = emit_metric_points context ~ts_ms metrics in
   Expert.make ~leaf_name:"Effect.metric_updates" (fun context ->
       Expert.observability_record_metrics_lazy context make_points)
 
 let metric_updates_lazy make_metrics =
-  let make_points ~ts_ms =
-    List.map (point_of_metric ~ts_ms) (make_metrics ())
+  let make_points context ~ts_ms =
+    emit_metric_points context ~ts_ms (make_metrics ())
   in
   Expert.make ~leaf_name:"Effect.metric_updates_lazy" (fun context ->
       Expert.observability_record_metrics_lazy context make_points)

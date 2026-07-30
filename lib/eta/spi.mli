@@ -175,8 +175,13 @@ module Expert : sig
 
   val observability_record_metrics_lazy :
     context ->
-    (ts_ms:int -> Capabilities.metric_point list) ->
+    (context -> ts_ms:int -> unit) ->
     (unit, 'err) Exit.t
+
+  val observability_emit_metric :
+    context -> Capabilities.metric_point -> unit
+  (** Emit one already-admitted metric point. SDK producers call this only from
+      the callback supplied to {!observability_record_metrics_lazy}. *)
 
   val emit_trace_event :
     context -> name:string -> attrs:(string * string) list -> unit
