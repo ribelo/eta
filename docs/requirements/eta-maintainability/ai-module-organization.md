@@ -11,7 +11,7 @@ distinct, coherent module seams.
 ## Requirements
 
 - The `Eta_ai` public module shall expose `Json` as its JSON value and projection module. ^aimod-obwo
-- The `Eta_ai` public module shall expose `Responses`, `Embedding`, `Image`, `Speech`, `Transcription`, `Rerank`, `Video`, and `Realtime` as capability modules. ^aimod-9elo
+- The `Eta_ai` public module shall expose `Responses`, `Embedding`, `Image`, `Audio`, `Rerank`, `Video`, and `Realtime` as capability modules. ^aimod-3lpb
 - The `Eta_ai` public module shall expose `Stream` and `Toolkit` as lifecycle-owning modules. ^aimod-wnrz
 - The `Eta_ai.Provider` module shall expose `Codec`, `Transport`, and `Telemetry` as provider-authoring modules. ^aimod-zmbl
 - The `Eta_ai.Provider.Codec` module shall own provider-error-aware JSON decoding support. ^aimod-72y8

@@ -28,9 +28,8 @@ without claiming account eligibility or inventing unsupported voice-resource API
 - The OpenAI Chat audio-output module shall accept a custom voice ID where documented. ^oavoi-gpmi
 - The OpenAI Realtime audio-output modules shall accept a custom voice ID where documented. ^oavoi-fmnf
 - The OpenAI custom-voice public API shall leave consent recording, actor verification, disclosure, and organizational eligibility policy to the application and OpenAI service. ^oavoi-h6sx
-
-## Open questions
-
-- Should built-in voices be a documented enum with a forward-compatible `Other` case?
-- Should consent IDs and custom voice IDs be distinct nominal private types?
-- Should consent pagination expose page primitives only or bounded pull-based iteration conveniences?
+- The OpenAI provider shall represent documented built-in voices as named cases together with a forward-compatible unrecognized case. ^oavoi-4acy
+- The OpenAI provider shall represent custom voice IDs as a nominal type distinct from voice-consent IDs. ^oavoi-383c
+- The OpenAI provider shall expose voice-consent pages as typed values containing their cursors. ^oavoi-ksw0
+- The OpenAI provider shall expose bounded pull-based iteration over voice-consent pages. ^oavoi-3ykw
+- The OpenAI provider shall expose bounded pull-based iteration over voice-consent items. ^oavoi-cvp3

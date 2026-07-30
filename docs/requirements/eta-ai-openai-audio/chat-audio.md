@@ -17,6 +17,8 @@ misrepresenting the text-and-image Responses contract as audio-capable.
 - The OpenAI Chat voice type shall distinguish built-in and custom voice references. ^oachat-8qmj
 - The OpenAI Chat module shall expose a provider-owned response type that preserves the complete Chat response and provider raw JSON. ^oachat-pf4m
 - When OpenAI returns Chat audio, the OpenAI provider shall preserve its audio ID, expiry, base64 data, transcript, and complete raw JSON. ^oachat-ss65
+- When OpenAI returns Chat audio data, the OpenAI provider shall preserve its exact base64 value. ^oachat-ghdj
+- The OpenAI provider shall expose an exception-free decoder from preserved Chat audio base64 into bytes. ^oachat-j7yj
 - When OpenAI returns Chat usage, the OpenAI provider shall preserve audio-token usage details. ^oachat-u5do
 - The OpenAI Chat module shall expose an explicit projection from its provider response to the common Eta AI response vocabulary. ^oachat-xp24
 - When the explicit Chat projection encounters provider audio facts without a neutral representation, the projection shall discard those facts only at that explicit boundary. ^oachat-na0v
@@ -26,5 +28,4 @@ misrepresenting the text-and-image Responses contract as audio-capable.
 
 ## Open questions
 
-- Shall Chat response audio preserve only exact base64 plus a safe bytes decoder, eager bytes plus base64, or another representation?
 - Which documented Chat audio streaming fields and deltas belong in the typed streaming event algebra?

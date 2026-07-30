@@ -22,8 +22,11 @@ that Eta can establish without guessing account or server policy.
 - Provider-specific OpenAI audio error facts shall be discarded only when a caller explicitly projects the error into `Eta_ai.ai_error`. ^oaerr-d1rd
 - If a caller supplies audio content to OpenAI Responses, then the OpenAI provider shall return nominal `Unsupported` before performing transport. ^oaerr-u6y4
 - The OpenAI provider shall not fabricate restricted-access or eligibility errors that only the OpenAI service can establish. ^oaerr-q55h
-
-## Open questions
-
-- Which documented deterministic ranges, cardinalities, mutual exclusions, model restrictions, file-size limits, and keyword constraints shall Eta validate locally?
-- Shall exact typed requests expose collision-rejecting extension fields for newly documented JSON and multipart fields?
+- If an OpenAI audio request violates a documented numeric range or string length, then the OpenAI provider shall reject it before transport. ^oaerr-huch
+- If an OpenAI audio request violates a documented collection cardinality, then the OpenAI provider shall reject it before transport. ^oaerr-mxol
+- If an OpenAI audio request combines documented mutually exclusive fields, then the OpenAI provider shall reject it before transport. ^oaerr-bjml
+- If an OpenAI audio request violates a documented model-specific field restriction, then the OpenAI provider shall reject it before transport. ^oaerr-qb73
+- While an upload length is known, if an OpenAI audio request exceeds the documented maximum upload size, then the OpenAI provider shall reject it before transport. ^oaerr-z39k
+- If an OpenAI audio request violates a documented keyword character or line constraint, then the OpenAI provider shall reject it before transport. ^oaerr-8ouo
+- Each OpenAI audio request type shall accept caller-supplied extra provider fields. ^oaerr-ivb8
+- If a caller-supplied extra field collides with a field the OpenAI provider owns, then the OpenAI provider shall reject the request before transport. ^oaerr-u2k2

@@ -22,9 +22,8 @@ private WebSocket mechanics and the provider-neutral lifecycle shape.
 - The OpenAI Realtime audio expansion shall include audio-related client-secret, WebSocket, WebRTC call-setup, call-control, and SIP lifecycle contracts. ^oartc-bfmv
 - The OpenAI Realtime audio expansion shall not broaden unrelated MCP behavior. ^oartc-84ls
 - The shared Eta AI Realtime interface shall retain provider-specific OpenAI and xAI protocol algebras behind a common lifecycle shape. ^oartc-nezv
-
-## Open questions
-
-- How exhaustive shall local Realtime state validation be?
-- Which framing and pending-event bounds shall be configurable?
-- Should common Conversation, Transcription, and Translation module signatures be added to `Eta_ai.Realtime`?
+- If a caller sends a client event through a connection whose protocol does not define that event, then the OpenAI Eio transport shall reject it before transmission. ^oartc-zl76
+- If a caller appends audio to a finished session, then the OpenAI Eio transport shall reject the operation. ^oartc-04l8
+- If a caller finishes an already-finished session, then the OpenAI Eio transport shall reject the duplicate finish. ^oartc-qfrz
+- If a caller sends an event after aborting a connection, then the OpenAI Eio transport shall reject the operation. ^oartc-l098
+- When a Realtime request depends on server-owned session policy, the OpenAI Eio transport shall submit it for OpenAI to evaluate. ^oartc-v4rg

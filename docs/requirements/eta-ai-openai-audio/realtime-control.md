@@ -19,7 +19,4 @@ browser, telephony, or application conversation state into Eta.
 - The OpenAI provider shall preserve documented SIP and call lifecycle events as typed events with complete raw JSON. ^oactl-xy2l
 - The OpenAI provider shall leave browser peer-connection ownership, media tracks, SIP routing policy, and application call state to the application. ^oactl-hiz9
 - The OpenAI provider shall expose every call-control operation through `Eta_ai_openai.Error.t`. ^oactl-6kx2
-
-## Open questions
-
-- Which Realtime resource identifiers require distinct nominal private types?
+- The OpenAI provider shall represent Realtime call identifiers as a nominal type distinct from voice, consent, and client-secret values. ^oactl-vg14

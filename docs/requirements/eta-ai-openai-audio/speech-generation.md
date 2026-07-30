@@ -23,9 +23,7 @@ chunked audio, and Speech SSE as distinct typed protocols.
 - When a caller selects a custom voice, the OpenAI provider shall encode the custom voice ID using the documented `{ "id": ... }` object form. ^oatts-7u4k
 - The OpenAI speech model type shall represent documented TTS model identifiers without preventing future provider model identifiers. ^oatts-gbnd
 - The OpenAI speech API shall expose a convenience operation that collects a streaming audio response only when the caller explicitly chooses collection. ^oatts-snbf
+- The OpenAI speech collection convenience shall accept a caller-supplied maximum byte limit. ^oatts-7c46
 
 ## Open questions
-
-- What framing bounds and configurable overrides shall apply to Speech SSE?
-- Shall the collector enforce a caller-supplied total-audio limit?
 - Which known Speech SSE event schemas can be established from a first-party source beyond the endpoint's `stream_format=sse` declaration?

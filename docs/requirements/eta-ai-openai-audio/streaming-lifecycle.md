@@ -25,9 +25,11 @@ audio streams while preserving protocol-specific completion behavior.
 - When a protocol defines a terminal drain event, `finish` shall keep delivering events until that terminal event arrives or the effect is cancelled. ^oastr-oe6k
 - When a caller invokes `abort`, the OpenAI Eio transport shall terminate the connection without waiting for protocol drain. ^oastr-zrr2
 - When a caller invokes `abort`, the OpenAI Eio transport shall release the connection exactly once. ^oastr-7r31
-
-## Open questions
-
-- Should concurrent pulls and sends serialize or fail immediately with a nominal concurrent-use diagnostic?
-- Which framing, JSON, and pending-event limits shall have safe defaults and per-operation overrides?
-- Should `finish` rely only on effect cancellation, and should a separate timeout convenience be exposed?
+- If a caller starts a second concurrent operation on an OpenAI audio pull stream, then the OpenAI provider shall fail that operation immediately with a nominal concurrent-use error. ^oastr-qjzb
+- If a caller starts a second concurrent read on an OpenAI Realtime connection, then the OpenAI Eio transport shall fail that read immediately with a nominal concurrent-use error. ^oastr-jete
+- Each OpenAI audio stream shall bound its unframed buffer size by default. ^oastr-h4gx
+- Each OpenAI audio stream shall bound its decoded JSON size by default. ^oastr-nxev
+- Each OpenAI audio stream shall bound its pending decoded event count by default. ^oastr-8f7g
+- Each OpenAI audio stream shall accept per-operation overrides of its documented bounds. ^oastr-659y
+- Each OpenAI audio stream shall permit unbounded total streamed audio while its framing and pending-state bounds remain in force. ^oastr-39sn
+- The OpenAI Eio Realtime transport shall expose a bounded-wait finish convenience accepting a caller-supplied timeout. ^oastr-ip8c
