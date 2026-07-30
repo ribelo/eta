@@ -164,3 +164,11 @@ SDK; Dune rejects a temporarily introduced real `eta <-> eta_observability`
 cycle; and a root-only Eio consumer with a hand-written `Capabilities.tracer`
 receives defect exception annotations from an internally named root effect.
 Sources, commands, raw outputs, and verdicts are under `redteam/`.
+
+## Verdict
+
+Recommend **PROMOTE**. Dependency direction, exact gates, js_of_ocaml
+single-package use, adversarial boundaries, migration completeness, and focused
+runtime parity are proven by committed artifacts. The broad behavioral
+`Spi.Expert` seam remains the weakest review target; no hold or kill trigger was
+observed.
