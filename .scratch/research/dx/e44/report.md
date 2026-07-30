@@ -2,10 +2,11 @@
 
 ## Recommendation
 
-**PROMOTE.** Root-to-SDK dependency is absent, all four required gates are
-green, the affected runtime watchlist stays below 2% regression, no raw
-fiber-local key is exposed, and the mainline js_of_ocaml gate uses the same
-single `eta_observability` package.
+**PROMOTE.** Root-to-SDK dependency is absent, all required gates are green, no
+raw fiber-local key is exposed, and the mainline js_of_ocaml gate uses the same
+single `eta_observability` package. The expanded batch watchlist has
+deterministic allocation parity and pooled wall medians near parity, with the
+per-pair spread and lack of a statistical upper bound stated explicitly below.
 
 ## Result
 
@@ -46,14 +47,17 @@ Proof: `evidence/dependency-direction.txt` records `eta (requires ())` and
 | `nix develop -c dune runtest --force` | PASS |
 | `nix develop -c eta-oxcaml-test-shipped` | PASS |
 | `nix develop .#mainline -c dune build --build-dir=_build-mainline test/cache_jsoo test/js_jsoo` | PASS |
+| `nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/js_jsoo --force` | PASS |
 
 The first final `runtest` attempt hit the existing flaky stream test `timeout
 closes from file`; its focused 16-test suite passed immediately and the second
 exact full command passed. See `evidence/gates.txt`.
 
-The mainline gate compiled and ran the shared JS suites after the split. No
-`lib/jsoo` observability implementation or second SDK was introduced, so the
-single-package claim is verified rather than inferred from OxCaml.
+The follow-up reran the native trio after the final batch and contract changes.
+The mainline build gate compiled the shared JS closure; the additional focused
+mainline `runtest` executed the new `runtime local binding contract` test and the
+complete eta_jsoo/eta_js_jsoo suites. No `lib/jsoo` observability implementation
+or second SDK was introduced.
 
 ## Census and migration completeness
 
@@ -82,12 +86,30 @@ The exact `nix develop -c bash bench/run.sh --quick` command fails both before
 and after E44 in the unchanged TypeScript comparison workload because
 `Effect.with_scope` is unavailable. Matching raw failures are committed.
 
-The affected native executable was measured with 15 alternating before/after
-pairs and three samples per row (45 per side). Every changed-path wall
-regression is below 2%; the maximum is **+1.936%**. Allocation is equal or
-lower on every changed row. Larger improvements come from removing intermediate
-optional/log/metric allocations. Full raw data and unchanged noisy controls are
-in `evidence/bench-parity.md`, `bench-parity.csv`, and `bench-pairs/`.
+The first paired run measured the single-point paths but omitted
+`metric_updates`, `metric_updates_lazy`, and batch interception. Its broad
+"every changed path" conclusion is withdrawn; the historical files remain for
+provenance.
+
+The follow-up added all three batch rows at 100,000 points and reran 15
+alternating pairs with three samples per row. Relative to pre-split `fd27e518`,
+pooled wall-median deltas are **+0.873%** for eager batches, **-16.110%** for
+lazy batches, and **-0.239%** under a `Keep` interceptor. The respective
+per-pair min/median/max spreads are **-16.041/+1.186/+10.178%**,
+**-22.036/-15.735/-3.820%**, and **-8.042/+0.367/+10.083%**.
+
+These descriptive samples do not establish a confidence interval or a
+one-sided upper bound. Unchanged controls also moved positively in the same run
+(noop tracer pooled medians +2.897% and +4.492%), so pair extrema are not
+represented as split-only cost.
+
+The structural allocation finding is resolved: the final producer receives one
+uniform timestamp and streams each point once, with no placeholder record,
+timestamp copy, or point-list allocation. Eager and intercepted batches differ
+from pre-split by four words total across 100,000 points; lazy batches allocate
+199,995 fewer words. The broken split allocated 1,100,003 extra words in the
+eager/intercept rows. Method, raw pairs, smoke comparison, patch, analyzer, and
+full CSV are in `evidence/bench-followup-pairs/`.
 
 ## Red-team outcomes
 
@@ -126,8 +148,13 @@ Overall: **10 exact, 1 partial, 0 contradicted**.
   `effect_of_public`.
 - The first implementation built metric points before admission. Independent
   seam review caught the regression; the final implementation gates point/batch
-  construction before allocation and the benchmark proves no allocation
-  regression.
+  construction before allocation.
+- A later independent review found that admitted batches still built a
+  placeholder point and copied it to install the timestamp, while the original
+  watchlist omitted batch paths. The final timestamp-aware streaming producer
+  constructs each point exactly once; the expanded allocation evidence is at
+  pre-split parity. The earlier broad below-2% claim was replaced with pooled
+  deltas plus the full per-pair spread and no one-sided bound.
 - The exact all-benchmark harness remains blocked by the pre-existing
   TypeScript `Effect.with_scope` mismatch; E44 did not modify that adjacent
   workload.
@@ -139,8 +166,11 @@ Overall: **10 exact, 1 partial, 0 contradicted**.
 Moved law-bearing contracts now point to
 `lib/observability/eta_observability.mli`. Mixed dynamic-override row R88 was
 split by package boundary, defect diagnostics received direct row R90b, and
-shifted root pointers were refreshed. Registered executable suites passed under
-the full and shipped gates.
+shifted root pointers were refreshed. Follow-up row R110b makes
+`local_with_binding` restoration, LIFO nesting, fork snapshots, and no
+join-merge backend conformance requirements, with native and jsoo named tests
+plus both reference implementations. R90 now registers the three corrected SDK
+qualifications. The registry contains 186 external clusters.
 
 ## Final verdict
 
@@ -148,9 +178,8 @@ All promote conditions are satisfied. The broad unstable SPI is the review's
 weakest design point, but it preserves the stronger boundary: root owns runtime
 state and protocols; the optional SDK owns application-facing observability.
 
-The independent final review initially blocked on R90b's incorrect executable
+The first independent final review blocked on R90b's incorrect executable
 pointer and the external-row headline count. Commit `b66c56ec` corrected those
-items and the stale `with_external_parent` error-path name. The reviewer
-recounted all 185 external rows, checked the exact named registrations, and
-returned **READY**. The final code then passed `@install`, focused core tests,
-the exact full suite, the shipped-package gate, and the mainline JS gate again.
+items and the stale `with_external_parent` error-path name. The follow-up review
+then identified F1–F4; all four are resolved in the final range. Reviewer-of-
+record reapproval is recorded after review of the committed follow-up.

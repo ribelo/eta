@@ -177,3 +177,30 @@ The independent final review initially blocked on an incorrect R90b executable
 pointer and an external-row headline count. Both were corrected to the exact
 `die captures diagnostics` and `annotate_all die diagnostics` registrations;
 the stale invalid-argument path for `with_external_parent` was also corrected.
+
+## Follow-up 1 addendum
+
+The reviewer-of-record's later four findings were all reproduced and fixed;
+the sealed prediction section above was not edited.
+
+1. Batch metrics now receive one root-computed timestamp and stream each final
+   point once. There is no placeholder record, timestamp copy, or intermediate
+   point list. The watchlist gained eager, lazy, and `Keep`-intercepted batch
+   rows at 100,000 points.
+2. `Runtime_contract.local_with_binding` now specifies restoration on normal
+   return, exception, and cancellation, LIFO nesting, fork snapshots, and no
+   join-merge. Named native and jsoo backend conformance tests cover the full
+   contract; R110b also cites both implementations.
+3. The SDK now states callback-failure behavior for `with_result_attrs`, active
+   in-process parent precedence for `with_context`, and effective admission for
+   `is_tracing_enabled`; exact named tests were registered in R90.
+4. The breaking draft now records public typed-error covariance and its need for
+   separately compiled polymorphic SDK constants.
+
+The final native trio and mainline build passed. A focused mainline JS runtest
+also executed the new backend contract test and completed both JS suites.
+
+The 15-pair batch run reports pooled medians and the full per-pair spread. It
+does not claim a one-sided performance bound. Eager/intercept allocation differs
+from pre-split by four words total over 100,000 points; lazy allocation improves
+by 199,995 words. Full evidence is under `evidence/bench-followup-pairs/`.

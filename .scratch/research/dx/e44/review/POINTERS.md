@@ -24,6 +24,8 @@ Key commits:
 - `e51f9e2e` — commit dependency, census, gate, migration, and benchmark proof;
 - `dd4e4247` — commit adversarial boundary probes.
 - `b66c56ec` — correct final independent-review law pointers and stale error path.
+- `f6ce2182` — address F1-F4 contracts, tests, laws, and changelog;
+- `8cfb17c5` — stream timestamped batches and commit expanded paired evidence.
 
 ## Boundary and public contract
 
@@ -57,8 +59,12 @@ Key commits:
 ## Runtime and adversarial proof
 
 - Exact gate summary: `.scratch/research/dx/e44/evidence/gates.txt`
-- Benchmark method/verdict: `.scratch/research/dx/e44/evidence/bench-parity.md`
-- Raw paired benchmark corpus: `.scratch/research/dx/e44/evidence/bench-pairs/`
+- Superseding batch method/verdict:
+  `.scratch/research/dx/e44/evidence/bench-followup-pairs/README.md`
+- Superseding raw pairs/analyzer:
+  `.scratch/research/dx/e44/evidence/bench-followup-pairs/`
+- Historical single-point evidence:
+  `.scratch/research/dx/e44/evidence/bench-parity.md`
 - Red-team sources/outputs/verdicts: `.scratch/research/dx/e44/redteam/`
 - Final synthesis: `.scratch/research/dx/e44/report.md`
 
@@ -73,7 +79,8 @@ suites. Review `spi.ml` and `eta_observability.ml` side by side, especially
 exception capture, dynamic-scope restoration, lazy metric admission, and the
 targeted hot-path inline attributes.
 
-The secondary evidence weakness is infrastructure outside E44: the exact full
-quick benchmark stops in an unchanged TypeScript workload. The review should
-therefore validate that the focused alternating paired method is a fair direct
-substitute for the affected native watchlist.
+The secondary evidence weakness is statistical: the exact full quick benchmark
+stops in an unchanged TypeScript workload, and the focused 15-pair batch run has
+material per-pair spread. Its pooled medians and deterministic allocations are
+reported, but no one-sided bound is claimed. Review the raw alternating pairs
+and analyzer rather than relying on the pooled table alone.

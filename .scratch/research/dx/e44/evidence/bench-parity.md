@@ -1,5 +1,10 @@
 # Runtime-observability benchmark parity
 
+> Historical first-pass evidence. This run omitted the batch paths later found
+> to allocate twice per point, so its broad "all changed paths" verdict is
+> superseded by `bench-followup-pairs/README.md`. The measurements below remain
+> unchanged as provenance for the single-point follow-up.
+
 ## Exact command
 
 The required command was run before and after the split:
