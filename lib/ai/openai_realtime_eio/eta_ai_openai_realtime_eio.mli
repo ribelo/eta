@@ -1,6 +1,10 @@
 (** Eio WebSocket transport for OpenAI Realtime. *)
 
-type realtime_error = Eta_http_eio.Ws.Client.ws_error
+type realtime_error =
+  [ Eta_http_eio.Ws.Client.ws_error
+  | `Openai_error of Eta_ai_openai.Error.t
+  ]
+(** Transport errors plus structured nominal OpenAI failures. *)
 type t
 
 type connection_options =

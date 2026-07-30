@@ -4,6 +4,16 @@ module Json = A.Json
 open Core
 open Error_codec
 
+type stream_failure =
+  | Decode of {
+      message : string;
+      raw_body : A.raw_json option;
+    }
+  | Provider of {
+      payload : wire_error_payload;
+      raw_body : A.raw_json;
+    }
+
 let stream_tool_delta json =
   let index = Json.int_member "index" json in
   let id = Json.string_member "id" json in
@@ -128,62 +138,143 @@ let responses_message_start raw json =
           };
       ]
 
-let responses_terminal ~provider json =
+let responses_terminal_lossless ~provider json =
   match Json.object_member "response" json with
-  | None -> [ A.Stream_finish [ A.Stop ]; A.Stream_done ]
+  | None -> Stdlib.Ok [ A.Stream_finish [ A.Stop ]; A.Stream_done ]
   | Some response -> (
-      match Responses.decode_responses ~provider (Json.compact response) with
+      let raw = Json.compact response in
+      match Responses.decode_responses ~provider raw with
       | Stdlib.Ok response ->
-          [
-            A.Stream_response response;
-            A.Stream_finish response.finish_reasons;
-            A.Stream_done;
-          ]
-      | Stdlib.Error error -> [ A.Stream_error error ])
+          Stdlib.Ok
+            [
+              A.Stream_response response;
+              A.Stream_finish response.finish_reasons;
+              A.Stream_done;
+            ]
+      | Stdlib.Error (A.Provider_error _ as error) -> (
+          match error with
+          | A.Provider_error { raw = Some raw_body; _ } -> (
+              match decode_wire_error raw_body with
+              | Decodable payload ->
+                  Stdlib.Error (Provider { payload; raw_body })
+              | Undecodable { raw_body } ->
+                  Stdlib.Error
+                    (Decode
+                       {
+                         message = "provider returned an error";
+                         raw_body = Some raw_body;
+                       }))
+          | A.Provider_error { message; _ } ->
+              Stdlib.Error (Decode { message; raw_body = Some raw })
+          | _ -> Stdlib.Error (Decode { message = "provider error"; raw_body = Some raw }))
+      | Stdlib.Error (A.Decode_error { message; raw; _ }) ->
+          Stdlib.Error (Decode { message; raw_body = raw })
+      | Stdlib.Error other ->
+          Stdlib.Error
+            (Decode
+               {
+                 message =
+                   (match other with
+                   | A.Unsupported { feature; _ } -> feature
+                   | A.Invalid_tool { message; _ } -> message
+                   | A.Eta_http_error error -> Eta_http.Error.to_string error
+                   | A.Provider_error { message; _ }
+                   | A.Decode_error { message; _ }
+                   | A.Invalid_request { message; _ } ->
+                       message);
+                 raw_body = Some raw;
+               }))
 
-let responses_stream_events ?(nested_response_error = false) ~provider raw
-    event_name json =
+let responses_stream_events_lossless ?(nested_response_error = false) ~provider
+    raw event_name json =
   match event_name with
-  | Some "response.created" -> responses_message_start raw json
+  | Some "response.created" -> Stdlib.Ok (responses_message_start raw json)
   | Some "response.reasoning_text.delta" -> (
       match Json.string_member "delta" json with
-      | Some text -> [ A.Stream_reasoning_delta text ]
-      | None -> [])
+      | Some text -> Stdlib.Ok [ A.Stream_reasoning_delta text ]
+      | None -> Stdlib.Ok [])
   | Some "response.output_text.delta" -> (
       match Json.string_member "delta" json with
-      | Some text -> [ A.Stream_content_delta text ]
-      | None -> [])
-  | Some "response.output_item.added" -> responses_stream_tool_added json
+      | Some text -> Stdlib.Ok [ A.Stream_content_delta text ]
+      | None -> Stdlib.Ok [])
+  | Some "response.output_item.added" ->
+      Stdlib.Ok (responses_stream_tool_added json)
   | Some "response.function_call_arguments.delta" ->
-      [ responses_stream_tool_delta json ]
-  | Some "response.completed" -> responses_terminal ~provider json
-  | Some "response.incomplete" -> responses_terminal ~provider json
+      Stdlib.Ok [ responses_stream_tool_delta json ]
+  | Some "response.completed" | Some "response.incomplete" ->
+      responses_terminal_lossless ~provider json
   | Some "response.failed" ->
-      [
-        A.Stream_error
-          (provider_error_json ~raw ~nested_response_error ~provider json);
-      ]
-  | _ -> []
+      (* OpenAI nests provider error under response.error; always traverse. *)
+      let payload =
+        wire_payload_of_json ~nested_response_error:true json
+      in
+      Stdlib.Error (Provider { payload; raw_body = raw })
+  | _ -> Stdlib.Ok []
 
-let decode_stream_event ?(nested_response_error = false) ~provider event =
+let decode_stream_event_lossless ?(nested_response_error = false) ~provider event
+    =
   let data = event.A.data in
   if A.Json_helpers.trim_equal data "[DONE]" then Stdlib.Ok [ A.Stream_done ]
   else
-    match parse_json ~provider data with
-    | Stdlib.Error _ as error -> error
+    match Json.parse data with
+    | Stdlib.Error message ->
+        Stdlib.Error (Decode { message; raw_body = Some data })
     | Stdlib.Ok json ->
-        if Option.is_some (error_object ~nested_response_error json) then
-          Stdlib.Ok
-            [
-              A.Stream_error
-                (provider_error_json ~raw:data ~nested_response_error ~provider
-                   json);
-            ]
+        let event_name = response_event_name event json in
+        (* response.failed must inspect nested response.error even when the
+           Chat-path nested_response_error flag is false. *)
+        let nested =
+          nested_response_error
+          || match event_name with Some "response.failed" -> true | _ -> false
+        in
+        if Option.is_some (error_object ~nested_response_error:nested json) then
+          let payload = wire_payload_of_json ~nested_response_error:nested json in
+          Stdlib.Error (Provider { payload; raw_body = data })
         else
-          let response_events =
-            responses_stream_events ~nested_response_error ~provider data
-              (response_event_name event json) json
-          in
-          if response_events = [] then
-            Stdlib.Ok (chat_stream_events ~finish_reason data json)
-          else Stdlib.Ok response_events
+          match
+            responses_stream_events_lossless ~nested_response_error:nested
+              ~provider data event_name json
+          with
+          | Stdlib.Error _ as error -> error
+          | Stdlib.Ok [] ->
+              Stdlib.Ok (chat_stream_events ~finish_reason data json)
+          | Stdlib.Ok events -> Stdlib.Ok events
+
+let ai_error_of_stream_failure ~provider = function
+  | Decode { message; raw_body } ->
+      A.Decode_error { provider; message; raw = raw_body }
+  | Provider { payload; raw_body } ->
+      A.Provider_error
+        {
+          provider;
+          status = None;
+          code =
+            (match code_string payload.code with
+            | Some _ as value -> value
+            | None -> payload.type_);
+          message =
+            Option.value payload.message ~default:"provider returned an error";
+          raw = Some raw_body;
+          retry_after_s = None;
+        }
+
+(* Neutral helper retained for unmigrated providers: provider failures become
+   Stream_error events carrying Eta_ai.ai_error. *)
+let responses_stream_events ?(nested_response_error = false) ~provider raw
+    event_name json =
+  match
+    responses_stream_events_lossless ~nested_response_error ~provider raw
+      event_name json
+  with
+  | Stdlib.Ok events -> events
+  | Stdlib.Error failure ->
+      [ A.Stream_error (ai_error_of_stream_failure ~provider failure) ]
+
+let decode_stream_event ?(nested_response_error = false) ~provider event =
+  match decode_stream_event_lossless ~nested_response_error ~provider event with
+  | Stdlib.Ok events -> Stdlib.Ok events
+  | Stdlib.Error (Decode { message; raw_body }) ->
+      Stdlib.Error (A.Decode_error { provider; message; raw = raw_body })
+  | Stdlib.Error (Provider _ as failure) ->
+      (* Historical neutral path embeds provider failures as stream events. *)
+      Stdlib.Ok [ A.Stream_error (ai_error_of_stream_failure ~provider failure) ]

@@ -131,10 +131,8 @@ let close_stream_unlocked stream =
   release_stream stream
 
 let fail_and_close stream error =
-  Eta.Effect.with_scope
-    (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
-       ~release:(fun () -> close_stream_unlocked stream)
-    |> Eta.Effect.bind (fun () -> Eta.Effect.fail error))
+  Eta.Effect.fail error
+  |> Eta.Effect.finally (close_stream_unlocked stream)
 
 let close_stream stream =
   with_operation stream (close_stream_unlocked stream)
@@ -250,8 +248,8 @@ let rec read_stream_event_unlocked stream =
   | [] when stream.eof -> Eta.Effect.pure None
   | [] ->
       Eta_http.Body.Stream.read stream.body
-      |> Eta.Effect.bind_error (fun error ->
-             fail_and_close stream (Eta_http_error error))
+      |> Eta.Effect.map_error (fun error -> Eta_http_error error)
+      |> Eta.Effect.on_error (fun _ -> close_stream_unlocked stream)
       |> Eta.Effect.bind (function
            | None ->
                stream.eof <- true;

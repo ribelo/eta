@@ -65,6 +65,9 @@ include Transport
 include Observability
 
 module Provider = struct
+  module Error = Provider_error
+  module Telemetry = Provider_telemetry
+
   module type Chat = sig
     val encode : provider:provider -> chat_request -> (raw_json, ai_error) result
     val decode : provider:provider -> raw_json -> (response, ai_error) result

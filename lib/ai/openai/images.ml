@@ -5,7 +5,7 @@ module Json = Common.Json
 
 let encode (request : A.Image.request) =
   if A.Json_helpers.is_blank request.prompt then
-    Common.unsupported "image prompt must not be empty"
+    Common.invalid_request "image prompt must not be empty"
   else
     Stdlib.Ok
       (Common.with_json_fields request.extra

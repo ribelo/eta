@@ -1,7 +1,9 @@
 module E = Eta.Effect
-module Realtime = Eta_ai_openai.Realtime
+module Openai = Eta_ai_openai
+module Realtime = Openai.Realtime
 
-type realtime_error = Eta_http_eio.Ws.Client.ws_error
+type realtime_error =
+  [ Eta_http_eio.Ws.Client.ws_error | `Openai_error of Openai.Error.t ]
 type t = { ws : Eta_http_eio.Ws.Client.t } [@@unboxed]
 
 type connection_options =
@@ -58,23 +60,31 @@ let websocket_headers ?safety_identifier api_key =
        | None -> []
        | Some value -> [ ("OpenAI-Safety-Identifier", value) ])
 
+let widen_ws (error : Eta_http_eio.Ws.Client.ws_error) : realtime_error =
+  (error :> realtime_error)
+
+let widen_effect eff = E.map_error widen_ws eff
+
 let connect ?base_url ?safety_identifier ~sw ~net ~api_key ~model () =
   Eta_http_eio.Ws.Client.connect
     ~headers:(websocket_headers ?safety_identifier api_key)
     ~sw ~net
     (realtime_url ?base_url ~model ())
   |> E.map (fun ws -> { ws })
+  |> widen_effect
 
 let connect_on_flow ?key ?safety_identifier ~sw ~flow ~api_key url =
   Eta_http_eio.Ws.Client.connect_on_flow ?key
     ~headers:(websocket_headers ?safety_identifier api_key)
     ~sw ~flow url
   |> E.map (fun ws -> { ws })
+  |> widen_effect
 
 let send_message t = function
-  | Eta_ai.Realtime.Text text -> Eta_http_eio.Ws.Client.send_text t.ws text
+  | Eta_ai.Realtime.Text text ->
+      Eta_http_eio.Ws.Client.send_text t.ws text |> widen_effect
   | Eta_ai.Realtime.Binary bytes ->
-      Eta_http_eio.Ws.Client.send_binary t.ws bytes
+      Eta_http_eio.Ws.Client.send_binary t.ws bytes |> widen_effect
 
 let send_event t event =
   send_message t (Realtime.Codec.encode_client_event event)
@@ -85,32 +95,28 @@ let decode_message = function
   | `Binary bytes ->
       Realtime.Codec.decode_server_event (Eta_ai.Realtime.Binary bytes)
 
-let events t =
-  Eta_http_eio.Ws.Client.incoming t.ws
-  |> Eta_stream.Stream.map (fun message ->
-         match decode_message message with
-         | Stdlib.Ok event -> event
-         | Stdlib.Error error ->
-             Realtime.Server_decode_error
-               {
-                 message = Realtime.codec_error_message error;
-                 raw = None;
-               })
-
-let close t = Eta_http_eio.Ws.Client.close t.ws
+let close t = Eta_http_eio.Ws.Client.close t.ws |> widen_effect
 
 let read_event t =
   Eta_http_eio.Ws.Client.incoming t.ws
   |> Eta_stream.Stream.take 1
   |> Eta_stream.run_collect
+  |> widen_effect
   |> E.bind (function
        | [] -> E.pure None
        | [ message ] -> (
            match decode_message message with
            | Stdlib.Ok event -> E.pure (Some event)
-           | Stdlib.Error error ->
-               E.fail (`Protocol (Realtime.codec_error_message error)))
+           | Stdlib.Error error -> E.fail (`Openai_error error))
        | _ -> assert false)
+
+let rec events t =
+  Eta_stream.Stream.from_effect (read_event t)
+  |> Eta_stream.Stream.flat_map (function
+       | None -> Eta_stream.Stream.empty
+       | Some event ->
+           Eta_stream.Stream.concat
+             (Eta_stream.Stream.succeed event) (events t))
 
 let initialize t session =
   (send_event t (Realtime.Session_update session) |> E.map (fun () -> t))
@@ -138,7 +144,9 @@ module Transport = struct
     match session.model with
     | None ->
         E.fail
-          (`Protocol "OpenAI Realtime session requires a model for connection")
+          (`Openai_error
+            (Openai.Error.Invalid_request
+               "Realtime session requires a model for connection"))
     | Some model ->
         connect ?base_url ?safety_identifier ~sw:scope ~net ~api_key ~model ()
         |> E.bind (fun connection -> initialize connection session)

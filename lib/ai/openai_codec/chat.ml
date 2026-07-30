@@ -43,6 +43,45 @@ let encode_chat ~provider ~schema_value ?structured_output request =
   encode_chat_json ~provider ~schema_value ?structured_output request
   |> Result.map Json.to_string
 
+(* Lossless local-validation path used by nominal OpenAI/compat: only the
+   temperature validation is structured; remaining encode steps reuse the
+   historical encoder and map ai_error through of_codec-compatible cases. *)
+let encode_chat_lossless ~schema_value ?structured_output request =
+  match temperature_json_lossless request.A.temperature with
+  | Stdlib.Error failure -> Stdlib.Error failure
+  | Stdlib.Ok _ ->
+      let schema_value_ai label raw =
+        match schema_value label raw with
+        | Stdlib.Ok json -> Stdlib.Ok json
+        | Stdlib.Error (Decode { message; raw_body }) ->
+            Stdlib.Error
+              (A.Decode_error { provider = "openai"; message; raw = raw_body })
+        | Stdlib.Error (Invalid_request message) ->
+            Stdlib.Error
+              (A.Invalid_request { provider = "openai"; message })
+        | Stdlib.Error (Unsupported feature) ->
+            Stdlib.Error (A.Unsupported { provider = "openai"; feature })
+        | Stdlib.Error (Invalid_tool { name; message }) ->
+            Stdlib.Error (A.Invalid_tool { name; message })
+      in
+      (match
+         encode_chat ~provider:"openai" ~schema_value:schema_value_ai
+           ?structured_output request
+       with
+      | Stdlib.Ok raw -> Stdlib.Ok raw
+      | Stdlib.Error (A.Unsupported { feature; _ }) ->
+          Stdlib.Error (Unsupported feature)
+      | Stdlib.Error (A.Decode_error { message; raw; _ }) ->
+          Stdlib.Error (Decode { message; raw_body = raw })
+      | Stdlib.Error (A.Invalid_tool { name; message }) ->
+          Stdlib.Error (Invalid_tool { name; message })
+      | Stdlib.Error (A.Provider_error { message; _ }) ->
+          Stdlib.Error (Invalid_request message)
+      | Stdlib.Error (A.Invalid_request { message; _ }) ->
+          Stdlib.Error (Invalid_request message)
+      | Stdlib.Error (A.Eta_http_error _) ->
+          Stdlib.Error (Decode { message = "encode failed"; raw_body = None }))
+
 let thinking_json = function
   | Off -> Json.object_ [ ("type", Some (Json.string "disabled")) ]
   | Minimal | Low | Medium | High | Xhigh | Max ->

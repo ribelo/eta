@@ -8,9 +8,47 @@ type structured_output = {
 
 type reasoning_level = Off | Minimal | Low | Medium | High | Xhigh | Max
 
+type codec_failure =
+  | Invalid_request of string
+  | Unsupported of string
+  | Invalid_tool of {
+      name : string;
+      message : string;
+    }
+  | Decode of {
+      message : string;
+      raw_body : Eta_ai.raw_json option;
+    }
+(** Provider-neutral structured codec failure. Nominal callers map this into
+    their own error channel. Historical neutral wrappers project local
+    validation as [Unsupported] to preserve unmigrated provider contracts. *)
+
+val reasoning_level_of_string_lossless :
+  string -> (reasoning_level, codec_failure) result
+
 val reasoning_level_of_string :
   provider:string -> string -> (reasoning_level, Eta_ai.ai_error) result
 val reasoning_level_to_string : reasoning_level -> string
+
+val encode_speech_lossless :
+  ?instructions:bool ->
+  Eta_ai.Speech.request ->
+  (Eta_ai.raw_json, codec_failure) result
+
+val temperature_json_lossless :
+  float option -> (Eta_ai.Json.t option, codec_failure) result
+
+val optional_float_json_lossless :
+  string -> float option -> (Eta_ai.Json.t option, codec_failure) result
+
+val structured_output_lossless :
+  schema_value:
+    (string -> Eta_ai.raw_json -> (Eta_ai.Json.t, codec_failure) result) ->
+  ?strict:bool ->
+  name:string ->
+  schema_json:Eta_ai.raw_json ->
+  unit ->
+  (structured_output, codec_failure) result
 
 val structured_output :
   schema_value:
@@ -62,6 +100,9 @@ val encode_embeddings_json :
   provider:string ->
   Eta_ai.Embedding.request ->
   (Eta_ai.Json.t, Eta_ai.ai_error) result
+
+val encode_embeddings_lossless :
+  Eta_ai.Embedding.request -> (Eta_ai.raw_json, codec_failure) result
 
 val encode_embeddings :
   provider:string ->
@@ -116,6 +157,13 @@ val encode_chat_json :
   Eta_ai.chat_request ->
   (Eta_ai.Json.t, Eta_ai.ai_error) result
 
+val encode_chat_lossless :
+  schema_value:
+    (string -> Eta_ai.raw_json -> (Eta_ai.Json.t, codec_failure) result) ->
+  ?structured_output:structured_output ->
+  Eta_ai.chat_request ->
+  (Eta_ai.raw_json, codec_failure) result
+
 val encode_chat :
   provider:string ->
   schema_value:
@@ -139,6 +187,14 @@ val encode_responses_json :
   'tool Eta_ai.Responses.request ->
   (Eta_ai.Json.t, Eta_ai.ai_error) result
 
+val encode_responses_lossless :
+  provider:string ->
+  map_codec_failure:(codec_failure -> 'error) ->
+  encode_tool:
+    ('tool -> (Eta_ai.Json.t, 'error) result) ->
+  'tool Eta_ai.Responses.request ->
+  (Eta_ai.raw_json, 'error) result
+
 val encode_responses :
   provider:string ->
   encode_tool:
@@ -160,6 +216,31 @@ val decode_responses :
   Eta_ai.raw_json ->
   (Eta_ai.response, Eta_ai.ai_error) result
 
+type wire_error_payload = {
+  message : string option;
+  type_ : string option;
+  param : Eta_ai.Json.t option;
+  code : Eta_ai.Json.t option;
+  (** Nested [error] object when present, otherwise the complete decoded body. *)
+  raw : Eta_ai.Json.t;
+  (** Complete decoded response JSON. *)
+  full : Eta_ai.Json.t;
+}
+(** Provider-neutral OpenAI-family error wire facts. Callers own mapping into
+    their public nominal error type. [param] and [code] are uncoerced JSON. *)
+
+type wire_error =
+  | Decodable of wire_error_payload
+  | Undecodable of { raw_body : Eta_ai.raw_json }
+
+val wire_payload_of_json :
+  ?nested_response_error:bool -> Eta_ai.Json.t -> wire_error_payload
+
+val decode_wire_error :
+  ?nested_response_error:bool -> Eta_ai.raw_json -> wire_error
+(** Decode OpenAI-compatible error wire payloads without choosing a caller
+    nominal error type. *)
+
 val provider_error_json :
   ?status:int ->
   ?raw:Eta_ai.raw_json ->
@@ -168,6 +249,8 @@ val provider_error_json :
   provider:string ->
   Eta_ai.Json.t ->
   Eta_ai.ai_error
+(** Neutral [Eta_ai.ai_error] projection helper for callers that still surface
+    [ai_error] on shared stream/response paths. *)
 
 val provider_error :
   ?status:int ->
@@ -193,6 +276,27 @@ val chat_stream_events :
 (** Decode OpenAI Chat Completions SSE JSON into stream events, including
     [delta.tool_calls] argument fragments. *)
 
+type stream_failure =
+  | Decode of {
+      message : string;
+      raw_body : Eta_ai.raw_json option;
+    }
+  | Provider of {
+      payload : wire_error_payload;
+      raw_body : Eta_ai.raw_json;
+    }
+(** Provider-neutral stream failure facts. Callers map these into their own
+    nominal error type. Successful event lists never contain
+    [Eta_ai.Stream_error]. *)
+
+val decode_stream_event_lossless :
+  ?nested_response_error:bool ->
+  provider:string ->
+  Eta_ai.sse_event ->
+  (Eta_ai.stream_event list, stream_failure) result
+(** Decode one SSE event without choosing a caller nominal error and without
+    embedding provider failures as [Stream_error] events. *)
+
 val responses_stream_events :
   ?nested_response_error:bool ->
   provider:string ->
@@ -200,12 +304,17 @@ val responses_stream_events :
   string option ->
   Eta_ai.Json.t ->
   Eta_ai.stream_event list
+(** Neutral helper retained for unmigrated providers. Provider failures become
+    [Stream_error] events carrying [Eta_ai.ai_error]. *)
 
 val decode_stream_event :
   ?nested_response_error:bool ->
   provider:string ->
   Eta_ai.sse_event ->
   (Eta_ai.stream_event list, Eta_ai.ai_error) result
+(** Neutral helper retained for unmigrated providers. Provider failures are
+    embedded as [Stream_error] events; only JSON parse failures fail the outer
+    result. Prefer {!decode_stream_event_lossless} for nominal callers. *)
 
 val result_all : ('a, 'err) result list -> ('a list, 'err) result
 val result_map_all : ('a -> ('b, 'err) result) -> 'a list -> ('b list, 'err) result

@@ -1,7 +1,9 @@
 module A = Eta_ai
-module Openai_codec = Eta_ai_openai_codec
 module E = Eta.Effect
+module Error = Openai_error
 module Json = A.Json
+
+type error = Error.t
 
 type modality = Text | Audio
 
@@ -89,10 +91,8 @@ type client_secret = {
   raw : A.raw_json option;
 }
 
-let trim_trailing_slash = A.trim_trailing_slash
-
 let http_base_url ?(base_url = "https://api.openai.com") () =
-  trim_trailing_slash base_url
+  A.trim_trailing_slash base_url
 
 let auth_headers api_key =
   Eta_http.Core.Header.unsafe_of_list
@@ -113,31 +113,35 @@ let client_secret_request ?base_url ~api_key session =
 
 let read_response_body body =
   Eta_http.Body.Stream.read_all body
-  |> E.bind_error (fun error -> E.fail (A.Eta_http_error error))
+  |> E.bind_error (fun error -> E.fail (Error.Http error))
   |> E.map Bytes.unsafe_to_string
 
 let decode_client_secret raw =
   match Json.parse raw with
   | Stdlib.Error message ->
-      Stdlib.Error (A.Decode_error { provider = "openai"; message; raw = Some raw })
+      Stdlib.Error (Error.Decode { message; raw_body = Some raw })
   | Stdlib.Ok json -> (
       match Json.string_member "value" json with
       | Some value ->
-          Stdlib.Ok { value; expires_at = Json.int_member "expires_at" json; raw = Some raw }
+          Stdlib.Ok
+            {
+              value;
+              expires_at = Json.int_member "expires_at" json;
+              raw = Some raw;
+            }
       | None ->
           Stdlib.Error
-            (A.Decode_error
+            (Error.Decode
                {
-                 provider = "openai";
                  message = "Realtime client secret response missing value";
-                 raw = Some raw;
+                 raw_body = Some raw;
                }))
 
 let create_client_secret ?base_url client ~api_key session =
   let request = client_secret_request ?base_url ~api_key session in
   Eta_http.request client request
   |> Eta_observability.suppress_observability
-  |> E.bind_error (fun error -> E.fail (A.Eta_http_error error))
+  |> E.bind_error (fun error -> E.fail (Error.Http error))
   |> E.bind (fun (response : Eta_http.Response.t) ->
          read_response_body response.Eta_http.Response.body
          |> E.bind (fun raw ->
@@ -147,8 +151,7 @@ let create_client_secret ?base_url client ~api_key session =
                   | Stdlib.Error error -> E.fail error
                 else
                   E.fail
-                    (Openai_codec.decode_error ~provider:"openai"
-                       ~status:response.status
+                    (Error.decode ~status:response.status
                        ~headers:response.headers raw)))
 
 type client_event =
@@ -171,14 +174,7 @@ type server_event =
   | Response_done of A.raw_json option
   | Input_audio_buffer_committed
   | Server_error of server_error
-  | Server_decode_error of { message : string; raw : A.raw_json option }
   | Raw_server_event of { type_ : string option; raw : A.raw_json }
-
-type codec_error = Unsupported_binary_message
-
-let codec_error_message = function
-  | Unsupported_binary_message ->
-      "OpenAI Realtime sent binary WebSocket message"
 
 let audio_data_base64 = function
   | A.Base64 value -> value
@@ -216,28 +212,40 @@ let server_error_json raw json =
 
 let decode_server_event raw =
   match Json.parse raw with
-  | Stdlib.Error message -> Server_decode_error { message; raw = Some raw }
+  | Stdlib.Error message ->
+      Stdlib.Error (Error.Decode { message; raw_body = Some raw })
   | Stdlib.Ok json -> (
       match Json.string_member "type" json with
-      | Some "session.created" -> Session_created (Some raw)
+      | Some "session.created" -> Stdlib.Ok (Session_created (Some raw))
       | Some "response.output_audio.delta" -> (
           match Json.string_member "delta" json with
-          | Some delta -> Response_audio_delta delta
-          | None -> Server_decode_error { message = "audio delta missing delta"; raw = Some raw })
+          | Some delta -> Stdlib.Ok (Response_audio_delta delta)
+          | None ->
+              Stdlib.Error
+                (Error.Decode
+                   {
+                     message = "audio delta missing delta";
+                     raw_body = Some raw;
+                   }))
       | Some "response.output_text.delta" -> (
           match Json.string_member "delta" json with
-          | Some delta -> Response_text_delta delta
-          | None -> Server_decode_error { message = "text delta missing delta"; raw = Some raw })
-      | Some "response.done" | Some "response.completed" -> Response_done (Some raw)
-      | Some "input_audio_buffer.committed" -> Input_audio_buffer_committed
-      | Some "error" -> server_error_json raw json
-      | type_ -> Raw_server_event { type_; raw })
+          | Some delta -> Stdlib.Ok (Response_text_delta delta)
+          | None ->
+              Stdlib.Error
+                (Error.Decode
+                   { message = "text delta missing delta"; raw_body = Some raw }))
+      | Some "response.done" | Some "response.completed" ->
+          Stdlib.Ok (Response_done (Some raw))
+      | Some "input_audio_buffer.committed" ->
+          Stdlib.Ok Input_audio_buffer_committed
+      | Some "error" -> Stdlib.Ok (server_error_json raw json)
+      | type_ -> Stdlib.Ok (Raw_server_event { type_; raw }))
 
 module Codec = struct
   type nonrec session = session
   type nonrec client_event = client_event
   type nonrec server_event = server_event
-  type nonrec error = codec_error
+  type error = Error.t
 
   let encode_session session =
     A.Realtime.Text (client_event_to_string (Session_update session))
@@ -246,6 +254,12 @@ module Codec = struct
     A.Realtime.Text (client_event_to_string event)
 
   let decode_server_event = function
-    | A.Realtime.Text raw -> Stdlib.Ok (decode_server_event raw)
-    | A.Realtime.Binary _ -> Stdlib.Error Unsupported_binary_message
+    | A.Realtime.Text raw -> decode_server_event raw
+    | A.Realtime.Binary _ ->
+        Stdlib.Error
+          (Error.Decode
+             {
+               message = "OpenAI Realtime sent binary WebSocket message";
+               raw_body = None;
+             })
 end

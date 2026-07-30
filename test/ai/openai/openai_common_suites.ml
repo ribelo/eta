@@ -34,9 +34,16 @@ let read_fixture = Eta_ai_test_support.read_fixture
 let expect_ok = Eta_ai_test_support.expect_ok
 
 let expect_unsupported label = function
-  | Stdlib.Error (A.Unsupported { feature; _ }) -> feature
+  | Stdlib.Error (O.Error.Unsupported feature) -> feature
   | Stdlib.Error _ -> Alcotest.fail ("expected Unsupported: " ^ label)
   | Stdlib.Ok _ -> Alcotest.fail ("expected Error: " ^ label)
+
+let expect_invalid_request label = function
+  | Stdlib.Error (O.Error.Invalid_request message) -> message
+  | Stdlib.Error _ -> Alcotest.fail ("expected Invalid_request: " ^ label)
+  | Stdlib.Ok _ -> Alcotest.fail ("expected Error: " ^ label)
+
+let project err = A.project_ai_error (O.Error.to_ai_error err)
 
 let contains ~needle value =
   let needle_len = String.length needle in
@@ -51,6 +58,10 @@ let contains ~needle value =
 
 let require_contains label ~needle value =
   Alcotest.(check bool) label true (contains ~needle value)
+
+let check_attr label expected attrs key =
+  Alcotest.(check (option string)) label (Some expected)
+    (List.assoc_opt key attrs)
 
 let weather_schema =
   "{\"type\":\"object\",\"required\":[\"location\"],\"properties\":{\"location\":{\"type\":\"string\"}},\"additionalProperties\":false}"
@@ -312,7 +323,7 @@ let test_responses_reasoning_levels () =
   List.iter
     (fun reasoning ->
       O.encode_responses (responses_request ~reasoning ())
-      |> expect_unsupported "invalid reasoning" |> ignore)
+      |> expect_invalid_request "invalid reasoning" |> ignore)
     [ ""; " "; "unknown" ];
   O.encode_chat (chat_request ~reasoning:"high" ())
   |> expect_unsupported "Chat Completions reasoning" |> ignore
@@ -385,7 +396,7 @@ let test_openai_responses_field_policy () =
   List.iter
     (fun (label, request) ->
       match O.encode_responses request with
-      | Stdlib.Error (A.Unsupported { provider = "openai"; feature }) ->
+      | Stdlib.Error (O.Error.Unsupported feature) ->
           require_contains label ~needle:label feature
       | Stdlib.Error _ -> Alcotest.fail ("unexpected " ^ label ^ " rejection")
       | Stdlib.Ok _ -> Alcotest.fail ("expected " ^ label ^ " rejection"))
@@ -438,6 +449,51 @@ let test_decode_chat_usage_details () =
   Alcotest.(check (option int)) "reasoning output" (Some 3)
     usage.A.output_tokens.reasoning
 
+let test_decode_chat_schema_regressions () =
+  (match O.decode_chat {|{"choices":[{}]}|} with
+  | Stdlib.Error (O.Error.Decode { message; _ }) ->
+      require_contains "missing message diagnostic" ~needle:"missing message" message
+  | _ -> Alcotest.fail "missing choice message must be a decode failure");
+  (match O.decode_chat {|{"choices":[{"message":"bad"}]}|} with
+  | Stdlib.Error (O.Error.Decode { message; _ }) ->
+      require_contains "non-object message diagnostic" ~needle:"missing message"
+        message
+  | _ -> Alcotest.fail "non-object choice message must be a decode failure");
+  let response =
+    O.decode_chat
+      {|{"choices":[{"message":{"content":"one"},"finish_reason":"stop"},{"message":{"content":"two"},"finish_reason":"length"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}|}
+    |> expect_ok "multi-choice chat"
+  in
+  (match response.finish_reasons with
+  | [ A.Stop; A.Length ] -> ()
+  | _ -> Alcotest.fail "finish reasons from every choice must be retained");
+  let usage = Option.get response.usage in
+  Alcotest.(check (option string)) "default raw prompt token name" (Some "1")
+    (List.assoc_opt "prompt_tokens" usage.raw);
+  Alcotest.(check (option string)) "no renamed default input token" None
+    (List.assoc_opt "input_tokens" usage.raw);
+  let codec_response =
+    Eta_ai_openai_codec.decode_chat ~provider:"probe"
+      {|{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":4,"completion_tokens":5,"total_tokens":9}}|}
+    |> expect_ok "direct codec default usage names"
+  in
+  let codec_usage = Option.get codec_response.usage in
+  Alcotest.(check (option string)) "codec default prompt token name" (Some "4")
+    (List.assoc_opt "prompt_tokens" codec_usage.raw);
+  Alcotest.(check (option string)) "codec default does not rename input token" None
+    (List.assoc_opt "input_tokens" codec_usage.raw);
+  let tool_response =
+    O.decode_chat
+      {|{"choices":[{"message":{"tool_calls":[{"function":{"name":"weather","arguments":{"city":"Warsaw"}}}]}}]}|}
+    |> expect_ok "missing tool id"
+  in
+  match assistant_tool_calls tool_response.message with
+  | [ call ] ->
+      Alcotest.(check string) "missing tool id defaults empty" "" call.id;
+      Alcotest.(check string) "non-string arguments retained" "{\"city\":\"Warsaw\"}"
+        call.arguments_json
+  | _ -> Alcotest.fail "tool call without id must be retained"
+
 let test_decode_tool_fixture () =
   let response =
     O.decode_chat (read_fixture "chat_tool_completion.json")
@@ -488,16 +544,21 @@ let test_decode_responses_failed_status_is_error () =
     |}
   in
   match O.decode_responses raw with
-  | Error (A.Provider_error { code = Some "server_error"; message; _ }) ->
+  | Error
+      (O.Error.Provider_response
+        { code = Some (`String "server_error"); message = Some message; _ }) ->
       Alcotest.(check string) "message" "model crashed" message
   | Error other ->
       Alcotest.failf "wrong error constructor: %s"
         (match other with
-        | A.Provider_error _ -> "provider"
-        | A.Decode_error _ -> "decode"
-        | A.Unsupported _ -> "unsupported"
-        | A.Invalid_tool _ -> "invalid_tool"
-        | A.Eta_http_error _ -> "http")
+        | O.Error.Provider _ -> "provider"
+        | O.Error.Provider_response _ -> "provider_response"
+        | O.Error.Decode _ -> "decode"
+        | O.Error.Unsupported _ -> "unsupported"
+        | O.Error.Invalid_tool _ -> "invalid_tool"
+        | O.Error.Http _ -> "http"
+        | O.Error.Unknown_response _ -> "unknown"
+        | O.Error.Invalid_request _ -> "invalid_request")
   | Ok response ->
       Alcotest.failf
         "failed provider response decoded as Ok; finish_reasons length=%d"
@@ -571,9 +632,9 @@ let test_stream_done_allows_surrounding_whitespace () =
 let test_stream_fixture () =
   with_runtime @@ fun rt ->
   let stream =
-    A.stream_of_body (O.provider ()) (body_of_fixture "responses_stream.sse")
+    O.stream_of_body (O.provider ()) (body_of_fixture "responses_stream.sse")
   in
-  let events = run_ok rt "read stream fixture" (A.read_stream_events stream) in
+  let events = run_ok rt "read stream fixture" (O.read_stream_events stream) in
   Alcotest.(check string) "text" "The weather is " (stream_text events);
   Alcotest.(check string)
     "tool args" "{\"location\":\"Warsaw\"}" (stream_tool_args events);
@@ -624,6 +685,21 @@ let test_responses_runner_uses_eta_http_and_suppresses_transport_span () =
 
 let test_responses_runner_provider_error () =
   with_runtime @@ fun rt ->
+  let decode_error_hit = ref false in
+  let base = O.responses_provider () in
+  let provider =
+    {
+      base with
+      A.transport =
+        {
+          base.transport with
+          A.decode_error =
+            (fun ~status:_ ~headers:_ _ ->
+              decode_error_hit := true;
+              A.Invalid_request { provider = "wrong"; message = "wrong" });
+        };
+    }
+  in
   let captured = ref None in
   let headers =
     H.Core.Header.unsafe_of_list
@@ -636,20 +712,30 @@ let test_responses_runner_provider_error () =
   in
   match
     B.run rt
-      (O.responses client ~api_key:(A.api_key "sk-test") (responses_request ()))
+      (O.responses ~provider client ~api_key:(A.api_key "sk-test")
+         (responses_request ()))
   with
   | Eta.Exit.Error
       (Eta.Cause.Fail
-        (A.Provider_error
+        (O.Error.Provider
           {
-            provider = "openai";
-            status = Some 429;
-            code = Some "rate_limit_exceeded";
-            message = "Rate limit reached";
-            raw = Some _;
-            retry_after_s = Some 9;
+            status = 429;
+            headers;
+            payload =
+              Some
+                {
+                  message = Some "Rate limit reached";
+                  type_ = Some "rate_limit_error";
+                  code = Some (`String "rate_limit_exceeded");
+                  _;
+                };
+            raw_body;
           } as error)) ->
-      let failure = A.project_ai_error error in
+      Alcotest.(check (option string)) "retry-after header" (Some "9")
+        (H.Core.Header.get "retry-after" headers);
+      Alcotest.(check bool) "aierr-2b3g raw body retained" true
+        (contains ~needle:"Rate limit reached" raw_body);
+      let failure = project error in
       Alcotest.(check string)
         "category" "transient"
         (A.ai_error_category_to_string failure.category);
@@ -659,11 +745,13 @@ let test_responses_runner_provider_error () =
       Alcotest.(check bool) "message retained in diagnostic" true
         (contains ~needle:"Rate limit reached" failure.diagnostic);
       Alcotest.(check bool) "raw body omitted from diagnostic" false
-        (contains ~needle:"raw=" failure.diagnostic)
+        (contains ~needle:"raw=" failure.diagnostic);
+      Alcotest.(check bool)
+        "nominal runner owns non-success decoding" false !decode_error_hit
   | Eta.Exit.Ok _ -> Alcotest.fail "expected provider error"
   | Eta.Exit.Error cause ->
       Alcotest.failf "unexpected error: %a"
-        (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<ai-error>"))
+        (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<openai-error>"))
         cause
 
 let test_openai_decode_error_projects_categories () =
@@ -676,9 +764,13 @@ let test_openai_decode_error_projects_categories () =
       "{\"error\":{\"message\":\"Rate limit reached\",\"type\":\"rate_limit_error\",\"code\":\"rate_limit_exceeded\"}}"
   in
   (match rate_limit with
-  | A.Provider_error { retry_after_s = Some 15; code = Some "rate_limit_exceeded"; _ }
-    ->
-      let failure = A.project_ai_error rate_limit in
+  | O.Error.Provider
+      {
+        payload =
+          Some { code = Some (`String "rate_limit_exceeded"); _ };
+        _;
+      } ->
+      let failure = project rate_limit in
       Alcotest.(check string)
         "rate limit category" "transient"
         (A.ai_error_category_to_string failure.category);
@@ -688,7 +780,7 @@ let test_openai_decode_error_projects_categories () =
     O.decode_error ~status:429 ~headers:H.Core.Header.empty
       "{\"error\":{\"message\":\"You exceeded your current quota\",\"code\":\"insufficient_quota\"}}"
   in
-  let quota_failure = A.project_ai_error quota in
+  let quota_failure = project quota in
   Alcotest.(check string)
     "quota category" "quota_budget"
     (A.ai_error_category_to_string quota_failure.category);
@@ -697,7 +789,7 @@ let test_openai_decode_error_projects_categories () =
     O.decode_error ~status:400 ~headers:H.Core.Header.empty
       "{\"error\":{\"message\":\"This model's maximum context length is 128000 tokens\",\"code\":\"context_length_exceeded\"}}"
   in
-  let context_failure = A.project_ai_error context in
+  let context_failure = project context in
   Alcotest.(check string)
     "context category" "context_overflow"
     (A.ai_error_category_to_string context_failure.category);
@@ -706,7 +798,7 @@ let test_openai_decode_error_projects_categories () =
     O.decode_error ~status:400 ~headers:H.Core.Header.empty
       "{\"error\":{\"message\":\"Billing hard limit reached\",\"code\":\"billing_hard_limit_reached\"}}"
   in
-  let billing_failure = A.project_ai_error billing in
+  let billing_failure = project billing in
   Alcotest.(check string)
     "billing category" "billing"
     (A.ai_error_category_to_string billing_failure.category);
@@ -731,7 +823,7 @@ let test_stream_runner () =
     run_ok rt "stream runner"
       (O.stream_responses client ~api_key:(A.api_key "sk-test")
          (responses_request ())
-      |> E.bind A.read_stream_events)
+      |> E.bind O.read_stream_events)
   in
   Alcotest.(check string)
     "streamed tool args" "{\"location\":\"Warsaw\"}" (stream_tool_args events);
@@ -898,13 +990,13 @@ let test_transcription_request_rejects_multipart_header_injection () =
   let field_error =
     O.transcription_request ~api_key:(A.api_key "sk-test")
       (make_request ~extra_fields:[ ("bad\r\nname", "value") ] ())
-    |> expect_unsupported "transcription extra field name"
+    |> expect_invalid_request "transcription extra field name"
   in
   require_contains "field name error" ~needle:"field name" field_error;
   let content_type_error =
     O.transcription_request ~api_key:(A.api_key "sk-test")
       (make_request ~content_type:"audio/wav\r\nX-Injected: yes" ())
-    |> expect_unsupported "transcription content type"
+    |> expect_invalid_request "transcription content type"
   in
   require_contains "content type error" ~needle:"content type"
     content_type_error
@@ -1018,14 +1110,22 @@ let test_realtime_decode_server_events () =
      O.Realtime.decode_server_event
        "{\"type\":\"response.output_audio.delta\",\"delta\":\"abc\"}"
    with
-  | O.Realtime.Response_audio_delta "abc" -> ()
+  | Stdlib.Ok (O.Realtime.Response_audio_delta "abc") -> ()
   | _ -> Alcotest.fail "expected audio delta");
-  match
-    O.Realtime.decode_server_event
-      "{\"type\":\"error\",\"error\":{\"code\":\"bad_request\",\"message\":\"nope\"}}"
-  with
-  | O.Realtime.Server_error { code = Some "bad_request"; message = "nope"; _ } -> ()
-  | _ -> Alcotest.fail "expected realtime error event"
+  (match
+     O.Realtime.decode_server_event
+       "{\"type\":\"error\",\"error\":{\"code\":\"bad_request\",\"message\":\"nope\"}}"
+   with
+  | Stdlib.Ok
+      (O.Realtime.Server_error
+         { code = Some "bad_request"; message = "nope"; _ }) ->
+      ()
+  | _ -> Alcotest.fail "expected realtime error event");
+  match O.Realtime.decode_server_event "{not-json" with
+  | Stdlib.Error (O.Error.Decode { raw_body = Some "{not-json"; _ }) -> ()
+  | Stdlib.Error (O.Error.Decode _) -> ()
+  | Stdlib.Ok _ -> Alcotest.fail "malformed frame must not succeed"
+  | Stdlib.Error _ -> Alcotest.fail "expected Decode for malformed frame"
 
 let test_airealtime_shared_codec_contract () =
   (* airealtime-02ky/5xcr/xem8/6gv2: the shared codec shape keeps OpenAI's
@@ -1043,9 +1143,9 @@ let test_airealtime_shared_codec_contract () =
     O.Realtime.Codec.decode_server_event
       (A.Realtime.Binary (Bytes.of_string "\000\001"))
   with
-  | Stdlib.Error error ->
-      let message = O.Realtime.codec_error_message error in
+  | Stdlib.Error (O.Error.Decode { message; _ }) ->
       require_contains "provider binary policy" ~needle:"binary" message
+  | Stdlib.Error _ -> Alcotest.fail "expected Decode for binary"
   | Stdlib.Ok _ -> Alcotest.fail "expected OpenAI binary policy error"
 
 let test_airealtime_nfad_transport_lifecycle () =
@@ -1149,10 +1249,7 @@ let test_openai_chat_tool_result_image_is_unsupported () =
     }
   in
   match O.encode_chat request with
-  | Stdlib.Error
-      (A.Unsupported
-        { provider = "openai"; feature = "tool result media content" }) ->
-      ()
+  | Stdlib.Error (O.Error.Unsupported "tool result media content") -> ()
   | Stdlib.Error _ -> Alcotest.fail "unexpected Chat Completions error"
   | Stdlib.Ok _ ->
       Alcotest.fail "Chat Completions must reject image-bearing tool results"
@@ -1212,7 +1309,7 @@ let test_decode_models_empty_ok () =
 
 let test_decode_models_malformed_shape () =
   match O.decode_models {|{"models":[]}|} with
-  | Stdlib.Error (A.Decode_error { message; _ }) ->
+  | Stdlib.Error (O.Error.Decode { message; _ }) ->
       require_contains "shape" ~needle:"data array" message
   | Stdlib.Error _ -> Alcotest.fail "expected decode shape error"
   | Stdlib.Ok _ -> Alcotest.fail "expected malformed shape failure"
@@ -1258,7 +1355,7 @@ let test_list_models_provider_error_is_safe () =
       let diagnostic =
         Format.asprintf "%a"
           (Eta.Cause.pp (fun fmt err ->
-               Format.pp_print_string fmt (A.project_ai_error err).diagnostic))
+               Format.pp_print_string fmt (project err).diagnostic))
           cause
       in
       require_contains "status or invalid" ~needle:"invalid" diagnostic;
@@ -1267,6 +1364,1415 @@ let test_list_models_provider_error_is_safe () =
       Alcotest.(check bool)
         "no bearer leak" false
         (contains ~needle:"Bearer oa-secret-key" diagnostic)
+
+let test_aierr_openai_lossless_param_code_and_headers () =
+  let header_list =
+    [
+      ("content-type", "application/json");
+      ("x-request-id", "req-openai-1");
+      ("x-duplicate", "first");
+      ("x-duplicate", "second");
+      ("retry-after", "3");
+    ]
+  in
+  let headers = H.Core.Header.unsafe_of_list header_list in
+  let raw = read_fixture "error_param_code_shapes.json" in
+  match O.decode_error ~status:400 ~headers raw with
+  | O.Error.Provider
+      {
+        status = 400;
+        headers = retained_headers;
+        payload = Some payload;
+        raw_body;
+      } ->
+      Alcotest.(check (option string)) "x-request-id" (Some "req-openai-1")
+        (H.Core.Header.get "x-request-id" retained_headers);
+      Alcotest.(check (list (pair string string)))
+        "ordered duplicate headers remain exact" header_list
+        (H.Core.Header.to_list retained_headers);
+      Alcotest.(check string) "aierr-2b3g raw body" raw raw_body;
+      Alcotest.(check (option string))
+        "message" (Some "param and code keep JSON shape") payload.message;
+      Alcotest.(check (option string))
+        "type" (Some "invalid_request_error") payload.type_;
+      (match payload.param with
+      | Some (`Assoc fields) ->
+          Alcotest.(check bool) "param object retained" true
+            (List.exists
+               (function "field", `String "tools" -> true | _ -> false)
+               fields)
+      | _ -> Alcotest.fail "param must remain uncoerced JSON object");
+      (match payload.code with
+      | Some (`Int 42) -> ()
+      | _ -> Alcotest.fail "code must remain uncoerced JSON int");
+      require_contains "unknown nested field via full JSON"
+        ~needle:"\"extra_unknown\":{\"kept\":true}"
+        (A.Json.compact payload.full);
+      require_contains "top-level unknown via full JSON"
+        ~needle:"\"request_id\":\"req_keep_me\"" (A.Json.compact payload.full);
+      (match O.Error.to_ai_error
+               (O.Error.Provider
+                  {
+                    status = 400;
+                    headers = retained_headers;
+                    payload = Some payload;
+                    raw_body;
+                  })
+       with
+      | A.Provider_error
+          { provider = "openai"; status = Some 400; retry_after_s = Some 3; _ }
+        ->
+          ()
+      | _ -> Alcotest.fail "aierr-v0dd total neutral projection")
+  | _ -> Alcotest.fail "expected lossless provider error"
+
+let test_aierr_openai_null_and_malformed_bodies () =
+  let null_raw = read_fixture "error_null_param_code.json" in
+  (match O.decode_error ~status:400 ~headers:H.Core.Header.empty null_raw with
+  | O.Error.Provider { payload = Some payload; _ } ->
+      (match payload.param with
+      | Some `Null -> ()
+      | _ -> Alcotest.fail "param null retained");
+      (match payload.code with
+      | Some `Null -> ()
+      | _ -> Alcotest.fail "code null retained")
+  | _ -> Alcotest.fail "expected provider payload for null param/code");
+  match O.decode_error ~status:502 ~headers:H.Core.Header.empty "<html>nope" with
+  | O.Error.Unknown_response { status = 502; raw_body; payload = None; _ } as err
+    ->
+      Alcotest.(check string) "malformed raw body" "<html>nope" raw_body;
+      Alcotest.(check string) "classification" "unknown_response"
+        (O.Error.classification err)
+  | _ -> Alcotest.fail "expected unknown_response for non-JSON body"
+
+let test_aierr_openai_local_codec_and_transport_classes () =
+  (* aierr-xe8o: local invalid inputs are Invalid_request; capabilities stay Unsupported. *)
+  (match O.structured_output ~name:"" ~schema_json:"{}" () with
+  | Stdlib.Error (O.Error.Invalid_tool _) -> ()
+  | _ -> Alcotest.fail "empty structured output name is invalid_tool");
+  (match O.decode_chat "not-json" with
+  | Stdlib.Error (O.Error.Decode _) -> ()
+  | _ -> Alcotest.fail "malformed chat body is decode");
+  (match O.encode_responses { (responses_request ()) with top_k = Some 1 } with
+  | Stdlib.Error (O.Error.Unsupported "top_k") -> ()
+  | _ -> Alcotest.fail "unsupported field class");
+  (match
+     O.encode_image_generation
+       {
+         A.Image.prompt = "";
+         model = None;
+         n = None;
+         size = None;
+         quality = None;
+         response_format = None;
+         user = None;
+         extra = [];
+       }
+   with
+  | Stdlib.Error (O.Error.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "blank image prompt is Invalid_request");
+  (match
+     O.transcription_request ~api_key:(A.api_key "sk")
+       {
+         A.Transcription.model = "m";
+         file =
+           {
+             filename = "a.wav";
+             content_type = "audio/wav\r\nX:1";
+             data = Bytes.of_string "RIFF";
+           };
+         language = None;
+         prompt = None;
+         response_format = None;
+         temperature = None;
+         extra_fields = [];
+       }
+   with
+  | Stdlib.Error (O.Error.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "multipart header injection is Invalid_request");
+  let http_err =
+    O.Error.Http
+      (Eta_http.Error.make ~method_:"POST" ~uri:"https://api.openai.com/v1/responses"
+         (Eta_http.Error.Total_request_timeout { timeout_ms = Some 1000 }))
+  in
+  Alcotest.(check string) "http classification" "http_error"
+    (O.Error.classification http_err);
+  match O.Error.to_ai_error http_err with
+  | A.Eta_http_error _ -> ()
+  | _ -> Alcotest.fail "http projects to Eta_http_error"
+
+let test_aierr_openai_stream_open_and_midstream_failures () =
+  (* aierr-c4cn/aierr-xe8o: stream open and midstream fail outer Error.t, never
+     Stream_error of ai_error. *)
+  with_runtime @@ fun rt ->
+  let captured = ref None in
+  let headers =
+    H.Core.Header.unsafe_of_list [ ("content-type", "application/json") ]
+  in
+  let client =
+    test_client (response_of_fixture ~status:429 ~headers "error.json") captured
+  in
+  (match
+     B.run rt
+       (O.stream_responses client ~api_key:(A.api_key "sk-test")
+          (responses_request ()))
+   with
+  | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Provider { status = 429; _ })) -> ()
+  | Eta.Exit.Ok _ -> Alcotest.fail "stream open must fail on provider HTTP error"
+  | Eta.Exit.Error _ -> Alcotest.fail "unexpected stream-open failure");
+  let nested_failed =
+    "{\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"boom\",\"type\":\"server_error\",\"code\":42,\"param\":{\"x\":1},\"extra\":true},\"id\":\"r1\"}}"
+  in
+  (match
+     O.decode_stream_event
+       { A.event = Some "response.failed"; data = nested_failed }
+   with
+  | Stdlib.Error
+      (O.Error.Provider_response
+        {
+          message = Some "boom";
+          type_ = Some "server_error";
+          code = Some (`Int 42);
+          param = Some (`Assoc [ ("x", `Int 1) ]);
+          raw = Some raw;
+          full = Some full;
+          raw_body = Some body;
+          _;
+        }) ->
+      require_contains "nested raw" ~needle:"\"extra\":true" (A.Json.compact raw);
+      require_contains "full keeps response" ~needle:"\"id\":\"r1\""
+        (A.Json.compact full);
+      Alcotest.(check string) "raw_body exact" nested_failed body
+  | Stdlib.Ok events ->
+      Alcotest.failf "midstream must fail outer result, got %d events"
+        (List.length events)
+  | Stdlib.Error _ -> Alcotest.fail "expected nested Provider_response");
+  let midstream_body =
+    "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"mid\",\"code\":\"server_error\"}}}\n\n"
+  in
+  let stream_headers =
+    H.Core.Header.unsafe_of_list [ ("content-type", "text/event-stream") ]
+  in
+  let stream_client =
+    test_client
+      (response_of_bytes ~status:200 ~headers:stream_headers midstream_body)
+      (ref None)
+  in
+  (match
+     B.run rt
+       (O.stream_responses stream_client ~api_key:(A.api_key "sk-test")
+          (responses_request ())
+       |> E.bind O.read_stream_events)
+   with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (O.Error.Provider_response { message = Some "mid"; _ })) ->
+      ()
+  | Eta.Exit.Ok events ->
+      Alcotest.failf "read_stream_events must fail midstream, got %d"
+        (List.length events)
+  | Eta.Exit.Error _ -> Alcotest.fail "unexpected midstream read failure");
+  let stream_client2 =
+    test_client
+      (response_of_bytes ~status:200 ~headers:stream_headers midstream_body)
+      (ref None)
+  in
+  match
+    B.run rt
+      (O.stream_responses stream_client2 ~api_key:(A.api_key "sk-test")
+         (responses_request ())
+      |> E.bind (fun stream -> O.read_stream_event stream))
+  with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (O.Error.Provider_response { message = Some "mid"; _ })) ->
+      ()
+  | Eta.Exit.Ok _ -> Alcotest.fail "read_stream_event must fail midstream"
+  | Eta.Exit.Error _ -> Alcotest.fail "unexpected singular midstream failure"
+
+let test_aierr_openai_total_projection_and_no_fabricated_http () =
+  (* aierr-v0dd/aierr-20g2: every case projects; of_ai_error never invents HTTP. *)
+  let cases =
+    [
+      O.Error.Http
+        (Eta_http.Error.make ~method_:"GET" ~uri:"u"
+           (Eta_http.Error.Connect_error { message = "x" }));
+      O.Error.Provider
+        {
+          status = 400;
+          headers = H.Core.Header.unsafe_of_list [ ("a", "1"); ("a", "2") ];
+          payload =
+            Some
+              {
+                message = Some "m";
+                type_ = Some "t";
+                param = Some `Null;
+                code = Some (`Int 1);
+                raw = `Assoc [ ("message", `String "m") ];
+                full = `Assoc [ ("error", `Assoc [ ("message", `String "m") ]) ];
+              };
+          raw_body = "{}";
+        };
+      O.Error.Unknown_response
+        {
+          status = 502;
+          headers = H.Core.Header.empty;
+          payload = None;
+          raw_body = "nope";
+        };
+      O.Error.Provider_response
+        {
+          status = None;
+          message = Some "failed body";
+          type_ = Some "server_error";
+          param = None;
+          code = Some (`String "server_error");
+          raw = None;
+          full = None;
+          raw_body = Some "{}";
+        };
+      O.Error.Decode { message = "d"; raw_body = None };
+      O.Error.Invalid_request "bad";
+      O.Error.Unsupported "feature";
+      O.Error.Invalid_tool { name = "t"; message = "m" };
+    ]
+  in
+  List.iter
+    (fun err ->
+      ignore (O.Error.to_ai_error err);
+      ignore (Format.asprintf "%a" O.Error.pp err))
+    cases;
+  List.iter2
+    (fun err expected ->
+      Alcotest.(check string) "classification matrix" expected
+        (O.Error.classification err))
+    cases
+    [
+      "http_error";
+      "t";
+      "unknown_response";
+      "server_error";
+      "decode_error";
+      "invalid_request";
+      "unsupported";
+      "invalid_tool";
+    ];
+  match
+    O.Error.of_ai_error
+      (A.Provider_error
+         {
+           provider = "openai";
+           status = Some 418;
+           code = Some "teapot";
+           message = "short";
+           raw = Some "{\"error\":{\"message\":\"short\"}}";
+           retry_after_s = None;
+         })
+  with
+  | O.Error.Provider_response { status = Some 418; _ } -> ()
+  | O.Error.Provider _ -> Alcotest.fail "must not fabricate HTTP envelope"
+  | _ -> Alcotest.fail "expected Provider_response from of_ai_error"
+
+let test_aierr_openai_telemetry_attrs_preserved () =
+  with_traced_runtime @@ fun rt tracer ->
+  let http =
+    Eta_http.Error.make ~method_:"GET" ~uri:"https://probe"
+      (Eta_http.Error.Connect_error { message = "down" })
+  in
+  let neutral_classifications =
+    [
+      (A.Eta_http_error http, "http_error");
+      ( A.Provider_error
+          {
+            provider = "probe";
+            status = None;
+            code = Some "remote_code";
+            message = "remote";
+            raw = None;
+            retry_after_s = None;
+          },
+        "remote_code" );
+      ( A.Provider_error
+          {
+            provider = "probe";
+            status = None;
+            code = None;
+            message = "remote";
+            raw = None;
+            retry_after_s = None;
+          },
+        "provider_error" );
+      ( A.Decode_error
+          { provider = "probe"; message = "decode"; raw = Some "raw" },
+        "decode_error" );
+      (A.Invalid_request { provider = "probe"; message = "bad" }, "invalid_request");
+      (A.Invalid_tool { name = "tool"; message = "bad" }, "invalid_tool");
+      (A.Unsupported { provider = "probe"; feature = "video" }, "unsupported");
+    ]
+  in
+  List.iter
+    (fun (error, expected) ->
+      Alcotest.(check string) "historical neutral error classification" expected
+        (A.Provider.Telemetry.ai_error_view.error_type error))
+    neutral_classifications;
+  let transport = O.provider ~base_url:"https://api.openai.test:8443" () in
+  let provider =
+    { (O.responses_provider ~base_url:"https://api.openai.test:8443" ()) with
+      A.transport }
+  in
+  let client =
+    test_client ~with_http_span:true
+      (response_of_fixture "responses.json")
+      (ref None)
+  in
+  ignore
+    (run_ok rt "telemetry responses"
+       (O.responses ~provider client ~api_key:(A.api_key "sk-test")
+          (responses_request ())));
+  let stream_headers =
+    H.Core.Header.unsafe_of_list [ ("content-type", "text/event-stream") ]
+  in
+  let stream_client =
+    test_client
+      (response_of_fixture ~headers:stream_headers "responses_stream.sse")
+      (ref None)
+  in
+  ignore
+    (run_ok rt "telemetry stream"
+       (O.stream_responses ~provider stream_client ~api_key:(A.api_key "sk-test")
+          (responses_request ())
+       |> E.bind O.read_stream_events));
+  let embedding_provider = O.provider ~base_url:"https://api.openai.test:8443" () in
+  let embedding_client =
+    test_client (response_of_fixture "embeddings.json") (ref None)
+  in
+  ignore
+    (run_ok rt "telemetry embeddings"
+       (O.embeddings ~provider:embedding_provider embedding_client
+          ~api_key:(A.api_key "sk-test") (embedding_request ())));
+  let error_headers =
+    H.Core.Header.unsafe_of_list [ ("content-type", "application/json") ]
+  in
+  let error_client =
+    test_client
+      (response_of_fixture ~status:429 ~headers:error_headers "error.json")
+      (ref None)
+  in
+  ignore
+    (B.run rt
+       (O.responses ~provider error_client ~api_key:(A.api_key "sk-test")
+          (responses_request ())));
+  let spans = Eta.Tracer.dump tracer in
+  let chat =
+    List.find
+      (fun (span : Eta.Tracer.span) -> String.equal span.name "chat gpt-4o-mini")
+      spans
+  in
+  let attrs = chat.attrs in
+  check_attr "operation" "chat" attrs "gen_ai.operation.name";
+  check_attr "provider" "openai" attrs "gen_ai.provider.name";
+  check_attr "request model" "gpt-4o-mini" attrs "gen_ai.request.model";
+  check_attr "server address" "api.openai.test" attrs "server.address";
+  check_attr "server port" "8443" attrs "server.port";
+  check_attr "response id" "resp_fixture" attrs "gen_ai.response.id";
+  check_attr "response model" "gpt-4.1-mini-2025-04-14" attrs
+    "gen_ai.response.model";
+  check_attr "finish reasons" "tool_calls" attrs "gen_ai.response.finish_reasons";
+  check_attr "input tokens" "10" attrs "gen_ai.usage.input_tokens";
+  check_attr "output tokens" "7" attrs "gen_ai.usage.output_tokens";
+  let stream_span =
+    List.find
+      (fun (span : Eta.Tracer.span) ->
+        List.assoc_opt "gen_ai.request.stream" span.attrs = Some "true")
+      spans
+  in
+  check_attr "stream flag" "true" stream_span.attrs "gen_ai.request.stream";
+  let embedding_span =
+    List.find
+      (fun (span : Eta.Tracer.span) ->
+        String.equal span.name "embeddings text-embedding-3-small")
+      spans
+  in
+  check_attr "embedding operation" "embeddings" embedding_span.attrs
+    "gen_ai.operation.name";
+  check_attr "embedding format" "float" embedding_span.attrs
+    "gen_ai.request.encoding_formats";
+  check_attr "embedding model response" "text-embedding-3-small"
+    embedding_span.attrs "gen_ai.response.model";
+  check_attr "embedding input usage" "3" embedding_span.attrs
+    "gen_ai.usage.input_tokens";
+  check_attr "embedding total usage" "3" embedding_span.attrs
+    "gen_ai.usage.total_tokens";
+  let error_span =
+    List.find
+      (fun (span : Eta.Tracer.span) ->
+        List.assoc_opt "error.type" span.attrs = Some "rate_limit_exceeded")
+      spans
+  in
+  check_attr "error type" "rate_limit_exceeded" error_span.attrs "error.type";
+  Alcotest.(check bool) "nested http span suppressed" false
+    (List.exists
+       (fun (span : Eta.Tracer.span) -> String.equal span.name "HTTP POST")
+       spans)
+
+let test_aierr_openai_no_parallel_ai_error_public_path () =
+  (* aierr-le4v: public decode_error/decode_stream_event stay on Error.t and
+     never succeed with Stream_error of ai_error. *)
+  (match O.decode_error ~status:400 ~headers:H.Core.Header.empty "{}" with
+  | O.Error.Provider _ | O.Error.Unknown_response _ -> ()
+  | _ -> Alcotest.fail "decode_error must return nominal Error.t");
+  match
+    O.decode_stream_event
+      { A.event = None; data = "{\"error\":{\"message\":\"x\"}}" }
+  with
+  | Stdlib.Error (O.Error.Provider_response _) -> ()
+  | Stdlib.Ok _ -> Alcotest.fail "must not embed Stream_error"
+  | Stdlib.Error _ -> Alcotest.fail "expected Provider_response"
+
+let test_aierr_openai_configured_callbacks_run () =
+  (* Configured provider encode/decode/stream callbacks must execute. *)
+  let encode_hit = ref false in
+  let decode_hit = ref false in
+  let stream_hit = ref false in
+  let base = O.chat_completions_provider () in
+  let provider =
+    {
+      base with
+      A.encode_chat =
+        (fun req ->
+          encode_hit := true;
+          base.encode_chat req);
+      decode_chat =
+        (fun raw ->
+          decode_hit := true;
+          base.decode_chat raw);
+      decode_stream_event =
+        (fun event ->
+          stream_hit := true;
+          base.decode_stream_event event);
+    }
+  in
+  ignore (O.Chat.encode ~provider (chat_request ()) |> expect_ok "callback encode");
+  Alcotest.(check bool) "encode callback" true !encode_hit;
+  ignore
+    (O.Chat.decode ~provider (read_fixture "chat_completion.json")
+    |> expect_ok "callback decode");
+  Alcotest.(check bool) "decode callback" true !decode_hit;
+  with_runtime @@ fun rt ->
+  let headers =
+    H.Core.Header.unsafe_of_list [ ("content-type", "text/event-stream") ]
+  in
+  let client =
+    test_client (response_of_fixture ~headers "stream_tool.sse") (ref None)
+  in
+  ignore
+    (run_ok rt "callback stream"
+       (O.Chat.stream ~provider client ~api_key:(A.api_key "sk") (chat_request ())
+       |> E.bind O.read_stream_events));
+  Alcotest.(check bool) "stream callback" true !stream_hit;
+  let stream_headers =
+    H.Core.Header.unsafe_of_list [ ("content-type", "text/event-stream") ]
+  in
+  let stream_client () =
+    test_client
+      (response_of_bytes ~headers:stream_headers "data: {}\n\n") (ref None)
+  in
+  let outer =
+    {
+      base with
+      A.decode_stream_event =
+        (fun _ ->
+          Stdlib.Error
+            (A.Decode_error
+               { provider = "openai"; message = "outer callback"; raw = None }));
+    }
+  in
+  (match
+     B.run rt
+       (O.Chat.stream ~provider:outer (stream_client ()) ~api_key:(A.api_key "k")
+          (chat_request ())
+       |> E.bind O.read_stream_event)
+   with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail (O.Error.Decode { message = "outer callback"; _ })) ->
+      ()
+  | _ -> Alcotest.fail "outer callback error was not promoted");
+  let embedded =
+    {
+      base with
+      A.decode_stream_event =
+        (fun _ ->
+          Stdlib.Ok
+            [
+              A.Stream_error
+                (A.Provider_error
+                   {
+                     provider = "openai";
+                     status = None;
+                     code = Some "embedded";
+                     message = "embedded callback";
+                     raw = Some "{}";
+                     retry_after_s = None;
+                   });
+            ]);
+    }
+  in
+  match
+    B.run rt
+      (O.Chat.stream ~provider:embedded (stream_client ()) ~api_key:(A.api_key "k")
+         (chat_request ())
+      |> E.bind O.read_stream_event)
+  with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (O.Error.Provider_response { message = Some "embedded callback"; _ })) ->
+      ()
+  | _ -> Alcotest.fail "embedded callback error was not promoted"
+
+let test_aierr_openai_callback_matrix () =
+  let chat_base = O.chat_completions_provider () in
+  let chat_decode_hit = ref false in
+  let chat_provider =
+    {
+      chat_base with
+      A.encode_chat = (fun _ -> Stdlib.Ok "{\"chat_callback\":true}");
+      decode_chat =
+        (fun raw ->
+          chat_decode_hit := true;
+          match chat_base.decode_chat raw with
+          | Stdlib.Ok response ->
+              Stdlib.Ok { response with A.model = Some "chat-callback-model" }
+          | Stdlib.Error _ as error -> error);
+    }
+  in
+  let chat_request_built =
+    O.Chat.request ~provider:chat_provider ~api_key:(A.api_key "k")
+      (chat_request ())
+    |> expect_ok "chat callback request"
+  in
+  require_contains "chat encode sentinel" ~needle:"chat_callback"
+    (request_body_string chat_request_built);
+  let embedding_base = O.chat_completions_provider () in
+  let embedding_encode_hit = ref false in
+  let embedding_decode_hit = ref false in
+  let embedding_provider =
+    {
+      embedding_base with
+      A.embeddings_path = Some "/v1/embeddings";
+      encode_embeddings =
+        (fun _ ->
+          embedding_encode_hit := true;
+          Stdlib.Ok "{\"embedding_callback\":true}");
+      decode_embeddings =
+        (fun raw ->
+          embedding_decode_hit := true;
+          match
+            Eta_ai_openai_codec.decode_embeddings ~provider:"openai" raw
+          with
+          | Stdlib.Ok response ->
+              Stdlib.Ok
+                { response with A.Embedding.model = Some "embedding-callback-model" }
+          | Stdlib.Error _ as error -> error);
+    }
+  in
+  let embedding_request : A.Embedding.request =
+    {
+      model = "text-embedding-3-small";
+      input = A.Embedding.Text "hello";
+      encoding_format = Some "float";
+      dimensions = None;
+      user = None;
+    }
+  in
+  let embedding_built =
+    O.Embeddings.request ~provider:embedding_provider ~api_key:(A.api_key "k")
+      embedding_request
+    |> expect_ok "embedding callback request"
+  in
+  require_contains "embedding encode sentinel" ~needle:"embedding_callback"
+    (request_body_string embedding_built);
+  let responses_base = O.responses_provider () in
+  let responses_encode_hit = ref false in
+  let responses_decode_hit = ref false in
+  let responses_provider =
+    {
+      A.encode_responses =
+        (fun request ->
+          responses_encode_hit := true;
+          match responses_base.encode_responses request with
+          | Stdlib.Ok raw -> (
+              match A.Json.parse raw with
+              | Stdlib.Ok (`Assoc fields) ->
+                  Stdlib.Ok
+                    (A.Json.to_string
+                       (`Assoc (("responses_callback", `Bool true) :: fields)))
+              | _ -> Alcotest.fail "built-in Responses encoder returned non-object")
+          | Stdlib.Error _ as error -> error);
+      transport =
+        {
+          responses_base.transport with
+          A.decode_chat =
+            (fun raw ->
+              responses_decode_hit := true;
+              match responses_base.transport.decode_chat raw with
+              | Stdlib.Ok response ->
+                  Stdlib.Ok
+                    { response with A.model = Some "responses-callback-model" }
+              | Stdlib.Error _ as error -> error);
+        };
+    }
+  in
+  let responses_built =
+    O.responses_request ~provider:responses_provider ~api_key:(A.api_key "k")
+      (responses_request ())
+    |> expect_ok "Responses callback request"
+  in
+  require_contains "Responses encode sentinel" ~needle:"responses_callback"
+    (request_body_string responses_built);
+  Alcotest.(check bool) "embedding encode callback" true !embedding_encode_hit;
+  Alcotest.(check bool) "Responses encode callback" true !responses_encode_hit;
+  with_runtime @@ fun rt ->
+  let chat_client =
+    test_client (response_of_fixture "chat_completion.json") (ref None)
+  in
+  let chat_response =
+    run_ok rt "chat callback run"
+      (O.Chat.run ~provider:chat_provider chat_client ~api_key:(A.api_key "k")
+         (chat_request ()))
+  in
+  Alcotest.(check (option string)) "chat decoder sentinel"
+    (Some "chat-callback-model") chat_response.model;
+  let embedding_client =
+    test_client (response_of_fixture "embeddings.json") (ref None)
+  in
+  let embedding_response =
+    run_ok rt "embedding callback run"
+      (O.Embeddings.run ~provider:embedding_provider embedding_client
+         ~api_key:(A.api_key "k") embedding_request)
+  in
+  Alcotest.(check (option string)) "embedding decoder sentinel"
+    (Some "embedding-callback-model") embedding_response.model;
+  let responses_client =
+    test_client (response_of_fixture "responses.json") (ref None)
+  in
+  let responses_response =
+    run_ok rt "Responses callback run"
+      (O.Chat.responses ~provider:responses_provider responses_client
+         ~api_key:(A.api_key "k") (responses_request ()))
+  in
+  Alcotest.(check (option string)) "Responses decoder sentinel"
+    (Some "responses-callback-model") responses_response.model;
+  Alcotest.(check bool) "chat decode callback" true !chat_decode_hit;
+  Alcotest.(check bool) "embedding decode callback" true !embedding_decode_hit;
+  Alcotest.(check bool) "Responses decode callback" true !responses_decode_hit
+
+let test_aierr_openai_custom_invalid_request_stays_provider_response () =
+  (* Genuine custom-provider invalid_request is not local Invalid_request. *)
+  match
+    O.Error.of_ai_error
+      (A.Provider_error
+         {
+           provider = "custom";
+           status = None;
+           code = Some "invalid_request";
+           message = "from provider";
+           raw = None;
+           retry_after_s = None;
+         })
+  with
+  | O.Error.Provider_response
+      { message = Some "from provider"; code = Some (`String "invalid_request"); _ }
+    ->
+      ()
+  | O.Error.Invalid_request _ ->
+      Alcotest.fail "must not classify provider invalid_request as local"
+  | _ -> Alcotest.fail "expected Provider_response"
+
+let test_aierr_openai_codec_lossless_stream_api () =
+  (* aierr-ytbq: codec lossless stream API is provider-neutral. *)
+  match
+    Eta_ai_openai_codec.decode_stream_event_lossless ~provider:"openai"
+      {
+        A.event = Some "response.failed";
+        data =
+          "{\"type\":\"response.failed\",\"error\":{\"message\":\"x\",\"code\":\"c\",\"param\":null}}";
+      }
+  with
+  | Stdlib.Error
+      (Eta_ai_openai_codec.Provider
+        { payload = { message = Some "x"; param = Some `Null; _ }; _ }) ->
+      ()
+  | Stdlib.Ok _ -> Alcotest.fail "lossless must fail outer result"
+  | Stdlib.Error _ -> Alcotest.fail "expected Provider stream_failure"
+
+let test_aierr_openai_codec_lossless_validation_apis () =
+  let module C = Eta_ai_openai_codec in
+  (match C.reasoning_level_of_string_lossless "high" with
+  | Stdlib.Ok C.High -> ()
+  | _ -> Alcotest.fail "reasoning lossless success");
+  (match C.reasoning_level_of_string_lossless "impossible" with
+  | Stdlib.Error (C.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "reasoning lossless invalid");
+  (match C.temperature_json_lossless (Some nan) with
+  | Stdlib.Error (C.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "temperature lossless invalid");
+  (match C.optional_float_json_lossless "top_p" (Some infinity) with
+  | Stdlib.Error (C.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "optional float lossless invalid");
+  let schema_value _ raw =
+    match A.Json.parse raw with
+    | Stdlib.Ok json ->
+        (Stdlib.Ok json : (A.Json.t, C.codec_failure) result)
+    | Stdlib.Error message ->
+        Stdlib.Error (C.Decode { message; raw_body = Some raw })
+  in
+  (match
+     C.structured_output_lossless ~schema_value ~name:"" ~schema_json:"{}" ()
+   with
+  | Stdlib.Error (C.Invalid_tool _) -> ()
+  | _ -> Alcotest.fail "structured output lossless invalid");
+  (match
+     C.encode_chat_lossless ~schema_value
+       { (chat_request ()) with temperature = Some nan }
+   with
+  | Stdlib.Error (C.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "chat lossless invalid");
+  (match
+     C.encode_chat_lossless
+       ~schema_value:(fun _ _ -> Stdlib.Error (C.Invalid_request "sentinel"))
+       (chat_request ())
+   with
+  | Stdlib.Error (C.Invalid_request "sentinel") -> ()
+  | _ -> Alcotest.fail "chat schema callback Invalid_request must survive");
+  (match C.encode_embeddings_lossless (embedding_request ()) with
+  | Stdlib.Ok _ -> ()
+  | _ -> Alcotest.fail "embeddings lossless success");
+  (match
+     C.encode_responses_lossless ~provider:"openai"
+       ~map_codec_failure:Fun.id
+       ~encode_tool:(fun _ -> Stdlib.Ok (A.Json.object_ []))
+       { (responses_request ()) with temperature = Some nan }
+   with
+  | Stdlib.Error (C.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "Responses lossless invalid");
+  let check_callback callback assert_error =
+    match
+      C.encode_responses_lossless ~provider:"openai"
+        ~map_codec_failure:O.Error.of_codec_failure
+        ~encode_tool:(fun _ -> Stdlib.Error callback)
+        (responses_request ())
+    with
+    | Stdlib.Error actual -> assert_error actual
+    | Stdlib.Ok _ -> Alcotest.fail "Responses callback error was discarded"
+  in
+  check_callback (O.Error.Invalid_request "tool-invalid") (function
+    | O.Error.Invalid_request "tool-invalid" -> ()
+    | _ -> Alcotest.fail "Responses Invalid_request callback changed");
+  check_callback
+    (O.Error.Decode { message = "tool-decode"; raw_body = Some "decode-raw" })
+    (function
+      | O.Error.Decode
+          { message = "tool-decode"; raw_body = Some "decode-raw" } -> ()
+      | _ -> Alcotest.fail "Responses Decode callback changed");
+  check_callback
+    (O.Error.Provider_response
+       {
+         status = Some 409;
+         message = Some "tool-provider";
+         type_ = Some "conflict";
+         param = Some (`Assoc [ ("field", `String "tool") ]);
+         code = Some (`Assoc [ ("kind", `String "conflict") ]);
+         raw = Some (`Assoc [ ("message", `String "nested") ]);
+         full = Some (`Assoc [ ("unknown", `Bool true) ]);
+         raw_body = Some "provider-raw";
+       })
+    (function
+      | O.Error.Provider_response
+          {
+            status = Some 409;
+            message = Some "tool-provider";
+            type_ = Some "conflict";
+            param = Some (`Assoc [ ("field", `String "tool") ]);
+            code = Some (`Assoc [ ("kind", `String "conflict") ]);
+            raw = Some (`Assoc [ ("message", `String "nested") ]);
+            full = Some (`Assoc [ ("unknown", `Bool true) ]);
+            raw_body = Some "provider-raw";
+          } -> ()
+      | _ -> Alcotest.fail "Responses Provider_response callback lost facts");
+  let callback_http =
+    Eta_http.Error.make ~method_:"POST" ~uri:"https://api.openai.com/v1"
+      (Eta_http.Error.Connect_error { message = "tool-transport" })
+  in
+  check_callback (O.Error.Http callback_http) (function
+    | O.Error.Http
+        {
+          Eta_http.Error.context =
+            { method_ = "POST"; uri = "https://api.openai.com/v1"; _ };
+          kind = Eta_http.Error.Connect_error { message = "tool-transport" };
+        } -> ()
+    | _ -> Alcotest.fail "Responses Http callback changed");
+  match
+    C.encode_speech_lossless
+      {
+        A.Speech.model = "tts";
+        input = "hello";
+        voice = "alloy";
+        response_format = None;
+        speed = Some nan;
+        instructions = None;
+        extra = [];
+      }
+  with
+  | Stdlib.Error (C.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "speech lossless invalid"
+
+let test_aierr_openai_validation_classes () =
+  (* Oracle A.4: every named validation class. *)
+  (match O.encode_chat { (chat_request ()) with temperature = Some nan } with
+  | Stdlib.Error (O.Error.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "non-finite chat temperature");
+  (match
+     O.encode_embeddings
+       {
+         model = "text-embedding-3-small";
+         input = A.Embedding.Texts [];
+         encoding_format = None;
+         dimensions = None;
+         user = None;
+       }
+   with
+  | Stdlib.Error (O.Error.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "empty embedding batch");
+  (match
+     O.encode_embeddings
+       {
+         model = "text-embedding-3-small";
+         input = A.Embedding.Text "x";
+         encoding_format = None;
+         dimensions = Some 0;
+         user = None;
+       }
+   with
+  | Stdlib.Error (O.Error.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "nonpositive dimensions");
+  (match
+     O.encode_embeddings
+       {
+         model = "text-embedding-3-small";
+         input = A.Embedding.Text "x";
+         encoding_format = Some "binary";
+         dimensions = None;
+         user = None;
+       }
+   with
+  | Stdlib.Error (O.Error.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "invalid encoding format");
+  (match
+     O.encode_embeddings
+       {
+         model = "text-embedding-3-small";
+         input = A.Embedding.Text "x";
+         encoding_format = None;
+         dimensions = None;
+         user = Some "  ";
+       }
+   with
+  | Stdlib.Error (O.Error.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "blank embedding user");
+  (match
+     O.encode_responses
+       { (responses_request ()) with temperature = Some infinity }
+   with
+  | Stdlib.Error (O.Error.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "non-finite responses temperature");
+  (match O.encode_responses { (responses_request ()) with top_p = Some nan } with
+  | Stdlib.Error (O.Error.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "non-finite top_p");
+  match O.encode_responses { (responses_request ()) with min_p = Some nan } with
+  | Stdlib.Error (O.Error.Unsupported "min_p") -> ()
+  | _ -> Alcotest.fail "min_p is unsupported OpenAI field"
+
+let test_aierr_openai_builder_runner_validation () =
+  let bad_chat = { (chat_request ()) with temperature = Some nan } in
+  let bad_embedding : A.Embedding.request =
+    {
+      model = "text-embedding-3-small";
+      input = A.Embedding.Texts [];
+      encoding_format = None;
+      dimensions = None;
+      user = None;
+    }
+  in
+  let bad_responses =
+    { (responses_request ()) with temperature = Some infinity }
+  in
+  let expect_builder label = function
+    | Stdlib.Error (O.Error.Invalid_request _) -> ()
+    | _ -> Alcotest.fail (label ^ " builder must return Invalid_request")
+  in
+  O.chat_completions_request ~api_key:(A.api_key "k") bad_chat
+  |> expect_builder "chat";
+  O.embeddings_request ~api_key:(A.api_key "k") bad_embedding
+  |> expect_builder "embeddings";
+  O.responses_request ~api_key:(A.api_key "k") bad_responses
+  |> expect_builder "responses";
+  with_runtime @@ fun rt ->
+  let requests = ref 0 in
+  let client =
+    H.Client.make_custom ~protocol:H.Client.H1
+      ~request:(fun _ ->
+        incr requests;
+        E.pure (response_of_fixture "responses.json"))
+      ~stats:(fun () -> E.pure (Some zero_stats))
+      ~shutdown:(fun () -> E.unit)
+  in
+  let expect_runner label eff =
+    match B.run rt eff with
+    | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Invalid_request _)) -> ()
+    | _ -> Alcotest.fail (label ^ " runner must fail Invalid_request")
+  in
+  expect_runner "chat"
+    (O.chat_completions client ~api_key:(A.api_key "k") bad_chat);
+  expect_runner "embeddings"
+    (O.embeddings client ~api_key:(A.api_key "k") bad_embedding);
+  expect_runner "responses"
+    (O.responses client ~api_key:(A.api_key "k") bad_responses);
+  Alcotest.(check int) "invalid runners never reach transport" 0 !requests
+
+let test_aierr_openai_http_transport_failure () =
+  with_runtime @@ fun rt ->
+  let client =
+    H.Client.make_custom ~protocol:H.Client.H1
+      ~request:(fun _req ->
+        E.fail
+          (Eta_http.Error.make ~method_:"POST"
+             ~uri:"https://api.openai.com/v1/responses"
+             (Eta_http.Error.Connect_error { message = "refused" })))
+      ~stats:(fun () -> E.pure (Some zero_stats))
+      ~shutdown:(fun () -> E.unit)
+  in
+  match
+    B.run rt
+      (O.responses client ~api_key:(A.api_key "sk") (responses_request ()))
+  with
+  | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Http _)) -> ()
+  | Eta.Exit.Ok _ -> Alcotest.fail "expected Http transport failure"
+  | Eta.Exit.Error _ -> Alcotest.fail "unexpected transport failure shape"
+
+let test_aierr_openai_missing_vs_null_param_code () =
+  let missing =
+    O.decode_error ~status:400 ~headers:H.Core.Header.empty
+      "{\"error\":{\"message\":\"m\"}}"
+  in
+  let explicit_null =
+    O.decode_error ~status:400 ~headers:H.Core.Header.empty
+      "{\"error\":{\"message\":\"m\",\"param\":null,\"code\":null}}"
+  in
+  (match missing with
+  | O.Error.Provider { payload = Some { param = None; code = None; _ }; _ } ->
+      ()
+  | _ -> Alcotest.fail "missing param/code must be None");
+  match explicit_null with
+  | O.Error.Provider
+      { payload = Some { param = Some `Null; code = Some `Null; _ }; _ } ->
+      ()
+  | _ -> Alcotest.fail "explicit null must remain Some `Null"
+
+let test_aierr_openai_to_ai_error_semantic_fields () =
+  (* Every constructor projects to the expected ai_error shape with fields. *)
+  let http =
+    Eta_http.Error.make ~method_:"POST" ~uri:"https://api.openai.test/v1"
+      (Eta_http.Error.Connect_error { message = "refused" })
+  in
+  (match O.Error.to_ai_error (O.Error.Http http) with
+  | A.Eta_http_error projected ->
+      Alcotest.(check string) "Http projection identity"
+        (Eta_http.Error.to_string http) (Eta_http.Error.to_string projected)
+  | _ -> Alcotest.fail "Http projection");
+  (match
+     O.Error.to_ai_error
+       (O.Error.Invalid_request "local bad")
+   with
+  | A.Invalid_request { provider = "openai"; message = "local bad" } -> ()
+  | _ -> Alcotest.fail "Invalid_request projection");
+  (match O.Error.to_ai_error (O.Error.Unsupported "feat") with
+  | A.Unsupported { provider = "openai"; feature = "feat" } -> ()
+  | _ -> Alcotest.fail "Unsupported projection");
+  (match
+     O.Error.to_ai_error
+       (O.Error.Decode { message = "d"; raw_body = Some "{}" })
+   with
+  | A.Decode_error
+      { provider = "openai"; message = "d"; raw = Some "{}" } ->
+      ()
+  | _ -> Alcotest.fail "Decode projection");
+  (match
+     O.Error.to_ai_error
+       (O.Error.Invalid_tool { name = "t"; message = "m" })
+   with
+  | A.Invalid_tool { name = "t"; message = "m" } -> ()
+  | _ -> Alcotest.fail "Invalid_tool projection");
+  (match
+     O.Error.to_ai_error
+       (O.Error.Unknown_response
+          {
+            status = 502;
+            headers =
+              H.Core.Header.unsafe_of_list [ ("retry-after", "4"); ("x", "y") ];
+            payload = None;
+            raw_body = "<html>bad gateway";
+          })
+   with
+  | A.Provider_error
+      {
+        provider = "openai";
+        status = Some 502;
+        code = None;
+        message = "Unrecognized OpenAI error response";
+        raw = Some "<html>bad gateway";
+        retry_after_s = Some 4;
+      } ->
+      ()
+  | _ -> Alcotest.fail "Unknown_response projection");
+  let headers =
+    H.Core.Header.unsafe_of_list [ ("x-a", "1"); ("x-a", "2"); ("x-b", "3") ]
+  in
+  (match
+     O.Error.to_ai_error
+       (O.Error.Provider
+          {
+            status = 400;
+            headers;
+            payload =
+              Some
+                {
+                  message = Some "m";
+                  type_ = Some "invalid_request_error";
+                  param = Some (`String "p");
+                  code = Some (`String "c");
+                  raw = `Assoc [ ("message", `String "m") ];
+                  full =
+                    `Assoc
+                      [
+                        ( "error",
+                          `Assoc [ ("message", `String "m") ] );
+                      ];
+                };
+            raw_body = "{\"error\":{\"message\":\"m\"}}";
+          })
+   with
+  | A.Provider_error
+      {
+        provider = "openai";
+        status = Some 400;
+        code = Some "c";
+        message = "m";
+        raw = Some raw;
+        _;
+      } ->
+      require_contains "provider raw retained" ~needle:"message" raw
+  | _ -> Alcotest.fail "Provider projection");
+  match
+    O.Error.to_ai_error
+      (O.Error.Provider_response
+         {
+           status = None;
+           message = Some "failed";
+           type_ = Some "server_error";
+           param = None;
+           code = Some (`String "server_error");
+           raw = None;
+           full = None;
+           raw_body = Some "{}";
+         })
+  with
+  | A.Provider_error
+      {
+        provider = "openai";
+        status = None;
+        message = "failed";
+        code = Some "server_error";
+        raw = Some "{}";
+        _;
+      } ->
+      ()
+  | _ -> Alcotest.fail "Provider_response projection"
+
+let test_aierr_openai_responses_replay_invalid_request () =
+  (* Replay local validation is Invalid_request, not Unsupported. *)
+  let bad_item = "{\"type\":\"message\"}" in
+  (match
+     O.encode_responses
+       {
+         (responses_request ()) with
+         replay_items = [ bad_item ];
+       }
+   with
+  | Stdlib.Error (O.Error.Invalid_request message) ->
+      require_contains "replay item type" ~needle:"reasoning" message
+  | Stdlib.Error (O.Error.Unsupported _) ->
+      Alcotest.fail "replay item must not be Unsupported"
+  | _ -> Alcotest.fail "expected Invalid_request for non-reasoning replay");
+  (match
+     O.encode_responses
+       {
+         (responses_request ()) with
+         input = A.Responses.Text "hi";
+         replay_items = [ "{\"type\":\"reasoning\"}" ];
+       }
+   with
+  | Stdlib.Error (O.Error.Invalid_request message) ->
+      require_contains "text+replay" ~needle:"text input" message
+  | _ -> Alcotest.fail "text input + replay is Invalid_request");
+  (match
+     O.encode_responses
+       { (responses_request ()) with replay_items = [ "{not-json" ] }
+   with
+  | Stdlib.Error (O.Error.Decode { raw_body = Some "{not-json"; _ }) -> ()
+  | _ -> Alcotest.fail "malformed replay JSON is Decode");
+  match
+    O.encode_responses
+      {
+        (responses_request ()) with
+        input =
+          A.Responses.Messages [ A.User [ A.Text "only user" ] ];
+        replay_items = [ "{\"type\":\"reasoning\"}" ];
+      }
+  with
+  | Stdlib.Error (O.Error.Invalid_request message) ->
+      require_contains "missing tool call" ~needle:"tool call" message
+  | _ -> Alcotest.fail "replay without assistant tool call is Invalid_request"
+
+let test_aierr_openai_structured_output_honors_custom_encode () =
+  let encode_hit = ref false in
+  let base = O.chat_completions_provider () in
+  let provider =
+    {
+      base with
+      A.encode_chat =
+        (fun req ->
+          encode_hit := true;
+          base.encode_chat req);
+    }
+  in
+  let structured =
+    O.structured_output ~name:"weather_answer" ~schema_json:weather_schema ()
+    |> expect_ok "structured"
+  in
+  let request =
+    O.chat_completions_request ~structured_output:structured ~provider
+      ~api_key:(A.api_key "sk") (chat_request ())
+    |> expect_ok "structured request"
+  in
+  Alcotest.(check bool) "custom encode ran" true !encode_hit;
+  let body =
+    match request.body with
+    | H.Request.Fixed chunks ->
+        Bytes.to_string (Bytes.concat Bytes.empty chunks)
+    | _ -> Alcotest.fail "expected fixed body"
+  in
+  require_contains "response_format injected" ~needle:"response_format" body;
+  require_contains "schema name" ~needle:"weather_answer" body;
+  let check_invalid encoded expected =
+    let provider = { provider with A.encode_chat = (fun _ -> Stdlib.Ok encoded) } in
+    match
+      O.chat_completions_request ~structured_output:structured ~provider
+        ~api_key:(A.api_key "sk") (chat_request ())
+    with
+    | Stdlib.Error error -> expected error
+    | Stdlib.Ok _ -> Alcotest.fail "invalid callback JSON accepted"
+  in
+  check_invalid "{bad" (function
+    | O.Error.Decode { raw_body = Some "{bad"; _ } -> ()
+    | _ -> Alcotest.fail "malformed callback JSON must Decode");
+  check_invalid "[]" (function
+    | O.Error.Invalid_request _ -> ()
+    | _ -> Alcotest.fail "non-object callback JSON must be Invalid_request")
+
+let test_aierr_openai_stream_cleanup_preserves_primary () =
+  (* Midstream failure closes exactly once; finalizer failure/defect cannot
+     replace the provider failure that triggered cleanup. *)
+  with_runtime @@ fun rt ->
+  let midstream_body =
+    "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"primary-mid\"}}}\n\n"
+  in
+  let headers =
+    H.Core.Header.unsafe_of_list [ ("content-type", "text/event-stream") ]
+  in
+  let rec has_primary = function
+    | Eta.Cause.Fail
+        (O.Error.Provider_response { message = Some "primary-mid"; _ }) ->
+        true
+    | Eta.Cause.Suppressed { primary; _ } -> has_primary primary
+    | Eta.Cause.Sequential causes | Eta.Cause.Concurrent causes ->
+        List.exists has_primary causes
+    | Eta.Cause.Die _ | Eta.Cause.Interrupt _ | Eta.Cause.Finalizer _
+    | Eta.Cause.Fail _ ->
+        false
+  in
+  let run_case label release =
+    let released = ref 0 in
+    let first = ref true in
+    let body =
+      H.Body.Stream.of_reader
+        ~release:(fun () -> incr released; release ())
+        (fun () ->
+          if !first then (
+            first := false;
+            E.pure (H.Body.Stream.Chunk (Bytes.of_string midstream_body)))
+          else E.pure H.Body.Stream.End)
+    in
+    let client =
+      test_client (H.Response.make ~status:200 ~headers ~body ()) (ref None)
+    in
+    let exit =
+      B.run rt
+        (O.stream_responses client ~api_key:(A.api_key "sk-test")
+           (responses_request ())
+        |> E.bind O.read_stream_event)
+    in
+    (match exit with
+    | Eta.Exit.Error cause ->
+        if not (has_primary cause) then
+          Alcotest.failf "%s primary missing from %a" label
+            (Eta.Cause.pp O.Error.pp) cause
+    | Eta.Exit.Ok _ -> Alcotest.fail (label ^ " unexpectedly succeeded"));
+    Alcotest.(check int) (label ^ " release exactly once") 1 !released
+  in
+  run_case "successful cleanup" (fun () -> E.unit);
+  run_case "typed cleanup failure" (fun () ->
+      E.fail
+        (Eta_http.Error.make ~method_:"GET" ~uri:"stream"
+           (Eta_http.Error.Connect_error { message = "cleanup typed" })));
+  run_case "cleanup defect" (fun () -> E.die_message "cleanup defect")
+
+let test_aierr_openai_outer_and_read_cleanup_preserve_primary () =
+  with_runtime @@ fun rt ->
+  let headers =
+    H.Core.Header.unsafe_of_list [ ("content-type", "text/event-stream") ]
+  in
+  let base = O.chat_completions_provider () in
+  let outer =
+    {
+      base with
+      A.decode_stream_event =
+        (fun _ ->
+          Stdlib.Error
+            (A.Decode_error
+               { provider = "openai"; message = "outer-primary"; raw = None }));
+    }
+  in
+  let rec has_outer_primary = function
+    | Eta.Cause.Fail (O.Error.Decode { message = "outer-primary"; _ }) -> true
+    | Eta.Cause.Suppressed { primary; _ } -> has_outer_primary primary
+    | Eta.Cause.Sequential causes | Eta.Cause.Concurrent causes ->
+        List.exists has_outer_primary causes
+    | Eta.Cause.Fail _ | Eta.Cause.Die _ | Eta.Cause.Interrupt _
+    | Eta.Cause.Finalizer _ -> false
+  in
+  let run_outer ~plural label release_effect =
+    let releases = ref 0 in
+    let first = ref true in
+    let body =
+      H.Body.Stream.of_reader
+        ~release:(fun () -> incr releases; release_effect ())
+        (fun () ->
+          if !first then (
+            first := false;
+            E.pure
+              (H.Body.Stream.Chunk (Bytes.of_string "data: {}\n\n")))
+          else E.pure H.Body.Stream.End)
+    in
+    let client =
+      test_client (H.Response.make ~status:200 ~headers ~body ()) (ref None)
+    in
+    let read stream =
+      if plural then O.read_stream_events stream |> E.map ignore
+      else O.read_stream_event stream |> E.map ignore
+    in
+    (match
+       B.run rt
+         (O.Chat.stream ~provider:outer client ~api_key:(A.api_key "k")
+            (chat_request ())
+         |> E.bind read)
+     with
+    | Eta.Exit.Error cause ->
+        Alcotest.(check bool) (label ^ " primary") true
+          (has_outer_primary cause)
+    | Eta.Exit.Ok _ -> Alcotest.fail (label ^ " unexpectedly succeeded"));
+    Alcotest.(check int) (label ^ " release exactly once") 1 !releases
+  in
+  run_outer ~plural:false "outer typed cleanup" (fun () ->
+      E.fail
+        (Eta_http.Error.make ~method_:"GET" ~uri:"stream"
+           (Eta_http.Error.Connect_error { message = "cleanup-typed" })));
+  run_outer ~plural:true "outer defect cleanup plural" (fun () ->
+      E.die_message "cleanup-defect");
+  let success_releases = ref 0 in
+  let body =
+    H.Body.Stream.of_reader
+      ~release:(fun () -> incr success_releases; E.unit)
+      (let first = ref true in
+       fun () ->
+         if !first then (
+           first := false;
+           E.pure (H.Body.Stream.Chunk (Bytes.of_string "data: {}\n\n")))
+         else E.pure H.Body.Stream.End)
+  in
+  let quiet = { base with A.decode_stream_event = (fun _ -> Stdlib.Ok []) } in
+  let client =
+    test_client (H.Response.make ~status:200 ~headers ~body ()) (ref None)
+  in
+  ignore
+    (run_ok rt "plural successful cleanup"
+       (O.Chat.stream ~provider:quiet client ~api_key:(A.api_key "k")
+          (chat_request ())
+       |> E.bind O.read_stream_events));
+  Alcotest.(check int) "plural successful release exactly once" 1
+    !success_releases;
+  let read_error =
+    Eta_http.Error.make ~method_:"GET" ~uri:"stream"
+      (Eta_http.Error.Connect_error { message = "read-primary" })
+  in
+  let read_releases = ref 0 in
+  let body =
+    H.Body.Stream.of_reader
+      ~release:(fun () -> incr read_releases; E.die_message "read-cleanup-defect")
+      (fun () -> E.fail read_error)
+  in
+  let client =
+    test_client (H.Response.make ~status:200 ~headers ~body ()) (ref None)
+  in
+  let rec has_read_primary = function
+    | Eta.Cause.Fail (O.Error.Http _) -> true
+    | Eta.Cause.Suppressed { primary; _ } -> has_read_primary primary
+    | Eta.Cause.Sequential causes | Eta.Cause.Concurrent causes ->
+        List.exists has_read_primary causes
+    | Eta.Cause.Fail _ | Eta.Cause.Die _ | Eta.Cause.Interrupt _
+    | Eta.Cause.Finalizer _ -> false
+  in
+  (match
+     B.run rt
+       (O.Chat.stream ~provider:quiet client ~api_key:(A.api_key "k")
+          (chat_request ())
+       |> E.bind O.read_stream_event)
+   with
+  | Eta.Exit.Error cause ->
+      if not (has_read_primary cause) then
+        Alcotest.failf "body read primary missing from %a"
+          (Eta.Cause.pp O.Error.pp) cause
+  | Eta.Exit.Ok _ -> Alcotest.fail "body read plus release unexpectedly succeeded");
+  Alcotest.(check int) "body read failure releases exactly once" 1 !read_releases
+
+let test_aierr_openai_of_ai_error_invalid_request_roundtrip () =
+  match
+    O.Error.of_ai_error
+      (A.Invalid_request { provider = "openai"; message = "x" })
+  with
+  | O.Error.Invalid_request "x" -> ()
+  | O.Error.Provider_response _ ->
+      Alcotest.fail "must not reclassify Invalid_request as Provider_response"
+  | _ -> Alcotest.fail "expected Invalid_request roundtrip"
 
 let tests =
   [
@@ -1299,6 +2805,8 @@ let tests =
             test_decode_chat_rejects_fractional_usage_integer;
           Alcotest.test_case "chat usage details" `Quick
             test_decode_chat_usage_details;
+          Alcotest.test_case "chat schema regressions" `Quick
+            test_decode_chat_schema_regressions;
           Alcotest.test_case "tool fixture" `Quick test_decode_tool_fixture;
           Alcotest.test_case "responses fixture" `Quick
             test_decode_responses_fixture;
@@ -1326,6 +2834,50 @@ let tests =
             test_responses_runner_provider_error;
           Alcotest.test_case "decode error categories" `Quick
             test_openai_decode_error_projects_categories;
+          Alcotest.test_case "aierr lossless param/code/headers" `Quick
+            test_aierr_openai_lossless_param_code_and_headers;
+          Alcotest.test_case "aierr null and malformed bodies" `Quick
+            test_aierr_openai_null_and_malformed_bodies;
+          Alcotest.test_case "aierr local codec transport classes" `Quick
+            test_aierr_openai_local_codec_and_transport_classes;
+          Alcotest.test_case "aierr stream open and midstream" `Quick
+            test_aierr_openai_stream_open_and_midstream_failures;
+          Alcotest.test_case "aierr total projection no fabricated http" `Quick
+            test_aierr_openai_total_projection_and_no_fabricated_http;
+          Alcotest.test_case "aierr telemetry attrs preserved" `Quick
+            test_aierr_openai_telemetry_attrs_preserved;
+          Alcotest.test_case "aierr no parallel ai_error path" `Quick
+            test_aierr_openai_no_parallel_ai_error_public_path;
+          Alcotest.test_case "aierr configured callbacks run" `Quick
+            test_aierr_openai_configured_callbacks_run;
+          Alcotest.test_case "aierr callback matrix" `Quick
+            test_aierr_openai_callback_matrix;
+          Alcotest.test_case "aierr custom invalid_request stays provider" `Quick
+            test_aierr_openai_custom_invalid_request_stays_provider_response;
+          Alcotest.test_case "aierr codec lossless stream" `Quick
+            test_aierr_openai_codec_lossless_stream_api;
+          Alcotest.test_case "aierr codec lossless validation APIs" `Quick
+            test_aierr_openai_codec_lossless_validation_apis;
+          Alcotest.test_case "aierr missing vs null param/code" `Quick
+            test_aierr_openai_missing_vs_null_param_code;
+          Alcotest.test_case "aierr validation classes" `Quick
+            test_aierr_openai_validation_classes;
+          Alcotest.test_case "aierr builder runner validation" `Quick
+            test_aierr_openai_builder_runner_validation;
+          Alcotest.test_case "aierr http transport failure" `Quick
+            test_aierr_openai_http_transport_failure;
+          Alcotest.test_case "aierr to_ai_error semantic fields" `Quick
+            test_aierr_openai_to_ai_error_semantic_fields;
+          Alcotest.test_case "aierr responses replay invalid_request" `Quick
+            test_aierr_openai_responses_replay_invalid_request;
+          Alcotest.test_case "aierr structured_output honors custom encode" `Quick
+            test_aierr_openai_structured_output_honors_custom_encode;
+          Alcotest.test_case "aierr stream cleanup preserves primary" `Quick
+            test_aierr_openai_stream_cleanup_preserves_primary;
+          Alcotest.test_case "aierr outer and read cleanup preserves primary"
+            `Quick test_aierr_openai_outer_and_read_cleanup_preserve_primary;
+          Alcotest.test_case "aierr of_ai_error invalid_request roundtrip" `Quick
+            test_aierr_openai_of_ai_error_invalid_request_roundtrip;
           Alcotest.test_case "responses request" `Quick
             test_responses_request_uses_responses_endpoint;
           Alcotest.test_case "embeddings request and decode" `Quick

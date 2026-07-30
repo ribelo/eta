@@ -9,6 +9,51 @@ type structured_output = {
   strict : bool option;
 }
 
+type codec_failure =
+  | Invalid_request of string
+  | Unsupported of string
+  | Invalid_tool of {
+      name : string;
+      message : string;
+    }
+  | Decode of {
+      message : string;
+      raw_body : A.raw_json option;
+    }
+
+let ai_error_of_codec_failure ~provider = function
+  | Invalid_request message ->
+      (* Built-in structured projection uses explicit Invalid_request. *)
+      A.Invalid_request { provider; message }
+  | Unsupported message -> A.Unsupported { provider; feature = message }
+  | Invalid_tool { name; message } -> A.Invalid_tool { name; message }
+  | Decode { message; raw_body } ->
+      A.Decode_error { provider; message; raw = raw_body }
+
+(* Historical unmigrated wrappers: local validation remains Unsupported. *)
+let ai_error_of_codec_failure_historical ~provider = function
+  | Invalid_request message | Unsupported message ->
+      A.Unsupported { provider; feature = message }
+  | Invalid_tool { name; message } -> A.Invalid_tool { name; message }
+  | Decode { message; raw_body } ->
+      A.Decode_error { provider; message; raw = raw_body }
+
+let map_codec_failure ~provider = function
+  | Stdlib.Ok _ as ok -> ok
+  | Stdlib.Error failure ->
+      Stdlib.Error (ai_error_of_codec_failure_historical ~provider failure)
+
+let structured_output_lossless ~schema_value ?strict ~name ~schema_json () =
+  let trimmed = A.Json_helpers.trim name in
+  if String.equal trimmed "" then
+    Stdlib.Error
+      (Invalid_tool { name; message = "structured output name is required" })
+  else (
+    match schema_value "structured output schema_json" schema_json with
+    | Stdlib.Error (Decode _ as failure) -> Stdlib.Error failure
+    | Stdlib.Error failure -> Stdlib.Error failure
+    | Stdlib.Ok schema -> Stdlib.Ok { name = trimmed; schema; strict })
+
 let structured_output ~schema_value ?strict ~name ~schema_json () =
   let trimmed = A.Json_helpers.trim name in
   if String.equal trimmed "" then
@@ -25,14 +70,15 @@ let schema_value = A.Json_helpers.schema_value
 let result_all = A.Json_helpers.result_all
 let result_map_all = A.Json_helpers.result_map_all
 
+(* Historical neutral unavailable-feature channel. *)
 let unsupported ~provider feature =
   Stdlib.Error (A.Unsupported { provider; feature })
 
 type reasoning_level = Off | Minimal | Low | Medium | High | Xhigh | Max
 
-let reasoning_level_of_string ~provider = function
+let reasoning_level_of_string_lossless = function
   | value when A.Json_helpers.is_blank value ->
-      unsupported ~provider "reasoning level must not be empty"
+      Stdlib.Error (Invalid_request "reasoning level must not be empty")
   | "off" -> Stdlib.Ok Off
   | "minimal" -> Stdlib.Ok Minimal
   | "low" -> Stdlib.Ok Low
@@ -41,8 +87,12 @@ let reasoning_level_of_string ~provider = function
   | "xhigh" -> Stdlib.Ok Xhigh
   | "max" -> Stdlib.Ok Max
   | _ ->
-      unsupported ~provider
-        "reasoning level must be off, minimal, low, medium, high, xhigh, or max"
+      Stdlib.Error
+        (Invalid_request
+           "reasoning level must be off, minimal, low, medium, high, xhigh, or max")
+
+let reasoning_level_of_string ~provider value =
+  reasoning_level_of_string_lossless value |> map_codec_failure ~provider
 
 let reasoning_level_to_string = function
   | Off -> "off"
@@ -53,35 +103,49 @@ let reasoning_level_to_string = function
   | Xhigh -> "xhigh"
   | Max -> "max"
 
-let non_empty_list ~provider label = function
-  | [] -> unsupported ~provider (label ^ " must not be empty")
+let non_empty_list_lossless label = function
+  | [] -> Stdlib.Error (Invalid_request (label ^ " must not be empty"))
   | values -> Stdlib.Ok values
 
-let positive_int_json ~provider label = function
+let non_empty_list ~provider label values =
+  non_empty_list_lossless label values |> map_codec_failure ~provider
+
+let positive_int_json_lossless label = function
   | None -> Stdlib.Ok None
   | Some value when value > 0 -> Stdlib.Ok (Some (Json.int value))
-  | Some _ -> unsupported ~provider (label ^ " must be positive")
+  | Some _ -> Stdlib.Error (Invalid_request (label ^ " must be positive"))
 
-let optional_non_empty ~provider label = function
+let positive_int_json ~provider label value =
+  positive_int_json_lossless label value |> map_codec_failure ~provider
+
+let optional_non_empty_lossless label = function
   | None -> Stdlib.Ok None
   | Some value when A.Json_helpers.is_blank value ->
-      unsupported ~provider (label ^ " must not be empty")
+      Stdlib.Error (Invalid_request (label ^ " must not be empty"))
   | Some value -> Stdlib.Ok (Some value)
 
-let embedding_encoding_format_json ~provider = function
+let optional_non_empty ~provider label value =
+  optional_non_empty_lossless label value |> map_codec_failure ~provider
+
+let embedding_encoding_format_json_lossless = function
   | None -> Stdlib.Ok None
   | Some ("float" | "base64" as value) -> Stdlib.Ok (Some (Json.string value))
   | Some _ ->
-      unsupported ~provider "embedding encoding_format must be float or base64"
+      Stdlib.Error
+        (Invalid_request "embedding encoding_format must be float or base64")
 
-let temperature_json ~provider = function
+let embedding_encoding_format_json ~provider value =
+  embedding_encoding_format_json_lossless value |> map_codec_failure ~provider
+
+let temperature_json_lossless = function
   | None -> Stdlib.Ok None
   | Some value -> (
       match Json.float value with
       | Some encoded -> Stdlib.Ok (Some encoded)
-      | None ->
-          Stdlib.Error
-            (A.Unsupported { provider; feature = "non-finite temperature" }))
+      | None -> Stdlib.Error (Invalid_request "non-finite temperature"))
+
+let temperature_json ~provider value =
+  temperature_json_lossless value |> map_codec_failure ~provider
 
 let finish_reason = function
   | "stop" -> A.Stop
@@ -203,14 +267,13 @@ let with_json_fields extra fields =
       Json.object_
         (fields @ List.map (fun (name, value) -> (name, Some value)) extra)
 
-let encode_speech ?(instructions = true) ~provider
-    (request : A.Speech.request) =
+let encode_speech_lossless ?(instructions = true) (request : A.Speech.request) =
   if A.Json_helpers.is_blank request.input then
-    unsupported ~provider "speech input must not be empty"
+    Stdlib.Error (Invalid_request "speech input must not be empty")
   else if A.Json_helpers.is_blank request.voice then
-    unsupported ~provider "speech voice must not be empty"
+    Stdlib.Error (Invalid_request "speech voice must not be empty")
   else if (not instructions) && Option.is_some request.instructions then
-    unsupported ~provider "speech instructions"
+    Stdlib.Error (Unsupported "speech instructions")
   else
     let speed =
       match request.speed with
@@ -218,19 +281,25 @@ let encode_speech ?(instructions = true) ~provider
       | Some value -> (
           match Json.float value with
           | Some json -> Stdlib.Ok (Some json)
-          | None -> unsupported ~provider "speech speed must be finite")
+          | None -> Stdlib.Error (Invalid_request "speech speed must be finite"))
     in
-    let* speed = speed in
-    Stdlib.Ok
-      (with_json_fields request.extra
-         [
-           ("model", Some (Json.string request.model));
-           ("input", Some (Json.string request.input));
-           ("voice", Some (Json.string request.voice));
-           ("response_format", Option.map Json.string request.response_format);
-           ("speed", speed);
-           ( "instructions",
-             if instructions then Option.map Json.string request.instructions
-             else None );
-         ]
-      |> Json.to_string)
+    match speed with
+    | Stdlib.Error _ as error -> error
+    | Stdlib.Ok speed ->
+        Stdlib.Ok
+          (with_json_fields request.extra
+             [
+               ("model", Some (Json.string request.model));
+               ("input", Some (Json.string request.input));
+               ("voice", Some (Json.string request.voice));
+               ( "response_format",
+                 Option.map Json.string request.response_format );
+               ("speed", speed);
+               ( "instructions",
+                 if instructions then Option.map Json.string request.instructions
+                 else None );
+             ]
+          |> Json.to_string)
+
+let encode_speech ?(instructions = true) ~provider request =
+  encode_speech_lossless ~instructions request |> map_codec_failure ~provider

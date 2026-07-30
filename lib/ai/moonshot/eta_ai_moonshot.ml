@@ -62,7 +62,10 @@ type structured_output = Codec.structured_output = {
   strict : bool option;
 }
 
-let structured_output = Compat.structured_output
+let structured_output ?strict ~name ~schema_json () =
+  Codec.structured_output
+    ~schema_value:(Codec.schema_value ~provider:"openai-compatible")
+    ?strict ~name ~schema_json ()
 
 let encode_chat ?structured_output request =
   Codec.encode_chat_with_thinking ~provider:provider_name
@@ -185,9 +188,14 @@ let list_models ?provider:custom client ~credential =
   | Stdlib.Ok request ->
       A.run_raw_decoded provider client (Stdlib.Ok request) decode_models
 
-let decode_chat = Compat.decode_chat
-let decode_stream_event = Compat.decode_stream_event
-let decode_error = Compat.decode_error
+let decode_chat raw =
+  Codec.decode_chat ~usage_raw_prompt_names:true ~provider:"openai-compatible" raw
+
+let decode_stream_event event =
+  Codec.decode_stream_event ~provider:"openai-compatible" event
+
+let decode_error ~status ~headers raw =
+  Codec.decode_error ~provider:"openai-compatible" ~status ~headers raw
 
 let chat_completions_request ?structured_output ?provider:custom ~credential
     request =

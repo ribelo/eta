@@ -177,7 +177,27 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         with
         | Stdlib.Error (A.Unsupported { provider = "moonshotai"; _ }) -> ()
         | _ -> Alcotest.fail "expected invalid reasoning error")
-      [ ""; " "; "unknown" ]
+      [ ""; " "; "unknown" ];
+    (* Historical unmigrated wrapper: local codec validation stays Unsupported. *)
+    match
+      M.encode_chat
+        {
+          model = "kimi-k2.5";
+          prompt = [ A.User [ A.Text "hi" ] ];
+          tools = [];
+          temperature = Some nan;
+          reasoning = None;
+          max_output_tokens = None;
+          replay_items = [];
+          stream = false;
+        }
+    with
+    | Stdlib.Error (A.Unsupported { provider = "moonshotai"; feature; _ }) ->
+        Alcotest.(check bool) "hist temperature" true
+          (String.length feature > 0)
+    | Stdlib.Error (A.Invalid_request _) ->
+        Alcotest.fail "moonshot must keep historical Unsupported, not Invalid_request"
+    | _ -> Alcotest.fail "expected Unsupported non-finite temperature"
 
   let test_chat_and_reasoning_stream () =
     with_runtime @@ fun rt ->
@@ -238,6 +258,34 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check (option int))
       "cache write not reported" None usage.A.input_tokens.cache_write
 
+  let test_historical_compat_attribution () =
+    let expect_compat = function
+      | A.Decode_error { provider = "openai-compatible"; _ }
+      | A.Provider_error { provider = "openai-compatible"; _ } ->
+          ()
+      | _ -> Alcotest.fail "expected historical openai-compatible attribution"
+    in
+    (match M.structured_output ~name:"x" ~schema_json:"{" () with
+    | Stdlib.Error error -> expect_compat error
+    | Stdlib.Ok _ -> Alcotest.fail "malformed schema accepted");
+    (match M.decode_chat "{" with
+    | Stdlib.Error error -> expect_compat error
+    | Stdlib.Ok _ -> Alcotest.fail "malformed response accepted");
+    (match M.decode_stream_event { A.event = None; data = "{" } with
+    | Stdlib.Error error -> expect_compat error
+    | Stdlib.Ok _ -> Alcotest.fail "malformed stream accepted");
+    (match
+       M.decode_stream_event
+         { A.event = None; data = "{\"error\":{\"message\":\"bad\"}}" }
+     with
+    | Stdlib.Ok
+        [ A.Stream_error (A.Provider_error { provider = "openai-compatible"; _ }) ] ->
+        ()
+    | _ -> Alcotest.fail "historical provider failure was not embedded");
+    expect_compat
+      (M.decode_error ~status:400 ~headers:H.Core.Header.empty
+         "{\"error\":{\"message\":\"bad\"}}")
+
   let tests =
     [
       ( "moonshot",
@@ -250,6 +298,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "chat and reasoning stream" `Quick
             test_chat_and_reasoning_stream;
           Alcotest.test_case "cache usage" `Quick test_cache_usage;
+          Alcotest.test_case "historical compat attribution" `Quick
+            test_historical_compat_attribution;
         ] );
     ]
 end

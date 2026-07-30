@@ -6,6 +6,7 @@
   eta_observability
   eta_ai
   eta_ai_openai
+  eta_ai_openai_codec
   eta_ai_test_support
   eta_http
   eta_runtime_common_tests
@@ -34,3 +35,17 @@
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
+
+(rule
+ (alias runtest)
+ (deps
+  check_no_ai_error_leak.sh
+  %{workspace_root}/lib/ai/eta_ai.mli
+  %{workspace_root}/lib/ai/openai/eta_ai_openai.mli
+  %{workspace_root}/lib/ai/openai/openai_error.mli
+  %{workspace_root}/lib/ai/openai/realtime.mli
+  %{workspace_root}/lib/ai/openai_compat/eta_ai_openai_compat.mli
+  %{workspace_root}/lib/ai/openai_compat/compat_error.mli
+  %{workspace_root}/lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.mli)
+ (action
+  (run bash %{dep:check_no_ai_error_leak.sh})))

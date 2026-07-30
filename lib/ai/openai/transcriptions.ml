@@ -22,12 +22,12 @@ let safe_disposition_value label value =
     String.contains value '\r' || String.contains value '\n'
     || String.contains value '"'
   then
-    Common.unsupported (label ^ " contains an invalid multipart character")
+    Common.invalid_request (label ^ " contains an invalid multipart character")
   else Stdlib.Ok value
 
 let safe_header_value label value =
   if String.contains value '\r' || String.contains value '\n' then
-    Common.unsupported
+    Common.invalid_request
       (label ^ " contains an invalid multipart header character")
   else Stdlib.Ok value
 

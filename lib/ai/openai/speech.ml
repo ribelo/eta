@@ -3,7 +3,10 @@
 module A = Common.A
 module H = Common.H
 
-let encode request = Common.Codec.encode_speech ~provider:"openai" request
+let encode request =
+  match Common.Codec.encode_speech_lossless request with
+  | Stdlib.Ok raw -> Stdlib.Ok raw
+  | Stdlib.Error failure -> Stdlib.Error (Common.Error.of_codec_failure failure)
 
 let decode_response (body, headers) =
   {

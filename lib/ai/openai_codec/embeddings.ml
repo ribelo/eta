@@ -3,36 +3,45 @@ module Json = A.Json
 
 open Core
 
-let embedding_input_json ~provider (input : A.Embedding.input) =
+let embedding_input_json_lossless (input : A.Embedding.input) =
   match input with
   | A.Embedding.Text text -> Stdlib.Ok (Json.string text)
   | A.Embedding.Texts texts ->
-      non_empty_list ~provider "embedding input" texts
+      non_empty_list_lossless "embedding input" texts
       |> Result.map (fun texts -> Json.array (List.map Json.string texts))
   | A.Embedding.Tokens tokens ->
-      non_empty_list ~provider "embedding token input" tokens
+      non_empty_list_lossless "embedding token input" tokens
       |> Result.map (fun tokens -> Json.array (List.map Json.int tokens))
   | A.Embedding.Token_batches batches ->
-      let* batches = non_empty_list ~provider "embedding token batch input" batches in
       let* batches =
-        result_map_all (non_empty_list ~provider "embedding token input") batches
+        non_empty_list_lossless "embedding token batch input" batches
+      in
+      let* batches =
+        result_map_all (non_empty_list_lossless "embedding token input") batches
       in
       Stdlib.Ok
         (Json.array
            (List.map
               (fun tokens -> Json.array (List.map Json.int tokens))
               batches))
-  | A.Embedding.Raw_json raw -> parse_json ~provider raw
+  | A.Embedding.Raw_json raw -> (
+      match Json.parse raw with
+      | Stdlib.Ok json -> Stdlib.Ok json
+      | Stdlib.Error message ->
+          Stdlib.Error (Decode { message; raw_body = Some raw }))
 
-let encode_embeddings_json ~provider (request : A.Embedding.request) =
-  let* input = embedding_input_json ~provider request.input in
+let embedding_input_json ~provider input =
+  embedding_input_json_lossless input |> map_codec_failure ~provider
+
+let encode_embeddings_json_lossless (request : A.Embedding.request) =
+  let* input = embedding_input_json_lossless request.input in
   let* dimensions =
-    positive_int_json ~provider "embedding dimensions" request.dimensions
+    positive_int_json_lossless "embedding dimensions" request.dimensions
   in
   let* encoding_format =
-    embedding_encoding_format_json ~provider request.encoding_format
+    embedding_encoding_format_json_lossless request.encoding_format
   in
-  let* user = optional_non_empty ~provider "embedding user" request.user in
+  let* user = optional_non_empty_lossless "embedding user" request.user in
   Stdlib.Ok
     (Json.object_
        [
@@ -42,6 +51,12 @@ let encode_embeddings_json ~provider (request : A.Embedding.request) =
          ("dimensions", dimensions);
          ("user", Option.map Json.string user);
        ])
+
+let encode_embeddings_lossless request =
+  encode_embeddings_json_lossless request |> Result.map Json.to_string
+
+let encode_embeddings_json ~provider request =
+  encode_embeddings_json_lossless request |> map_codec_failure ~provider
 
 let encode_embeddings ~provider request =
   encode_embeddings_json ~provider request |> Result.map Json.to_string

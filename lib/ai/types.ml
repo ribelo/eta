@@ -341,6 +341,13 @@ type ai_error =
       message : string;
       raw : raw_json option;
     }
+  | Invalid_request of {
+      provider : provider_name;
+      message : string;
+    }
+  (** Explicit local validation failure. Distinct from {!Provider_error} so
+      provider-reported [invalid_request] codes are not confusable with local
+      input rejection. *)
   | Invalid_tool of {
       name : string;
       message : string;

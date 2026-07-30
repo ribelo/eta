@@ -420,9 +420,21 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         | _ -> Alcotest.fail "expected invalid messages reasoning error")
       [ ""; " "; "unknown" ];
     let provider = K.messages_provider ~identity () in
-    match provider.encode_chat (chat_request ~reasoning:"unknown" ()) with
+    (match provider.encode_chat (chat_request ~reasoning:"unknown" ()) with
     | Stdlib.Error (A.Unsupported { provider = "kimi-coding"; _ }) -> ()
-    | _ -> Alcotest.fail "expected Kimi provider attribution"
+    | _ -> Alcotest.fail "expected Kimi provider attribution");
+    (* Historical unmigrated wrapper: local codec validation stays Unsupported. *)
+    match
+      K.encode_chat
+        {
+          (chat_request ()) with
+          temperature = Some nan;
+        }
+    with
+    | Stdlib.Error (A.Unsupported { provider = "kimi-coding"; _ }) -> ()
+    | Stdlib.Error (A.Invalid_request _) ->
+        Alcotest.fail "kimi must keep historical Unsupported, not Invalid_request"
+    | _ -> Alcotest.fail "expected Unsupported non-finite temperature"
 
   let test_protocol_and_poll_errors () =
     with_runtime @@ fun rt ->
@@ -482,6 +494,34 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       "extra" (Some "fixture")
       (H.Core.Header.get "x-debug" headers)
 
+  let test_historical_compat_attribution () =
+    let expect_compat = function
+      | A.Decode_error { provider = "openai-compatible"; _ }
+      | A.Provider_error { provider = "openai-compatible"; _ } ->
+          ()
+      | _ -> Alcotest.fail "expected historical openai-compatible attribution"
+    in
+    (match K.structured_output ~name:"x" ~schema_json:"{" () with
+    | Stdlib.Error error -> expect_compat error
+    | Stdlib.Ok _ -> Alcotest.fail "malformed schema accepted");
+    (match K.decode_chat "{" with
+    | Stdlib.Error error -> expect_compat error
+    | Stdlib.Ok _ -> Alcotest.fail "malformed response accepted");
+    (match K.decode_stream_event { A.event = None; data = "{" } with
+    | Stdlib.Error error -> expect_compat error
+    | Stdlib.Ok _ -> Alcotest.fail "malformed stream accepted");
+    (match
+       K.decode_stream_event
+         { A.event = None; data = "{\"error\":{\"message\":\"bad\"}}" }
+     with
+    | Stdlib.Ok
+        [ A.Stream_error (A.Provider_error { provider = "openai-compatible"; _ }) ] ->
+        ()
+    | _ -> Alcotest.fail "historical provider failure was not embedded");
+    expect_compat
+      (K.decode_error ~status:400 ~headers:H.Core.Header.empty
+         "{\"error\":{\"message\":\"bad\"}}")
+
   let tests =
     [
       ( "kimi-coding",
@@ -500,6 +540,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_identity_requires_product;
           Alcotest.test_case "protocol and poll errors" `Quick
             test_protocol_and_poll_errors;
+          Alcotest.test_case "historical compat attribution" `Quick
+            test_historical_compat_attribution;
         ] );
     ]
 end

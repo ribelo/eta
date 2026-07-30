@@ -218,6 +218,15 @@ let project_ai_error = function
         diagnostic =
           make_diagnostic ~kind:"decode_error" ~provider ~message ();
       }
+  | Invalid_request { provider; message } ->
+      {
+        category = Other;
+        status = None;
+        retryable = false;
+        retry_after_s = None;
+        diagnostic =
+          make_diagnostic ~kind:"invalid_request" ~provider ~message ();
+      }
   | Invalid_tool { name; message } ->
       {
         category = Other;

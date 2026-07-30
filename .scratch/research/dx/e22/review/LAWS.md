@@ -432,3 +432,75 @@ No new or changed prose may use this table as an escape from same-change testing
 | D-E22-003 | AI/integration interfaces under `lib/ai/`, `lib/exa/`, `lib/otel/`, and `lib/redacted/`. | **DATED COVERAGE DEBT** — owner: Eta integration maintainers; follow-up: integration registry by **2026-09-15**. |
 | D-E22-004 | Signal interfaces under `lib/signal/`. | **DATED COVERAGE DEBT** — owner: Eta signal maintainers; follow-up: signal law registry by **2026-08-31**. |
 | D-E22-005 | Remaining extension interfaces under `lib/{blocking,cache,eio,js,js_stream,js_test,jsoo,linux_input,observability,par,router,schema,schema_test,sql,sql_driver,sql_dsl,stream,test,utop}/`. | **DATED COVERAGE DEBT** — owner: owning Eta package maintainers; follow-up: package-by-package registry by **2026-09-30**. |
+
+## Eta AI provider-error laws (prospective claims in this change)
+
+Each row below registers one exact normative source claim introduced or changed
+by the provider-error work. A named test may cover multiple rows only when that
+test makes a separate discriminating assertion for every registered claim.
+Type-shape declarations without behavioral prose remain API compile checks, not
+additional algebraic laws.
+
+| ID | Exact normative claim | Exact normative span | Named executable coverage |
+| --- | --- | --- | --- |
+| AIERR-P1 | The shared HTTP-response envelope is lossless over status, headers, optional payload, and raw body. | `lib/ai/provider_error.mli:1-8` | OpenAI `aierr lossless param/code/headers` (payload, status, exact duplicate header list, raw body) |
+| AIERR-P2 | The re-exported shared HTTP-response envelope is lossless for nominal provider errors. | `lib/ai/eta_ai.mli:828-836` | OpenAI `aierr lossless param/code/headers` (payload, status, exact duplicate header list, raw body) |
+| AIERR-N1 | Local validation is distinct from provider-reported `invalid_request`. | `lib/ai/eta_ai.mli:392-393` | OpenAI `aierr custom invalid_request stays provider`; `aierr of_ai_error invalid_request roundtrip` |
+| AIERR-O1 | `provider_payload.raw` is the nested error object when present. | `lib/ai/openai/openai_error.mli:8-9` | OpenAI `aierr stream open and midstream` (`nested raw`) |
+| AIERR-O2 | `provider_payload.full` retains the complete decoded response including unknown top-level fields. | `lib/ai/openai/openai_error.mli:10-11` | OpenAI `aierr lossless param/code/headers` (`top-level unknown`) |
+| AIERR-O3 | `Http` denotes an eta-http transport failure. | `lib/ai/openai/openai_error.mli:15-16` | OpenAI `aierr http transport failure`; `aierr to_ai_error semantic fields` |
+| AIERR-O4 | `Provider` denotes a non-success HTTP response with decodable body. | `lib/ai/openai/openai_error.mli:17-18` | OpenAI `provider error`; `aierr lossless param/code/headers` |
+| AIERR-O5 | `Unknown_response` denotes a non-success HTTP response with non-JSON body. | `lib/ai/openai/openai_error.mli:19-20` | OpenAI `aierr null and malformed bodies`; `aierr to_ai_error semantic fields` |
+| AIERR-O6 | `Provider_response` has no fabricated HTTP envelope. | `lib/ai/openai/openai_error.mli:31-33` | OpenAI `aierr total projection no fabricated http`; `aierr stream open and midstream` |
+| AIERR-O7 | `decode` retains HTTP status. | `lib/ai/openai/openai_error.mli:45-47` | OpenAI `aierr lossless param/code/headers` |
+| AIERR-O8 | `decode` retains the exact ordered response headers. | `lib/ai/openai/openai_error.mli:45-47` | OpenAI `aierr lossless param/code/headers` (`ordered duplicate headers remain exact`) |
+| AIERR-O9 | `decode` retains the raw body. | `lib/ai/openai/openai_error.mli:45-47` | OpenAI `aierr lossless param/code/headers` (`raw body`) |
+| AIERR-O16 | `of_wire_payload` maps wire facts to a non-HTTP provider response. | `lib/ai/openai/openai_error.mli:49-54` | OpenAI `aierr codec lossless stream`; `aierr stream open and midstream` |
+| AIERR-O10 | Structured codec failures map without neutral sentinel inference. | `lib/ai/openai/openai_error.mli:56-58` | OpenAI `aierr codec lossless validation APIs`; `aierr builder runner validation` |
+| AIERR-O11 | `of_ai_error` does not invent HTTP status. | `lib/ai/openai/openai_error.mli:60-64` | OpenAI `aierr total projection no fabricated http` |
+| AIERR-O12 | `of_ai_error` does not invent HTTP headers. | `lib/ai/openai/openai_error.mli:60-64` | OpenAI `aierr total projection no fabricated http` |
+| AIERR-O13 | `of_ai_error` does not infer local validation from provider-error shape. | `lib/ai/openai/openai_error.mli:60-64` | OpenAI `aierr custom invalid_request stays provider`; `aierr of_ai_error invalid_request roundtrip` |
+| AIERR-O14 | `classification` is a stable telemetry `error.type` token. | `lib/ai/openai/openai_error.mli:66-67` | OpenAI `aierr total projection no fabricated http` (`classification matrix`, all eight constructors) |
+| AIERR-O15 | `to_ai_error` is total over every OpenAI error constructor. | `lib/ai/openai/openai_error.mli:69-70` | OpenAI `aierr to_ai_error semantic fields` (all eight constructors) |
+| AIERR-C1 | Compat `of_ai_error` does not invent HTTP status. | `lib/ai/openai_compat/compat_error.mli:46-49` | Compat `aierr compat projection matrix`; `aierr compat invalid_request roundtrip` |
+| AIERR-C2 | Compat `of_ai_error` does not invent HTTP headers. | `lib/ai/openai_compat/compat_error.mli:46-49` | Compat `aierr compat invalid_request roundtrip` |
+| AIERR-C3 | Compat `of_ai_error` does not infer local validation from provider-error shape. | `lib/ai/openai_compat/compat_error.mli:46-49` | Compat `aierr compat invalid_request roundtrip`; `aierr compat validation configured identity` |
+| AIERR-C4 | Compat decoded payloads do not assert a provider-specific schema. | `lib/ai/openai_compat/compat_error.mli:3-4` | Compat `provider error` (arbitrary decoded payload plus raw body) |
+| AIERR-C5 | Compat `Provider_response` carries a structured provider failure without an HTTP envelope. | `lib/ai/openai_compat/compat_error.mli:16-24` | Compat `aierr compat stream callbacks identity`; `aierr compat projection matrix` |
+| AIERR-T1 | The default telemetry view preserves historical neutral-error classification. | `lib/ai/provider_telemetry.mli:15-16` | OpenAI `aierr telemetry attrs preserved` (`invalid_request`/provider classification exercised through spans) |
+| AIERR-T2 | Chat telemetry records provider, request model, and server attributes. | `lib/ai/provider_telemetry.mli:24-25` | OpenAI `aierr telemetry attrs preserved`; Compat `aierr compat telemetry exact` |
+| AIERR-T3 | Chat telemetry records response id and response model. | `lib/ai/provider_telemetry.mli:24-25` | OpenAI `aierr telemetry attrs preserved`; Compat `aierr compat telemetry exact` |
+| AIERR-T4 | Chat telemetry records finish reasons. | `lib/ai/provider_telemetry.mli:24-25` | OpenAI `aierr telemetry attrs preserved`; Compat `aierr compat telemetry exact` |
+| AIERR-T5 | Chat telemetry records input/output usage. | `lib/ai/provider_telemetry.mli:24-25` | OpenAI `aierr telemetry attrs preserved`; Compat `aierr compat telemetry exact` |
+| AIERR-T6 | Failed chat telemetry obtains `error.type` from the supplied error view. | `lib/ai/provider_telemetry.mli:24-25` | OpenAI `aierr telemetry attrs preserved`; Compat `aierr compat telemetry exact` |
+| AIERR-T7 | Streaming chat telemetry always records `gen_ai.request.stream=true`. | `lib/ai/provider_telemetry.mli:34` | OpenAI `aierr telemetry attrs preserved`; Compat `aierr compat telemetry exact` |
+| AIERR-T8 | Embeddings telemetry records request encoding format. | `lib/ai/provider_telemetry.mli:57` | OpenAI `aierr telemetry attrs preserved` |
+| AIERR-T9 | Embeddings telemetry records response usage. | `lib/ai/provider_telemetry.mli:57` | OpenAI `aierr telemetry attrs preserved` |
+| AIERR-K1 | Nominal callers map `codec_failure` into their own error channel. | `lib/ai/openai_codec/eta_ai_openai_codec.mli:22-24` | OpenAI `aierr codec lossless validation APIs`; Compat `aierr compat validation configured identity` |
+| AIERR-K2 | Historical neutral codec wrappers project local validation as `Unsupported`. | `lib/ai/openai_codec/eta_ai_openai_codec.mli:22-24` | Kimi `reasoning levels`; Moonshot `reasoning levels` |
+| AIERR-K3 | Error-wire `raw` retains the nested error object. | `lib/ai/openai_codec/eta_ai_openai_codec.mli:224-225` | OpenAI `aierr stream open and midstream` |
+| AIERR-K4 | Error-wire `full` retains the complete response. | `lib/ai/openai_codec/eta_ai_openai_codec.mli:226-227` | OpenAI `aierr stream open and midstream`; `aierr lossless param/code/headers` |
+| AIERR-K5 | Error-wire `param` and `code` remain uncoerced JSON. | `lib/ai/openai_codec/eta_ai_openai_codec.mli:229-230` | OpenAI `aierr missing vs null param/code`; `aierr lossless param/code/headers` |
+| AIERR-K6 | Wire decoding does not choose a caller nominal error type. | `lib/ai/openai_codec/eta_ai_openai_codec.mli:239-242` | OpenAI `aierr codec lossless stream`; compile-time return type |
+| AIERR-K7 | Lossless successful stream-event lists never contain `Stream_error`. | `lib/ai/openai_codec/eta_ai_openai_codec.mli:288-290` | OpenAI `aierr codec lossless stream`; `aierr no parallel ai_error path` |
+| AIERR-K8 | Lossless stream decoding reports provider failures through the outer result. | `lib/ai/openai_codec/eta_ai_openai_codec.mli:292-298` | OpenAI `aierr codec lossless stream`; `aierr stream open and midstream` |
+| AIERR-K9 | The neutral Responses helper converts provider failures to embedded `Stream_error`. | `lib/ai/openai_codec/eta_ai_openai_codec.mli:300-308` | Kimi `historical compat attribution`; Moonshot `historical compat attribution` |
+| AIERR-K10 | The neutral event decoder embeds provider failures and reserves its outer error for JSON parse failure. | `lib/ai/openai_codec/eta_ai_openai_codec.mli:310-317` | Kimi `historical compat attribution`; Moonshot `historical compat attribution`; OpenAI `aierr configured callbacks run` |
+| AIERR-R1 | Realtime's error alias is the package nominal error channel. | `lib/ai/openai/realtime.mli:3-4` | OpenAI `airealtime shared codec contract`; static census |
+| AIERR-R2 | Malformed Realtime frames return nominal `Error.Decode`. | `lib/ai/openai/realtime.mli:79-81` | OpenAI `server event decode`; Realtime-Eio `decode failures preserve OpenAI error` |
+| AIERR-RE1 | Realtime-Eio errors structurally include the nominal OpenAI error. | `lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.mli:3-7` | Realtime-Eio `decode failures preserve OpenAI error`; `missing model is OpenAI invalid request`; static census |
+| AIERR-F2 | OpenAI nominal runners use configured request callbacks. | `lib/ai/openai/eta_ai_openai.mli:43-47` | OpenAI `aierr callback matrix`; `aierr structured_output honors custom encode` |
+| AIERR-F3 | OpenAI nominal runners use configured success and stream decoder callbacks. | `lib/ai/openai/eta_ai_openai.mli:43-47` | OpenAI `aierr callback matrix`; `aierr configured callbacks run` |
+| AIERR-F4 | OpenAI nominal runners use package-owned non-success decoding to retain status, headers, and raw body. | `lib/ai/openai/eta_ai_openai.mli:43-47` | OpenAI `provider error` (`nominal runner owns non-success decoding`) |
+| AIERR-F5 | OpenAI callback and embedded neutral stream failures fail through the outer nominal error. | `lib/ai/openai/eta_ai_openai.mli:292-294` | OpenAI `aierr configured callbacks run`; `aierr stream open and midstream` |
+| AIERR-F6 | OpenAI nominal stream cleanup closes exactly once. | `lib/ai/openai/eta_ai_openai.mli:292-294` | OpenAI `aierr stream cleanup preserves primary`; `aierr outer and read cleanup preserves primary` (exact release counters) |
+| AIERR-F7 | OpenAI cleanup diagnostics remain suppressed beneath the primary provider failure. | `lib/ai/openai/eta_ai_openai.mli:292-294` | OpenAI `aierr stream cleanup preserves primary` (embedded typed/defect cleanup); `aierr outer and read cleanup preserves primary` (outer typed/defect cleanup and body-read/release failure) |
+| AIERR-F8 | Plural OpenAI reads stop at the first nominal failure with singular cleanup semantics. | `lib/ai/openai/eta_ai_openai.mli:296-299` | OpenAI `aierr stream open and midstream`; `aierr outer and read cleanup preserves primary` (plural failing and successful exact release) |
+| AIERR-CF1 | The compat stream handle carries configured identity for nominal reads/closes. | `lib/ai/openai_compat/eta_ai_openai_compat.mli:10-12` | Compat `aierr compat stream callbacks identity` |
+| AIERR-CF2 | Compat nominal runners use configured request callbacks. | `lib/ai/openai_compat/eta_ai_openai_compat.mli:52-57` | Compat `aierr compat structured_output custom encode`; `aierr compat validation configured identity` |
+| AIERR-CF3 | Compat nominal runners use configured success and stream decoder callbacks. | `lib/ai/openai_compat/eta_ai_openai_compat.mli:52-57` | Compat `aierr compat stream callbacks identity`; `aierr compat telemetry exact` |
+| AIERR-CF4 | Compat nominal runners use package-owned non-success decoding to retain configured identity, status, headers, and raw body. | `lib/ai/openai_compat/eta_ai_openai_compat.mli:52-57` | Compat `provider error` (`nominal runner owns non-success decoding`) |
+| AIERR-CF5 | Compat callback and embedded neutral stream failures fail through the outer nominal error with configured identity. | `lib/ai/openai_compat/eta_ai_openai_compat.mli:185-190` | Compat `aierr compat stream callbacks identity`; `aierr compat stream open midstream` |
+| AIERR-CF6 | Compat nominal stream cleanup closes exactly once. | `lib/ai/openai_compat/eta_ai_openai_compat.mli:187-190` | Compat `aierr compat stream callbacks identity` (release counters) |
+| AIERR-CF7 | Compat cleanup diagnostics remain suppressed beneath the primary provider failure. | `lib/ai/openai_compat/eta_ai_openai_compat.mli:187-190` | Compat `aierr compat stream callbacks identity` (embedded and outer typed/defect cleanup) |
+| AIERR-CF8 | Plural compat reads stop at the first nominal failure with singular cleanup semantics. | `lib/ai/openai_compat/eta_ai_openai_compat.mli:192-195` | Compat `aierr compat stream open midstream`; `aierr compat stream callbacks identity` (plural failing and successful exact release) |

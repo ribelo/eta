@@ -385,6 +385,12 @@ type ai_error =
       message : string;
       raw : raw_json option;
     }
+  | Invalid_request of {
+      provider : provider_name;
+      message : string;
+    }
+  (** Explicit local validation failure, distinct from provider-reported
+      [invalid_request] codes carried on {!Provider_error}. *)
   | Invalid_tool of {
       name : string;
       message : string;
@@ -820,6 +826,71 @@ val suppress_provider_transport_observability :
     default and expose explicit opt-in transport tracing later if needed. *)
 
 module Provider : sig
+  module Error : sig
+    type 'payload http_response = {
+      status : int;
+      headers : headers;
+      payload : 'payload option;
+      raw_body : raw_json;
+    }
+    (** Shared lossless HTTP-response envelope used by nominal provider errors. *)
+  end
+
+  module Telemetry : sig
+    type 'err error_view = {
+      error_type : 'err -> string;
+      error_pp : Format.formatter -> 'err -> unit;
+    }
+
+    val ai_error_view : ai_error error_view
+
+    val with_chat_span :
+      error_view:'err error_view ->
+      provider ->
+      chat_request ->
+      (response, 'err) Eta.Effect.t ->
+      (response, 'err) Eta.Effect.t
+
+    val with_stream_span :
+      error_view:'err error_view ->
+      ?time_to_first_chunk_s:float ->
+      provider ->
+      chat_request ->
+      ('a, 'err) Eta.Effect.t ->
+      ('a, 'err) Eta.Effect.t
+
+    val with_responses_span :
+      error_view:'err error_view ->
+      provider ->
+      'tool Responses.request ->
+      (response, 'err) Eta.Effect.t ->
+      (response, 'err) Eta.Effect.t
+
+    val with_responses_stream_span :
+      error_view:'err error_view ->
+      ?time_to_first_chunk_s:float ->
+      provider ->
+      'tool Responses.request ->
+      ('a, 'err) Eta.Effect.t ->
+      ('a, 'err) Eta.Effect.t
+
+    val with_embeddings_span :
+      error_view:'err error_view ->
+      provider ->
+      Embedding.request ->
+      (Embedding.response, 'err) Eta.Effect.t ->
+      (Embedding.response, 'err) Eta.Effect.t
+
+    val with_tool_span :
+      error_view:'err error_view ->
+      ?tool_call_id:string ->
+      ?tool_type:string ->
+      tool_name:string ->
+      ('a, 'err) Eta.Effect.t ->
+      ('a, 'err) Eta.Effect.t
+  end
+  (** Shared provider inference, embedding, and tool telemetry (aimod-mhgx). *)
+
   module type Chat = sig
     val encode : provider:provider -> chat_request -> (raw_json, ai_error) result
     val decode : provider:provider -> raw_json -> (response, ai_error) result

@@ -1,0 +1,10 @@
+{
+  "error": {
+    "message": "param and code keep JSON shape",
+    "type": "invalid_request_error",
+    "param": {"field": "tools", "nested": [1, null]},
+    "code": 42,
+    "extra_unknown": {"kept": true}
+  },
+  "request_id": "req_keep_me"
+}

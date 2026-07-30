@@ -1,5 +1,8 @@
 (** OpenAI Realtime session, client-secret, and event codecs. *)
 
+type error = Openai_error.t
+(** Equal to the package-level [Eta_ai_openai.Error.t] nominal channel. *)
+
 type modality = Text | Audio
 
 type session = {
@@ -46,7 +49,7 @@ val create_client_secret :
   Eta_http.Client.t ->
   api_key:Eta_ai.api_key ->
   session ->
-  (client_secret, Eta_ai.ai_error) Eta.Effect.t
+  (client_secret, error) Eta.Effect.t
 
 type client_event =
   | Session_update of session
@@ -68,15 +71,14 @@ type server_event =
   | Response_done of Eta_ai.raw_json option
   | Input_audio_buffer_committed
   | Server_error of server_error
-  | Server_decode_error of { message : string; raw : Eta_ai.raw_json option }
   | Raw_server_event of { type_ : string option; raw : Eta_ai.raw_json }
-
-type codec_error = Unsupported_binary_message
-val codec_error_message : codec_error -> string
 
 val client_event_json : client_event -> Eta_ai.Json.t
 val client_event_to_string : client_event -> Eta_ai.raw_json
-val decode_server_event : Eta_ai.raw_json -> server_event
+
+val decode_server_event :
+  Eta_ai.raw_json -> (server_event, error) result
+(** Public nominal decoder. Malformed frames return [Error.Decode]. *)
 
 module Codec : sig
   include
@@ -84,5 +86,5 @@ module Codec : sig
       with type session = session
        and type client_event = client_event
        and type server_event = server_event
-       and type error = codec_error
+       and type error = error
 end

@@ -61,6 +61,7 @@ let ai_error_type = function
   | Provider_error { code = Some code; _ } -> code
   | Provider_error _ -> "provider_error"
   | Decode_error _ -> "decode_error"
+  | Invalid_request _ -> "invalid_request"
   | Invalid_tool _ -> "invalid_tool"
   | Unsupported _ -> "unsupported"
 
@@ -69,21 +70,32 @@ let ai_error_message fmt = function
       Format.pp_print_string fmt (Eta_http.Error.to_string error)
   | Provider_error { message; _ }
   | Decode_error { message; _ }
+  | Invalid_request { message; _ }
   | Invalid_tool { message; _ } ->
       Format.pp_print_string fmt message
   | Unsupported { provider; feature } ->
       Format.fprintf fmt "%s unsupported %s" provider feature
 
-let with_error_type eff =
+type 'err error_view = {
+  error_type : 'err -> string;
+  error_pp : Format.formatter -> 'err -> unit;
+}
+
+let ai_error_view =
+  { error_type = ai_error_type; error_pp = ai_error_message }
+
+let with_error_type ~error_type eff =
   eff
   |> Eta.Effect.bind_error (fun error ->
          Eta.Effect.fail error
          |> Eta_observability.annotate_all
-              [ ("error.type", ai_error_type error) ])
+              [ ("error.type", error_type error) ])
 
-let with_span ~kind ~name ~attrs eff =
-  eff |> with_error_type |> Eta_observability.annotate_all attrs
-  |> Eta_observability.named ~error_pp:ai_error_message ~kind name
+let with_span ~error_view ~kind ~name ~attrs eff =
+  eff
+  |> with_error_type ~error_type:error_view.error_type
+  |> Eta_observability.annotate_all attrs
+  |> Eta_observability.named ~error_pp:error_view.error_pp ~kind name
 
 let[@inline always] with_response_attrs response_attrs eff =
   eff
@@ -91,39 +103,50 @@ let[@inline always] with_response_attrs response_attrs eff =
          Eta.Effect.pure response
          |> Eta_observability.annotate_all (response_attrs response))
 
-let with_chat_span provider (request : chat_request) eff =
+let with_chat_span_for ~error_view provider (request : chat_request) eff =
   let eff = with_response_attrs response_attrs eff in
   let attrs =
     common_attrs ~operation:"chat" provider ~model:request.model
     @ if request.stream then [ ("gen_ai.request.stream", "true") ] else []
   in
-  with_span ~kind:Eta.Capabilities.Client
+  with_span ~error_view ~kind:Eta.Capabilities.Client
     ~name:("chat " ^ request.model)
     ~attrs eff
 
-let with_stream_span ?time_to_first_chunk_s provider (request : chat_request)
-    eff =
+let with_chat_span provider request eff =
+  with_chat_span_for ~error_view:ai_error_view provider request eff
+
+let with_stream_span_for ~error_view ?time_to_first_chunk_s provider
+    (request : chat_request) eff =
   let attrs =
     common_attrs ~operation:"chat" provider ~model:request.model
     @ [ ("gen_ai.request.stream", "true") ]
     @ option_float_attr "gen_ai.response.time_to_first_chunk"
         time_to_first_chunk_s
   in
-  with_span ~kind:Eta.Capabilities.Client
+  with_span ~error_view ~kind:Eta.Capabilities.Client
     ~name:("chat " ^ request.model)
     ~attrs eff
 
-let with_responses_span provider (request : _ Responses.request) eff =
+let with_stream_span ?time_to_first_chunk_s provider request eff =
+  with_stream_span_for ~error_view:ai_error_view ?time_to_first_chunk_s
+    provider request eff
+
+let with_responses_span_for ~error_view provider
+    (request : _ Responses.request) eff =
   let eff = with_response_attrs response_attrs eff in
   let attrs =
     common_attrs ~operation:"chat" provider ~model:request.model
     @ if request.stream then [ ("gen_ai.request.stream", "true") ] else []
   in
-  with_span ~kind:Eta.Capabilities.Client
+  with_span ~error_view ~kind:Eta.Capabilities.Client
     ~name:("chat " ^ request.model)
     ~attrs eff
 
-let with_responses_stream_span ?time_to_first_chunk_s provider
+let with_responses_span provider request eff =
+  with_responses_span_for ~error_view:ai_error_view provider request eff
+
+let with_responses_stream_span_for ~error_view ?time_to_first_chunk_s provider
     (request : _ Responses.request) eff =
   let attrs =
     common_attrs ~operation:"chat" provider ~model:request.model
@@ -131,9 +154,13 @@ let with_responses_stream_span ?time_to_first_chunk_s provider
     @ option_float_attr "gen_ai.response.time_to_first_chunk"
         time_to_first_chunk_s
   in
-  with_span ~kind:Eta.Capabilities.Client
+  with_span ~error_view ~kind:Eta.Capabilities.Client
     ~name:("chat " ^ request.model)
     ~attrs eff
+
+let with_responses_stream_span ?time_to_first_chunk_s provider request eff =
+  with_responses_stream_span_for ~error_view:ai_error_view
+    ?time_to_first_chunk_s provider request eff
 
 let embedding_usage_attrs (usage : Embedding.usage) =
   option_int_attr "gen_ai.usage.input_tokens" usage.input_tokens
@@ -147,18 +174,22 @@ let embedding_response_attrs (response : Embedding.response) =
   | Some usage -> embedding_usage_attrs usage
   | None -> []
 
-let with_embeddings_span provider (request : Embedding.request) eff =
+let with_embeddings_span_for ~error_view provider
+    (request : Embedding.request) eff =
   let eff = with_response_attrs embedding_response_attrs eff in
   let attrs =
-    common_attrs ~operation:"embeddings" provider
-      ~model:request.model
+    common_attrs ~operation:"embeddings" provider ~model:request.model
     @ option_attr "gen_ai.request.encoding_formats" request.encoding_format
   in
-  with_span ~kind:Eta.Capabilities.Client
+  with_span ~error_view ~kind:Eta.Capabilities.Client
     ~name:("embeddings " ^ request.model)
     ~attrs eff
 
-let with_tool_span ?tool_call_id ?(tool_type = "function") ~tool_name eff =
+let with_embeddings_span provider request eff =
+  with_embeddings_span_for ~error_view:ai_error_view provider request eff
+
+let with_tool_span_for ~error_view ?tool_call_id ?(tool_type = "function")
+    ~tool_name eff =
   let attrs =
     [
       ("gen_ai.operation.name", "execute_tool");
@@ -167,9 +198,13 @@ let with_tool_span ?tool_call_id ?(tool_type = "function") ~tool_name eff =
     ]
     @ option_attr "gen_ai.tool.call.id" tool_call_id
   in
-  with_span ~kind:Eta.Capabilities.Internal
+  with_span ~error_view ~kind:Eta.Capabilities.Internal
     ~name:("execute_tool " ^ tool_name)
     ~attrs eff
+
+let with_tool_span ?tool_call_id ?tool_type ~tool_name eff =
+  with_tool_span_for ~error_view:ai_error_view ?tool_call_id ?tool_type
+    ~tool_name eff
 
 let suppress_provider_transport_observability =
   Eta_observability.suppress_observability

@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "null param and code",
+    "type": "invalid_request_error",
+    "param": null,
+    "code": null
+  }
+}
