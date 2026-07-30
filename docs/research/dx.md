@@ -424,6 +424,33 @@ deliberate telemetry upgrade. Red-team: raising bodies still surface as
 Provenance: `.scratch/research/dx/e8/`, V-DX-E8-001..002, branch
 `research/dx-e8-eta-result-sugar`.
 
+## E42b — Hygiene batch (promoted 2026-07-30)
+
+Four consolidations, each small, each with a durable lesson:
+
+1. **`ppx_eta_sql` split.** SQL table syntax left `ppx_eta` for its own
+   package (ppxlib-only) — the rewriter that knows about effects no longer
+   knows about SQL. The extension name `eta.sql.table` is unchanged; the
+   move is invisible to users except in `(pps …)` lists.
+2. **`docs/packages.md`.** All 48 packages publicly tiered
+   core/batteries/integrations/labs. The durable part is not the rows but
+   the rules: tiers derive from each package's *primary contract*, with
+   bridges and native harness plumbing named as incidental. The first
+   ruleset failed re-derivation in review (eta_test/eta_stream expose Eio
+   types); the precedence fix is what makes the map defensible.
+3. **`Mutable_ref` purity, honestly stated.** The `update` callback must
+   be pure, runs **at least once** (the orchestrator's "zero-to-many"
+   phrase was false and caught by review), and CAS retry multiplies any
+   effects it has. Prose, because OxCaml modes can't express semantic
+   purity for a retry loop (R177).
+4. **`race` kept, semantics made unmissable.** No in-repo evidence of
+   first-settlement surprise, so the name stays — and the mli now says
+   what JS doesn't mean: `Exit.Error` causes (typed failures, defects,
+   interruptions) never win, and a cancelled loser's cleanup diagnostic
+   *replaces* the selected value with an error (R178–R180).
+
+Evidence: `.scratch/research/dx/e42b/`, V-DX-E42B-001..002.
+
 ## E41 — `Resource` → `Refreshable` (promoted 2026-07-29)
 
 `Eta.Resource` was not a resource — it was a stale-while-refresh cached

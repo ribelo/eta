@@ -5647,3 +5647,55 @@ documented (Mutable_ref purity), +0 removed.
 **Outcome (predicted).** All four promote; gates green ≤3 attempts;
 mainline JS unaffected (ppx is compile-time; eta_js has no sql ppx use —
 executor verifies).
+
+---
+
+## V-DX-E42B-002 — 2026-07-30 — research/dx-e42b-hygiene-batch — phase: results + decision
+
+**Decision: PROMOTE (with reservations registered as follow-ups)** — merged
+`--no-ff` (`5a67dfd5`), master gates green, master + branch pushed, worktree
+removed, objectives archived.
+
+**The arc:** clean delivery (all four items, gates first-attempt, executor
+self-score 14 HIT / 1 MISS) → orchestrator verification clean → independent
+PR review **should-not-merge** with five findings, all verified: (F1)
+"zero-to-many" cardinality false (`f` runs at least once — **the phrase
+came from the orchestrator's own objective text**; executor copied it in
+good faith); (F2) tier rules did not re-derive `eta_test`/`eta_stream`
+(Eio-exposing packages classified Batteries); (F3) SQL README still
+pointed at the removed `ppx_eta`; (F4) law-registry pointers stale after
+the test insertion (R43 pointed at the new test instead of its Queue
+test); (F5) `race` doc missed the cleanup-diagnostic override (a cancelled
+loser's finalizer diagnostic replaces the selected value — implementation-
+verified). Follow-up 1 fixed all five with substantive evidence; re-review
+**promote-with-reservations** (two polish items, registered below).
+
+**Prediction scoring (orchestrator, V-DX-E42B-001).** Hits: extension name
+unchanged; ppxlib-only split; snapshot byte-stability; README link already
+present; core ≤3 (actual 1); race kept + divergence sentence with flip
+condition unfired; census deltas; gates ≤3 attempts. Misses: package
+baseline (predicted 48→49; actual 47→48 — my dune-project name count
+double-counted `eta`); labs count (predicted ≥4; actual explicitly 0 —
+the honest empty tier); consumer migration detail (predicted
+sql_common/connectors_loader work; actual: nothing to migrate there — the
+real consumers were the shared suite + hand-written driver); **the
+zero-to-many mechanism error** (false phrase originated by me, caught by
+the review — the sharpest finding of the round).
+
+**Reservations registered as follow-ups (ledger):**
+- F10: `eta_stream` "backend-neutral" phrasing in `docs/packages.md` —
+  mandatory Eio deps make "general Eta-owned streams" more literal (tier
+  unchanged).
+- F11: R179 mixed-cause test checks constructors, not exact payloads —
+  payload-level assertions would fully discriminate cause preservation
+  (implementation provably preserves causes; test-strength only).
+
+**Lessons.** (1) The tier map's value is the *rules*, not the rows — the
+first ruleset failed re-derivation; the primary-contract/incidental-
+plumbing precedence is what makes the map defensible. (2) Registry pointer
+hygiene: inserting tests mid-file shifts every later span; the refresh
+rule is now in the registry header. (3) Orchestrator-originated errors
+propagate — the objective is a contract, and its phrases get copied
+verbatim; the review layer exists precisely for this.
+
+**Wave progress:** 10/14 done. Next: E44 (observability full split).

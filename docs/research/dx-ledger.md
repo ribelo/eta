@@ -451,6 +451,15 @@ Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
   V-DX-E42A-001..002.
 - b: `ppx_sql` split; docs-level tiering; Mutable_ref purity; race
   naming question.
+  **Decision: PROMOTED (2026-07-30, `5a67dfd5`, with follow-ups F10/F11).**
+  `ppx_eta_sql` package (extension name unchanged, snapshots byte-stable);
+  `docs/packages.md` tiers all 48 packages under primary-contract
+  precedence rules; `Mutable_ref` pure/at-least-once/retry-multiplying
+  callback contract (R177); `race` kept with cleanup-diagnostic override +
+  Promise.race divergence documented (R178–R180). One should-not-merge
+  round (five findings incl. orchestrator-originated false cardinality
+  phrase) fixed pre-merge. Evidence: `.scratch/research/dx/e42b/`,
+  V-DX-E42B-001..002.
 
 ### E43 — Resilience package (API-completeness proof)
 - What: `eta_resilience` without Expert/SPI — circuit breaker, token
@@ -518,6 +527,12 @@ Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
   close-on-replace semantics) — watch/documented boundary. Evidence gate: a
   real use case where loaded generations hold resources. If it fires, design
   Effect-TS `ScopedRef`-style close-previous-on-replace semantics.
+- F10 `eta_stream` "backend-neutral" phrasing in `docs/packages.md` —
+  mandatory Eio deps; "general Eta-owned streams" is more literal (tier
+  unchanged). Fix on next touch.
+- F11 R179 mixed-cause test checks constructors, not exact payloads —
+  payload-level assertions would fully discriminate cause preservation
+  (implementation provably preserves causes; test-strength only).
 - E22 dated law debts (CD-E22-004/008/020/022/023 named by oracle as
   readily coverable) — prioritize, don't let them fossilize.
 - E22 registry granularity (compound rows R82–R93) — split on next
