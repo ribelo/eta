@@ -181,5 +181,8 @@ state and protocols; the optional SDK owns application-facing observability.
 The first independent final review blocked on R90b's incorrect executable
 pointer and the external-row headline count. Commit `b66c56ec` corrected those
 items and the stale `with_external_parent` error-path name. The follow-up review
-then identified F1–F4; all four are resolved in the final range. Reviewer-of-
-record reapproval is recorded after review of the committed follow-up.
+then identified F1–F4. Its first re-review found stale shifted law pointers and
+insufficient fork-isolation discrimination; commit `c2249a62` refreshed every
+pointer and synchronized both backend tests. The same reviewer independently
+recounted 186 external rows, reran native and jsoo suites, and returned
+**READY** with no remaining blockers.

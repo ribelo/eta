@@ -26,6 +26,7 @@ Key commits:
 - `b66c56ec` — correct final independent-review law pointers and stale error path.
 - `f6ce2182` — address F1-F4 contracts, tests, laws, and changelog;
 - `8cfb17c5` — stream timestamped batches and commit expanded paired evidence.
+- `c2249a62` — strengthen fork isolation tests and repair shifted law pointers.
 
 ## Boundary and public contract
 

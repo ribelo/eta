@@ -204,3 +204,12 @@ The 15-pair batch run reports pooled medians and the full per-pair spread. It
 does not claim a one-sided performance bound. Eager/intercept allocation differs
 from pre-split by four words total over 100,000 points; lazy allocation improves
 by 199,995 words. Full evidence is under `evidence/bench-followup-pairs/`.
+
+The reviewer-of-record's first follow-up pass found that the F3 prose insertion
+had shifted other law pointers and that the first fork test did not discriminate
+a shared live context. Every shifted observability pointer was refreshed. Both
+backend tests now coordinate parent binding 7 and child bindings 5/6 so the
+child must retain its fork snapshot while the parent must retain its own value
+during the child's active override. Native and jsoo focused runs passed. The
+same reviewer rechecked the committed repair, independently counted 186 rows,
+reran both backend suites, and returned **READY** with no blockers.
