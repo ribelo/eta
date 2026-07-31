@@ -1,7 +1,7 @@
 # Public computation and construction API
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 02
 
 ## Question
