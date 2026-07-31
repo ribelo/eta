@@ -42,6 +42,7 @@ deliverable. Implementation is not part of this map.
 ## Decisions so far
 
 - [Eta Crux first-principles direction](issues/01-eta-crux-direction.md) — Build a Bonsai-like layer over private `eta_signal`, with Eta effects, deterministic advancement, typed output, and host-owned rendering.
+- [Reference semantics worth keeping](issues/02-reference-semantics.md) — Keep Bonsai computation laws and Incremental engine laws; treat Elm/Crux managed effects thinly; drop unjustified Cmd/Sub, FFI capability, and fragment-tree copies ([report](../../../.scratch/research/eta-crux/reference-semantics.md)).
 
 ## Not yet specified
 

@@ -1,7 +1,7 @@
 # Reference semantics worth keeping
 
 Type: research
-Status: claimed
+Status: resolved
 
 ## Question
 
@@ -25,3 +25,12 @@ claim that current Eta Crux notes copied without enough justification.
 
 Write one durable research report under `.scratch/research/eta-crux/` and link
 it from the answer.
+
+## Answer
+
+Keep Bonsai's computation-layer laws (local state machines, inject-then-advance,
+dynamic structure, keyed `assoc`, ordered lifecycle) and Incremental's private
+engine laws (stabilize, necessity, cutoffs, scopes, keyed maps). Keep only the
+thin Elm/Crux idea of managed effects and a pure transition, not public
+`Cmd`/`Sub` types, Crux FFI/capability ports, or fragment-address trees. Full
+cited report: [reference-semantics.md](../../../../.scratch/research/eta-crux/reference-semantics.md).
