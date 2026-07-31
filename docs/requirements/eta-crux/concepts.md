@@ -1,6 +1,5 @@
 ---
 kind: doc
-status: draft
 tags: [eta_crux, overview, concepts, mental-model]
 ---
 # Concepts overview
@@ -71,3 +70,24 @@ driver advancement
 - **Driver operation** — an explicit operation used by a host or test to submit
   actions, advance ready work, observe outputs, advance test time, or request
   shutdown.
+
+## Analogy
+
+A single-model framework is one waiter with one notebook. Eta Crux is a floor of
+stations, and the floor plan itself follows the state.
+
+| Eta Crux | Restaurant |
+|---|---|
+| Cell | A station with its own notebook and its own waiter |
+| Root computation | The floor of stations, not one waiter with one pad |
+| Graph-computed structure | The floor plan rearranges itself: a station appears when a party is seated and is struck when they leave |
+| Computation value | The manager's live board, which totals every notebook |
+| Action | "Table 3 asked for the check" |
+| Cell transition | The station waiter hears it, updates that notebook, and may write slips |
+| Command work | A slip to the kitchen. The slip is an ordinary Eta effect |
+| Command slot | A station's spike: a new slip on the spike replaces the previous one |
+| Fragment | The plates and the check the guest sees |
+| Adapter | The pass: it plates kitchen output for this dining room |
+| Capability message | An order to an outside supplier, plus the order to stand down |
+| Subscription | A standing order, such as "keep coffee coming for table 5" |
+| Driver operation | The expediter's calls: take orders, push work, read the pass, close the kitchen |

@@ -1,6 +1,5 @@
 ---
 kind: requirement
-status: draft
 tags: [eta_crux, boundary, contract]
 refines: ["[[docs/requirements/eta-crux/README]]"]
 depends_on: []
@@ -25,29 +24,27 @@ target toolkit can accept them.
 
 ## Requirements
 
-- **boundary-7t2q** (ubiquitous): When an external host supplies input to Eta
-  Crux, eta_crux shall accept that input as inbound actions.
-- **boundary-3n9x** (ubiquitous): When an external host affects application
-  state, eta_crux shall expose action dispatch as the host's only application
-  state mutation verb.
-- **boundary-k5r8** (ubiquitous): When an external host integrates with Eta
-  Crux, eta_crux shall provide no boundary operation that triggers Eta effect
-  work directly.
-- **boundary-b6t3** (ubiquitous): When application code exposes outbound state,
-  eta_crux shall expose that state as per-cell output fragments.
-- **boundary-p1n7** (event-driven): When an exposed output fragment changes,
-  eta_crux shall make the updated fragment available to the adapter.
-- **boundary-6y2v** (ubiquitous): When values cross an Eta Crux adapter
-  boundary, eta_crux shall confine those values to inbound actions, outbound
-  fragments, and outbound capability messages.
-- **boundary-d1h5** (ubiquitous): When Eta effect values are used by application
-  code, eta_crux shall keep those effect values inside the OCaml core.
-- **boundary-9q7c** (ubiquitous): When an adapter crosses a process or language
-  boundary, eta_crux shall require serialization only for the boundary payload
-  types: actions, fragments, and capability messages.
-- **boundary-a3f9** (event-driven): When an adapter targets a retained UI
-  toolkit, eta_crux shall deliver outbound fragments as immutable adapter
-  payloads expressible by that toolkit.
+- When an external host supplies input to Eta Crux, eta_crux shall accept that
+  input as inbound actions. ^boundary-7t2q
+- eta_crux shall expose action dispatch as the external host's only verb for
+  mutating application state. ^boundary-3n9x
+- eta_crux shall expose no boundary operation that triggers Eta effect work
+  directly. ^boundary-k5r8
+- When application code exposes outbound state, eta_crux shall expose that state
+  as per-cell output fragments. ^boundary-b6t3
+- When an exposed output fragment changes, eta_crux shall make the updated
+  fragment available to the adapter. ^boundary-p1n7
+- When values cross an Eta Crux adapter boundary, eta_crux shall confine those
+  values to inbound actions, outbound fragments, and outbound capability
+  messages. ^boundary-6y2v
+- When Eta effect values are used by application code, eta_crux shall keep those
+  effect values inside the OCaml core. ^boundary-d1h5
+- When an adapter crosses a process or language boundary, eta_crux shall require
+  serialization only for the boundary payload types: actions, fragments, and
+  capability messages. ^boundary-9q7c
+- When an adapter targets a retained UI toolkit, eta_crux shall
+  deliver outbound fragments as immutable adapter payloads
+  expressible by that toolkit. ^boundary-a3f9
 
 ## Open questions
 

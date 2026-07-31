@@ -1,6 +1,5 @@
 ---
 kind: requirement
-status: draft
 tags: [eta_crux, commands, effects, errors]
 refines: ["[[docs/requirements/eta-crux/README]]"]
 depends_on: ["[[docs/requirements/eta-crux/core-loop]]"]
@@ -32,53 +31,48 @@ a separate framework-level command name or argument payload.
 
 ## Requirements
 
-- **cmd-4t7m** (ubiquitous): When application code defines command work,
-  eta_crux shall require the work to be a force-total Eta effect that resolves
-  to an action.
-- **cmd-t3w8** (ubiquitous): When command work can fail with a typed error,
-  eta_crux shall require application code to fold that error into an action
-  before the work is scheduled.
-- **cmd-j2p6** (ubiquitous): When application code schedules command work,
-  eta_crux shall represent the scheduled command as the command work plus
-  execution metadata.
-- **cmd-l8n3** (event-driven): When eta_crux stages a scheduled command,
-  eta_crux shall record the owning cell scope and emission order in the
-  command's execution metadata.
-- **cmd-s4h8** (event-driven): When application code schedules a command in a
-  slot, eta_crux shall interpret that slot within the owning cell's command
-  scope and shall record the slot in the command's execution metadata.
-- **cmd-n2b7** (ubiquitous): When a state-machine transition returns work to run
-  later, eta_crux shall receive that work as a list of scheduled commands.
-- **cmd-e2r9** (event-driven): When eta_crux evaluates a state-machine
-  transition, eta_crux shall not run command work during transition evaluation.
-- **cmd-b3n6** (event-driven): When eta_crux starts command work, eta_crux shall
-  run it as an Eta fiber owned by the command's cell scope.
-- **cmd-6k3w** (event-driven): When one transition returns multiple scheduled
-  commands, eta_crux shall run their command work concurrently as independent
-  Eta fibers.
-- **cmd-9d2t** (ubiquitous): When application code needs ordering between side
-  effects, eta_crux shall require that ordering to be expressed by composing the
-  effects inside one command.
-- **cmd-1s6k** (event-driven): When command work completes successfully,
-  eta_crux shall enqueue exactly one result action for the owning cell.
-- **cmd-r6m2** (event-driven): When eta_crux starts a command in an occupied
-  slot, eta_crux shall interrupt the previous command in that slot before
-  registering the new command as current.
-- **cmd-v9k1** (event-driven): When a slotted command completes, eta_crux shall
-  clear the slot only if the completing command is still current for that slot.
-- **cmd-p3n7** (event-driven): When a cell scope is disposed, eta_crux shall
-  interrupt all in-flight commands owned by that cell, including slotted and
-  unslotted commands.
-- **cmd-d8w5** (event-driven): When a command is interrupted by slot replacement
-  or scope disposal, eta_crux shall produce no result action for that command.
-- **cmd-7h2q** (ubiquitous): When command work is scheduled, eta_crux shall keep
-  the effect value inside the OCaml core and shall not serialize or forward that
-  effect across an adapter boundary.
-- **cmd-r5w9** (ubiquitous): When eta_crux records command diagnostics,
-  eta_crux shall use Eta effect names and annotations and shall not require a
-  separate framework command name or argument payload.
-- **cmd-b8v1** (ubiquitous): When a transition returns a finite command list,
-  eta_crux shall impose no framework-level concurrency cap on that list.
+- When application code defines command work, eta_crux shall require the work to
+  be a force-total Eta effect that resolves to an action. ^cmd-4t7m
+- When command work can fail with a typed error, eta_crux shall require
+  application code to fold that error into an action before the work is
+  scheduled. ^cmd-t3w8
+- When application code schedules command work, eta_crux shall represent the
+  scheduled command as the command work plus execution metadata. ^cmd-j2p6
+- When eta_crux stages a scheduled command, eta_crux shall record the owning cell
+  scope and emission order in the command's execution metadata. ^cmd-l8n3
+- When application code schedules a command in a slot, eta_crux shall interpret
+  that slot within the owning cell's command scope and shall record the slot in
+  the command's execution metadata. ^cmd-s4h8
+- When a state-machine transition returns work to run later, eta_crux shall
+  receive that work as a list of scheduled commands. ^cmd-n2b7
+- When eta_crux evaluates a state-machine transition, eta_crux shall not run
+  command work during transition evaluation. ^cmd-e2r9
+- When eta_crux starts command work, eta_crux shall run it as an Eta fiber owned
+  by the command's cell scope. ^cmd-b3n6
+- When one transition returns multiple scheduled commands, eta_crux shall run
+  their command work concurrently as independent Eta fibers. ^cmd-6k3w
+- When application code needs ordering between side effects, eta_crux shall
+  require that ordering to be expressed by composing the effects inside one
+  command. ^cmd-9d2t
+- When command work completes successfully, eta_crux shall enqueue exactly one
+  result action for the owning cell. ^cmd-1s6k
+- When eta_crux starts a command in an occupied slot, eta_crux shall
+  interrupt the previous command in that slot before registering the
+  new command as current. ^cmd-r6m2
+- When a slotted command completes, eta_crux shall clear the slot only if the
+  completing command is still current for that slot. ^cmd-v9k1
+- When a cell scope is disposed, eta_crux shall interrupt all in-flight commands
+  owned by that cell, including slotted and unslotted commands. ^cmd-p3n7
+- When a command is interrupted by slot replacement or scope disposal, eta_crux
+  shall produce no result action for that command. ^cmd-d8w5
+- When command work is scheduled, eta_crux shall keep the effect value inside the
+  OCaml core and shall not serialize or forward that effect across an adapter
+  boundary. ^cmd-7h2q
+- When eta_crux records command diagnostics, eta_crux shall use Eta effect names
+  and annotations and shall not require a separate framework command name or
+  argument payload. ^cmd-r5w9
+- When a transition returns a finite command list, eta_crux shall impose no
+  framework-level concurrency cap on that list. ^cmd-b8v1
 
 ## Open questions
 

@@ -1,6 +1,5 @@
 ---
 kind: requirement
-status: draft
 tags: [eta_crux, architecture, overview]
 refines: []
 depends_on: []
@@ -37,20 +36,19 @@ to depend on it.
 
 ## Requirements
 
-- **pkg-a1c7** (ubiquitous): When Eta Crux is published, it shall be published as
-  an optional `eta_crux` package with public library `Eta_crux`.
-- **pkg-9f3d** (ubiquitous): When the root `eta` package is built, it shall not
-  depend on `eta_crux`.
-- **pkg-4k8e** (ubiquitous): When an application depends on `eta_crux`,
-  eta_crux shall own that application's computation graph and cell state.
-- **arch-2m6p** (ubiquitous): When an Eta Crux application is created without a
-  UI adapter, eta_crux shall still provide action processing, command execution,
-  subscription execution, lifecycle handling, and shutdown.
-- **arch-g9m4** (ubiquitous): When application code defines an Eta Crux
-  application, eta_crux shall require the application to be a root computation.
-- **arch-r7p2** (ubiquitous): When a host integrates with an Eta Crux
-  application instance, eta_crux shall expose explicit driver operations rather
-  than requiring direct host access to cell model storage.
+- Eta Crux shall be published as an optional `eta_crux` package with public
+  library `Eta_crux`. ^pkg-a1c7
+- The root `eta` package shall not depend on `eta_crux`. ^pkg-9f3d
+- When an application depends on `eta_crux`, eta_crux shall own that application's
+  computation graph and cell state. ^pkg-4k8e
+- When an Eta Crux application is created without a UI adapter, eta_crux shall
+  still provide action processing, command execution, subscription execution,
+  lifecycle handling, and shutdown. ^arch-2m6p
+- When application code defines an Eta Crux application, eta_crux shall require
+  the application to be a root computation. ^arch-g9m4
+- When a host integrates with an Eta Crux application instance, eta_crux shall
+  expose explicit driver operations rather than requiring direct host access to
+  cell model storage. ^arch-r7p2
 
 ## Requirement Notes
 

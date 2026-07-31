@@ -1,6 +1,5 @@
 ---
 kind: requirement
-status: draft
 tags: [eta_crux, dispatch, backpressure, portable_queue, cross-domain]
 refines: ["[[docs/requirements/eta-crux/README]]"]
 depends_on: ["[[docs/requirements/eta-crux/adapter]]", "[[docs/requirements/eta-crux/lifecycle]]", "[[docs/requirements/eta-crux/concurrency]]"]
@@ -30,29 +29,24 @@ the disposed-cell processing rule is defined in
 
 ## Requirements
 
-- **dispatch-9c3r** (event-driven): When application code calls a cell inject
-  function with an action, eta_crux shall enqueue that action addressed to the
-  cell that created the inject function.
-- **dispatch-8w2n** (event-driven): When eta_crux accepts an action, eta_crux
-  shall process the action during a later driver advancement rather than inline
-  in the caller.
-- **dispatch-q8m2** (ubiquitous): When eta_crux receives inbound actions,
-  eta_crux shall route them through a bounded application action queue.
-- **dispatch-c1v9** (event-driven): When non-owner-domain action admission finds
-  the bounded action queue full or closed, eta_crux shall report admission
-  failure to the adapter.
-- **dispatch-a6p4** (event-driven): When owner-domain work emits an action while
-  the bounded action queue is full, eta_crux shall suspend the producer until
-  queue capacity is available or the producer's scope is interrupted.
-- **dispatch-e5v2** (event-driven): When eta_crux processes queued actions for
-  one target cell, eta_crux shall preserve that cell's first-in-first-out action
-  order.
-- **dispatch-n4k7** (ubiquitous): When eta_crux processes queued actions for
-  different target cells, eta_crux shall make no cross-target ordering
-  guarantee.
-- **dispatch-m6p8** (event-driven): When action admission is attempted after
-  shutdown has closed admission, eta_crux shall reject the action without
-  processing it.
+- When application code calls a cell inject function with an action, eta_crux
+  shall enqueue that action addressed to the cell that created the inject
+  function. ^dispatch-9c3r
+- When eta_crux accepts an action, eta_crux shall process the action during a
+  later driver advancement rather than inline in the caller. ^dispatch-8w2n
+- eta_crux shall route all inbound actions through a bounded application action
+  queue. ^dispatch-q8m2
+- When non-owner-domain action admission finds the bounded action queue full or
+  closed, eta_crux shall report admission failure to the adapter. ^dispatch-c1v9
+- When owner-domain work emits an action while the bounded action queue is full,
+  eta_crux shall suspend the producer until queue capacity is available or the
+  producer's scope is interrupted. ^dispatch-a6p4
+- When eta_crux processes queued actions for one target cell, eta_crux shall
+  preserve that cell's first-in-first-out action order. ^dispatch-e5v2
+- When eta_crux processes queued actions for different target cells, eta_crux
+  shall make no cross-target ordering guarantee. ^dispatch-n4k7
+- If action admission occurs after shutdown has closed admission, then eta_crux
+  shall reject the action without processing it. ^dispatch-m6p8
 
 ## Open questions
 

@@ -1,6 +1,5 @@
 ---
 kind: requirement
-status: draft
 tags: [eta_crux, adapter, boundary, dispatch, sliml]
 refines: ["[[docs/requirements/eta-crux/README]]"]
 depends_on: ["[[docs/requirements/eta-crux/boundary-contract]]", "[[docs/requirements/eta-crux/fragments]]", "[[docs/requirements/eta-crux/tick]]"]
@@ -29,27 +28,24 @@ notifications when the toolkit supports retained row models.
 
 ## Requirements
 
-- **adpt-3k7m** (ubiquitous): When an adapter is implemented, eta_crux shall
-  provide type-agnostic driver and transport behavior and shall require
-  application-specific code to bind typed actions and typed fragments to the
-  host surface.
-- **adpt-9d2r** (ubiquitous): When an adapter binds an inbound host event,
-  eta_crux shall let the adapter capture a typed cell inject function directly.
-- **adpt-5t8w** (event-driven): When an adapter invokes a cell inject function
-  from a non-owner domain, eta_crux shall admit the action through the
-  cross-domain action admission path.
-- **adpt-b4h1** (event-driven): When an adapter binds an outbound scalar
-  fragment, eta_crux shall let the adapter map that fragment to a host-specific
-  mutation point.
-- **adpt-2n6q** (event-driven): When an adapter binds an outbound keyed
-  collection fragment, eta_crux shall let the adapter map keyed subtree changes
-  to host-specific row add, row change, and row remove operations.
-- **adpt-7c3j** (ubiquitous): When an adapter runs in the same OCaml process,
-  eta_crux shall allow the adapter to carry typed actions, fragments, and
-  capability messages as direct values.
-- **adpt-e1v9** (ubiquitous): When an adapter targets a UI toolkit, eta_crux
-  shall require no dependency from the toolkit binding to Eta Crux's internal
-  graph engine.
+- Where a host integrates a UI adapter, eta_crux shall provide type-agnostic
+  driver and transport behavior and shall require application-specific code to
+  bind typed actions and typed fragments to the host surface. ^adpt-3k7m
+- When an adapter binds an inbound host event, eta_crux shall let the adapter
+  capture a typed cell inject function directly. ^adpt-9d2r
+- When an adapter invokes a cell inject function from a non-owner
+  domain, eta_crux shall admit the action through the cross-domain
+  action admission path. ^adpt-5t8w
+- When an adapter binds an outbound scalar fragment, eta_crux shall let the
+  adapter map that fragment to a host-specific mutation point. ^adpt-b4h1
+- When an adapter binds an outbound keyed collection fragment, eta_crux shall let
+  the adapter map keyed subtree changes to host-specific row add, row change,
+  and row remove operations. ^adpt-2n6q
+- When an adapter runs in the same OCaml process, eta_crux shall allow
+  the adapter to carry typed actions, fragments, and capability
+  messages as direct values. ^adpt-7c3j
+- When an adapter targets a UI toolkit, eta_crux shall require no dependency from
+  the toolkit binding to Eta Crux's internal graph engine. ^adpt-e1v9
 
 ## Open questions
 

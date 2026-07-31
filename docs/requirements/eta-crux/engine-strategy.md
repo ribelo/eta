@@ -1,6 +1,5 @@
 ---
 kind: requirement
-status: draft
 tags: [eta_crux, eta_signal, engine, layering, eta_signal_map, timer]
 refines: ["[[docs/requirements/eta-crux/README]]"]
 depends_on: ["[[docs/requirements/eta-crux/core-loop]]", "[[docs/requirements/eta-crux/composition]]", "[[docs/requirements/eta-crux/tick]]"]
@@ -25,29 +24,25 @@ must make the application driver eligible to advance.
 
 ## Requirements
 
-- **eng-3p7k** (ubiquitous): When `eta_signal` is used as the Eta Crux graph
-  engine, `eta_signal` shall keep keyed collection operations outside the
-  `eta_signal` core API.
-- **eng-8w2n** (ubiquitous): When eta_crux supports keyed dynamic collections,
-  eta_crux shall consume a sibling `eta_signal_map` keyed collection substrate.
-- **eng-b4r9** (ubiquitous): When eta_crux exposes `assoc`, eta_crux shall
-  implement `assoc` over `eta_signal_map`.
-- **eng-m5k7** (state-driven): While a key remains present in an
-  `eta_signal_map` collection, `eta_signal_map` shall preserve that key's
-  associated scope.
-- **eng-r9p2** (event-driven): When a key enters an `eta_signal_map` collection,
-  `eta_signal_map` shall create a scope for that key.
-- **eng-c6v1** (event-driven): When a key leaves an `eta_signal_map` collection,
-  `eta_signal_map` shall dispose that key's scope.
-- **eng-n3d8** (event-driven): When existing key data changes in an
-  `eta_signal_map` collection, `eta_signal_map` shall update the key's
-  associated computation without recreating the key's scope.
-- **eng-c1m6** (ubiquitous): When `eta_signal_map` requires graph-engine support
-  for keyed diffing and stable per-key scopes, `eta_signal` shall expose the
-  minimal hook needed for that support.
-- **eng-6h8t** (event-driven): When an engine time node reaches its due time,
-  the graph engine shall provide wake information that makes the Eta Crux driver
-  eligible to advance.
+- When `eta_signal` is used as the Eta Crux graph engine, `eta_signal` shall keep
+  keyed collection operations outside the `eta_signal` core API. ^eng-3p7k
+- Where keyed dynamic collections are included, eta_crux shall consume a sibling
+  `eta_signal_map` keyed collection substrate. ^eng-8w2n
+- eta_crux shall implement `assoc` over `eta_signal_map`. ^eng-b4r9
+- While a key remains present in an `eta_signal_map` collection, `eta_signal_map`
+  shall preserve that key's associated scope. ^eng-m5k7
+- When a key enters an `eta_signal_map` collection, `eta_signal_map` shall create
+  a scope for that key. ^eng-r9p2
+- When a key leaves an `eta_signal_map` collection, `eta_signal_map` shall dispose
+  that key's scope. ^eng-c6v1
+- When existing key data changes in an `eta_signal_map` collection,
+  `eta_signal_map` shall update the key's associated computation without
+  recreating the key's scope. ^eng-n3d8
+- When `eta_signal_map` requires graph-engine support for keyed diffing and stable
+  per-key scopes, `eta_signal` shall expose the minimal hook needed for that
+  support. ^eng-c1m6
+- When an engine time node reaches its due time, the graph engine shall provide
+  wake information that makes the Eta Crux driver eligible to advance. ^eng-6h8t
 
 ## Open questions
 
