@@ -11,7 +11,8 @@
         "content": "Sunny and 68F",
         "refusal": null
       },
-      "finish_reason": "stop"
+      "finish_reason": "stop",
+      "logprobs": null
     }
   ],
   "usage": {

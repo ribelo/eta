@@ -29,7 +29,8 @@ let replay_item_lossless raw =
 let replay_item ~provider raw =
   replay_item_lossless raw |> map_codec_failure ~provider
 
-let response_input_items_lossless ~provider ~replay_items prompt =
+let response_input_items_lossless_with encode_input_items ~provider
+    ~replay_items prompt =
   let* replay_items = result_map_all replay_item_lossless replay_items in
   let rec loop replay_used = function
     | [] -> Stdlib.Ok ([], replay_used)
@@ -37,7 +38,7 @@ let response_input_items_lossless ~provider ~replay_items prompt =
         match loop replay_used rest with
         | Stdlib.Error _ as error -> error
         | Stdlib.Ok (rest_items, replay_used) -> (
-            match input_items ~provider message with
+            match encode_input_items ~provider message with
             | Stdlib.Error (A.Unsupported { feature; _ }) ->
                 Stdlib.Error (Unsupported feature)
             | Stdlib.Error (A.Decode_error { message; raw; _ }) ->
@@ -72,11 +73,18 @@ let response_input_items_lossless ~provider ~replay_items prompt =
              "provider replay items require a preceding assistant tool call")
       else Stdlib.Ok items
 
+let response_input_items_lossless =
+  response_input_items_lossless_with input_items
+
+let openrouter_response_input_items_lossless =
+  response_input_items_lossless_with openrouter_input_items
+
 let response_input_items ~provider ~replay_items prompt =
   response_input_items_lossless ~provider ~replay_items prompt
   |> map_codec_failure ~provider
 
-let encode_responses_json_lossless ~provider ~map_codec_failure ~encode_tool
+let encode_responses_json_lossless_with encode_input_items ~provider
+    ~map_codec_failure ~encode_tool
     (request : _ A.Responses.request) =
   let map_failure result = Result.map_error map_codec_failure result in
   let* temperature = map_failure (temperature_json_lossless request.temperature) in
@@ -93,7 +101,6 @@ let encode_responses_json_lossless ~provider ~map_codec_failure ~encode_tool
                ("generate_summary", Option.map Json.bool generate_summary);
              ])
   in
-  let* tools = result_map_all encode_tool request.tools in
   let* input =
     match request.input with
     | A.Responses.Text _ when request.replay_items <> [] ->
@@ -103,10 +110,11 @@ let encode_responses_json_lossless ~provider ~map_codec_failure ~encode_tool
                 "provider replay items with Responses text input"))
     | A.Responses.Text text -> Stdlib.Ok (Json.string text)
     | A.Responses.Messages prompt ->
-        response_input_items_lossless ~provider
+        encode_input_items ~provider
           ~replay_items:request.replay_items prompt
         |> map_failure |> Result.map Json.array
   in
+  let* tools = result_map_all encode_tool request.tools in
   let request_text =
     request.text
     |> Option.map (fun { A.Responses.format } ->
@@ -171,17 +179,31 @@ let encode_responses_json_lossless ~provider ~map_codec_failure ~encode_tool
          ("prompt_cache_key", Option.map Json.string request.prompt_cache_key);
        ])
 
+let encode_responses_json_lossless ~provider ~map_codec_failure ~encode_tool
+    request =
+  encode_responses_json_lossless_with response_input_items_lossless ~provider
+    ~map_codec_failure ~encode_tool request
+
 let encode_responses_json ~provider ~encode_tool request =
   encode_responses_json_lossless ~provider
     ~map_codec_failure:(ai_error_of_codec_failure_historical ~provider)
     ~encode_tool request
 
 let encode_responses_lossless ~provider ~map_codec_failure ~encode_tool request =
-  encode_responses_json_lossless ~provider ~map_codec_failure ~encode_tool request
+  encode_responses_json_lossless ~provider ~map_codec_failure
+    ~encode_tool request
   |> Result.map Json.to_string
 
 let encode_responses ~provider ~encode_tool request =
   encode_responses_json ~provider ~encode_tool request
+  |> Result.map Json.to_string
+
+let encode_openrouter_responses ~encode_tool request =
+  encode_responses_json_lossless_with openrouter_response_input_items_lossless
+    ~provider:"openrouter"
+    ~map_codec_failure:
+      (ai_error_of_codec_failure_historical ~provider:"openrouter")
+    ~encode_tool request
   |> Result.map Json.to_string
 
 let output_text item =

@@ -140,8 +140,11 @@ val message_item :
 val function_call_item : Eta_ai.tool_call -> Eta_ai.Json.t
 val input_items :
   provider:string -> Eta_ai.message -> (Eta_ai.Json.t list, Eta_ai.ai_error) result
+(** The standard Responses message helpers reject audio content. *)
 val chat_message_json :
   provider:string -> Eta_ai.message -> (Eta_ai.Json.t, Eta_ai.ai_error) result
+(** Chat message encoding rejects audio outside user messages, unsupported audio
+    formats, and noncanonical caller-provided Base64. *)
 
 type tool_shape =
   | Chat_tool
@@ -193,6 +196,15 @@ val encode_chat_with_thinking :
   ?structured_output:structured_output ->
   Eta_ai.chat_request ->
   (Eta_ai.raw_json, Eta_ai.ai_error) result
+(** Every public Chat request encoder applies the same input-audio validation
+    before schema callbacks or wire encoding. Streamed user input audio remains
+    valid. *)
+
+val validate_chat_request :
+  Eta_ai.chat_request -> (unit, codec_failure) result
+
+val chat_has_audio : Eta_ai.chat_request -> bool
+val canonical_padded_base64 : string -> bool
 
 val encode_responses_json :
   provider:string ->
@@ -215,6 +227,15 @@ val encode_responses :
     ('tool -> (Eta_ai.Json.t, Eta_ai.ai_error) result) ->
   'tool Eta_ai.Responses.request ->
   (Eta_ai.raw_json, Eta_ai.ai_error) result
+(** The standard Responses encoders reject audio content. *)
+
+val encode_openrouter_responses :
+  encode_tool:
+    ('tool -> (Eta_ai.Json.t, Eta_ai.ai_error) result) ->
+  'tool Eta_ai.Responses.request ->
+  (Eta_ai.raw_json, Eta_ai.ai_error) result
+(** OpenRouter Responses dialect encoding. This operation has no provider
+    parameter and keeps OpenRouter's documented input-audio behavior. *)
 
 val finish_reason : string -> Eta_ai.finish_reason
 val usage : ?raw_prompt_names:bool -> Eta_ai.Json.t -> Eta_ai.usage

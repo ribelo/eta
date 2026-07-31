@@ -83,6 +83,12 @@ let chat_request ?reasoning ?(stream = false) () : A.chat_request =
     stream;
   }
 
+let openai_chat_request request =
+  O.Chat.request ~common:request () |> expect_ok "OpenAI Chat request"
+
+let decode_chat_neutral raw =
+  O.decode_chat raw |> Result.map O.Chat.to_eta_ai
+
 let responses_request ?reasoning ?(stream = false) () :
     A.tool A.Responses.request =
   {
@@ -228,8 +234,15 @@ let test_provider_value () =
   Alcotest.(check bool) "audio prompt input" false provider.capabilities.audio_input;
   Alcotest.(check bool) "video prompt input" false provider.capabilities.video_input;
   Alcotest.(check bool) "image generation" true provider.capabilities.image_generation;
-  Alcotest.(check bool) "speech" true provider.capabilities.speech;
-  Alcotest.(check bool) "transcription" true provider.capabilities.transcription;
+  Alcotest.(check bool) "Responses speech" false provider.capabilities.speech;
+  Alcotest.(check bool)
+    "Responses transcription" false provider.capabilities.transcription;
+  Alcotest.(check bool)
+    "Chat audio input" true chat_provider.capabilities.audio_input;
+  Alcotest.(check bool)
+    "Chat audio output" true chat_provider.capabilities.speech;
+  Alcotest.(check bool)
+    "Chat is not transcription" false chat_provider.capabilities.transcription;
   let headers = provider.auth_headers (A.api_key "sk-test") in
   Alcotest.(check (option string))
     "authorization" (Some "Bearer sk-test")
@@ -242,7 +255,9 @@ let test_encode_chat_and_responses () =
     |> expect_ok "structured output"
   in
   let chat =
-    O.encode_chat ~structured_output:output (chat_request ()) |> expect_ok "chat"
+    O.encode_chat ~structured_output:output
+      (openai_chat_request (chat_request ()))
+    |> expect_ok "chat"
   in
   require_contains "chat model" ~needle:"\"model\":\"gpt-4o-mini\"" chat;
   require_contains "chat messages" ~needle:"\"messages\":[" chat;
@@ -326,7 +341,7 @@ let test_responses_reasoning_levels () =
       O.encode_responses (responses_request ~reasoning ())
       |> expect_invalid_request "invalid reasoning" |> ignore)
     [ ""; " "; "unknown" ];
-  O.encode_chat (chat_request ~reasoning:"high" ())
+  O.encode_chat (openai_chat_request (chat_request ~reasoning:"high" ()))
   |> expect_unsupported "Chat Completions reasoning" |> ignore
 
 let test_xairsp_0eyc_2a4x_distinct_polymorphic_request () =
@@ -388,7 +403,10 @@ let test_xairsp_0eyc_2a4x_distinct_polymorphic_request () =
   require_contains "tool choice" ~needle:"\"tool_choice\":\"auto\"" responses;
   require_contains "typed text format"
     ~needle:"\"text\":{\"format\":{\"type\":\"json_object\"}}" responses;
-  let chat = O.encode_chat (chat_request ()) |> expect_ok "distinct chat" in
+  let chat =
+    O.encode_chat (openai_chat_request (chat_request ()))
+    |> expect_ok "distinct chat"
+  in
   require_contains "chat envelope" ~needle:"\"messages\":[" chat;
   Alcotest.(check bool) "chat has no Responses input" false
     (contains ~needle:"\"input\":" chat)
@@ -409,7 +427,7 @@ let test_openai_responses_field_policy () =
 
 let test_decode_chat_fixture () =
   let response =
-    O.decode_chat (read_fixture "chat_completion.json")
+    decode_chat_neutral (read_fixture "chat_completion.json")
     |> expect_ok "chat completion fixture"
   in
   Alcotest.(check (option string)) "id" (Some "chatcmpl_fixture") response.id;
@@ -423,21 +441,20 @@ let test_decode_chat_fixture () =
 
 let test_decode_chat_rejects_fractional_usage_integer () =
   let raw =
-    {|{"id":"chatcmpl_fractional","model":"gpt-fixture","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1.5,"completion_tokens":2,"total_tokens":3}}|}
+    {|{"id":"chatcmpl_fractional","object":"chat.completion","created":1,"model":"gpt-fixture","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","logprobs":null}],"usage":{"prompt_tokens":1.5,"completion_tokens":2,"total_tokens":3}}|}
   in
-  let response = O.decode_chat raw |> expect_ok "fractional usage" in
-  Alcotest.(check (option int)) "fractional prompt tokens rejected" None
-    (Option.bind response.usage (fun usage -> usage.A.input_tokens.total));
-  Alcotest.(check (option int)) "integral completion tokens kept" (Some 2)
-    (Option.bind response.usage (fun usage -> usage.A.output_tokens.total))
+  match O.decode_chat raw with
+  | Stdlib.Error (O.Error.Decode { raw_body = Some actual; _ }) ->
+      Alcotest.(check string) "malformed body retained" raw actual
+  | _ -> Alcotest.fail "fractional usage must fail the strict success decoder"
 
 let test_decode_chat_usage_details () =
   let raw =
-    {|{"id":"chatcmpl_usage","model":"gpt-fixture","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":8,"total_tokens":18,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"reasoning_tokens":3}}}|}
+    {|{"id":"chatcmpl_usage","object":"chat.completion","created":1,"model":"gpt-fixture","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","logprobs":null}],"usage":{"prompt_tokens":10,"completion_tokens":8,"total_tokens":18,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"reasoning_tokens":3}}}|}
   in
-  let response = O.decode_chat raw |> expect_ok "chat usage details" in
+  let response = decode_chat_neutral raw |> expect_ok "chat usage details" in
   let usage = Option.get response.usage in
-  Alcotest.(check (option int)) "uncached input" (Some 6)
+  Alcotest.(check (option int)) "uncached input is not fabricated" None
     usage.A.input_tokens.uncached;
   Alcotest.(check (option int)) "total input" (Some 10)
     usage.A.input_tokens.total;
@@ -445,29 +462,35 @@ let test_decode_chat_usage_details () =
     usage.A.input_tokens.cache_read;
   Alcotest.(check (option int)) "total output" (Some 8)
     usage.A.output_tokens.total;
-  Alcotest.(check (option int)) "text output" (Some 5)
+  Alcotest.(check (option int)) "text output is not fabricated" None
     usage.A.output_tokens.text;
   Alcotest.(check (option int)) "reasoning output" (Some 3)
     usage.A.output_tokens.reasoning
 
 let test_decode_chat_schema_regressions () =
-  (match O.decode_chat {|{"choices":[{}]}|} with
+  (match
+     decode_chat_neutral
+       {|{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[{"index":0}]}|}
+   with
   | Stdlib.Error (O.Error.Decode { message; _ }) ->
       require_contains "missing message diagnostic" ~needle:"missing message" message
   | _ -> Alcotest.fail "missing choice message must be a decode failure");
-  (match O.decode_chat {|{"choices":[{"message":"bad"}]}|} with
+  (match
+     decode_chat_neutral
+       {|{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":"bad"}]}|}
+   with
   | Stdlib.Error (O.Error.Decode { message; _ }) ->
-      require_contains "non-object message diagnostic" ~needle:"missing message"
+      require_contains "non-object message diagnostic" ~needle:"must be an object"
         message
   | _ -> Alcotest.fail "non-object choice message must be a decode failure");
   let response =
-    O.decode_chat
-      {|{"choices":[{"message":{"content":"one"},"finish_reason":"stop"},{"message":{"content":"two"},"finish_reason":"length"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}|}
+    decode_chat_neutral
+      {|{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"one"},"finish_reason":"stop","logprobs":null},{"index":1,"message":{"role":"assistant","content":"two"},"finish_reason":"length","logprobs":null}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}|}
     |> expect_ok "multi-choice chat"
   in
   (match response.finish_reasons with
-  | [ A.Stop; A.Length ] -> ()
-  | _ -> Alcotest.fail "finish reasons from every choice must be retained");
+  | [ A.Stop ] -> ()
+  | _ -> Alcotest.fail "neutral projection must use only the first choice");
   let usage = Option.get response.usage in
   Alcotest.(check (option string)) "default raw prompt token name" (Some "1")
     (List.assoc_opt "prompt_tokens" usage.raw);
@@ -483,21 +506,16 @@ let test_decode_chat_schema_regressions () =
     (List.assoc_opt "prompt_tokens" codec_usage.raw);
   Alcotest.(check (option string)) "codec default does not rename input token" None
     (List.assoc_opt "input_tokens" codec_usage.raw);
-  let tool_response =
+  match
     O.decode_chat
-      {|{"choices":[{"message":{"tool_calls":[{"function":{"name":"weather","arguments":{"city":"Warsaw"}}}]}}]}|}
-    |> expect_ok "missing tool id"
-  in
-  match assistant_tool_calls tool_response.message with
-  | [ call ] ->
-      Alcotest.(check string) "missing tool id defaults empty" "" call.id;
-      Alcotest.(check string) "non-string arguments retained" "{\"city\":\"Warsaw\"}"
-        call.arguments_json
-  | _ -> Alcotest.fail "tool call without id must be retained"
+      {|{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"type":"function","function":{"name":"weather","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}|}
+  with
+  | Stdlib.Error (O.Error.Decode _) -> ()
+  | _ -> Alcotest.fail "tool call without id must fail strict decoding"
 
 let test_decode_tool_fixture () =
   let response =
-    O.decode_chat (read_fixture "chat_tool_completion.json")
+    decode_chat_neutral (read_fixture "chat_tool_completion.json")
     |> expect_ok "tool completion fixture"
   in
   match assistant_tool_calls response.message with
@@ -3352,7 +3370,43 @@ let test_chat_and_responses_encode_audio_content () =
       input = A.Responses.Messages [ A.User [ A.audio_pcm16_base64 "AAE=" ] ];
     }
   in
-  let raw = O.encode_responses request |> expect_ok "audio responses" in
+  (match O.encode_responses request with
+  | Stdlib.Error (O.Error.Unsupported _) -> ()
+  | _ -> Alcotest.fail "Responses audio must be rejected");
+  List.iter
+    (fun provider ->
+      let tool_callbacks = ref 0 in
+      match
+        Eta_ai_openai_codec.encode_responses ~provider
+          ~encode_tool:(fun _ ->
+            incr tool_callbacks;
+            Stdlib.Ok (A.Json.object_ []))
+          request
+      with
+      | Stdlib.Error (A.Unsupported _) ->
+          Alcotest.(check int) "codec tool callback" 0 !tool_callbacks
+      | _ ->
+          Alcotest.fail
+            "the standard Responses codec must reject audio for every provider label")
+    [ "openai"; "openrouter"; "custom" ];
+  let common =
+    {
+      (chat_request ()) with
+      model = "gpt-audio-1.5";
+      prompt = [ A.User [ A.audio_pcm16_base64 "AAE=" ] ];
+    }
+  in
+  (match O.Chat.request ~common () with
+  | Stdlib.Error (O.Error.Unsupported _) -> ()
+  | _ -> Alcotest.fail "Chat must reject undocumented pcm16 input");
+  let wav =
+    A.Audio { data = A.Base64 "AAE="; format = A.Wav; transcript = None }
+  in
+  let raw =
+    O.Chat.request ~common:{ common with prompt = [ A.User [ wav ] ] } ()
+    |> expect_ok "audio Chat request" |> O.Chat.encode
+    |> expect_ok "audio Chat encode"
+  in
   require_contains "audio part" ~needle:"\"type\":\"input_audio\"" raw;
   require_contains "audio data" ~needle:"\"data\":\"AAE=\"" raw
 
@@ -3381,7 +3435,9 @@ let test_openai_image_content_wire_shape () =
       stream = false;
     }
   in
-  let raw = O.encode_chat request |> expect_ok "image chat" in
+  let raw =
+    O.encode_chat (openai_chat_request request) |> expect_ok "image chat"
+  in
   (* The wire format MUST contain "image_url" as the type *)
   require_contains "image type" ~needle:"\"type\":\"image_url\"" raw;
   require_contains "image_url field" ~needle:"\"image_url\":{" raw
@@ -3576,7 +3632,7 @@ let test_openai_chat_tool_result_image_is_unsupported () =
       stream = false;
     }
   in
-  match O.encode_chat request with
+  match Result.bind (O.Chat.request ~common:request ()) O.encode_chat with
   | Stdlib.Error (O.Error.Unsupported "tool result media content") -> ()
   | Stdlib.Error _ -> Alcotest.fail "unexpected Chat Completions error"
   | Stdlib.Ok _ ->
@@ -4179,12 +4235,15 @@ let test_aierr_openai_configured_callbacks_run () =
           base.decode_stream_event event);
     }
   in
-  ignore (O.Chat.encode ~provider (chat_request ()) |> expect_ok "callback encode");
+  ignore
+    (O.Chat.encode ~provider (openai_chat_request (chat_request ()))
+    |> expect_ok "callback encode");
   Alcotest.(check bool) "encode callback" true !encode_hit;
   ignore
-    (O.Chat.decode ~provider (read_fixture "chat_completion.json")
+    (O.Chat.decode (read_fixture "chat_completion.json")
     |> expect_ok "callback decode");
-  Alcotest.(check bool) "decode callback" true !decode_hit;
+  Alcotest.(check bool)
+    "provider-owned buffered decoder bypasses neutral callback" false !decode_hit;
   with_runtime @@ fun rt ->
   let headers =
     H.Core.Header.unsafe_of_list [ ("content-type", "text/event-stream") ]
@@ -4194,7 +4253,8 @@ let test_aierr_openai_configured_callbacks_run () =
   in
   ignore
     (run_ok rt "callback stream"
-       (O.Chat.stream ~provider client ~api_key:(A.api_key "sk") (chat_request ())
+       (O.Chat.stream ~provider client ~api_key:(A.api_key "sk")
+          (openai_chat_request (chat_request ()))
        |> E.bind O.read_stream_events));
   Alcotest.(check bool) "stream callback" true !stream_hit;
   let stream_headers =
@@ -4217,7 +4277,7 @@ let test_aierr_openai_configured_callbacks_run () =
   (match
      B.run rt
        (O.Chat.stream ~provider:outer (stream_client ()) ~api_key:(A.api_key "k")
-          (chat_request ())
+          (openai_chat_request (chat_request ()))
        |> E.bind O.read_stream_event)
    with
   | Eta.Exit.Error
@@ -4247,7 +4307,7 @@ let test_aierr_openai_configured_callbacks_run () =
   match
     B.run rt
       (O.Chat.stream ~provider:embedded (stream_client ()) ~api_key:(A.api_key "k")
-         (chat_request ())
+         (openai_chat_request (chat_request ()))
       |> E.bind O.read_stream_event)
   with
   | Eta.Exit.Error
@@ -4273,8 +4333,8 @@ let test_aierr_openai_callback_matrix () =
     }
   in
   let chat_request_built =
-    O.Chat.request ~provider:chat_provider ~api_key:(A.api_key "k")
-      (chat_request ())
+    O.Chat.http_request ~provider:chat_provider ~api_key:(A.api_key "k")
+      (openai_chat_request (chat_request ()))
     |> expect_ok "chat callback request"
   in
   require_contains "chat encode sentinel" ~needle:"chat_callback"
@@ -4365,10 +4425,10 @@ let test_aierr_openai_callback_matrix () =
   let chat_response =
     run_ok rt "chat callback run"
       (O.Chat.run ~provider:chat_provider chat_client ~api_key:(A.api_key "k")
-         (chat_request ()))
+         (openai_chat_request (chat_request ())))
   in
-  Alcotest.(check (option string)) "chat decoder sentinel"
-    (Some "chat-callback-model") chat_response.model;
+  Alcotest.(check string) "provider-owned Chat decoder"
+    "gpt-4o-mini-2024-07-18" chat_response.model;
   let embedding_client =
     test_client (response_of_fixture "embeddings.json") (ref None)
   in
@@ -4389,7 +4449,8 @@ let test_aierr_openai_callback_matrix () =
   in
   Alcotest.(check (option string)) "Responses decoder sentinel"
     (Some "responses-callback-model") responses_response.model;
-  Alcotest.(check bool) "chat decode callback" true !chat_decode_hit;
+  Alcotest.(check bool)
+    "Chat does not use the lossy neutral decode callback" false !chat_decode_hit;
   Alcotest.(check bool) "embedding decode callback" true !embedding_decode_hit;
   Alcotest.(check bool) "Responses decode callback" true !responses_decode_hit
 
@@ -4547,7 +4608,13 @@ let test_aierr_openai_codec_lossless_validation_apis () =
 
 let test_aierr_openai_validation_classes () =
   (* Oracle A.4: every named validation class. *)
-  (match O.encode_chat { (chat_request ()) with temperature = Some nan } with
+  (match
+     Result.bind
+       (O.Chat.request
+          ~common:{ (chat_request ()) with temperature = Some nan }
+          ())
+       O.encode_chat
+   with
   | Stdlib.Error (O.Error.Invalid_request _) -> ()
   | _ -> Alcotest.fail "non-finite chat temperature");
   (match
@@ -4629,7 +4696,8 @@ let test_aierr_openai_builder_runner_validation () =
     | Stdlib.Error (O.Error.Invalid_request _) -> ()
     | _ -> Alcotest.fail (label ^ " builder must return Invalid_request")
   in
-  O.chat_completions_request ~api_key:(A.api_key "k") bad_chat
+  O.chat_completions_request ~api_key:(A.api_key "k")
+    (openai_chat_request bad_chat)
   |> expect_builder "chat";
   O.embeddings_request ~api_key:(A.api_key "k") bad_embedding
   |> expect_builder "embeddings";
@@ -4651,7 +4719,8 @@ let test_aierr_openai_builder_runner_validation () =
     | _ -> Alcotest.fail (label ^ " runner must fail Invalid_request")
   in
   expect_runner "chat"
-    (O.chat_completions client ~api_key:(A.api_key "k") bad_chat);
+    (O.chat_completions client ~api_key:(A.api_key "k")
+       (openai_chat_request bad_chat));
   expect_runner "embeddings"
     (O.embeddings client ~api_key:(A.api_key "k") bad_embedding);
   expect_runner "responses"
@@ -4880,7 +4949,7 @@ let test_aierr_openai_structured_output_honors_custom_encode () =
   in
   let request =
     O.chat_completions_request ~structured_output:structured ~provider
-      ~api_key:(A.api_key "sk") (chat_request ())
+      ~api_key:(A.api_key "sk") (openai_chat_request (chat_request ()))
     |> expect_ok "structured request"
   in
   Alcotest.(check bool) "custom encode ran" true !encode_hit;
@@ -4896,7 +4965,7 @@ let test_aierr_openai_structured_output_honors_custom_encode () =
     let provider = { provider with A.encode_chat = (fun _ -> Stdlib.Ok encoded) } in
     match
       O.chat_completions_request ~structured_output:structured ~provider
-        ~api_key:(A.api_key "sk") (chat_request ())
+        ~api_key:(A.api_key "sk") (openai_chat_request (chat_request ()))
     with
     | Stdlib.Error error -> expected error
     | Stdlib.Ok _ -> Alcotest.fail "invalid callback JSON accepted"
@@ -5012,7 +5081,7 @@ let test_aierr_openai_outer_and_read_cleanup_preserve_primary () =
     (match
        B.run rt
          (O.Chat.stream ~provider:outer client ~api_key:(A.api_key "k")
-            (chat_request ())
+            (openai_chat_request (chat_request ()))
          |> E.bind read)
      with
     | Eta.Exit.Error cause ->
@@ -5045,7 +5114,7 @@ let test_aierr_openai_outer_and_read_cleanup_preserve_primary () =
   ignore
     (run_ok rt "plural successful cleanup"
        (O.Chat.stream ~provider:quiet client ~api_key:(A.api_key "k")
-          (chat_request ())
+          (openai_chat_request (chat_request ()))
        |> E.bind O.read_stream_events));
   Alcotest.(check int) "plural successful release exactly once" 1
     !success_releases;
@@ -5073,7 +5142,7 @@ let test_aierr_openai_outer_and_read_cleanup_preserve_primary () =
   (match
      B.run rt
        (O.Chat.stream ~provider:quiet client ~api_key:(A.api_key "k")
-          (chat_request ())
+          (openai_chat_request (chat_request ()))
        |> E.bind O.read_stream_event)
    with
   | Eta.Exit.Error cause ->
@@ -5082,6 +5151,367 @@ let test_aierr_openai_outer_and_read_cleanup_preserve_primary () =
           (Eta.Cause.pp O.Error.pp) cause
   | Eta.Exit.Ok _ -> Alcotest.fail "body read plus release unexpectedly succeeded");
   Alcotest.(check int) "body read failure releases exactly once" 1 !read_releases
+
+let test_oachat_runner_preflight_replay_concurrency_and_telemetry () =
+  let audio =
+    A.Audio
+      {
+        data = A.Base64 "AA==";
+        format = A.Wav;
+        transcript = None;
+      }
+  in
+  let responses_audio role : A.tool A.Responses.request =
+    let message =
+      match role with
+      | 0 -> A.User [ audio ]
+      | 1 -> A.Assistant { content = [ audio ]; tool_calls = [] }
+      | 2 -> A.Tool { tool_call_id = "call"; content = [ audio ] }
+      | _ -> A.User [ A.Text "before"; audio; A.Text "after" ]
+    in
+    { (responses_request ()) with input = A.Responses.Messages [ message ] }
+  in
+  B.with_traced_runtime @@ fun ctx rt tracer ->
+  let provider_callbacks = ref 0 in
+  let body_allocations = ref 0 in
+  let responses_base = O.responses_provider () in
+  let responses_provider =
+    {
+      responses_base with
+      A.encode_responses =
+        (fun request ->
+          incr provider_callbacks;
+          incr body_allocations;
+          responses_base.encode_responses request);
+    }
+  in
+  let http_callbacks = ref 0 in
+  let unreachable_client =
+    H.Client.make_custom ~protocol:H.Client.H1
+      ~request:(fun _ ->
+        incr http_callbacks;
+        E.pure (response_of_fixture "responses.json"))
+      ~stats:(fun () -> E.pure (Some zero_stats))
+      ~shutdown:(fun () -> E.unit)
+  in
+  List.iter
+    (fun role ->
+      let request = responses_audio role in
+      let expect_preflight label = function
+        | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Unsupported _)) -> ()
+        | _ -> Alcotest.fail (label ^ " did not fail before transport")
+      in
+      B.run rt
+        (O.responses ~provider:responses_provider unreachable_client
+           ~api_key:(A.api_key "runner-key") request)
+      |> expect_preflight "Responses run";
+      B.run rt
+        (O.stream_responses ~provider:responses_provider unreachable_client
+           ~api_key:(A.api_key "runner-key") request)
+      |> expect_preflight "Responses stream")
+    [ 0; 1; 2; 3 ];
+  Alcotest.(check int) "Responses provider callbacks" 0 !provider_callbacks;
+  Alcotest.(check int) "Responses body allocations" 0 !body_allocations;
+  Alcotest.(check int) "Responses HTTP callbacks" 0 !http_callbacks;
+  let chat_base = O.chat_completions_provider () in
+  let chat_encodes = ref 0 in
+  let chat_provider =
+    {
+      chat_base with
+      A.encode_chat =
+        (fun request ->
+          incr chat_encodes;
+          chat_base.encode_chat request);
+    }
+  in
+  (match
+     O.Chat.request
+       ~common:
+         {
+           (chat_request ()) with
+           prompt =
+             [
+               A.User
+                 [
+                   A.Audio
+                     {
+                       data = A.Base64 "AB==";
+                       format = A.Wav;
+                       transcript = None;
+                     };
+                 ];
+             ];
+         }
+       ()
+   with
+  | Error (O.Error.Invalid_request _) -> ()
+  | _ -> Alcotest.fail "noncanonical caller Base64 was accepted");
+  Alcotest.(check int) "invalid Base64 has no encode callback" 0 !chat_encodes;
+  Alcotest.(check int) "invalid Base64 has no HTTP callback" 0 !http_callbacks;
+  let output =
+    O.Chat.request ~common:(chat_request ())
+      ~modalities:[ O.Chat.Text; O.Chat.Audio ]
+      ~audio:
+        {
+          O.Chat.voice = O.Voices.Built_in O.Voices.Alloy;
+          format = O.Chat.Wav;
+        }
+      ()
+    |> expect_ok "audio output request"
+  in
+  (match
+     B.run rt
+       (O.Chat.stream ~provider:chat_provider unreachable_client
+          ~api_key:(A.api_key "runner-key") output)
+   with
+  | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Unsupported _)) -> ()
+  | _ -> Alcotest.fail "streamed audio output reached transport");
+  Alcotest.(check int) "output stream encode callback" 0 !chat_encodes;
+  Alcotest.(check int) "output stream HTTP callback" 0 !http_callbacks;
+  let input =
+    O.Chat.request
+      ~common:{ (chat_request ()) with prompt = [ A.User [ audio ] ] }
+      ()
+    |> expect_ok "audio input request"
+  in
+  let input_releases = ref 0 in
+  let input_client =
+    H.Client.make_custom ~protocol:H.Client.H1
+      ~request:(fun _ ->
+        incr http_callbacks;
+        let body =
+          H.Body.Stream.of_bytes
+            ~release:(fun () -> E.sync (fun () -> incr input_releases))
+            [ Bytes.of_string "data: [DONE]\n\n" ]
+        in
+        E.pure
+          (H.Response.make ~status:200
+             ~headers:
+               (H.Core.Header.unsafe_of_list
+                  [ ("content-type", "text/event-stream") ])
+             ~body ()))
+      ~stats:(fun () -> E.pure (Some zero_stats))
+      ~shutdown:(fun () -> E.unit)
+  in
+  let input_stream =
+    run_ok rt "streamed input audio"
+      (O.Chat.stream ~provider:chat_provider input_client
+         ~api_key:(A.api_key "runner-key") input)
+  in
+  run_ok rt "close streamed input audio" (O.close_stream input_stream);
+  Alcotest.(check int) "input stream encode callback" 1 !chat_encodes;
+  Alcotest.(check int) "input stream HTTP callback" 1 !http_callbacks;
+  Alcotest.(check int) "input stream release" 1 !input_releases;
+  let structured =
+    O.structured_output ~name:"shape" ~schema_json:"{\"type\":\"object\"}" ()
+    |> expect_ok "structured output"
+  in
+  (match O.Chat.encode ~structured_output:structured ~provider:chat_provider input with
+  | Error (O.Error.Unsupported _) -> ()
+  | _ -> Alcotest.fail "input audio plus structured output accepted");
+  (match
+     O.Chat.http_request ~structured_output:structured ~provider:chat_provider
+       ~api_key:(A.api_key "runner-key") output
+   with
+  | Error (O.Error.Unsupported _) -> ()
+  | _ -> Alcotest.fail "output audio plus structured output accepted");
+  Alcotest.(check int) "structured rejection has no encode callback" 1
+    !chat_encodes;
+  let response_counter = Atomic.make 0 in
+  let releases = Atomic.make 0 in
+  let response_client =
+    H.Client.make_custom ~protocol:H.Client.H1
+      ~request:(fun _ ->
+        E.sync (fun () ->
+            let ordinal = Atomic.fetch_and_add response_counter 1 + 1 in
+            let raw =
+              read_fixture "chat_completion.json" |> A.Json.parse
+              |> Result.get_ok
+              |> (function
+                   | `Assoc fields -> (
+                       match List.assoc_opt "choices" fields with
+                       | Some (`List [ (`Assoc choice_fields as first) ]) ->
+                           let second =
+                             `Assoc
+                               (("index", `Int 1)
+                               :: ("finish_reason", `String "length")
+                               :: List.remove_assoc "index"
+                                    (List.remove_assoc "finish_reason"
+                                       choice_fields))
+                           in
+                           `Assoc
+                             (("id", `String (Printf.sprintf "chat-%d" ordinal))
+                             :: ("choices", `List [ first; second ])
+                             :: List.remove_assoc "id"
+                                  (List.remove_assoc "choices" fields))
+                       | None | Some _ -> assert false)
+                   | _ -> assert false)
+              |> A.Json.to_string
+            in
+            let body =
+              H.Body.Stream.of_bytes
+                ~release:(fun () ->
+                  E.sync (fun () -> Atomic.incr releases))
+                [ Bytes.of_string raw ]
+            in
+            H.Response.make ~status:200 ~body ()))
+      ~stats:(fun () -> E.pure (Some zero_stats))
+      ~shutdown:(fun () -> E.unit)
+  in
+  let telemetry_audio_bytes = "audio-content-sentinel" in
+  let telemetry_audio_base64 = Base64.encode_string telemetry_audio_bytes in
+  let telemetry_common =
+    {
+      (chat_request ()) with
+      prompt =
+        (chat_request ()).prompt
+        @
+        [
+          A.User
+            [
+              A.Audio
+                {
+                  data = A.Base64 telemetry_audio_base64;
+                  format = A.Wav;
+                  transcript = Some "audio-transcript-sentinel";
+                };
+            ];
+        ];
+    }
+  in
+  let program =
+    O.Chat.run response_client ~api_key:(A.api_key "runner-secret-key")
+      (openai_chat_request telemetry_common)
+  in
+  let first = run_ok rt "Chat replay first" program in
+  let second = run_ok rt "Chat replay second" program in
+  Alcotest.(check string) "first replay response" "chat-1" first.id;
+  Alcotest.(check string) "second replay response" "chat-2" second.id;
+  let concurrent =
+    run_ok rt "Chat concurrent replay" (E.all [ program; program ])
+  in
+  Alcotest.(check (list string)) "concurrent responses are independent"
+    [ "chat-3"; "chat-4" ]
+    (concurrent |> List.map (fun response -> response.O.Chat.id)
+    |> List.sort String.compare);
+  Alcotest.(check int) "all buffered bodies released" 4 (Atomic.get releases);
+  let started, started_resolver = B.create_promise () in
+  let gate, _gate_resolver = B.create_promise () in
+  let cancelled_releases = Atomic.make 0 in
+  let blocked_client =
+    H.Client.make_custom ~protocol:H.Client.H1
+      ~request:(fun _ ->
+        let body =
+          H.Body.Stream.of_reader
+            ~release:(fun () ->
+              E.sync (fun () -> Atomic.incr cancelled_releases))
+            (fun () ->
+              E.sync (fun () -> B.try_resolve started_resolver ())
+              |> E.bind (fun () -> B.await_effect gate)
+              |> E.map (fun () -> H.Body.Stream.End))
+        in
+        E.pure (H.Response.make ~status:200 ~body ()))
+      ~stats:(fun () -> E.pure (Some zero_stats))
+      ~shutdown:(fun () -> E.unit)
+  in
+  let blocked =
+    B.fork_run_cancelable ctx rt
+      (O.Chat.run blocked_client ~api_key:(A.api_key "runner-key")
+         (openai_chat_request (chat_request ())))
+  in
+  ignore (B.await started : unit);
+  B.cancel_fiber blocked;
+  ignore (B.await_cancelable blocked);
+  Alcotest.(check int) "cancelled Chat body release" 1
+    (Atomic.get cancelled_releases);
+  let spans = Eta.Tracer.dump tracer in
+  let chat_spans =
+    List.filter
+      (fun (span : Eta.Tracer.span) -> String.equal span.name "chat openai")
+      spans
+  in
+  Alcotest.(check int) "successful Chat telemetry spans" 4
+    (List.length
+       (List.filter
+          (fun (span : Eta.Tracer.span) -> span.status = Eta.Tracer.Ok)
+          chat_spans));
+  let successful_spans =
+    List.filter
+      (fun (span : Eta.Tracer.span) -> span.status = Eta.Tracer.Ok)
+      chat_spans
+  in
+  let returned = first :: second :: concurrent in
+  Alcotest.(check (list string))
+    "exact replay and concurrency response ids"
+    [ "chat-1"; "chat-2"; "chat-3"; "chat-4" ]
+    (returned
+    |> List.map (fun response -> response.O.Chat.id)
+    |> List.sort String.compare);
+  let attrs_for_response (response : O.Chat.response) =
+    let usage =
+      match response.usage with
+      | Some usage -> usage
+      | None -> Alcotest.fail "issued Chat response missing usage"
+    in
+    Alcotest.(check string) "issued response model"
+      "gpt-4o-mini-2024-07-18" response.model;
+    Alcotest.(check int) "issued prompt usage" 11 usage.prompt_tokens;
+    Alcotest.(check int) "issued completion usage" 5 usage.completion_tokens;
+    Alcotest.(check (list string)) "issued finish reasons"
+      [ "stop"; "length" ]
+      (List.map (fun choice -> choice.O.Chat.finish_reason) response.choices);
+    [
+      ("gen_ai.operation.name", "chat");
+      ("gen_ai.provider.name", "openai");
+      ("gen_ai.request.model", "gpt-4o-mini");
+      ("server.address", "api.openai.com");
+      ("server.port", "443");
+      ("gen_ai.response.id", response.id);
+      ("gen_ai.response.model", response.model);
+      ("gen_ai.response.finish_reasons", "stop,length");
+      ("gen_ai.usage.input_tokens", string_of_int usage.prompt_tokens);
+      ("gen_ai.usage.output_tokens", string_of_int usage.completion_tokens);
+    ]
+    |> List.sort compare
+  in
+  let sort_by_id attrs =
+    match List.assoc_opt "gen_ai.response.id" attrs with
+    | Some id -> id
+    | None -> Alcotest.fail "Chat span missing response id"
+  in
+  let expected =
+    returned |> List.map attrs_for_response
+    |> List.sort (fun left right ->
+           String.compare (sort_by_id left) (sort_by_id right))
+  in
+  let actual =
+    successful_spans
+    |> List.map (fun (span : Eta.Tracer.span) -> List.sort compare span.attrs)
+    |> List.sort (fun left right ->
+           String.compare (sort_by_id left) (sort_by_id right))
+  in
+  Alcotest.(check (list (list (pair string string))))
+    "exact correlated Chat GenAI success attributes"
+    expected actual;
+  let rendered =
+    chat_spans
+    |> List.concat_map (fun (span : Eta.Tracer.span) ->
+           span.attrs |> List.map (fun (name, value) -> name ^ "=" ^ value))
+    |> String.concat "\n"
+  in
+  List.iter
+    (fun secret ->
+      Alcotest.(check bool) ("Chat telemetry excludes " ^ secret) false
+        (contains ~needle:secret rendered))
+    [
+      "runner-secret-key";
+      "weather in Warsaw";
+      "stay brief";
+      telemetry_audio_bytes;
+      telemetry_audio_base64;
+      "audio-transcript-sentinel";
+      "Sunny and 68F";
+    ]
 
 let test_aierr_openai_of_ai_error_invalid_request_roundtrip () =
   match
@@ -5092,6 +5522,146 @@ let test_aierr_openai_of_ai_error_invalid_request_roundtrip () =
   | O.Error.Provider_response _ ->
       Alcotest.fail "must not reclassify Invalid_request as Provider_response"
   | _ -> Alcotest.fail "expected Invalid_request roundtrip"
+
+let test_oachat_gen_ai_error_attrs_all_nominal_classes () =
+  B.with_traced_runtime @@ fun _ctx rt tracer ->
+  let secret = "prompt-audio-base64-api-key-secret" in
+  let base_provider =
+    {
+      (O.chat_completions_provider
+         ~base_url:"https://custom.example:8443" ())
+      with
+      A.name = "custom-provider";
+    }
+  in
+  let request = openai_chat_request (chat_request ()) in
+  let unreachable = test_client (response_of_bytes "unreachable") (ref None) in
+  let local ai_error =
+    let provider =
+      { base_provider with A.encode_chat = (fun _ -> Error ai_error) }
+    in
+    O.Chat.run ~provider unreachable ~api_key:(A.api_key secret) request
+  in
+  let http_error =
+    H.Error.make ~method_:"POST"
+      ~uri:"https://custom.example:8443/v1/chat"
+      (H.Error.Connect_error { message = secret })
+  in
+  let failing_client =
+    H.Client.make_custom ~protocol:H.Client.H1
+      ~request:(fun _ -> E.fail http_error)
+      ~stats:(fun () -> E.pure None)
+      ~shutdown:(fun () -> E.unit)
+  in
+  let response_effect response =
+    O.Chat.run ~provider:base_provider
+      (test_client response (ref None))
+      ~api_key:(A.api_key secret) request
+  in
+  let effects =
+    [
+      ( local (A.Invalid_request { provider = "custom"; message = secret }),
+        "invalid_request" );
+      ( local (A.Unsupported { provider = "custom"; feature = secret }),
+        "unsupported" );
+      (local (A.Invalid_tool { name = secret; message = secret }), "invalid_tool");
+      ( local
+          (A.Provider_error
+             {
+               provider = "custom";
+               status = None;
+               code = None;
+               message = secret;
+               raw = Some secret;
+               retry_after_s = None;
+             }),
+        "provider_error" );
+      ( local
+          (A.Provider_error
+             {
+               provider = "custom";
+               status = None;
+               code = Some "concurrent_use";
+               message = secret;
+               raw = Some secret;
+               retry_after_s = None;
+             }),
+        "concurrent_use" );
+      ( local
+          (A.Provider_error
+             {
+               provider = "custom";
+               status = None;
+               code = Some "limit_exceeded";
+               message = secret;
+               raw = Some secret;
+               retry_after_s = None;
+             }),
+        "limit_exceeded" );
+      ( O.Chat.run ~provider:base_provider failing_client
+          ~api_key:(A.api_key secret) request,
+        "http_error" );
+      ( response_effect
+          (response_of_bytes ~status:429
+             {|{"error":{"code":"remote_code","type":"remote_type","message":"prompt-audio-base64-api-key-secret"}}|}),
+        "remote_code" );
+      ( response_effect
+          (response_of_bytes ~status:400
+             {|{"error":{"message":"prompt-audio-base64-api-key-secret"}}|}),
+        "provider_error" );
+      (response_effect (response_of_bytes ~status:500 secret), "unknown_response");
+      (response_effect (response_of_bytes "{}"), "decode_error");
+    ]
+  in
+  List.iter
+    (fun (program, _) ->
+      match B.run rt program with
+      | Eta.Exit.Error (Eta.Cause.Fail _) -> ()
+      | Eta.Exit.Ok _ | Eta.Exit.Error _ ->
+          Alcotest.fail "nominal telemetry error did not remain primary")
+    effects;
+  let spans =
+    Eta.Tracer.dump tracer
+    |> List.filter (fun (span : Eta.Tracer.span) ->
+           String.equal span.name "chat custom-provider")
+  in
+  Alcotest.(check int) "one span per reachable nominal failure class"
+    (List.length effects) (List.length spans);
+  let actual_error_types =
+    spans
+    |> List.filter_map (fun (span : Eta.Tracer.span) ->
+           let error_type = List.assoc_opt "error.type" span.attrs in
+           let expected_base =
+             [
+               ("gen_ai.operation.name", "chat");
+               ("gen_ai.provider.name", "custom-provider");
+               ("gen_ai.request.model", "gpt-4o-mini");
+               ("server.address", "custom.example");
+               ("server.port", "8443");
+             ]
+           in
+           (match error_type with
+           | None -> Alcotest.fail "failed GenAI span omitted error.type"
+           | Some error_type ->
+               Alcotest.(check (list (pair string string)))
+                 "exact Chat GenAI failure attributes"
+                 (List.sort compare (("error.type", error_type) :: expected_base))
+                 (List.sort compare span.attrs));
+           error_type)
+    |> List.sort String.compare
+  in
+  Alcotest.(check (list string)) "reachable nominal error classifications"
+    (effects |> List.map snd |> List.sort String.compare)
+    actual_error_types;
+  let rendered =
+    spans
+    |> List.concat_map (fun (span : Eta.Tracer.span) ->
+           List.map (fun (name, value) -> name ^ "=" ^ value) span.attrs)
+    |> String.concat "\n"
+  in
+  Alcotest.(check bool)
+    "error telemetry excludes prompt audio base64 API key and content" false
+    (contains ~needle:secret rendered)
 
 let tests =
   [
@@ -5195,6 +5765,12 @@ let tests =
             test_aierr_openai_stream_cleanup_preserves_primary;
           Alcotest.test_case "aierr outer and read cleanup preserves primary"
             `Quick test_aierr_openai_outer_and_read_cleanup_preserve_primary;
+          Alcotest.test_case
+            "oachat runner preflight replay concurrency telemetry cleanup"
+            `Quick
+            test_oachat_runner_preflight_replay_concurrency_and_telemetry;
+          Alcotest.test_case "oachat exact GenAI nominal error attributes" `Quick
+            test_oachat_gen_ai_error_attrs_all_nominal_classes;
           Alcotest.test_case "aierr of_ai_error invalid_request roundtrip" `Quick
             test_aierr_openai_of_ai_error_invalid_request_roundtrip;
           Alcotest.test_case "responses request" `Quick

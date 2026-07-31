@@ -5,8 +5,22 @@ open Core
 open Content
 open Tools
 
+let chat_validation_error ~provider = function
+  | Chat_validation.Invalid_request message ->
+      Stdlib.Error (A.Invalid_request { provider; message })
+  | Chat_validation.Unsupported feature -> unsupported ~provider feature
+
+let chat_validation_failure = function
+  | Chat_validation.Invalid_request message -> Invalid_request message
+  | Chat_validation.Unsupported feature -> Unsupported feature
+
 let encode_chat_json ~provider ~schema_value ?structured_output
     (request : A.chat_request) =
+  let* () =
+    match Chat_validation.validate request with
+    | Stdlib.Ok () -> Stdlib.Ok ()
+    | Stdlib.Error failure -> chat_validation_error ~provider failure
+  in
   let* () =
     match request.reasoning with
     | None -> Stdlib.Ok ()
@@ -47,6 +61,9 @@ let encode_chat ~provider ~schema_value ?structured_output request =
    temperature validation is structured; remaining encode steps reuse the
    historical encoder and map ai_error through of_codec-compatible cases. *)
 let encode_chat_lossless ~schema_value ?structured_output request =
+  match Chat_validation.validate request with
+  | Stdlib.Error failure -> Stdlib.Error (chat_validation_failure failure)
+  | Stdlib.Ok () -> (
   match temperature_json_lossless request.A.temperature with
   | Stdlib.Error failure -> Stdlib.Error failure
   | Stdlib.Ok _ ->
@@ -80,7 +97,7 @@ let encode_chat_lossless ~schema_value ?structured_output request =
       | Stdlib.Error (A.Invalid_request { message; _ }) ->
           Stdlib.Error (Invalid_request message)
       | Stdlib.Error (A.Eta_http_error _) ->
-          Stdlib.Error (Decode { message = "encode failed"; raw_body = None }))
+          Stdlib.Error (Decode { message = "encode failed"; raw_body = None })))
 
 let thinking_json = function
   | Off -> Json.object_ [ ("type", Some (Json.string "disabled")) ]
@@ -89,6 +106,11 @@ let thinking_json = function
 
 let encode_chat_with_thinking_json ~provider ~schema_value ?structured_output
     (request : A.chat_request) =
+  let* () =
+    match Chat_validation.validate request with
+    | Stdlib.Ok () -> Stdlib.Ok ()
+    | Stdlib.Error failure -> chat_validation_error ~provider failure
+  in
   let* reasoning =
     match request.reasoning with
     | None -> Stdlib.Ok None
@@ -113,6 +135,14 @@ let encode_chat_with_thinking ~provider ~schema_value ?structured_output request
   encode_chat_with_thinking_json ~provider ~schema_value ?structured_output
     request
   |> Result.map Json.to_string
+
+let canonical_padded_base64 = Chat_validation.canonical_padded_base64
+let chat_has_audio = Chat_validation.has_audio
+
+let validate_chat_request request =
+  match Chat_validation.validate request with
+  | Stdlib.Ok () -> Stdlib.Ok ()
+  | Stdlib.Error failure -> Stdlib.Error (chat_validation_failure failure)
 
 let chat_tool_call json =
   let function_json = Json.object_member "function" json in

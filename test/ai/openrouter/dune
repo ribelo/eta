@@ -22,3 +22,14 @@
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
+
+(test
+ (name test_audio_laws)
+ (modules test_audio_laws)
+ (libraries
+  eta_ai
+  eta_ai_openai_codec
+  eta_ai_openrouter
+  base64
+  qcheck
+  qcheck-core.runner))

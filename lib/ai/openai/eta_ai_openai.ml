@@ -14,11 +14,8 @@ let authorization_headers = auth_headers
 
 module Image_endpoint = Images
 
-let chat_completions_request = Chat_completions.request
 let responses_request = Responses.request
-let chat_completions = Chat_completions.run
 let responses = Responses.run
-let stream_chat_completions = Chat_completions.stream
 let stream_responses = Responses.stream
 
 let stream_of_body = Common.stream_of_body
@@ -50,8 +47,10 @@ let decode_image_response = Image_endpoint.decode
 let image_generation_request = Image_endpoint.request
 let image_generation = Image_endpoint.run
 
+module Voices = Speech.Voices
+
 module Audio = struct
-  module Voices = Speech.Voices
+  module Voices = Voices
 
   module Speech_to_text = Transcriptions
   module Translation = Translations
@@ -60,35 +59,17 @@ module Audio = struct
 end
 
 module Chat = struct
-  let encode ~provider request =
-    provider.A.encode_chat request |> of_neutral_result
-
-  let decode ~provider raw =
-    provider.A.decode_chat raw |> of_neutral_result
-
-  let request ~provider ~api_key chat_request =
-    match encode ~provider chat_request with
-    | Stdlib.Error _ as error -> error
-    | Stdlib.Ok raw ->
-        Stdlib.Ok
-          (H.Request.make ~headers:(provider.A.auth_headers api_key)
-             ~body:(H.Request.Fixed [ Bytes.of_string raw ])
-             "POST"
-             (join_url provider.base_url provider.chat_path))
-
-  let run ~provider client ~api_key chat_request =
-    request ~provider ~api_key chat_request
-    |> run_chat provider client chat_request
-
-  let stream ~provider client ~api_key chat_request =
-    let chat_request = { chat_request with A.stream = true } in
-    request ~provider ~api_key chat_request
-    |> run_stream provider client chat_request
-
+  include Openai_chat
   let responses_request = Responses.request
   let responses = Responses.run
   let stream_responses = Responses.stream
 end
+
+let encode_chat = Chat.encode
+let decode_chat = Chat.decode
+let chat_completions_request = Chat.http_request
+let chat_completions = Chat.run
+let stream_chat_completions = Chat.stream
 
 module Embeddings = struct
   let encode ~provider request =

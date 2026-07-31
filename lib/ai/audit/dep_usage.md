@@ -1,7 +1,7 @@
 # Dependency Usage Audit
 
 Run: bash lib/ai/audit/run.sh
-Current sites: 832
+Current sites: 833
 
 Every eta-ai call site for an allowed external dependency is listed here. The
 catalog is not a gate; it is the truth-of-record.
@@ -271,69 +271,70 @@ Search:
 - lib/ai/observability.ml:201:  with_span ~error_view ~kind:Eta.Capabilities.Internal
 - lib/ai/openai/audio_sse.ml:4:module E = Eta.Effect
 - lib/ai/openai/common.ml:7:module E = Eta.Effect
-- lib/ai/openai/common.ml:159:  Eta_http.Core.Header.unsafe_of_list
-- lib/ai/openai/common.ml:161:      ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
-- lib/ai/openai/common.ml:428:       ~kind:Eta.Capabilities.Client
-- lib/ai/openai/eta_ai_openai.mli:73:    (Eta_http.Request.t, Error.t) result
-- lib/ai/openai/eta_ai_openai.mli:77:    Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:80:    (Eta_ai.response, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:84:    Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:87:    (stream, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:93:    (Eta_http.Request.t, Error.t) result
-- lib/ai/openai/eta_ai_openai.mli:97:    Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:100:    (Eta_ai.response, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:104:    Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:107:    (stream, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:125:    (Eta_http.Request.t, Error.t) result
-- lib/ai/openai/eta_ai_openai.mli:129:    Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:132:    (Eta_ai.Embedding.response, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:138:    Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:141:    (Eta_ai.Image.response, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:397:      (Eta_http.Request.t, Error.t) Stdlib.result
-- lib/ai/openai/eta_ai_openai.mli:401:      Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:404:      (result, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:417:      Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:420:      (event_stream, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:422:    val read_event : event_stream -> (event option, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:423:    val close_events : event_stream -> (unit, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:493:      (Eta_http.Request.t, Error.t) Stdlib.result
-- lib/ai/openai/eta_ai_openai.mli:497:      Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:500:      (result, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:577:      (Eta_http.Request.t, Error.t) Stdlib.result
-- lib/ai/openai/eta_ai_openai.mli:581:      Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:584:      (result, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:606:      Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:609:      (audio_stream, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:612:      audio_stream -> (bytes option, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:615:      max_bytes:int -> audio_stream -> (bytes, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:621:    val close_audio : audio_stream -> (unit, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:628:      Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:631:      (event_stream, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:636:      event_stream -> (event option, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:638:    val close_events : event_stream -> (unit, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:684:  (Eta_http.Request.t, Error.t) result
-- lib/ai/openai/eta_ai_openai.mli:690:  (Eta_http.Request.t, Error.t) result
-- lib/ai/openai/eta_ai_openai.mli:696:  (Eta_http.Request.t, Error.t) result
-- lib/ai/openai/eta_ai_openai.mli:702:  (Eta_http.Request.t, Error.t) result
-- lib/ai/openai/eta_ai_openai.mli:707:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:710:  (Eta_ai.response, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:714:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:717:  (Eta_ai.response, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:721:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:724:  (Eta_ai.Embedding.response, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:728:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:731:  (Eta_ai.Image.response, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:736:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:739:  (stream, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:743:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:746:  (stream, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:748:val stream_of_body : Eta_ai.provider -> Eta_http.Body.Stream.t -> stream
-- lib/ai/openai/eta_ai_openai.mli:752:  stream -> (Eta_ai.stream_event option, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:758:  stream -> (Eta_ai.stream_event list, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:762:val close_stream : stream -> (unit, Error.t) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:775:  (Eta_http.Request.t, Error.t) result
-- lib/ai/openai/eta_ai_openai.mli:781:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:783:  (model_info list, Error.t) Eta.Effect.t
+- lib/ai/openai/common.ml:176:  Eta_http.Core.Header.unsafe_of_list
+- lib/ai/openai/common.ml:178:      ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
+- lib/ai/openai/common.ml:444:       ~kind:Eta.Capabilities.Client
+- lib/ai/openai/eta_ai_openai.mli:299:    (Eta_http.Request.t, Error.t) result
+- lib/ai/openai/eta_ai_openai.mli:304:    Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:307:    (response, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:312:    Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:315:    (stream, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:321:    (Eta_http.Request.t, Error.t) result
+- lib/ai/openai/eta_ai_openai.mli:325:    Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:328:    (Eta_ai.response, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:332:    Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:335:    (stream, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:353:    (Eta_http.Request.t, Error.t) result
+- lib/ai/openai/eta_ai_openai.mli:357:    Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:360:    (Eta_ai.Embedding.response, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:366:    Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:369:    (Eta_ai.Image.response, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:603:      (Eta_http.Request.t, Error.t) Stdlib.result
+- lib/ai/openai/eta_ai_openai.mli:607:      Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:610:      (result, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:623:      Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:626:      (event_stream, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:628:    val read_event : event_stream -> (event option, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:629:    val close_events : event_stream -> (unit, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:699:      (Eta_http.Request.t, Error.t) Stdlib.result
+- lib/ai/openai/eta_ai_openai.mli:703:      Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:706:      (result, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:783:      (Eta_http.Request.t, Error.t) Stdlib.result
+- lib/ai/openai/eta_ai_openai.mli:787:      Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:790:      (result, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:812:      Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:815:      (audio_stream, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:818:      audio_stream -> (bytes option, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:821:      max_bytes:int -> audio_stream -> (bytes, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:827:    val close_audio : audio_stream -> (unit, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:834:      Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:837:      (event_stream, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:842:      event_stream -> (event option, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:844:    val close_events : event_stream -> (unit, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:891:  (Eta_http.Request.t, Error.t) result
+- lib/ai/openai/eta_ai_openai.mli:897:  (Eta_http.Request.t, Error.t) result
+- lib/ai/openai/eta_ai_openai.mli:903:  (Eta_http.Request.t, Error.t) result
+- lib/ai/openai/eta_ai_openai.mli:909:  (Eta_http.Request.t, Error.t) result
+- lib/ai/openai/eta_ai_openai.mli:914:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:917:  (Chat.response, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:921:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:924:  (Eta_ai.response, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:928:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:931:  (Eta_ai.Embedding.response, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:935:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:938:  (Eta_ai.Image.response, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:943:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:946:  (stream, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:950:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:953:  (stream, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:955:val stream_of_body : Eta_ai.provider -> Eta_http.Body.Stream.t -> stream
+- lib/ai/openai/eta_ai_openai.mli:959:  stream -> (Eta_ai.stream_event option, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:965:  stream -> (Eta_ai.stream_event list, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:969:val close_stream : stream -> (unit, Error.t) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:982:  (Eta_http.Request.t, Error.t) result
+- lib/ai/openai/eta_ai_openai.mli:988:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:990:  (model_info list, Error.t) Eta.Effect.t
+- lib/ai/openai/openai_chat.ml:4:module E = Eta.Effect
 - lib/ai/openai/openai_error.ml:14:  | Http of Eta_http.Error.t
 - lib/ai/openai/openai_error.ml:243:  | Http error -> Format.pp_print_string fmt (Eta_http.Error.to_string error)
 - lib/ai/openai/openai_error.mli:15:  | Http of Eta_http.Error.t
@@ -484,7 +485,7 @@ Search:
 - lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.mli:96:  val finish_with_timeout : timeout:Eta.Duration.t -> t -> (unit, error) Eta.Effect.t
 - lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.mli:97:  val abort : t -> (unit, error) Eta.Effect.t
 - lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.mli:103:       and type error = error and type scope = Eio.Switch.t
-- lib/ai/openrouter/common.ml:266:       ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
+- lib/ai/openrouter/common.ml:265:       ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
 - lib/ai/openrouter/eta_ai_openrouter.ml:215:  | Stdlib.Error error -> Eta.Effect.fail error
 - lib/ai/openrouter/eta_ai_openrouter.mli:89:    (Eta_http.Request.t, Eta_ai.ai_error) result
 - lib/ai/openrouter/eta_ai_openrouter.mli:95:    Eta_http.Client.t ->

@@ -164,8 +164,7 @@ let encode_responses_base request =
       (Option.bind request.reasoning (fun value -> value.generate_summary))
   in
   let* request = normalize_responses_reasoning request in
-  Codec.encode_responses ~provider:"openrouter"
-    ~encode_tool:encode_responses_tool request
+  Codec.encode_openrouter_responses ~encode_tool:encode_responses_tool request
 
 let decorate_responses ?routing ?reasoning request raw =
   match

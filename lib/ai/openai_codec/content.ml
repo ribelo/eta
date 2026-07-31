@@ -77,28 +77,54 @@ let chat_content_json ~provider contents =
     contents_text ~provider contents |> Result.map Json.string
   else Stdlib.Ok (Json.array (List.map chat_content_part contents))
 
-let responses_content_part = function
-  | A.Text text -> Json.object_ [ ("type", Some (Json.string "input_text")); ("text", Some (Json.string text)) ]
-  | A.Json raw -> Json.object_ [ ("type", Some (Json.string "input_text")); ("text", Some (Json.string raw)) ]
+let responses_content_part ~provider = function
+  | A.Text text ->
+      Stdlib.Ok
+        (Json.object_
+           [
+             ("type", Some (Json.string "input_text"));
+             ("text", Some (Json.string text));
+           ])
+  | A.Json raw ->
+      Stdlib.Ok
+        (Json.object_
+           [
+             ("type", Some (Json.string "input_text"));
+             ("text", Some (Json.string raw));
+           ])
   | A.Image media ->
-      Json.object_
-        [
-          ("type", Some (Json.string "input_image"));
-          ("image_url", Some (Json.string media.A.url));
-          ("detail", Option.map Json.string media.detail);
-        ]
-  | A.Audio audio -> audio_content_part audio
+      Stdlib.Ok
+        (Json.object_
+           [
+             ("type", Some (Json.string "input_image"));
+             ("image_url", Some (Json.string media.A.url));
+             ("detail", Option.map Json.string media.detail);
+           ])
+  | A.Audio _ -> unsupported ~provider "audio content in Responses"
   | A.Video media ->
-      Json.object_
-        [
-          ("type", Some (Json.string "input_video"));
-          ("video_url", Some (Json.string media.A.url));
-        ]
+      Stdlib.Ok
+        (Json.object_
+           [
+             ("type", Some (Json.string "input_video"));
+             ("video_url", Some (Json.string media.A.url));
+           ])
 
-let responses_content_json ~provider contents =
+let openrouter_responses_content_part ~provider = function
+  | A.Audio audio -> Stdlib.Ok (audio_content_part audio)
+  | content -> responses_content_part ~provider content
+
+let responses_content_json_with encode_part ~provider contents =
   if contents_are_text contents then
     contents_text ~provider contents |> Result.map Json.string
-  else Stdlib.Ok (Json.array (List.map responses_content_part contents))
+  else
+    let rec loop acc = function
+      | [] -> Stdlib.Ok (Json.array (List.rev acc))
+      | content :: rest -> (
+          match encode_part ~provider content with
+          | Stdlib.Error _ as error -> error
+          | Stdlib.Ok part -> loop (part :: acc) rest)
+    in
+    loop [] contents
 
 let responses_tool_content_part ~provider = function
   | A.Text text ->
@@ -148,8 +174,14 @@ let contents_empty contents =
       | Stdlib.Error _ -> false)
   | _ -> false
 
-let message_item ~provider role contents =
-  responses_content_json ~provider contents
+let responses_content_json =
+  responses_content_json_with responses_content_part
+
+let openrouter_responses_content_json =
+  responses_content_json_with openrouter_responses_content_part
+
+let message_item_with encode_content ~provider role contents =
+  encode_content ~provider contents
   |> Result.map (fun content ->
          Json.object_
            [
@@ -166,7 +198,10 @@ let function_call_item (call : A.tool_call) =
       ("arguments", Some (Json.string call.arguments_json));
     ]
 
-let input_items ~provider = function
+let message_item = message_item_with responses_content_json
+let openrouter_message_item = message_item_with openrouter_responses_content_json
+
+let input_items_with message_item ~provider = function
   | A.System text -> message_item ~provider "system" [ A.Text text ] |> Result.map (fun item -> [ item ])
   | A.User contents -> message_item ~provider "user" contents |> Result.map (fun item -> [ item ])
   | A.Assistant { content; tool_calls } ->
@@ -189,12 +224,24 @@ let input_items ~provider = function
                  ];
              ])
 
+let input_items = input_items_with message_item
+let openrouter_input_items = input_items_with openrouter_message_item
+
 let chat_tool_content_json ~provider contents =
   if contents_are_text contents then
     contents_text ~provider contents |> Result.map Json.string
   else unsupported ~provider "tool result media content"
 
-let chat_message_json ~provider = function
+let chat_validation_error ~provider = function
+  | Chat_validation.Invalid_request message ->
+      Stdlib.Error (A.Invalid_request { provider; message })
+  | Chat_validation.Unsupported feature -> unsupported ~provider feature
+
+let chat_message_json ~provider message =
+  match Chat_validation.validate_message message with
+  | Stdlib.Error failure -> chat_validation_error ~provider failure
+  | Stdlib.Ok () -> (
+      match message with
   | A.System content ->
       Stdlib.Ok
         (Json.object_
@@ -249,4 +296,4 @@ let chat_message_json ~provider = function
                  ("role", Some (Json.string "tool"));
                  ("tool_call_id", Some (Json.string tool_call_id));
                  ("content", Some content);
-               ])
+               ]))

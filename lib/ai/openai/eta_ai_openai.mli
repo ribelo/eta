@@ -2,10 +2,9 @@
 
     [provider] defaults to the Responses API; use
     {!chat_completions_provider} for the legacy Chat Completions envelope.
-    Chat prompt capability flags are conservative: image parts are encoded, but
-    audio prompt input belongs to Realtime and video prompt input is not
-    advertised. Speech-to-text, text-to-speech, voices, and Realtime are grouped
-    under [Audio]; image generation remains a separate endpoint module. *)
+    Chat Completions supports buffered audio input and output. Responses remains
+    a text-and-image endpoint. Speech-to-text, text-to-speech, voices, and
+    Realtime are grouped under [Audio]; image generation remains separate. *)
 
 module Error = Openai_error
 
@@ -43,47 +42,276 @@ val provider : ?base_url:string -> unit -> Eta_ai.provider
     The shared [Eta_ai.provider] record remains neutral ([Eta_ai.ai_error]) so
     generic transport helpers can host it. Prefer the nominal OpenAI operations
     below for lossless failures. Nominal runners use configured request and
-    success/stream decoder callbacks, but decode non-success HTTP responses with
-    [Error.decode] so status, headers, and raw body remain lossless. *)
+    stream callbacks. Buffered Chat uses its provider-owned decoder. Responses
+    uses its configured success decoder. All nominal runners use [Error.decode]
+    for non-success responses. Thus, status, headers, and raw body remain
+    available. *)
 
 val chat_completions_provider : ?base_url:string -> unit -> Eta_ai.provider
 (** Explicit legacy Chat Completions provider value. The default base URL is
-    [https://api.openai.com] and the path is [/v1/chat/completions]. *)
+    [https://api.openai.com] and the path is [/v1/chat/completions].
+    Its neutral encoder applies the same input-audio checks as [Chat.request]. *)
 
 val responses_provider :
   ?base_url:string -> unit -> Eta_ai.tool Eta_ai.responses_provider
 (** Responses API provider value. The default base URL is
     [https://api.openai.com]. *)
 
-module Chat : sig
-  val encode :
-    provider:Eta_ai.provider ->
-    Eta_ai.chat_request ->
-    (Eta_ai.raw_json, Error.t) result
+module Voices : sig
+  type custom_id = private string
 
-  val decode :
-    provider:Eta_ai.provider ->
-    Eta_ai.raw_json ->
-    (Eta_ai.response, Error.t) result
+  val custom_id : string -> (custom_id, Error.t) Stdlib.result
+
+  type built_in =
+    | Alloy
+    | Ash
+    | Ballad
+    | Coral
+    | Echo
+    | Fable
+    | Onyx
+    | Nova
+    | Sage
+    | Shimmer
+    | Verse
+    | Marin
+    | Cedar
+    | Other of string
+
+  type t = Built_in of built_in | Custom of custom_id
+end
+
+module Chat : sig
+  type modality = Text | Audio
+
+  type output_format =
+    | Wav
+    | Aac
+    | Mp3
+    | Flac
+    | Opus
+    | Pcm16
+
+  type output_audio = {
+    voice : Voices.t;
+    format : output_format;
+  }
+
+  type request = private {
+    common : Eta_ai.chat_request;
+    modalities : modality list;
+    audio : output_audio option;
+    store : bool option;
+    extra_fields : (string * Eta_ai.Json.t) list;
+  }
 
   val request :
-    provider:Eta_ai.provider ->
+    common:Eta_ai.chat_request ->
+    ?modalities:modality list ->
+    ?audio:output_audio ->
+    ?store:bool ->
+    ?extra_fields:(string * Eta_ai.Json.t) list ->
+    unit ->
+    (request, Error.t) result
+  (** Audio content is valid only in user messages and only with [Mp3] or [Wav].
+      Caller-provided Base64 must use strict canonical standard padding.
+      The [Audio] modality and [audio] configuration must occur together.
+      Modalities cannot repeat. Extra field names must be unique and cannot use
+      provider-owned names. A streaming request with audio output returns
+      [Error.Unsupported]. Streamed input audio with text output is valid. *)
+
+  type function_call = {
+    name : string;
+    arguments : string;
+    raw : Eta_ai.Json.t;
+  }
+
+  type custom_call = {
+    name : string;
+    input : string;
+    raw : Eta_ai.Json.t;
+  }
+
+  type tool_call =
+    | Function_tool_call of {
+        id : string;
+        function_ : function_call;
+        raw : Eta_ai.Json.t;
+      }
+    | Custom_tool_call of {
+        id : string;
+        custom : custom_call;
+        raw : Eta_ai.Json.t;
+      }
+
+  type audio = {
+    id : string;
+    expires_at : int;
+    data : string;
+    transcript : string;
+    raw : Eta_ai.Json.t;
+  }
+
+  type content_part =
+    | Text_part of {
+        text : string;
+        raw : Eta_ai.Json.t;
+      }
+    | Refusal_part of {
+        refusal : string;
+        raw : Eta_ai.Json.t;
+      }
+
+  type message_content =
+    | Content_text of string
+    | Content_parts of content_part list
+
+  type message = {
+    role : string;
+    content : message_content option;
+    refusal : string option;
+    annotations : Eta_ai.Json.t list option;
+    function_call : function_call option;
+    tool_calls : tool_call list;
+    audio : audio option;
+    raw : Eta_ai.Json.t;
+  }
+
+  type choice = {
+    index : int;
+    message : message;
+    finish_reason : string;
+    logprobs : logprobs option;
+    raw : Eta_ai.Json.t;
+  }
+
+  and logprobs = {
+    content : Eta_ai.Json.t list option;
+    refusal : Eta_ai.Json.t list option;
+    raw : Eta_ai.Json.t;
+  }
+
+  type prompt_token_details = {
+    audio_tokens : int option;
+    cached_tokens : int option;
+    cache_write_tokens : int option;
+    raw : Eta_ai.Json.t;
+  }
+
+  type completion_token_details = {
+    accepted_prediction_tokens : int option;
+    audio_tokens : int option;
+    reasoning_tokens : int option;
+    rejected_prediction_tokens : int option;
+    raw : Eta_ai.Json.t;
+  }
+
+  type usage = {
+    prompt_tokens : int;
+    completion_tokens : int;
+    total_tokens : int;
+    prompt_tokens_details : prompt_token_details option;
+    completion_tokens_details : completion_token_details option;
+    raw : Eta_ai.Json.t;
+  }
+
+  type moderation_input_type = Text_input | Image_input
+
+  type moderation_result = {
+    categories : (string * bool) list;
+    category_applied_input_types :
+      (string * moderation_input_type list) list;
+    category_scores : (string * float) list;
+    flagged : bool;
+    model : string;
+    type_ : string;
+    raw : Eta_ai.Json.t;
+  }
+
+  type moderation_success = {
+    model : string;
+    results : moderation_result list;
+    type_ : string;
+    raw : Eta_ai.Json.t;
+  }
+
+  type moderation_error = {
+    code : string;
+    message : string;
+    type_ : string;
+    raw : Eta_ai.Json.t;
+  }
+
+  type moderation_outcome =
+    | Moderation_success of moderation_success
+    | Moderation_error of moderation_error
+
+  type moderation = {
+    input : moderation_outcome;
+    output : moderation_outcome;
+    raw : Eta_ai.Json.t;
+  }
+
+  type response = private {
+    id : string;
+    choices : choice list;
+    created : int;
+    model : string;
+    object_ : string;
+    service_tier : string option;
+    system_fingerprint : string option;
+    usage : usage option;
+    moderation : moderation option;
+    raw : Eta_ai.Json.t;
+    raw_body : Eta_ai.raw_json;
+  }
+
+  val encode :
+    ?structured_output:structured_output ->
+    ?provider:Eta_ai.provider ->
+    request ->
+    (Eta_ai.raw_json, Error.t) result
+  (** Audio requests cannot use [structured_output]. *)
+
+  val decode :
+    Eta_ai.raw_json -> (response, Error.t) result
+  (** The decoder requires the documented buffered Chat fields, at least one
+      choice, and nonnegative integer token counts. Each typed provider record
+      keeps its complete JSON object. A malformed success body returns
+      [Error.Decode] with the original body. Moderation category scores must be
+      finite numbers from [0.0] through [1.0], inclusive. *)
+
+  val audio_bytes : audio -> (bytes, Error.t) result
+  (** This function decodes strict canonical standard padded base64 without an
+      exception. Invalid data returns [Error.Decode] with the complete audio JSON.
+      The [audio] value does not change. *)
+
+  val to_eta_ai : response -> Eta_ai.response
+  (** This projection keeps the first choice's common text, tools, and finish
+      reason, plus direct usage totals and raw JSON. It removes Chat audio facts
+      at this explicit boundary and does not derive missing token facts. *)
+
+  val http_request :
+    ?structured_output:structured_output ->
+    ?provider:Eta_ai.provider ->
     api_key:Eta_ai.api_key ->
-    Eta_ai.chat_request ->
+    request ->
     (Eta_http.Request.t, Error.t) result
 
   val run :
-    provider:Eta_ai.provider ->
+    ?structured_output:structured_output ->
+    ?provider:Eta_ai.provider ->
     Eta_http.Client.t ->
     api_key:Eta_ai.api_key ->
-    Eta_ai.chat_request ->
-    (Eta_ai.response, Error.t) Eta.Effect.t
+    request ->
+    (response, Error.t) Eta.Effect.t
 
   val stream :
-    provider:Eta_ai.provider ->
+    ?structured_output:structured_output ->
+    ?provider:Eta_ai.provider ->
     Eta_http.Client.t ->
     api_key:Eta_ai.api_key ->
-    Eta_ai.chat_request ->
+    request ->
     (stream, Error.t) Eta.Effect.t
 
   val responses_request :
@@ -142,29 +370,7 @@ module Images : sig
 end
 
 module Audio : sig
-  module Voices : sig
-    type custom_id = private string
-
-    val custom_id : string -> (custom_id, Error.t) Stdlib.result
-
-    type built_in =
-      | Alloy
-      | Ash
-      | Ballad
-      | Coral
-      | Echo
-      | Fable
-      | Onyx
-      | Nova
-      | Sage
-      | Shimmer
-      | Verse
-      | Marin
-      | Cedar
-      | Other of string
-
-    type t = Built_in of built_in | Custom of custom_id
-  end
+  module Voices = Voices
 
   module Speech_to_text : sig
     type model =
@@ -654,14 +860,15 @@ end
 
 val encode_chat :
   ?structured_output:structured_output ->
-  Eta_ai.chat_request ->
+  ?provider:Eta_ai.provider ->
+  Chat.request ->
   (Eta_ai.raw_json, Error.t) result
 
 val encode_responses :
   Eta_ai.tool Eta_ai.Responses.request ->
   (Eta_ai.raw_json, Error.t) result
 
-val decode_chat : Eta_ai.raw_json -> (Eta_ai.response, Error.t) result
+val decode_chat : Eta_ai.raw_json -> (Chat.response, Error.t) result
 val decode_responses : Eta_ai.raw_json -> (Eta_ai.response, Error.t) result
 val encode_embeddings :
   Eta_ai.Embedding.request -> (Eta_ai.raw_json, Error.t) result
@@ -680,7 +887,7 @@ val chat_completions_request :
   ?structured_output:structured_output ->
   ?provider:Eta_ai.provider ->
   api_key:Eta_ai.api_key ->
-  Eta_ai.chat_request ->
+  Chat.request ->
   (Eta_http.Request.t, Error.t) result
 
 val responses_request :
@@ -706,8 +913,8 @@ val chat_completions :
   ?provider:Eta_ai.provider ->
   Eta_http.Client.t ->
   api_key:Eta_ai.api_key ->
-  Eta_ai.chat_request ->
-  (Eta_ai.response, Error.t) Eta.Effect.t
+  Chat.request ->
+  (Chat.response, Error.t) Eta.Effect.t
 
 val responses :
   ?provider:Eta_ai.tool Eta_ai.responses_provider ->
@@ -735,7 +942,7 @@ val stream_chat_completions :
   ?provider:Eta_ai.provider ->
   Eta_http.Client.t ->
   api_key:Eta_ai.api_key ->
-  Eta_ai.chat_request ->
+  Chat.request ->
   (stream, Error.t) Eta.Effect.t
 
 val stream_responses :

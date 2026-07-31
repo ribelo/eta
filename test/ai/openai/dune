@@ -42,6 +42,19 @@
  (libraries eta_ai eta_ai_openai qcheck qcheck-core.runner))
 
 (test
+ (name test_chat_audio_laws)
+ (modules test_chat_audio_laws)
+ (libraries
+  eta
+  eta_ai
+  eta_ai_openai
+  eta_http
+  eta_test_backend_eio
+  base64
+  qcheck
+  qcheck-core.runner))
+
+(test
  (name test_speech_laws)
  (modules test_speech_laws collector_math)
  (libraries

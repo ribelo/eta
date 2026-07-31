@@ -9,12 +9,15 @@ let request ?provider:custom_provider ~api_key responses_request =
   let provider =
     Common.default_provider Common.responses_provider custom_provider
   in
-  let encoded =
-    match provider.encode_responses responses_request with
-    | Stdlib.Ok _ as ok -> ok
-    | Stdlib.Error error -> Stdlib.Error (Common.Error.of_ai_error error)
-  in
-  Common.raw_chat_request provider.A.transport ~api_key encoded
+  match Common.reject_responses_audio responses_request with
+  | Stdlib.Error _ as error -> error
+  | Stdlib.Ok () ->
+      let encoded =
+        match provider.encode_responses responses_request with
+        | Stdlib.Ok _ as ok -> ok
+        | Stdlib.Error error -> Stdlib.Error (Common.Error.of_ai_error error)
+      in
+      Common.raw_chat_request provider.A.transport ~api_key encoded
 
 let run ?provider:custom_provider client ~api_key responses_request =
   let provider =

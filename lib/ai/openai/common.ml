@@ -85,7 +85,24 @@ let normalize_responses_reasoning request =
                     Some { reasoning with effort = Some effort };
                 }))
 
+let message_has_audio = function
+  | A.System _ -> false
+  | A.User contents | A.Tool { content = contents; _ }
+  | A.Assistant { content = contents; _ } ->
+      List.exists (function A.Audio _ -> true | _ -> false) contents
+
+let reject_responses_audio request =
+  match request.A.Responses.input with
+  | A.Responses.Text _ -> Stdlib.Ok ()
+  | A.Responses.Messages messages ->
+      if List.exists message_has_audio messages then
+        Stdlib.Error
+          (Error.Unsupported
+             "audio content is not supported by the OpenAI Responses API")
+      else Stdlib.Ok ()
+
 let encode_responses request =
+  let* () = reject_responses_audio request in
   let* () = reject_responses_field "max_turns" request.A.Responses.max_turns in
   let* () = reject_responses_field "top_k" request.top_k in
   let* () = reject_responses_field "min_p" request.min_p in
@@ -163,7 +180,7 @@ let auth_headers api_key =
       ("Accept", "application/json");
     ]
 
-let capabilities =
+let responses_capabilities =
   {
     A.streaming = true;
     tools = true;
@@ -175,10 +192,17 @@ let capabilities =
     video_input = false;
     embeddings = true;
     image_generation = true;
-    speech = true;
-    transcription = true;
+    speech = false;
+    transcription = false;
     rerank = false;
     video_generation = false;
+  }
+
+let chat_capabilities =
+  {
+    responses_capabilities with
+    audio_input = true;
+    speech = true;
   }
 
 let of_neutral_result = function
@@ -213,7 +237,7 @@ let chat_completions_provider ?(base_url = "https://api.openai.com") () =
     chat_path = "/v1/chat/completions";
     embeddings_path = Some "/v1/embeddings";
     auth_headers;
-    capabilities;
+    capabilities = chat_capabilities;
     encode_chat = (fun request -> neutral_encode_chat request);
     decode_chat =
       (fun raw ->
@@ -232,7 +256,7 @@ let responses_transport_provider ?(base_url = "https://api.openai.com") () =
     chat_path = "/v1/responses";
     embeddings_path = Some "/v1/embeddings";
     auth_headers;
-    capabilities;
+    capabilities = responses_capabilities;
     encode_chat =
       (fun _ ->
         Error.to_ai_error
@@ -395,15 +419,7 @@ let authority_attrs provider =
         ("server.port", string_of_int (H.Core.Url.effective_port url));
       ]
 
-let with_provider_span provider ~operation ~model ?(attrs = []) eff =
-  let attrs =
-    [
-      ("eta_ai.operation.name", operation);
-      ("eta_ai.provider.name", provider.A.name);
-      ("gen_ai.request.model", model);
-    ]
-    @ authority_attrs provider @ attrs
-  in
+let with_classified_span ~name ~attrs eff =
   let rec primary_error = function
     | Eta.Cause.Fail error -> Some error
     | Eta.Cause.Suppressed { primary; _ } -> primary_error primary
@@ -426,7 +442,29 @@ let with_provider_span provider ~operation ~model ?(attrs = []) eff =
        ~error_pp:(fun fmt error ->
          Format.pp_print_string fmt (Error.classification error))
        ~kind:Eta.Capabilities.Client
-       (operation ^ " " ^ provider.name)
+       name
+
+let with_provider_span provider ~operation ~model ?(attrs = []) eff =
+  let attrs =
+    [
+      ("eta_ai.operation.name", operation);
+      ("eta_ai.provider.name", provider.A.name);
+      ("gen_ai.request.model", model);
+    ]
+    @ authority_attrs provider @ attrs
+  in
+  with_classified_span ~name:(operation ^ " " ^ provider.name) ~attrs eff
+
+let with_gen_ai_span provider ~operation ~model ?(attrs = []) eff =
+  let attrs =
+    [
+      ("gen_ai.operation.name", operation);
+      ("gen_ai.provider.name", provider.A.name);
+      ("gen_ai.request.model", model);
+    ]
+    @ authority_attrs provider @ attrs
+  in
+  with_classified_span ~name:(operation ^ " " ^ provider.name) ~attrs eff
 
 (* Primary provider failure with protected cleanup finalizer (Sse.fail_and_close). *)
 let fail_stream_preserving (stream : stream) error =

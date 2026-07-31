@@ -41,6 +41,10 @@ let responses_request : Eta_ai.tool Eta_ai.Responses.request =
     stream = false;
   }
 
+let openai_request () =
+  Eta_ai_openai.Chat.request ~common:request ()
+  |> expect_ok
+
 let output () =
   Eta_ai_openai.structured_output ~name:"weather_answer" ~schema_json:weather_schema
     ~strict:true ()
@@ -54,7 +58,9 @@ let workloads =
     item "encode_chat.10k" (fun () ->
         let structured_output = output () in
         Bench_lib.repeat 10_000 (fun () ->
-            ignore (Eta_ai_openai.encode_chat ~structured_output request)));
+            ignore
+              (Eta_ai_openai.encode_chat ~structured_output
+                 (openai_request ()))));
     item "encode_responses.10k" (fun () ->
         Bench_lib.repeat 10_000 (fun () ->
             ignore (Eta_ai_openai.encode_responses responses_request)));
