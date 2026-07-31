@@ -10,6 +10,117 @@ module Response_reader = H2_client_response_reader
 
 let informational_status = Response_reader.informational_status
 
+let rec has_finalizer_diagnostic = function
+  | Eta.Cause.Finalizer _ | Eta.Cause.Suppressed _ -> true
+  | Eta.Cause.Sequential causes | Eta.Cause.Concurrent causes ->
+      List.exists has_finalizer_diagnostic causes
+  | Eta.Cause.Fail _ | Eta.Cause.Die _ | Eta.Cause.Interrupt _ -> false
+
+let cause_of_list = function
+  | [] -> invalid_arg "eta_http.h2.race_upload_response: empty cause list"
+  | [ cause ] -> cause
+  | causes -> Eta.Cause.concurrent causes
+
+let race_upload_response response writer =
+  Eta.Spi.Expert.make ~leaf_name:"eta_http.h2.race_upload_response" (fun context ->
+      let contract = Eta.Spi.Expert.contract context in
+      let results = contract.create_stream 2 in
+      let outcome = ref None in
+      let switch_diagnostics = ref [] in
+      let exception Race_finished in
+      let rec contains_race_finished exn =
+        match exn with
+        | Race_finished -> true
+        | exn -> (
+            match contract.multiple_exceptions exn with
+            | None -> false
+            | Some exceptions ->
+                List.exists
+                  (fun (exn, _backtrace) -> contains_race_finished exn)
+                  exceptions)
+      in
+      let rec causes_without_race_finished exn =
+        match exn with
+        | Race_finished -> []
+        | exn -> (
+            match contract.multiple_exceptions exn with
+            | Some exceptions ->
+                List.concat_map
+                  (fun (exn, _backtrace) ->
+                    if contains_race_finished exn then
+                      causes_without_race_finished exn
+                    else
+                      match Eta.Spi.Expert.exit_of_exn context exn with
+                      | Eta.Exit.Error cause -> [ cause ]
+                      | Eta.Exit.Ok _ -> [])
+                  exceptions
+            | None -> (
+                match Eta.Spi.Expert.exit_of_exn context exn with
+                | Eta.Exit.Error cause -> [ cause ]
+                | Eta.Exit.Ok _ -> []))
+      in
+      let run race_scope eff =
+        let exit =
+          try Eta.Spi.Expert.eval_in_scope context race_scope eff
+          with exn -> Eta.Spi.Expert.exit_of_exn context exn
+        in
+        contract.stream_add results exit
+      in
+      let finish race_scope first =
+        contract.fail_scope race_scope Race_finished;
+        let loser = ref None in
+        (try
+           contract.protect (fun () ->
+               loser := Some (contract.stream_take results))
+         with exn ->
+           if Option.is_none (contract.cancellation_reason exn) then
+             match exn with Race_finished -> () | exn -> raise exn);
+        let diagnostics =
+          match !loser with
+          | Some (Eta.Exit.Error cause) when has_finalizer_diagnostic cause ->
+              [ cause ]
+          | Some (Eta.Exit.Ok _) | Some (Eta.Exit.Error _) | None -> []
+        in
+        outcome := Some (first, diagnostics);
+        raise Race_finished
+      in
+      (try
+         contract.run_scope ~name:"eta_http.h2.race_upload_response"
+           (fun race_scope ->
+             contract.fork race_scope (fun () ->
+                 run race_scope
+                   (response
+                   |> Eta.Effect.map (fun value -> `Response value)));
+             contract.fork race_scope (fun () ->
+                 run race_scope
+                   (writer |> Eta.Effect.map (fun () -> `Writer)));
+             match contract.stream_take results with
+             | Eta.Exit.Ok `Writer ->
+                 (* Keep the original response waiter and its deadline alive. *)
+                 outcome := Some (contract.stream_take results, [])
+             | first -> finish race_scope first)
+       with
+       | Race_finished -> ()
+       | exn when contains_race_finished exn ->
+           switch_diagnostics :=
+             causes_without_race_finished exn
+             |> List.filter has_finalizer_diagnostic);
+      match !outcome with
+      | Some (Eta.Exit.Ok (`Response response), diagnostics) ->
+          let diagnostics = diagnostics @ !switch_diagnostics in
+          if diagnostics = [] then Eta.Exit.Ok response
+          else Eta.Exit.Error (cause_of_list diagnostics)
+      | Some (Eta.Exit.Error primary, diagnostics) ->
+          let diagnostics = diagnostics @ !switch_diagnostics in
+          if diagnostics = [] then Eta.Exit.Error primary
+          else Eta.Exit.Error (cause_of_list (primary :: diagnostics))
+      | Some (Eta.Exit.Ok `Writer, _) ->
+          Eta.Spi.Expert.exit_of_exn context
+            (Failure "eta_http.h2.race_upload_response: duplicate writer exit")
+      | None ->
+          Eta.Spi.Expert.exit_of_exn context
+            (Failure "eta_http.h2.race_upload_response: missing outcome"))
+
 let request_on_connection connection request url =
   let response_idle_timeout =
     Request.Response_idle_timeout.to_ms request.Request.response_idle_timeout
@@ -101,10 +212,6 @@ let request_on_connection connection request url =
     resolve_trailer_error error;
     !body_wake ()
   in
-  unregister_failure :=
-    Connection.register_failure_handler connection (fun kind ->
-        let error = Errors.error request kind in
-        if !response_started then set_body_error error else resolve_error error);
   let open_request h2_request =
     Connection.request connection ~tag:0 h2_request
       ~trailers_handler:(fun headers -> resolve_trailers headers)
@@ -164,70 +271,88 @@ let request_on_connection connection request url =
          | `Response (Error error) -> Eta.Effect.fail error)
   in
   let wait_for_response () = wait_for_response_from !header_progress in
-  match Request_writer.request_of_request request url with
-  | Error error -> resolve_error error; Eta.Effect.fail error
-  | Ok h2_request -> (
-  match open_request h2_request with
-  | Error (Admission_rejected { limit }) ->
-      let error = Errors.error request (Stream_admission_rejected { limit }) in
-      resolve_error error;
-      Eta.Effect.fail error
-  | Error Connection_closed ->
-      let error = Errors.closed request Http_request in
-      resolve_error error;
-      Eta.Effect.fail error
-  | Error (Request_failed message) ->
-      let error = Errors.protocol_violation request "request" message in
-      resolve_error error;
-      Eta.Effect.fail error
-  | Ok opened ->
-      let release_unreturned_request () =
-        if !response_returned then Eta.Effect.unit
-        else
-          Eta.Effect.sync (fun () ->
-              unregister ();
-              (try H2_proto.Body.Writer.close opened.request_body with _ -> ());
-              ignore (Multiplexer.release mux opened.stream))
-      in
-      Body_source.with_owned_stream (Request.body_source request.body) (fun upload ->
-          let write_request =
-            Request_writer.write_body opened.request_body request.body upload
-            |> Eta.Effect.bind (fun () ->
-                   Request_writer.close_request_body opened.request_body)
-            |> Eta.Effect.bind_error (fun error ->
-                   if not !response_started then resolve_error error;
-                   Eta.Effect.fail error)
-          in
-          let race_response_and_writer () =
-            Eta.Effect.race
-              [
-                wait_for_response () |> Eta.Effect.to_result;
-                (write_request
-                |> Eta.Effect.bind (fun () -> wait_for_response ())
-                |> Eta.Effect.map Result.ok);
-              ]
-            |> Eta.Effect.bind (function
-                 | Ok response -> Eta.Effect.pure response
-                 | Error error -> Eta.Effect.fail error)
-          in
-          let response_or_writer =
-            match request.body with
-            | Empty ->
-                Request_writer.close_request_body opened.request_body
-                |> Eta.Effect.bind (fun () -> wait_for_response ())
-            | Fixed [] ->
-                Request_writer.close_request_body opened.request_body
-                |> Eta.Effect.bind (fun () -> wait_for_response ())
-            | Fixed _ | Stream _ | Rewindable_stream _ ->
-                race_response_and_writer ()
-          in
-          Eta.Effect.with_scope
-            (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
-               ~release:(fun () ->
-                 Request_writer.close_request_body opened.request_body)
-            |> Eta.Effect.bind (fun () -> response_or_writer)))
-      |> fun request_effect ->
-      Eta.Effect.with_scope
-        (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
-           ~release:release_unreturned_request
-        |> Eta.Effect.bind (fun () -> request_effect)))
+  Body_source.with_owned_stream (Request.body_source request.body) (fun upload ->
+      unregister_failure :=
+        Connection.register_failure_handler connection (fun kind ->
+            let error = Errors.error request kind in
+            if !response_started then set_body_error error
+            else resolve_error error);
+      match Request_writer.request_of_request request url with
+      | Error error ->
+          resolve_error error;
+          Eta.Effect.fail error
+      | Ok h2_request -> (
+          match open_request h2_request with
+          | Error (Admission_rejected { limit }) ->
+              let error =
+                Errors.error request (Stream_admission_rejected { limit })
+              in
+              resolve_error error;
+              Eta.Effect.fail error
+          | Error Connection_closed ->
+              let error = Errors.closed request Http_request in
+              resolve_error error;
+              Eta.Effect.fail error
+          | Error (Request_failed message) ->
+              let error = Errors.protocol_violation request "request" message in
+              resolve_error error;
+              Eta.Effect.fail error
+          | Ok opened ->
+              let release_unreturned_request () =
+                if !response_returned then Eta.Effect.unit
+                else
+                  Eta.Effect.sync (fun () ->
+                      unregister ();
+                      (try
+                         H2_proto.Body.Writer.close opened.request_body
+                       with _ -> ());
+                      ignore (Multiplexer.release mux opened.stream))
+              in
+              let write_request =
+                Request_writer.write_body opened.request_body request.body upload
+                |> Eta.Effect.bind (fun () ->
+                       Request_writer.close_request_body opened.request_body)
+              in
+              let race_response_and_writer () =
+                let write_request =
+                  write_request
+                  |> Eta.Effect.bind_error (fun error ->
+                         if not !response_started then resolve_error error;
+                         Eta.Effect.fail error)
+                in
+                Eta.Effect.race
+                  [
+                    wait_for_response () |> Eta.Effect.to_result;
+                    (write_request
+                    |> Eta.Effect.bind (fun () -> wait_for_response ())
+                    |> Eta.Effect.map Result.ok);
+                  ]
+                |> Eta.Effect.bind (function
+                     | Ok response -> Eta.Effect.pure response
+                     | Error error -> Eta.Effect.fail error)
+              in
+              let race_one_shot_response_and_writer () =
+                race_upload_response (wait_for_response ()) write_request
+              in
+              let response_or_writer =
+                match request.body with
+                | Empty ->
+                    Request_writer.close_request_body opened.request_body
+                    |> Eta.Effect.bind (fun () -> wait_for_response ())
+                | Fixed [] ->
+                    Request_writer.close_request_body opened.request_body
+                    |> Eta.Effect.bind (fun () -> wait_for_response ())
+                | One_shot_stream _ -> race_one_shot_response_and_writer ()
+                | Fixed _ | Stream _ | Rewindable_stream _ ->
+                    race_response_and_writer ()
+              in
+              Eta.Effect.with_scope
+                (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+                   ~release:(fun () ->
+                     Request_writer.close_request_body opened.request_body)
+                |> Eta.Effect.bind (fun () -> response_or_writer))
+              |> fun request_effect ->
+              Eta.Effect.with_scope
+                (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+                   ~release:release_unreturned_request
+                |> Eta.Effect.bind (fun () -> request_effect))))

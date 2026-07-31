@@ -54,6 +54,7 @@ module Audio = struct
   module Voices = Speech.Voices
 
   module Speech_to_text = Transcriptions
+  module Translation = Translations
   module Text_to_speech = Speech
   module Realtime = Realtime
 end

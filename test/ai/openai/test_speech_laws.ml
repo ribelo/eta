@@ -678,6 +678,152 @@ let property_collector_checked_arithmetic =
           !classes_seen;
       passed)
 
+let property_transcription_multipart_upload_partitions =
+  let generated =
+    QCheck.make
+      ~print:(fun chunks ->
+        Printf.sprintf "{chunks=[%s]}"
+          (String.concat ";"
+             (List.map (fun chunk -> Printf.sprintf "%S" chunk) chunks)))
+      QCheck.Gen.(list_size (int_range 0 12) (string_size (int_range 0 24)))
+  in
+  QCheck.Test.make
+    ~name:
+      "oastt-59ol/ffor generated multipart preserves arbitrary upload partitions length and replay classes"
+    ~count generated (fun chunks ->
+      let expected = String.concat "" chunks in
+      let classes =
+        [
+          ("replayable-known", A.Audio.Replayable, true);
+          ("replayable-unknown", A.Audio.Replayable, false);
+          ("one-shot-known", A.Audio.One_shot, true);
+          ("one-shot-unknown", A.Audio.One_shot, false);
+        ]
+      in
+      let classes_seen = ref 0 in
+      let passed =
+        List.for_all
+          (fun (name, replayability, known) ->
+            incr classes_seen;
+            let opens = ref 0 in
+            let source =
+              A.Audio.stream
+                ?length:
+                  (if known then Some (Int64.of_int (String.length expected))
+                   else None)
+                ~replayability (fun () ->
+                  incr opens;
+                  let remaining = ref chunks in
+                  fun () ->
+                    match !remaining with
+                    | [] -> None
+                    | chunk :: rest ->
+                        remaining := rest;
+                        Some (Bytes.of_string chunk))
+            in
+            let file : A.Audio.upload =
+              { filename = "generated.wav"; content_type = "audio/wav"; source }
+            in
+            let request =
+              O.Audio.Speech_to_text.request
+                ~model:O.Audio.Speech_to_text.Gpt_4o_transcribe ~file ()
+              |> require_ok
+              |> O.Audio.Speech_to_text.http_request ~api_key:(A.api_key "key")
+              |> require_ok
+            in
+            let drain () =
+              let operation =
+                H.Request.body_source request.body |> H.Body.Source.to_stream
+                |> H.Body.Stream.read_all ~max_bytes:100_000
+              in
+              let outcome = Eta_test.Run.run operation in
+              Eta_test.Run.expect_no_pending_fibers outcome;
+              match outcome.exit with
+              | Eta.Exit.Ok bytes -> Bytes.to_string bytes
+              | Eta.Exit.Error cause ->
+                  QCheck.Test.fail_reportf "class=%s chunks=[%s] exit=%a" name
+                    (String.concat ";"
+                       (List.map (Printf.sprintf "%S") chunks))
+                    (Eta.Cause.pp H.Error.pp) cause
+            in
+            let validate_body body =
+                let content_type =
+                  Option.get (H.Core.Header.get "content-type" request.headers)
+                in
+                let prefix = "multipart/form-data; boundary=" in
+                let boundary =
+                  String.sub content_type (String.length prefix)
+                    (String.length content_type - String.length prefix)
+                in
+                let suffix = "\r\n--" ^ boundary ^ "--\r\n" in
+                let suffix_start = String.length body - String.length suffix in
+                let file_start = suffix_start - String.length expected in
+                let actual_file =
+                  if file_start < 0 then "<invalid>"
+                  else String.sub body file_start (String.length expected)
+                in
+                let provider_length =
+                  H.Core.Header.get "content-length" request.headers
+                in
+                let transport_length =
+                  H.Request.body_source request.body
+                  |> H.Body.Source.content_length
+                in
+                let length_ok =
+                  provider_length = None
+                  &&
+                  if known then transport_length = Some (String.length body)
+                  else transport_length = None
+                in
+                if actual_file <> expected || not length_ok then
+                  QCheck.Test.fail_reportf
+                    "class=%s chunks=[%s] expected_file=%S actual_file=%S known=%b content_length=%s body_length=%d"
+                    name
+                    (String.concat ";" (List.map (Printf.sprintf "%S") chunks))
+                    expected actual_file known
+                    (Option.value provider_length ~default:"<none>")
+                    (String.length body);
+                actual_file = expected && length_ok
+            in
+            let first = drain () in
+            let first_valid = validate_body first in
+            let replay_valid =
+              match replayability with
+              | A.Audio.Replayable ->
+                  let second = drain () in
+                  if !opens <> 2 || not (String.equal first second) then
+                    QCheck.Test.fail_reportf
+                      "class=%s chunks=[%s] replay opens=%d exact=%b"
+                      name
+                      (String.concat ";"
+                         (List.map (Printf.sprintf "%S") chunks))
+                      !opens (String.equal first second);
+                  !opens = 2 && String.equal first second
+                  && validate_body second
+              | A.Audio.One_shot ->
+                  let rejected =
+                    try
+                      let _reader = A.Audio.open_pull source in
+                      false
+                    with Invalid_argument _ -> true
+                  in
+                  if !opens <> 1 || not rejected then
+                    QCheck.Test.fail_reportf
+                      "class=%s chunks=[%s] one_shot opens=%d second_rejected=%b"
+                      name
+                      (String.concat ";"
+                         (List.map (Printf.sprintf "%S") chunks))
+                      !opens rejected;
+                  !opens = 1 && rejected
+            in
+            first_valid && replay_valid)
+          classes
+      in
+      if !classes_seen <> 4 then
+        QCheck.Test.fail_reportf "class=accounting expected=4 actual=%d"
+          !classes_seen;
+      passed)
+
 let () =
   let code =
     QCheck_base_runner.run_tests ~colors:false ~verbose:true ~rand:qcheck_seed
@@ -687,6 +833,7 @@ let () =
         property_unicode_input_instruction_boundaries;
         property_raw_audio_has_no_total_cap;
         property_collector_checked_arithmetic;
+        property_transcription_multipart_upload_partitions;
       ]
   in
   exit code

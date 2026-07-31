@@ -19,6 +19,18 @@ val of_reader :
   (unit -> (read_result, Error.t) Eta.Effect.t) ->
   t
 
+val enforce_exact_length : length:int -> t -> t
+(** [enforce_exact_length ~length stream] requires a nonnegative [length] and
+    raises [Invalid_argument] otherwise.
+
+    The wrapped stream fails with a typed [request_body_length] protocol error
+    when [Last] or [End] arrives before [length] bytes, or when a chunk would
+    exceed [length]. It does not yield an excess chunk.
+
+    Exact completion delegates release once to [stream]. After a mismatch or
+    source-read failure, release failure remains a suppressed finalizer
+    diagnostic beneath that primary failure. *)
+
 val default_max_bytes : int
 (** Default maximum bytes accumulated by [read_all]. *)
 

@@ -150,23 +150,40 @@ let upload_request ?endpoint:custom ~api_key ?expires_after_s ?purpose file =
   let parts =
     (match expires_after_s with
     | None -> []
-    | Some seconds -> [ C.Field ("expires_after", string_of_int seconds) ])
-    @ (match purpose with None -> [] | Some value -> [ C.Field ("purpose", value) ])
+    | Some seconds ->
+        [
+          Eta_http.Multipart.Text
+            { name = "expires_after"; value = string_of_int seconds };
+        ])
+    @
+    (match purpose with
+    | None -> []
+    | Some value ->
+        [ Eta_http.Multipart.Text { name = "purpose"; value } ])
     @ [
-        C.File
+        Eta_http.Multipart.File
           {
             name = "file";
             filename = file.A.filename;
             content_type = file.content_type;
-            data = file.data;
+            data = Eta_http.Multipart.Buffered file.data;
           };
       ]
   in
-  let* boundary, body = C.multipart ~label:"file upload" parts in
+  let* multipart =
+    Eta_http.Multipart.make parts
+    |> Result.map_error (C.multipart_error ~label:"file upload")
+  in
   let base_url = base_url (endpoint custom) in
+  let headers =
+    C.inference_headers api_key
+    |> Eta_http.Core.Header.remove "content-type"
+    |> Eta_http.Core.Header.unsafe_add "Content-Type"
+         ("multipart/form-data; boundary=" ^ multipart.boundary)
+  in
   Ok
-    (C.multipart_request ~headers:(C.inference_headers api_key) ~base_url
-       ~path:"/v1/files" boundary body)
+    (Eta_http.Request.make ~headers ~body:multipart.body "POST"
+       (C.join_url base_url "/v1/files"))
 
 let list_request ?endpoint:custom ~api_key request =
   let* () =

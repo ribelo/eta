@@ -8,7 +8,7 @@ let request operation = Exa.request ~api_key:key operation |> Result.get_ok
 
 let body = function
   | H.Request.Fixed [ value ] -> Bytes.to_string value
-  | Empty | Fixed _ | Stream _ | Rewindable_stream _ ->
+  | Empty | Fixed _ | Stream _ | One_shot_stream _ | Rewindable_stream _ ->
       Alcotest.fail "expected one fixed body"
 
 let test_core_requests () =

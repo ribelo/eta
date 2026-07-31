@@ -29,7 +29,7 @@ let has_idempotency_key request =
 let body_replayable request =
   match request.Request.body with
   | Empty | Fixed _ | Rewindable_stream _ -> true
-  | Stream _ -> false
+  | Stream _ | One_shot_stream _ -> false
 
 let classify request =
   if not (body_replayable request) then One_shot_body

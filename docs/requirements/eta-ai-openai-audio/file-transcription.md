@@ -14,6 +14,7 @@ Realtime audio.
 - When a caller creates a file transcription, the OpenAI provider shall send `POST /v1/audio/transcriptions` as multipart form data. ^oastt-2asc
 - The OpenAI file-transcription request shall accept a provider-neutral upload source supporting bytes and pull streaming. ^oastt-59ol
 - The OpenAI file-transcription upload source shall represent optional known length and replayability. ^oastt-bvq8
+- When an OpenAI file-transcription upload source is pull-streamed, the provider shall not preread or spool the complete source before transport. ^oastt-qp7m
 - The OpenAI file-transcription request shall represent `file`, `model`, `prompt`, `response_format`, `temperature`, `stream`, `include`, `timestamp_granularities`, `chunking_strategy`, `known_speaker_names`, `known_speaker_references`, `keywords`, `language`, and `languages`. ^oastt-3y32
 - The OpenAI file-transcription request shall preserve repeated multipart fields for keywords, languages, timestamp granularities, known-speaker names, and known-speaker references. ^oastt-ffor
 - The OpenAI file-transcription result shall distinguish JSON, verbose JSON, and diarized JSON responses with an explicit variant. ^oastt-if8v

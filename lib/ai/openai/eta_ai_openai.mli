@@ -167,29 +167,191 @@ module Audio : sig
   end
 
   module Speech_to_text : sig
-    type request = {
-      model : Eta_ai.model;
+    type model =
+      | Whisper_1
+      | Gpt_transcribe
+      | Gpt_4o_transcribe
+      | Gpt_4o_mini_transcribe
+      | Gpt_4o_mini_transcribe_2025_12_15
+      | Gpt_4o_transcribe_diarize
+      | Other of string
+
+    type response_format =
+      | Json
+      | Text
+      | Srt
+      | Verbose_json
+      | Vtt
+      | Diarized_json
+      | Other_format of string
+
+    type include_item = Logprobs | Other_include of string
+    type timestamp_granularity = Word | Segment | Other_timestamp of string
+
+    type vad = {
+      prefix_padding_ms : int option;
+      silence_duration_ms : int option;
+      threshold : float option;
+    }
+
+    type chunking_strategy =
+      | Auto
+      | Server_vad of vad
+      | Other_chunking of Eta_ai.Json.t
+
+    type request = private {
+      model : model;
       file : Eta_ai.Audio.upload;
-      language : string option;
       prompt : string option;
-      response_format : string option;
+      response_format : response_format option;
       temperature : float option;
+      stream : bool option;
+      include_ : include_item list;
+      timestamp_granularities : timestamp_granularity list;
+      chunking_strategy : chunking_strategy option;
+      known_speaker_names : string list;
+      known_speaker_references : string list;
+      keywords : string list;
+      language : string option;
+      languages : string list;
       extra_fields : (string * string) list;
     }
 
-    type result = {
-      text : string option;
-      language : string option;
-      duration_s : float option;
-      usage : Eta_ai.usage option;
-      raw : Eta_ai.raw_json option;
+    type token_logprob = {
+      token : string option;
+      bytes : int list option;
+      logprob : float option;
+      raw : Eta_ai.Json.t;
     }
 
+    type token_details = {
+      audio_tokens : int option;
+      text_tokens : int option;
+      raw : Eta_ai.Json.t;
+    }
+
+    type usage =
+      | Tokens of {
+          input_tokens : int;
+          output_tokens : int;
+          total_tokens : int;
+          input_token_details : token_details option;
+          output_token_details : token_details option;
+          raw : Eta_ai.Json.t;
+        }
+      | Duration of {
+          seconds : float;
+          raw : Eta_ai.Json.t;
+        }
+
+    type language = {
+      code : string;
+      raw : Eta_ai.Json.t;
+    }
+
+    type segment = {
+      id : int;
+      seek : int;
+      start : float;
+      end_ : float;
+      text : string;
+      tokens : int list;
+      temperature : float;
+      avg_logprob : float;
+      compression_ratio : float;
+      no_speech_prob : float;
+      raw : Eta_ai.Json.t;
+    }
+
+    type word = {
+      word : string;
+      start : float;
+      end_ : float;
+      raw : Eta_ai.Json.t;
+    }
+
+    type diarized_segment = {
+      id : string;
+      speaker : string;
+      start : float;
+      end_ : float;
+      text : string;
+      type_ : string;
+      raw : Eta_ai.Json.t;
+    }
+
+    type json_result = {
+      text : string;
+      languages : language list option;
+      logprobs : token_logprob list option;
+      usage : usage option;
+      raw : Eta_ai.Json.t;
+    }
+
+    type verbose_result = {
+      text : string;
+      language : string;
+      duration : float;
+      segments : segment list option;
+      words : word list option;
+      usage : usage option;
+      raw : Eta_ai.Json.t;
+    }
+
+    type diarized_result = {
+      text : string;
+      duration : float;
+      task : string;
+      usage : usage option;
+      segments : diarized_segment list;
+      raw : Eta_ai.Json.t;
+    }
+
+    type result =
+      | Json_result of json_result
+      | Text_result of string
+      | Srt_result of string
+      | Verbose_json_result of verbose_result
+      | Vtt_result of string
+      | Diarized_json_result of diarized_result
+      | Other_result of {
+          format : string;
+          body : string;
+        }
+
+    type event =
+      | Text_delta of {
+          delta : string;
+          logprobs : token_logprob list option;
+          segment_id : string option;
+          raw : Eta_ai.Json.t;
+        }
+      | Text_segment of diarized_segment
+      | Text_done of {
+          text : string;
+          logprobs : token_logprob list option;
+          usage : usage option;
+          languages : language list option;
+          raw : Eta_ai.Json.t;
+        }
+      | Unknown of {
+          type_ : string;
+          raw : Eta_ai.Json.t;
+        }
+
     type configuration = {
-      model : Eta_ai.model;
+      model : model;
       prompt : string option;
-      response_format : string option;
+      response_format : response_format option;
       temperature : float option;
+      stream : bool option;
+      include_ : include_item list;
+      timestamp_granularities : timestamp_granularity list;
+      chunking_strategy : chunking_strategy option;
+      known_speaker_names : string list;
+      known_speaker_references : string list;
+      keywords : string list;
+      languages : string list;
       extra_fields : (string * string) list;
     }
 
@@ -203,9 +365,128 @@ module Audio : sig
          and type configuration := configuration
          and type request_construction := request_construction
 
-    val decode_response : Eta_ai.raw_json -> (result, Error.t) Stdlib.result
+    val model_to_string : model -> string
+    val response_format_to_string : response_format -> string
 
     val request :
+      model:model ->
+      file:Eta_ai.Audio.upload ->
+      ?prompt:string ->
+      ?response_format:response_format ->
+      ?temperature:float ->
+      ?stream:bool ->
+      ?include_:include_item list ->
+      ?timestamp_granularities:timestamp_granularity list ->
+      ?chunking_strategy:chunking_strategy ->
+      ?known_speaker_names:string list ->
+      ?known_speaker_references:string list ->
+      ?keywords:string list ->
+      ?language:string ->
+      ?languages:string list ->
+      ?extra_fields:(string * string) list ->
+      unit ->
+      (request, Error.t) Stdlib.result
+
+    val decode_response :
+      response_format option -> string -> (result, Error.t) Stdlib.result
+
+    val http_request :
+      ?provider:Eta_ai.provider ->
+      api_key:Eta_ai.api_key ->
+      request ->
+      (Eta_http.Request.t, Error.t) Stdlib.result
+
+    val create :
+      ?provider:Eta_ai.provider ->
+      Eta_http.Client.t ->
+      api_key:Eta_ai.api_key ->
+      request ->
+      (result, Error.t) Eta.Effect.t
+
+    type event_stream
+
+    val default_max_buffer_bytes : int
+    val default_max_json_bytes : int
+    val default_max_pending_events : int
+
+    val stream_events :
+      ?max_buffer_bytes:int ->
+      ?max_json_bytes:int ->
+      ?max_pending_events:int ->
+      ?provider:Eta_ai.provider ->
+      Eta_http.Client.t ->
+      api_key:Eta_ai.api_key ->
+      request ->
+      (event_stream, Error.t) Eta.Effect.t
+
+    val read_event : event_stream -> (event option, Error.t) Eta.Effect.t
+    val close_events : event_stream -> (unit, Error.t) Eta.Effect.t
+  end
+
+  module Translation : sig
+    type response_format =
+      | Json
+      | Text
+      | Srt
+      | Verbose_json
+      | Vtt
+      | Other_format of string
+
+    type request = private {
+      file : Eta_ai.Audio.upload;
+      prompt : string option;
+      response_format : response_format option;
+      temperature : float option;
+      extra_fields : (string * string) list;
+    }
+
+    type segment = Speech_to_text.segment = {
+      id : int;
+      seek : int;
+      start : float;
+      end_ : float;
+      text : string;
+      tokens : int list;
+      temperature : float;
+      avg_logprob : float;
+      compression_ratio : float;
+      no_speech_prob : float;
+      raw : Eta_ai.Json.t;
+    }
+
+    type result =
+      | Json_result of {
+          text : string;
+          raw : Eta_ai.Json.t;
+        }
+      | Text_result of string
+      | Srt_result of string
+      | Verbose_json_result of {
+          language : string;
+          duration : float;
+          text : string;
+          segments : segment list option;
+          raw : Eta_ai.Json.t;
+        }
+      | Vtt_result of string
+      | Other_result of {
+          format : string;
+          body : string;
+        }
+
+    val request :
+      file:Eta_ai.Audio.upload ->
+      ?prompt:string ->
+      ?response_format:response_format ->
+      ?temperature:float ->
+      ?extra_fields:(string * string) list ->
+      unit ->
+      (request, Error.t) Stdlib.result
+
+    val decode_response :
+      response_format option -> string -> (result, Error.t) Stdlib.result
+
+    val http_request :
       ?provider:Eta_ai.provider ->
       api_key:Eta_ai.api_key ->
       request ->

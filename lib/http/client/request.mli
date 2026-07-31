@@ -19,10 +19,18 @@ type body =
   | Empty
   | Fixed of bytes list
   | Stream of Stream.t
+  | One_shot_stream of {
+      length : int;
+      stream : Stream.t;
+    }
   | Rewindable_stream of {
       length : int option;
       make : (unit -> Stream.t);
     }
+(** [Stream] is a one-shot body of unknown length. [One_shot_stream] is a
+    non-replayable body whose [length] is the exact byte length. A negative
+    length, early EOF, or overrun fails with a typed HTTP error; an overrun is
+    rejected before its excess chunk reaches the transport. *)
 
 type t = {
   method_ : string;

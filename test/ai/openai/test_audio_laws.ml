@@ -123,16 +123,26 @@ let property_openai_conversion =
             match
               O.Audio.Speech_to_text.configure
                 {
-                  model = model_1;
+                  model = O.Audio.Speech_to_text.Other model_1;
                   prompt = None;
                   response_format = None;
                   temperature = None;
+                  stream = None;
+                  include_ = [];
+                  timestamp_granularities = [];
+                  chunking_strategy = None;
+                  known_speaker_names = [];
+                  known_speaker_references = [];
+                  keywords = [];
+                  languages = [];
                   extra_fields = [];
                 }
                 stt
             with
             | Ok request ->
-                String.equal request.model model_1
+                String.equal
+                  (O.Audio.Speech_to_text.model_to_string request.model)
+                  model_1
                 && request.language = Some language
             | Error _ -> false
           in
@@ -145,13 +155,16 @@ let property_openai_conversion =
           in
           let projected_stt =
             O.Audio.Speech_to_text.to_eta_ai
+              (O.Audio.Speech_to_text.Verbose_json_result
               {
-                text = Some transcript;
-                language = Some language;
-                duration_s = Some duration;
+                text = transcript;
+                language;
+                duration;
+                segments = None;
+                words = None;
                 usage = None;
-                raw = Some "{}";
-              }
+                raw = `Assoc [];
+              })
           in
           configured && encoding_conversion && stt_configured
           && Bytes.equal projected_tts.audio (Bytes.of_string text)

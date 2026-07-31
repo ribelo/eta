@@ -19,6 +19,10 @@ type body =
   | Empty
   | Fixed of bytes list
   | Stream of Stream.t
+  | One_shot_stream of {
+      length : int;
+      stream : Stream.t;
+    }
   | Rewindable_stream of {
       length : int option;
       make : (unit -> Stream.t);
@@ -40,12 +44,14 @@ let body_chunks t =
   match t.body with
   | Empty -> 0
   | Fixed chunks -> List.length chunks
-  | Stream _ | Rewindable_stream _ -> -1
+  | Stream _ | One_shot_stream _ | Rewindable_stream _ -> -1
 
 let body_source = function
   | Empty -> Source.Empty
   | Fixed chunks -> Source.Fixed chunks
   | Stream body -> Source.Stream body
+  | One_shot_stream { length; stream } ->
+      Source.One_shot_stream { length; stream }
   | Rewindable_stream { length; make } ->
       Source.Rewindable_stream { length; make }
 

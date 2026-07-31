@@ -105,7 +105,9 @@ let method_has_body_forbidden method_ =
   String.equal method_ "get" || String.equal method_ "head"
 
 let request_has_body request =
-  match request.Request.body with Empty -> false | Fixed _ | Stream _ | Rewindable_stream _ -> true
+  match request.Request.body with
+  | Empty -> false
+  | Fixed _ | Stream _ | One_shot_stream _ | Rewindable_stream _ -> true
 
 let validate_method request =
   if not (valid_method_token request.Request.method_) then
@@ -216,6 +218,28 @@ let collect_rewindable request ~max_buffered_request_body_bytes ~declared_length
       Body.Stream.read_all ~max_bytes:max_buffered_request_body_bytes (make ())
       |> Eta.Effect.map_error (map_request_body_error request)
 
+let collect_one_shot request ~max_buffered_request_body_bytes ~length stream =
+  if length < 0 then
+    Eta.Effect.fail
+      (error ~request
+         (Connection_protocol_violation
+            {
+              kind = "request_body_length";
+              message =
+                Printf.sprintf
+                  "request body length must be nonnegative (got %d)" length;
+            }))
+  else if length > max_buffered_request_body_bytes then
+    Eta.Effect.fail
+      (error ~request
+         (Request_body_too_large
+            { limit = max_buffered_request_body_bytes; length }))
+  else
+    stream
+    |> Body.Stream.enforce_exact_length ~length
+    |> Body.Stream.read_all ~max_bytes:max_buffered_request_body_bytes
+    |> Eta.Effect.map_error (map_request_body_error request)
+
 let collect_request_body request ~max_buffered_request_body_bytes =
   match request.Request.body with
   | Empty -> Eta.Effect.pure None
@@ -224,6 +248,9 @@ let collect_request_body request ~max_buffered_request_body_bytes =
       Eta.Effect.fail
         (unsupported ~request ~feature:"request_body_stream"
            "Fetch upload streaming is not supported by eta_http_js")
+  | One_shot_stream { length; stream } ->
+      collect_one_shot request ~max_buffered_request_body_bytes ~length stream
+      |> Eta.Effect.map Option.some
   | Rewindable_stream { length; make } ->
       collect_rewindable request ~max_buffered_request_body_bytes
         ~declared_length:length make
@@ -464,11 +491,17 @@ let decode_response request options response =
                          ())))
 
 let request_with_options ~max_buffered_request_body_bytes options request =
-  Eta.Effect.from_result (validate_request options request)
-  |> Eta.Effect.bind (fun () ->
-         collect_request_body request ~max_buffered_request_body_bytes)
-  |> Eta.Effect.bind (fun body -> start_fetch request body)
-  |> Eta.Effect.bind (decode_response request options)
+  let run () =
+    Eta.Effect.from_result (validate_request options request)
+    |> Eta.Effect.bind (fun () ->
+           collect_request_body request ~max_buffered_request_body_bytes)
+    |> Eta.Effect.bind (fun body -> start_fetch request body)
+    |> Eta.Effect.bind (decode_response request options)
+  in
+  match request.Request.body with
+  | One_shot_stream { stream; _ } ->
+      run () |> Eta.Effect.on_exit (fun _ -> Body.Stream.discard stream)
+  | Empty | Fixed _ | Stream _ | Rewindable_stream _ -> run ()
 
 let validate_non_negative name value =
   if value < 0 then invalid_arg (name ^ " must be >= 0")

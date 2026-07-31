@@ -1,6 +1,6 @@
 # ADR 0002: HTTP Wire Construction Ownership
 
-Status: accepted.
+Status: accepted; streaming multipart amended by ADR 0003.
 
 ## Context
 
@@ -12,14 +12,15 @@ must not drift between providers, but neither is AI-specific.
 
 `eta_http` owns both shared wire-construction surfaces.
 
-`Eta_http.Multipart` encodes text fields and binary files, rejects disposition
-and header injection, deterministically selects a content-derived boundary that
-does not collide with any encoded metadata or payload, preserves file bytes, and
-returns a typed error or a boundary with a `bytes list` suitable for
-`Eta_http.Request.Fixed`. Its public part vocabulary contains only named text
-fields and named binary files with filename and content type. It uses a fixed
-Eta-owned boundary prefix and rejects an empty part list. Provider adapters map
-multipart errors into their own error domains.
+`Eta_http.Multipart` encodes text fields and binary files and rejects disposition
+and header injection. For buffered files it deterministically selects a
+content-derived boundary that does not collide with encoded metadata or payload,
+preserves file bytes, and returns a typed error or a boundary with a `bytes list`
+suitable for `Eta_http.Request.Fixed`. Its public part vocabulary contains only
+named text fields and named binary files with filename and content type. It uses
+a fixed Eta-owned boundary prefix and rejects an empty part list. Provider
+adapters map multipart errors into their own error domains. ADR 0003 extends the
+same owner and vocabulary to pull-streamed files.
 
 `Eta_http.Core.Url` exposes both query-component percent encoding and an optional
 field query builder implemented with that encoder. The encoder preserves RFC
@@ -36,8 +37,8 @@ and use these HTTP-owned operations. No compatibility aliases remain.
   concerns and already have non-provider utility.
 - Parameterize multipart encoding by provider error constructors. That would
   make HTTP framing depend on adapter policy.
-- Generate random multipart boundaries. Collision checking supplies framing
-  safety; randomness would add a capability dependency and nondeterministic
-  tests.
+- Generate random multipart boundaries for buffered bodies. Collision checking
+  supplies deterministic framing safety there. ADR 0003 makes a different choice
+  for sources whose future bytes cannot be inspected before headers are sent.
 - Return one contiguous multipart buffer. Fixed body chunks preserve caller file
   buffers and avoid unnecessary concatenation.

@@ -1,7 +1,7 @@
 # Eta-Primitive-Escape Audit
 
 Run: bash lib/ai/audit/run.sh
-Current sites: 51
+Current sites: 97
 
 Sites where eta-ai reaches into raw Eio fiber/switch/promise/mutex/condition
 primitives or raw Atomic.t are listed here.
@@ -30,6 +30,52 @@ No debt escapes yet.
 - lib/ai/audio.ml:10:      opened : bool Atomic.t;
 - lib/ai/audio.ml:21:  Stream { length; replayability; open_pull; opened = Atomic.make false }
 - lib/ai/audio.ml:45:          if not (Atomic.compare_and_set opened false true) then
+- lib/ai/openai/audio_sse.ml:38:  released : bool Atomic.t;
+- lib/ai/openai/audio_sse.ml:39:  active : bool Atomic.t;
+- lib/ai/openai/audio_sse.ml:88:    released = Atomic.make false;
+- lib/ai/openai/audio_sse.ml:89:    active = Atomic.make false;
+- lib/ai/openai/audio_sse.ml:109:    (E.sync (fun () -> Atomic.compare_and_set stream.released false true)
+- lib/ai/openai/audio_sse.ml:122:  (E.sync (fun () -> Atomic.compare_and_set stream.active false true)
+- lib/ai/openai/audio_sse.ml:127:           |> E.finally (E.sync (fun () -> Atomic.set stream.active false))))
+- lib/ai/openai/speech.ml:367:  audio_released : bool Atomic.t;
+- lib/ai/openai/speech.ml:368:  audio_active : bool Atomic.t;
+- lib/ai/openai/speech.ml:376:         Atomic.compare_and_set stream.audio_released false true)
+- lib/ai/openai/speech.ml:385:       Atomic.compare_and_set stream.audio_active false true)
+- lib/ai/openai/speech.ml:391:                (E.sync (fun () -> Atomic.set stream.audio_active false))))
+- lib/ai/openai/speech.ml:484:                audio_released = Atomic.make false;
+- lib/ai/openai/speech.ml:485:                audio_active = Atomic.make false;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:98:    send_mutex : Eio.Mutex.t;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:99:    read_active : bool Atomic.t;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:100:    state : int Atomic.t;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:101:    released : bool Atomic.t;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:102:    terminal : (unit, engine_error) result Eio.Promise.t;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:103:    terminal_resolver : (unit, engine_error) result Eio.Promise.u;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:104:    terminal_resolved : bool Atomic.t;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:105:    telemetry_resolver : telemetry_end Eio.Promise.u;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:106:    telemetry_resolved : bool Atomic.t;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:111:    if Atomic.compare_and_set flag false true then Eio.Promise.resolve resolver value
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:136:        Atomic.compare_and_set t.released false true)
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:143:      match Atomic.get t.state with
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:146:          if Atomic.compare_and_set t.state state 2 then true else loop ()
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:168:    E.sync (fun () -> Atomic.set t.state 3)
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:210:    let terminal, terminal_resolver = Eio.Promise.create () in
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:211:    let telemetry, telemetry_resolver = Eio.Promise.create () in
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:213:      { ws; send_mutex = Eio.Mutex.create (); read_active = Atomic.make false;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:214:        state = Atomic.make 0; released = Atomic.make false;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:215:        terminal; terminal_resolver; terminal_resolved = Atomic.make false;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:216:        telemetry_resolver; telemetry_resolved = Atomic.make false;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:224:      (E.sync (fun () -> Eio.Promise.await telemetry)
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:267:    E.sync (fun () -> Eio.Mutex.lock t.send_mutex)
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:271:                  E.sync (fun () -> Eio.Mutex.unlock t.send_mutex)))
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:281:    match Atomic.get t.state with
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:294:    E.sync (fun () -> Atomic.compare_and_set t.read_active false true)
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:314:                       (match Atomic.get t.state = 1 && t.is_terminal event with
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:320:                  E.sync (fun () -> Atomic.set t.read_active false)
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:331:      match Atomic.get t.state with
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:333:          Atomic.set t.state 1;
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:348:    |> E.bind (fun () -> E.sync (fun () -> Eio.Promise.await t.terminal))
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:518:  let finish_counter = Atomic.make 0
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:528:      "eta_finish_" ^ string_of_int (Atomic.fetch_and_add finish_counter 1)
 - lib/ai/sse.ml:12:  active : bool Atomic.t;
 - lib/ai/sse.ml:29:    active = Atomic.make false;
 - lib/ai/sse.ml:41:  if not (Atomic.compare_and_set stream.active false true) then

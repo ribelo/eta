@@ -3,6 +3,8 @@
  (public_name eta_ai_openai)
  (synopsis "OpenAI provider for eta_ai (chat, streaming, realtime)")
  (private_modules
+  audio_upload_limit
+  audio_sse
   chat_completions
   collector_math
   common
@@ -10,7 +12,8 @@
   openai_error
   responses
   speech
-  transcriptions)
+  transcriptions
+  translations)
  (libraries
   eta
   eta_observability

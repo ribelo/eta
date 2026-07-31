@@ -487,306 +487,30 @@ let stream_audio ?provider:custom_provider client ~api_key
   |> Common.with_provider_span provider ~operation:"speech.stream_audio" ~model
        ~attrs:audio_attrs
 
-let default_max_buffer_bytes = 1024 * 1024
-let default_max_json_bytes = 1024 * 1024
-let default_max_pending_events = 256
+let default_max_buffer_bytes = Audio_sse.default_max_buffer_bytes
+let default_max_json_bytes = Audio_sse.default_max_json_bytes
+let default_max_pending_events = Audio_sse.default_max_pending_events
 
-type bom_state = Start | Ef | Ef_bb | Bom_done
-
-type event_stream = {
-  event_provider : A.provider;
-  event_model : string;
-  event_body : H.Body.Stream.t;
-  max_buffer_bytes : int;
-  max_json_bytes : int;
-  max_pending_events : int;
-  line : bytes;
-  data : bytes;
-  mutable line_length : int;
-  mutable data_length : int;
-  mutable framing_bytes : int;
-  mutable has_data : bool;
-  mutable after_cr : bool;
-  mutable bom_state : bom_state;
-  mutable event_pending : event list;
-  mutable event_eof : bool;
-  event_released : bool Atomic.t;
-  event_active : bool Atomic.t;
-}
+type event_stream = event Audio_sse.t
 
 let event_attrs = [ ("eta_ai.request.stream_format", "sse") ]
 
-let event_limit kind limit actual =
-  Openai_error.Limit_exceeded { kind; limit; actual }
-
-let over_limit_actual limit = if limit = max_int then max_int else limit + 1
-
-let clear_parser stream =
-  stream.line_length <- 0;
-  stream.data_length <- 0;
-  stream.framing_bytes <- 0;
-  stream.has_data <- false;
-  stream.after_cr <- false;
-  stream.event_pending <- [];
-  stream.event_eof <- true
-
-let release_events stream =
-  E.uninterruptible
-    (E.sync (fun () ->
-         Atomic.compare_and_set stream.event_released false true)
-    |> E.bind (fun release ->
-           if release then
-             defer (fun () -> H.Body.Stream.discard stream.event_body)
-             |> E.map_error (fun error -> Openai_error.Http error)
-           else E.unit))
-
-let cleanup_events stream =
-  E.uninterruptible
-    (E.sync (fun () -> clear_parser stream)
-    |> E.bind (fun () -> release_events stream))
-
-let with_event_operation stream operation thunk =
-  (E.sync (fun () ->
-       Atomic.compare_and_set stream.event_active false true)
-  |> E.bind (fun acquired ->
-         if not acquired then E.fail (Openai_error.Concurrent_use "speech SSE")
-         else
-           defer thunk
-           |> E.finally
-                (E.sync (fun () -> Atomic.set stream.event_active false))))
-  |> Common.with_provider_span stream.event_provider ~operation
-       ~model:stream.event_model ~attrs:event_attrs
-
-let line_is_data stream colon =
-  let field_length = Option.value colon ~default:stream.line_length in
-  field_length = 4
-  && Bytes.get stream.line 0 = 'd'
-  && Bytes.get stream.line 1 = 'a'
-  && Bytes.get stream.line 2 = 't'
-  && Bytes.get stream.line 3 = 'a'
-
-let append_data_byte stream byte =
-  if stream.data_length >= stream.max_json_bytes then
-    Error
-      (event_limit "speech SSE JSON bytes" stream.max_json_bytes
-         (over_limit_actual stream.max_json_bytes))
-  else begin
-    Bytes.set stream.data stream.data_length byte;
-    stream.data_length <- stream.data_length + 1;
-    Ok ()
-  end
-
-let parse_line stream =
-  if stream.line_length = 0 || Bytes.get stream.line 0 = ':' then Ok ()
-  else
-    let rec find_colon index =
-      if index = stream.line_length then None
-      else if Bytes.get stream.line index = ':' then Some index
-      else find_colon (index + 1)
-    in
-    let colon = find_colon 0 in
-    if not (line_is_data stream colon) then Ok ()
-    else
-      let* () =
-        if stream.has_data then append_data_byte stream '\n' else Ok ()
-      in
-      stream.has_data <- true;
-      let start =
-        match colon with
-        | None -> stream.line_length
-        | Some colon ->
-            let start = colon + 1 in
-            if
-              start < stream.line_length
-              && Bytes.get stream.line start = ' '
-            then start + 1
-            else start
-      in
-      let rec copy index =
-        if index = stream.line_length then Ok ()
-        else
-          let* () = append_data_byte stream (Bytes.get stream.line index) in
-          copy (index + 1)
-      in
-      copy start
-
-let decode_event stream =
-  let raw = Bytes.sub_string stream.data 0 stream.data_length in
-  match Json.parse raw with
-  | Error message ->
-      Error (Openai_error.Decode { message; raw_body = Some raw })
-  | Ok json -> (
-      match json with
-      | `Assoc _ -> (
-          match Json.string_member "type" json with
-          | Some type_ -> Ok (Unknown { type_; raw = json })
-          | None ->
-              Error
-                (Openai_error.Decode
-                   {
-                     message =
-                       "speech SSE event must contain a string type field";
-                     raw_body = Some raw;
-                   }))
-      | _ ->
-          Error
-            (Openai_error.Decode
-               {
-                 message = "speech SSE event must be a JSON object";
-                 raw_body = Some raw;
-               }))
-
-let reset_event stream =
-  stream.line_length <- 0;
-  stream.data_length <- 0;
-  stream.framing_bytes <- 0;
-  stream.has_data <- false
-
-let dispatch_event stream =
-  if not stream.has_data then begin
-    reset_event stream;
-    Ok ()
-  end
-  else
-    let pending = List.length stream.event_pending in
-    if pending >= stream.max_pending_events then
+let decode_event raw json =
+  match Json.string_member "type" json with
+  | Some type_ -> Ok (Unknown { type_; raw = json })
+  | None ->
       Error
-        (event_limit "speech SSE pending events" stream.max_pending_events
-           (over_limit_actual stream.max_pending_events))
-    else
-      let* event = decode_event stream in
-      stream.event_pending <- stream.event_pending @ [ event ];
-      reset_event stream;
-      Ok ()
-
-let finish_line stream =
-  let result =
-    if stream.line_length = 0 then dispatch_event stream
-    else parse_line stream
-  in
-  stream.line_length <- 0;
-  result
-
-let append_line_byte stream byte =
-  if stream.framing_bytes >= stream.max_buffer_bytes then
-    Error
-      (event_limit "speech SSE unframed bytes" stream.max_buffer_bytes
-         (over_limit_actual stream.max_buffer_bytes))
-  else begin
-    Bytes.set stream.line stream.line_length byte;
-    stream.line_length <- stream.line_length + 1;
-    stream.framing_bytes <- stream.framing_bytes + 1;
-    Ok ()
-  end
-
-let rec process_content_byte stream byte =
-  if stream.after_cr then begin
-    stream.after_cr <- false;
-    if byte = '\n' then Ok () else process_content_byte stream byte
-  end
-  else
-    match byte with
-    | '\r' ->
-        stream.after_cr <- true;
-        finish_line stream
-    | '\n' -> finish_line stream
-    | byte -> append_line_byte stream byte
-
-let process_byte stream byte =
-  match stream.bom_state with
-  | Bom_done -> process_content_byte stream byte
-  | Start ->
-      if Char.code byte = 0xef then begin
-        stream.bom_state <- Ef;
-        Ok ()
-      end
-      else begin
-        stream.bom_state <- Bom_done;
-        process_content_byte stream byte
-      end
-  | Ef ->
-      if Char.code byte = 0xbb then begin
-        stream.bom_state <- Ef_bb;
-        Ok ()
-      end
-      else begin
-        stream.bom_state <- Bom_done;
-        let* () = process_content_byte stream (Char.chr 0xef) in
-        process_content_byte stream byte
-      end
-  | Ef_bb ->
-      stream.bom_state <- Bom_done;
-      if Char.code byte = 0xbf then Ok ()
-      else
-        let* () = process_content_byte stream (Char.chr 0xef) in
-        let* () = process_content_byte stream (Char.chr 0xbb) in
-        process_content_byte stream byte
-
-let feed_chunk stream chunk =
-  let length = Bytes.length chunk in
-  let rec loop index =
-    if index = length then Ok ()
-    else
-      let* () = process_byte stream (Bytes.get chunk index) in
-      loop (index + 1)
-  in
-  loop 0
-
-let rec read_event_step stream =
-  match stream.event_pending with
-  | event :: rest ->
-      E.sync (fun () ->
-          stream.event_pending <- rest;
-          Some event)
-  | [] when stream.event_eof -> E.pure None
-  | [] ->
-      defer (fun () -> H.Body.Stream.read stream.event_body)
-      |> E.map_error (fun error -> Openai_error.Http error)
-      |> E.bind (function
-           | None ->
-               E.sync (fun () ->
-                   stream.event_eof <- true;
-                   (* WHATWG discards an incomplete event at EOF. *)
-                   clear_parser stream)
-               |> E.bind (fun () ->
-                      release_events stream |> E.map (fun () -> None))
-           | Some bytes ->
-               E.sync (fun () -> feed_chunk stream bytes)
-               |> E.bind (function
-                    | Error error -> E.fail error
-                    | Ok () -> read_event_step stream))
-
-let read_event_unlocked stream =
-  read_event_step stream
-  |> E.on_exit (function
-       | Eta.Exit.Ok _ -> E.unit
-       | Eta.Exit.Error _ -> cleanup_events stream)
+        (Openai_error.Decode
+           {
+             message = "speech SSE event must contain a string type field";
+             raw_body = Some raw;
+           })
 
 let read_event stream =
-  with_event_operation stream "speech.read_event" (fun () ->
-      read_event_unlocked stream)
+  Audio_sse.read stream ~operation:"speech.read_event"
 
 let close_events stream =
-  with_event_operation stream "speech.close_events" (fun () ->
-      cleanup_events stream)
-
-let allocate_event_storage ~max_buffer_bytes ~max_json_bytes =
-  E.sync (fun () ->
-      if
-        max_buffer_bytes > Sys.max_string_length
-        || max_json_bytes > Sys.max_string_length
-      then
-        Error
-          (Openai_error.Invalid_request
-             "speech SSE byte bounds exceed the platform allocation limit")
-      else
-        try Ok (Bytes.create max_buffer_bytes, Bytes.create max_json_bytes)
-        with
-        | Out_of_memory | Invalid_argument _ ->
-            Error
-              (Openai_error.Invalid_request
-                 "speech SSE parser storage cannot be allocated"))
-  |> E.bind (function Ok storage -> E.pure storage | Error error -> E.fail error)
+  Audio_sse.close stream ~operation:"speech.close_events"
 
 let stream_events ?(max_buffer_bytes = default_max_buffer_bytes)
     ?(max_json_bytes = default_max_json_bytes)
@@ -794,39 +518,25 @@ let stream_events ?(max_buffer_bytes = default_max_buffer_bytes)
     client ~api_key (speech_request : request) =
   let provider = Common.default_provider Common.provider custom_provider in
   let model = model_to_string speech_request.model in
-  (if max_buffer_bytes <= 0 || max_json_bytes <= 0 || max_pending_events <= 0 then
-     E.fail
-       (Openai_error.Invalid_request
-          "speech SSE bounds must all be positive")
-   else
-     match operation_mismatch speech_request `Events with
-     | Error error -> E.fail error
-     | Ok () ->
-         allocate_event_storage ~max_buffer_bytes ~max_json_bytes
-         |> E.bind (fun (line, data) ->
-                Common.run_request
-                  (http_request ~provider ~api_key speech_request)
-                  (fun request ->
-                    perform_stream client request (fun event_body ->
-                        {
-                          event_provider = provider;
-                          event_model = model;
-                          event_body;
-                          max_buffer_bytes;
-                          max_json_bytes;
-                          max_pending_events;
-                          line;
-                          data;
-                          line_length = 0;
-                          data_length = 0;
-                          framing_bytes = 0;
-                          has_data = false;
-                          after_cr = false;
-                          bom_state = Start;
-                          event_pending = [];
-                          event_eof = false;
-                          event_released = Atomic.make false;
-                          event_active = Atomic.make false;
-                        }))))
+  (match
+     Audio_sse.validate_bounds ~kind:"speech SSE" ~max_buffer_bytes
+       ~max_json_bytes ~max_pending_events
+   with
+  | Error error -> E.fail error
+  | Ok () -> (
+      match operation_mismatch speech_request `Events with
+      | Error error -> E.fail error
+      | Ok () ->
+          Audio_sse.allocate ~kind:"speech SSE" ~max_buffer_bytes
+            ~max_json_bytes
+          |> E.bind (fun storage ->
+                 Common.run_request
+                   (http_request ~provider ~api_key speech_request)
+                   (fun request ->
+                     perform_stream client request (fun body ->
+                         Audio_sse.make ~provider ~model ~kind:"speech SSE"
+                           ~attrs:event_attrs ~body ~decode:decode_event
+                           ~max_buffer_bytes ~max_json_bytes
+                           ~max_pending_events storage)))))
   |> Common.with_provider_span provider ~operation:"speech.stream_events" ~model
        ~attrs:event_attrs

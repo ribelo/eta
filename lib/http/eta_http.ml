@@ -26,6 +26,7 @@ module Response = Response
 module Trace_context = Trace_context
 module Retry_policy = Retry
 module Error = Error
+module Multipart = Multipart
 module Error_projection = Projection
 module Observability = struct
   module Meter = Meter

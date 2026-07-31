@@ -11,10 +11,52 @@ let skip_header name =
       true
   | normalized -> String.length normalized > 0 && Char.equal normalized.[0] ':'
 
+let parse_content_length value =
+  let value = String.trim value in
+  let length = String.length value in
+  let rec digits index =
+    index = length
+    ||
+    match value.[index] with
+    | '0' .. '9' -> digits (index + 1)
+    | _ -> false
+  in
+  if length = 0 || not (digits 0) then None else int_of_string_opt value
+
+let one_shot_framing_error request =
+  match request.Request.body with
+  | One_shot_stream { length; _ } ->
+      if length < 0 then
+        Some
+          (Error.Header_invalid
+             { reason = "Content-Length must be a nonnegative decimal integer" })
+      else
+        let values = Header.get_all "content-length" request.headers in
+        if
+          List.exists
+            (fun value ->
+              match parse_content_length value with
+              | Some declared -> declared <> length
+              | None -> true)
+            values
+        then
+          Some
+            (Error.Header_invalid
+               {
+                 reason =
+                   "Content-Length must match the known one-shot request body \
+                    length";
+               })
+        else None
+  | Empty | Fixed _ | Stream _ | Rewindable_stream _ -> None
+
 let headers request =
   match Header.validate request.Request.headers with
   | Some kind -> Error (H2_client_errors.error request kind)
-  | None ->
+  | None -> (
+      match one_shot_framing_error request with
+      | Some kind -> Error (H2_client_errors.error request kind)
+      | None ->
       let user_headers, has_content_length =
         let rec loop acc has_content_length = function
           | [] -> (List.rev acc, has_content_length)
@@ -34,6 +76,7 @@ let headers request =
         else
           match request.body with
           | Empty | Stream _ -> None
+          | One_shot_stream { length; _ } -> Some length
           | Fixed chunks ->
               Some
                 (chunks
@@ -47,7 +90,7 @@ let headers request =
         | None -> user_headers
         | Some length -> ("content-length", string_of_int length) :: user_headers
       in
-      Ok user_headers
+      Ok user_headers)
 
 let method_ = function
   | `GET -> "GET"
@@ -126,7 +169,7 @@ let write_body writer request_body upload =
       match request_body with
       | Request.Empty -> Eta.Effect.unit
       | Fixed chunks -> write_chunks writer chunks
-      | Stream _ | Rewindable_stream _ -> Eta.Effect.unit)
+      | Stream _ | One_shot_stream _ | Rewindable_stream _ -> Eta.Effect.unit)
 
 let close_request_body writer =
   Eta.Effect.sync (fun () -> try H2_proto.Body.Writer.close writer with _ -> ())

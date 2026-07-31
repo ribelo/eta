@@ -1,5 +1,6 @@
 open Test_eta_http_h1_write
 open Test_eta_http_error
+open Test_eta_http_multipart
 open Test_eta_http_url
 open Test_eta_http_transport
 open Test_eta_http_h1_client
@@ -64,6 +65,35 @@ let () =
           Alcotest.test_case "semconv uses Error.Redaction" `Quick
             test_semconv_uses_error_redaction_for_uri_and_location;
         ] );
+      ( "multipart",
+        [
+          Alcotest.test_case "rejects empty and injection" `Quick
+            test_multipart_rejects_empty_and_injection;
+          Alcotest.test_case "buffered deterministic collision-free" `Quick
+            test_multipart_buffered_deterministic_collision_free;
+          Alcotest.test_case "buffered exact bytes and order" `Quick
+            test_multipart_buffered_exact_bytes_and_order;
+          Alcotest.test_case "stream lazy lengths and replayability" `Quick
+            test_multipart_stream_lazy_lengths_and_replayability;
+          Alcotest.test_case "source failures and overflow" `Quick
+            test_multipart_source_failures_and_overflow;
+          Alcotest.test_case "declared source lengths" `Quick
+            test_multipart_declared_source_lengths;
+          Alcotest.test_case "mixed source shape" `Quick
+            test_multipart_mixed_source_shape;
+          Alcotest.test_case "length precedes collision on overrun" `Quick
+            test_multipart_length_precedes_collision_on_overrun;
+          Alcotest.test_case "stream fresh static-safe boundary" `Quick
+            test_multipart_stream_boundary_fresh_and_static_safe;
+          Alcotest.test_case "stream concurrent unique boundaries" `Quick
+            test_multipart_stream_boundaries_concurrent_unique;
+          Alcotest.test_case "collision split at every offset" `Quick
+            test_multipart_collision_split_at_every_offset;
+          Alcotest.test_case "source-start collision every partition" `Quick
+            test_multipart_source_start_collision_every_partition;
+          Alcotest.test_case "source-start collision every file position" `Quick
+            test_multipart_source_start_collision_every_file_position;
+        ] );
       ( "url",
         [
           Alcotest.test_case "rejects invalid reg-name hosts" `Quick
@@ -126,6 +156,10 @@ let () =
             test_h1_client_caps_close_delimited_body;
           Alcotest.test_case "streaming request body releases" `Quick
             test_h1_client_streaming_request_body_releases;
+          Alcotest.test_case "known one-shot request body" `Quick
+            test_h1_client_one_shot_known_length_body;
+          Alcotest.test_case "one-shot request body length contract" `Quick
+            test_h1_client_one_shot_length_contract;
           Alcotest.test_case "stream cancel releases request body" `Quick
             test_h1_client_cancelled_streaming_request_body_releases;
           Alcotest.test_case "stream write failure releases request body" `Quick
@@ -134,6 +168,8 @@ let () =
             test_h1_client_streaming_request_body_write_cancellation_propagates;
           Alcotest.test_case "rejects mismatched stream Content-Length" `Quick
             test_h1_client_rejects_mismatched_stream_content_length;
+          Alcotest.test_case "rejects negative one-shot length" `Quick
+            test_h1_client_rejects_negative_one_shot_length;
           Alcotest.test_case "rejects unknown-length stream Content-Length" `Quick
             test_h1_client_rejects_unknown_stream_content_length;
           Alcotest.test_case
@@ -566,6 +602,21 @@ let () =
           Alcotest.test_case
             "streaming upload does not suppress header idle timeout" `Quick
             test_h2_streaming_upload_does_not_suppress_header_idle_timeout;
+          Alcotest.test_case "known one-shot request body" `Quick
+            test_h2_one_shot_known_length_body;
+          Alcotest.test_case "one-shot early response cancels blocked writer"
+            `Quick test_h2_one_shot_early_response_cancels_blocked_writer;
+          Alcotest.test_case
+            "one-shot early response surfaces writer cleanup" `Quick
+            test_h2_one_shot_early_response_surfaces_writer_cleanup;
+          Alcotest.test_case
+            "one-shot writer success keeps original response deadline" `Quick
+            test_h2_one_shot_writer_success_keeps_original_response_deadline;
+          Alcotest.test_case "one-shot request body length contract" `Quick
+            test_h2_one_shot_length_contract;
+          Alcotest.test_case
+            "negative one-shot preflight releases without request" `Quick
+            test_h2_negative_one_shot_preflight_releases_without_request;
           Alcotest.test_case "header idle timeout resets on informational"
             `Quick
             test_h2_response_header_idle_timeout_resets_on_informational;

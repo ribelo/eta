@@ -312,7 +312,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         "GET" "https://api.example.test/resource"
     in
     Alcotest.(check bool) "one-shot body" false
-      (Eta_http.Idempotency.retryable one_shot)
+      (Eta_http.Idempotency.retryable one_shot);
+    let known_one_shot =
+      Eta_http.Request.make
+        ~body:
+          (One_shot_stream
+             {
+               length = 1;
+               stream =
+                 Eta_http.Body.Stream.of_bytes [ Bytes.of_string "x" ];
+             })
+        "GET" "https://api.example.test/resource"
+    in
+    Alcotest.(check bool) "known one-shot body remains non-replayable" false
+      (Eta_http.Idempotency.retryable known_one_shot)
 
   let test_retry_after_parser () =
     let seconds =
@@ -1744,6 +1757,178 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     ignore (B.run rt (Eta_http.Body.Stream.discard stream) |> expect_ok);
     Alcotest.(check int) "release once" 1 !released
 
+  let test_body_stream_exact_length_enforcement_and_cleanup () =
+    B.with_test_clock @@ fun _ctx _clock rt ->
+    let length_failure = function
+      | Eta.Cause.Fail
+          {
+            Eta_http.Error.kind =
+              Connection_protocol_violation
+                { kind = "request_body_length"; _ };
+            _;
+          } ->
+          true
+      | _ -> false
+    in
+    let expect_typed_cleanup label = function
+      | Eta.Exit.Error
+          (Eta.Cause.Suppressed
+            {
+              primary;
+              finalizer = Eta.Cause.Finalizer.Fail _;
+            })
+        when length_failure primary ->
+          ()
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "%s returned %a" label
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause
+      | Eta.Exit.Ok _ -> Alcotest.fail (label ^ " unexpectedly succeeded")
+    in
+    let expect_defect_cleanup label defect = function
+      | Eta.Exit.Error
+          (Eta.Cause.Suppressed
+            {
+              primary;
+              finalizer = Eta.Cause.Finalizer.Die { exn; _ };
+            })
+        when length_failure primary && exn == defect ->
+          ()
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "%s returned %a" label
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause
+      | Eta.Exit.Ok _ -> Alcotest.fail (label ^ " unexpectedly succeeded")
+    in
+    let run_case ~length results release =
+      let released = ref 0 in
+      let results = ref results in
+      let stream =
+        Eta_http.Body.Stream.of_reader
+          ~release:(fun () ->
+            incr released;
+            release ())
+          (fun () ->
+            match !results with
+            | [] -> Eta.Effect.pure Eta_http.Body.Stream.End
+            | result :: rest ->
+                results := rest;
+                Eta.Effect.pure result)
+        |> Eta_http.Body.Stream.enforce_exact_length ~length
+      in
+      let result = B.run rt (Eta_http.Body.Stream.read_all stream) in
+      Alcotest.(check int) "exact-length release once" 1 !released;
+      result
+    in
+    let cleanup_error =
+      Eta_http.Error.make ~method_:"*" ~uri:"*"
+        (Decode_error
+           { codec = "exact-length-cleanup"; message = "typed cleanup" })
+    in
+    let typed_release () = Eta.Effect.fail cleanup_error in
+    let run_typed label ~length results =
+      run_case ~length results typed_release |> expect_typed_cleanup label
+    in
+    let run_defect label ~length results =
+      let defect = Failure (label ^ " cleanup") in
+      run_case ~length results (fun () ->
+          Eta.Effect.sync (fun () -> raise defect))
+      |> expect_defect_cleanup label defect
+    in
+    let last value = Eta_http.Body.Stream.Last (Bytes.of_string value) in
+    let chunk value = Eta_http.Body.Stream.Chunk (Bytes.of_string value) in
+    run_typed "Last underflow typed cleanup" ~length:3 [ last "ab" ];
+    run_defect "Last underflow defect cleanup" ~length:3 [ last "ab" ];
+    run_typed "End underflow typed cleanup" ~length:3
+      [ chunk "ab"; Eta_http.Body.Stream.End ];
+    run_defect "End underflow defect cleanup" ~length:3
+      [ chunk "ab"; Eta_http.Body.Stream.End ];
+    run_typed "Last overrun typed cleanup" ~length:2 [ last "abc" ];
+    run_defect "Last overrun defect cleanup" ~length:2 [ last "abc" ];
+    let exact_released = ref 0 in
+    let exact =
+      Eta_http.Body.Stream.of_reader
+        ~release:(fun () ->
+          incr exact_released;
+          Eta.Effect.unit)
+        (let done_ = ref false in
+         fun () ->
+           if !done_ then Eta.Effect.pure Eta_http.Body.Stream.End
+           else (
+             done_ := true;
+             Eta.Effect.pure (last "abc")))
+      |> Eta_http.Body.Stream.enforce_exact_length ~length:3
+    in
+    Alcotest.(check bytes) "exact enforced bytes" (Bytes.of_string "abc")
+      (B.run rt (Eta_http.Body.Stream.read_all exact) |> expect_ok);
+    ignore (B.run rt (Eta_http.Body.Stream.discard exact) |> expect_ok);
+    Alcotest.(check int) "exact enforced release once" 1 !exact_released;
+    let released = ref 0 in
+    let results = ref [ chunk "a"; last "bc" ] in
+    let no_excess =
+      Eta_http.Body.Stream.of_reader
+        ~release:(fun () ->
+          incr released;
+          Eta.Effect.fail cleanup_error)
+        (fun () ->
+          match !results with
+          | [] -> Eta.Effect.pure Eta_http.Body.Stream.End
+          | result :: rest ->
+              results := rest;
+              Eta.Effect.pure result)
+      |> Eta_http.Body.Stream.enforce_exact_length ~length:2
+    in
+    let first =
+      Eta_http.Body.Stream.read no_excess |> B.run rt |> expect_ok
+    in
+    Alcotest.(check (option bytes)) "prefix yielded" (Some (Bytes.of_string "a"))
+      first;
+    Eta_http.Body.Stream.read no_excess
+    |> B.run rt |> expect_typed_cleanup "excess Last withheld";
+    Alcotest.(check int) "no-excess release once" 1 !released;
+    let source_error =
+      Eta_http.Error.make ~method_:"*" ~uri:"*"
+        (Decode_error
+           { codec = "exact-length-source"; message = "source read failed" })
+    in
+    let source_cleanup_defect = Failure "source cleanup defect" in
+    let source_released = ref 0 in
+    let failing_source =
+      Eta_http.Body.Stream.of_reader
+        ~release:(fun () ->
+          incr source_released;
+          Eta.Effect.sync (fun () -> raise source_cleanup_defect))
+        (fun () -> Eta.Effect.fail source_error)
+      |> Eta_http.Body.Stream.enforce_exact_length ~length:1
+    in
+    (match B.run rt (Eta_http.Body.Stream.read failing_source) with
+    | Eta.Exit.Error
+        (Eta.Cause.Suppressed
+          {
+            primary =
+              Eta.Cause.Fail
+                {
+                  Eta_http.Error.kind =
+                    Decode_error { codec = "exact-length-source"; _ };
+                  _;
+                };
+            finalizer = Eta.Cause.Finalizer.Die { exn; _ };
+          })
+      when exn == source_cleanup_defect ->
+        ()
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "source failure precedence returned %a"
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
+    | Eta.Exit.Ok _ -> Alcotest.fail "source read failure unexpectedly succeeded");
+    Alcotest.(check int) "source failure release once" 1 !source_released;
+    (match
+       Eta_http.Body.Stream.enforce_exact_length ~length:(-1)
+         (Eta_http.Body.Stream.empty ())
+     with
+    | _ -> Alcotest.fail "negative exact length was accepted"
+    | exception Invalid_argument _ -> ())
+
   let rec body_stream_concurrent_use = function
     | Eta.Cause.Fail
         {
@@ -1807,6 +1992,260 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Eta.Exit.Ok _ -> Alcotest.fail "concurrent reads both succeeded");
     Alcotest.(check int) "second read did not enter reader" 1 !read_calls
 
+  let test_body_stream_exact_view_shares_all_operation_gates () =
+    B.with_test_clock @@ fun _ctx _clock rt ->
+    let check_concurrent label eff =
+      Eta.Effect.to_result eff
+      |> Eta.Effect.map (function
+           | Error
+               {
+                 Eta_http.Error.kind =
+                   Decode_error { codec = "body-stream"; message };
+                 _;
+               }
+             when contains message "concurrent" ->
+               ()
+           | Error error ->
+               Alcotest.failf "%s returned %a" label Eta_http.Error.pp error
+           | Ok _ -> Alcotest.fail (label ^ " unexpectedly succeeded"))
+    in
+    let run_direction label ~block_view =
+      let read_calls = ref 0 in
+      let released = ref 0 in
+      let started, started_resolver = B.create_promise () in
+      let unblock, unblock_resolver = B.create_promise () in
+      let source =
+        Eta_http.Body.Stream.of_reader
+          ~release:(fun () ->
+            incr released;
+            Eta.Effect.unit)
+          (fun () ->
+            incr read_calls;
+            if !read_calls = 1 then (
+              B.resolve started_resolver ();
+              B.await_effect unblock
+              |> Eta.Effect.map (fun () ->
+                     Eta_http.Body.Stream.Chunk (Bytes.of_string "x")))
+            else Eta.Effect.pure Eta_http.Body.Stream.End)
+      in
+      let view =
+        Eta_http.Body.Stream.enforce_exact_length ~length:1 source
+      in
+      let blocked = if block_view then view else source in
+      let competitor = if block_view then source else view in
+      let winner = Eta_http.Body.Stream.read blocked in
+      let competitors =
+        B.await_effect started
+        |> Eta.Effect.bind (fun () ->
+               check_concurrent (label ^ " read")
+                 (Eta_http.Body.Stream.read competitor)
+               |> Eta.Effect.bind (fun () ->
+                      check_concurrent (label ^ " read_all")
+                        (Eta_http.Body.Stream.read_all competitor))
+               |> Eta.Effect.bind (fun () ->
+                      check_concurrent (label ^ " discard")
+                        (Eta_http.Body.Stream.discard competitor)))
+        |> Eta.Effect.finally
+             (Eta.Effect.sync (fun () -> B.resolve unblock_resolver ()))
+      in
+      Alcotest.(check int) (label ^ " construction read count") 0 !read_calls;
+      Alcotest.(check int) (label ^ " construction release count") 0 !released;
+      let winner_result, () =
+        B.run rt (Eta.Effect.par winner competitors) |> expect_ok
+      in
+      Alcotest.(check (option bytes)) (label ^ " winner")
+        (Some (Bytes.of_string "x"))
+        winner_result;
+      Alcotest.(check int) (label ^ " one source read") 1 !read_calls;
+      ignore (B.run rt (Eta_http.Body.Stream.discard view) |> expect_ok);
+      ignore (B.run rt (Eta_http.Body.Stream.discard source) |> expect_ok);
+      Alcotest.(check int) (label ^ " retryable exact release") 1 !released
+    in
+    run_direction "blocked source rejects view operations" ~block_view:false;
+    run_direction "blocked view rejects source operations" ~block_view:true
+
+  let test_body_stream_sync_callbacks_reset_private_gates () =
+    B.with_test_clock @@ fun _ctx _clock rt ->
+    let expect_defect label expected = function
+      | Eta.Exit.Error (Eta.Cause.Die { exn; _ }) when exn == expected -> ()
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "%s returned %a" label
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause
+      | Eta.Exit.Ok _ -> Alcotest.fail (label ^ " unexpectedly succeeded")
+    in
+    let check_reader label wrap =
+      let defect = Failure (label ^ " reader") in
+      let released = ref 0 in
+      let stream =
+        Eta_http.Body.Stream.of_reader
+          ~release:(fun () ->
+            incr released;
+            Eta.Effect.unit)
+          (fun () -> raise defect)
+      in
+      let stream = wrap stream in
+      B.run rt (Eta_http.Body.Stream.read stream) |> expect_defect label defect;
+      ignore (B.run rt (Eta_http.Body.Stream.discard stream) |> expect_ok);
+      Alcotest.(check int) (label ^ " exact release") 1 !released
+    in
+    let check_release label wrap =
+      let defect = Failure (label ^ " release") in
+      let released = ref 0 in
+      let source =
+        Eta_http.Body.Stream.of_reader
+          ~release:(fun () ->
+            incr released;
+            raise defect)
+          (fun () -> Eta.Effect.pure Eta_http.Body.Stream.End)
+      in
+      let stream = wrap source in
+      B.run rt (Eta_http.Body.Stream.discard stream) |> expect_defect label defect;
+      ignore (B.run rt (Eta_http.Body.Stream.discard stream) |> expect_ok);
+      ignore (B.run rt (Eta_http.Body.Stream.discard source) |> expect_ok);
+      Alcotest.(check int) (label ^ " release once") 1 !released
+    in
+    let raw stream = stream in
+    let exact stream =
+      Eta_http.Body.Stream.enforce_exact_length ~length:0 stream
+    in
+    check_reader "raw synchronous reader defect" raw;
+    check_reader "exact-view synchronous reader defect" exact;
+    check_release "raw synchronous release defect" raw;
+    check_release "exact-view synchronous release defect" exact
+
+  let test_body_stream_same_shaped_errors_are_not_gate_signals () =
+    B.with_test_clock @@ fun _ctx _clock rt ->
+    let capture_public_concurrent_error () =
+      let started, started_resolver = B.create_promise () in
+      let unblock, unblock_resolver = B.create_promise () in
+      let first = ref true in
+      let stream =
+        Eta_http.Body.Stream.of_reader (fun () ->
+            if !first then (
+              first := false;
+              B.resolve started_resolver ();
+              B.await_effect unblock
+              |> Eta.Effect.map (fun () ->
+                     Eta_http.Body.Stream.Chunk (Bytes.of_string "winner")))
+            else Eta.Effect.pure Eta_http.Body.Stream.End)
+      in
+      let winner = Eta_http.Body.Stream.read stream in
+      let rejected =
+        B.await_effect started
+        |> Eta.Effect.bind (fun () ->
+               Eta_http.Body.Stream.read stream |> Eta.Effect.to_result)
+        |> Eta.Effect.map (function
+             | Error error -> error
+             | Ok _ -> Alcotest.fail "concurrent operation was not rejected")
+        |> Eta.Effect.finally
+             (Eta.Effect.sync (fun () -> B.resolve unblock_resolver ()))
+      in
+      let winner, error =
+        B.run rt (Eta.Effect.par winner rejected) |> expect_ok
+      in
+      Alcotest.(check (option bytes)) "capture winner"
+        (Some (Bytes.of_string "winner"))
+        winner;
+      ignore (B.run rt (Eta_http.Body.Stream.discard stream) |> expect_ok);
+      error
+    in
+    let check_replayed_public_error error =
+      let reader_releases = ref 0 in
+      let reader_view =
+        Eta_http.Body.Stream.of_reader
+          ~release:(fun () ->
+            incr reader_releases;
+            Eta.Effect.unit)
+          (fun () -> Eta.Effect.fail error)
+        |> Eta_http.Body.Stream.enforce_exact_length ~length:1
+      in
+      (match B.run rt (Eta_http.Body.Stream.read reader_view) with
+      | Eta.Exit.Error (Eta.Cause.Fail actual) when actual == error -> ()
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "replayed reader error returned %a"
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause
+      | Eta.Exit.Ok _ -> Alcotest.fail "replayed reader error succeeded");
+      ignore (B.run rt (Eta_http.Body.Stream.discard reader_view) |> expect_ok);
+      Alcotest.(check int) "replayed reader triggers cleanup once" 1
+        !reader_releases;
+      let release_calls = ref 0 in
+      let release_source =
+        Eta_http.Body.Stream.of_reader
+          ~release:(fun () ->
+            incr release_calls;
+            Eta.Effect.fail error)
+          (fun () -> Eta.Effect.pure Eta_http.Body.Stream.End)
+      in
+      let release_view =
+        Eta_http.Body.Stream.enforce_exact_length ~length:0 release_source
+      in
+      (match B.run rt (Eta_http.Body.Stream.discard release_view) with
+      | Eta.Exit.Error (Eta.Cause.Fail actual) when actual == error -> ()
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "replayed release error returned %a"
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause
+      | Eta.Exit.Ok _ -> Alcotest.fail "replayed release error succeeded");
+      ignore (B.run rt (Eta_http.Body.Stream.discard release_view) |> expect_ok);
+      ignore (B.run rt (Eta_http.Body.Stream.discard release_source) |> expect_ok);
+      Alcotest.(check int) "replayed release remains release-once" 1
+        !release_calls
+    in
+    capture_public_concurrent_error () |> check_replayed_public_error;
+    let same_shaped_error () =
+      Eta_http.Error.make ~method_:"*" ~uri:"*"
+        (Decode_error
+           {
+             codec = "body-stream";
+             message = "concurrent body stream operation";
+           })
+    in
+    let reader_error = same_shaped_error () in
+    let reader_releases = ref 0 in
+    let reader_view =
+      Eta_http.Body.Stream.of_reader
+        ~release:(fun () ->
+          incr reader_releases;
+          Eta.Effect.unit)
+        (fun () -> Eta.Effect.fail reader_error)
+      |> Eta_http.Body.Stream.enforce_exact_length ~length:1
+    in
+    (match B.run rt (Eta_http.Body.Stream.read reader_view) with
+    | Eta.Exit.Error (Eta.Cause.Fail error) when error == reader_error -> ()
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "same-shaped reader error returned %a"
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
+    | Eta.Exit.Ok _ -> Alcotest.fail "same-shaped reader error succeeded");
+    ignore (B.run rt (Eta_http.Body.Stream.discard reader_view) |> expect_ok);
+    Alcotest.(check int) "same-shaped reader triggers cleanup once" 1
+      !reader_releases;
+    let release_error = same_shaped_error () in
+    let release_calls = ref 0 in
+    let release_source =
+      Eta_http.Body.Stream.of_reader
+        ~release:(fun () ->
+          incr release_calls;
+          Eta.Effect.fail release_error)
+        (fun () -> Eta.Effect.pure Eta_http.Body.Stream.End)
+    in
+    let release_view =
+      Eta_http.Body.Stream.enforce_exact_length ~length:0 release_source
+    in
+    (match B.run rt (Eta_http.Body.Stream.discard release_view) with
+    | Eta.Exit.Error (Eta.Cause.Fail error) when error == release_error -> ()
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "same-shaped release error returned %a"
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
+    | Eta.Exit.Ok _ -> Alcotest.fail "same-shaped release error succeeded");
+    ignore (B.run rt (Eta_http.Body.Stream.discard release_view) |> expect_ok);
+    ignore (B.run rt (Eta_http.Body.Stream.discard release_source) |> expect_ok);
+    Alcotest.(check int) "same-shaped release remains release-once" 1
+      !release_calls
+
   let test_body_source_owned_stream_releases_on_scope_exit () =
     B.with_test_clock @@ fun _ctx _clock rt ->
     let released = ref 0 in
@@ -1855,8 +2294,184 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "made" 2 !made;
     Alcotest.(check int) "released" 2 !released
 
+  let test_body_source_one_shot_reports_length_and_releases () =
+    B.with_test_clock @@ fun _ctx _clock rt ->
+    (match
+       Eta_http.Body.Source.one_shot_stream ~length:(-1)
+         (Eta_http.Body.Stream.empty ())
+     with
+    | _ -> Alcotest.fail "negative known one-shot length was accepted"
+    | exception Invalid_argument _ -> ());
+    let released = ref 0 in
+    let stream =
+      Eta_http.Body.Stream.of_bytes
+        ~release:(fun () ->
+          incr released;
+          Eta.Effect.unit)
+        [ Bytes.of_string "abc" ]
+    in
+    let source = Eta_http.Body.Source.one_shot_stream ~length:3 stream in
+    Alcotest.(check (option int)) "reported length" (Some 3)
+      (Eta_http.Body.Source.content_length source);
+    Alcotest.(check bool) "source remains one-shot" true
+      (Eta_http.Body.Source.replayability source = One_shot);
+    Eta_http.Body.Source.with_owned_stream source (function
+      | None -> Alcotest.fail "expected known one-shot owned stream"
+      | Some owned ->
+          Alcotest.(check (option int)) "owned length" (Some 3) owned.length;
+          Eta_http.Body.Stream.read_all owned.stream |> Eta.Effect.map ignore)
+    |> B.run rt |> expect_ok |> ignore;
+    Alcotest.(check int) "released" 1 !released;
+    let run_case ~length chunks =
+      let released = ref 0 in
+      let stream =
+        Eta_http.Body.Stream.of_bytes
+          ~release:(fun () ->
+            incr released;
+            Eta.Effect.unit)
+          (List.map Bytes.of_string chunks)
+      in
+      let source =
+        Eta_http.Body.Source.One_shot_stream { length; stream }
+      in
+      let result =
+        Eta_http.Body.Source.with_owned_stream source (function
+          | None -> Alcotest.fail "expected verified one-shot stream"
+          | Some owned -> Eta_http.Body.Stream.read_all owned.stream)
+        |> B.run rt
+      in
+      Alcotest.(check int) "verified source released once" 1 !released;
+      result
+    in
+    let expect_length_error label = function
+      | Eta.Exit.Error
+          (Eta.Cause.Fail
+            {
+              Eta_http.Error.kind =
+                Connection_protocol_violation
+                  { kind = "request_body_length"; _ };
+              _;
+            }) ->
+          ()
+      | Eta.Exit.Ok _ -> Alcotest.fail (label ^ " unexpectedly succeeded")
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "%s returned unexpected cause: %a" label
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause
+    in
+    Alcotest.(check bytes) "verified exact bytes" (Bytes.of_string "abc")
+      (run_case ~length:3 [ "a"; "bc" ] |> expect_ok);
+    Alcotest.(check bytes) "verified zero bytes" Bytes.empty
+      (run_case ~length:0 [] |> expect_ok);
+    run_case ~length:3 [ "ab" ] |> expect_length_error "undershoot";
+    run_case ~length:2 [ "abc" ] |> expect_length_error "overshoot";
+    run_case ~length:(-1) [ "x" ] |> expect_length_error "negative";
+    let cleanup_error =
+      Eta_http.Error.make ~method_:"*" ~uri:"*"
+        (Decode_error
+           { codec = "source-length-cleanup"; message = "typed cleanup" })
+    in
+    let run_cleanup_case ~length raw_results release =
+      let released = ref 0 in
+      let raw_results = ref raw_results in
+      let stream =
+        Eta_http.Body.Stream.of_reader
+          ~release:(fun () ->
+            incr released;
+            release ())
+          (fun () ->
+            match !raw_results with
+            | [] -> Eta.Effect.pure Eta_http.Body.Stream.End
+            | result :: rest ->
+                raw_results := rest;
+                Eta.Effect.pure result)
+      in
+      let source =
+        Eta_http.Body.Source.One_shot_stream { length; stream }
+      in
+      let result =
+        Eta_http.Body.Source.with_owned_stream source (function
+          | None -> Alcotest.fail "expected cleanup-matrix owned stream"
+          | Some owned -> Eta_http.Body.Stream.read_all owned.stream)
+        |> B.run rt
+      in
+      Alcotest.(check int) "source cleanup-matrix release once" 1 !released;
+      result
+    in
+    let is_length_failure = function
+      | Eta.Cause.Fail
+          {
+            Eta_http.Error.kind =
+              Connection_protocol_violation
+                { kind = "request_body_length"; _ };
+            _;
+          } ->
+          true
+      | _ -> false
+    in
+    let expect_typed label = function
+      | Eta.Exit.Error
+          (Eta.Cause.Suppressed
+            {
+              primary;
+              finalizer = Eta.Cause.Finalizer.Fail _;
+            })
+        when is_length_failure primary ->
+          ()
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "%s returned %a" label
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause
+      | Eta.Exit.Ok _ -> Alcotest.fail (label ^ " unexpectedly succeeded")
+    in
+    let expect_defect label defect = function
+      | Eta.Exit.Error
+          (Eta.Cause.Suppressed
+            {
+              primary;
+              finalizer = Eta.Cause.Finalizer.Die { exn; _ };
+            })
+        when is_length_failure primary && exn == defect ->
+          ()
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "%s returned %a" label
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause
+      | Eta.Exit.Ok _ -> Alcotest.fail (label ^ " unexpectedly succeeded")
+    in
+    let last value = Eta_http.Body.Stream.Last (Bytes.of_string value) in
+    let chunk value = Eta_http.Body.Stream.Chunk (Bytes.of_string value) in
+    let typed label ~length results =
+      run_cleanup_case ~length results (fun () -> Eta.Effect.fail cleanup_error)
+      |> expect_typed label
+    in
+    let defect label ~length results =
+      let exn = Failure (label ^ " cleanup") in
+      run_cleanup_case ~length results (fun () ->
+          Eta.Effect.sync (fun () -> raise exn))
+      |> expect_defect label exn
+    in
+    typed "source Last underflow typed" ~length:3 [ last "ab" ];
+    defect "source Last underflow defect" ~length:3 [ last "ab" ];
+    typed "source End underflow typed" ~length:3
+      [ chunk "ab"; Eta_http.Body.Stream.End ];
+    defect "source End underflow defect" ~length:3
+      [ chunk "ab"; Eta_http.Body.Stream.End ];
+    typed "source Last overrun typed" ~length:2 [ last "abc" ];
+    defect "source Last overrun defect" ~length:2 [ last "abc" ]
+
   let test_body_stream_read_all_caps_default () =
     B.with_test_clock @@ fun _ctx _clock rt ->
+    let exact =
+      Eta_http.Body.Stream.of_bytes [ Bytes.of_string "abc" ]
+    in
+    Alcotest.(check bytes) "explicit exact cap" (Bytes.of_string "abc")
+      (B.run rt (Eta_http.Body.Stream.read_all ~max_bytes:3 exact) |> expect_ok);
+    let one_over =
+      Eta_http.Body.Stream.of_bytes [ Bytes.of_string "abc" ]
+    in
+    B.run rt (Eta_http.Body.Stream.read_all ~max_bytes:2 one_over)
+    |> expect_body_too_large "explicit one-over" ~limit:2;
     let stream =
       Eta_http.Body.Stream.of_bytes
         [ Bytes.make body_size_cap 'a'; Bytes.of_string "b" ]
@@ -3078,13 +3693,23 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_body_stream_release_once;
           Alcotest.test_case "reader release once" `Quick
             test_body_stream_reader_release_once;
+          Alcotest.test_case "exact length enforcement and cleanup" `Quick
+            test_body_stream_exact_length_enforcement_and_cleanup;
           Alcotest.test_case "rejects concurrent reads" `Quick
             test_body_stream_rejects_concurrent_reads;
+          Alcotest.test_case "exact view shares all operation gates" `Quick
+            test_body_stream_exact_view_shares_all_operation_gates;
+          Alcotest.test_case "sync callbacks reset private gates" `Quick
+            test_body_stream_sync_callbacks_reset_private_gates;
+          Alcotest.test_case "same-shaped errors are not gate signals" `Quick
+            test_body_stream_same_shaped_errors_are_not_gate_signals;
           Alcotest.test_case "source owned stream release" `Quick
             test_body_source_owned_stream_releases_on_scope_exit;
           Alcotest.test_case "source rewindable stream ownership" `Quick
             test_body_source_rewindable_stream_is_owned_per_call;
-          Alcotest.test_case "read_all caps default" `Quick
+          Alcotest.test_case "source known one-shot length and ownership" `Quick
+            test_body_source_one_shot_reports_length_and_releases;
+          Alcotest.test_case "read_all exact one-over and default cap" `Quick
             test_body_stream_read_all_caps_default;
           Alcotest.test_case "chunked trailers" `Quick
             test_chunked_decodes_trailers;

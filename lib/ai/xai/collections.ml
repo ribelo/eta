@@ -318,25 +318,34 @@ let upload_document_request ?management_endpoint:custom ~management_key
   let fields = Json.to_string (fields_json document.fields) in
   let parts =
     [
-      C.Field ("name", document.name);
-      C.File
+      Eta_http.Multipart.Text { name = "name"; value = document.name };
+      Eta_http.Multipart.File
         {
           name = "data";
           filename = document.name;
           content_type = document.content_type;
-          data = document.data;
+          data = Eta_http.Multipart.Buffered document.data;
         };
-      C.Field ("content_type", document.content_type);
-      C.Field ("fields", fields);
+      Eta_http.Multipart.Text
+        { name = "content_type"; value = document.content_type };
+      Eta_http.Multipart.Text { name = "fields"; value = fields };
     ]
   in
-  let* boundary, body = C.multipart ~label:"collection document" parts in
+  let* multipart =
+    Eta_http.Multipart.make parts
+    |> Result.map_error (C.multipart_error ~label:"collection document")
+  in
   let management_base_url = management_base_url (management_endpoint custom) in
+  let headers =
+    C.management_headers management_key
+    |> Eta_http.Core.Header.remove "content-type"
+    |> Eta_http.Core.Header.unsafe_add "Content-Type"
+         ("multipart/form-data; boundary=" ^ multipart.boundary)
+  in
   Ok
-    (C.multipart_request ~headers:(C.management_headers management_key)
-       ~base_url:management_base_url
-       ~path:("/v1/collections/" ^ collection_id ^ "/documents")
-       boundary body)
+    (Eta_http.Request.make ~headers ~body:multipart.body "POST"
+       (C.join_url management_base_url
+          ("/v1/collections/" ^ collection_id ^ "/documents")))
 
 let list_documents_request ?management_endpoint:custom ~management_key
     ~collection_id request =

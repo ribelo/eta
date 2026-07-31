@@ -120,7 +120,8 @@ let request_body_string (request : H.Request.t) =
   | H.Request.Fixed chunks ->
       chunks |> List.map Bytes.to_string |> String.concat ""
   | H.Request.Empty -> ""
-  | H.Request.Stream _ | H.Request.Rewindable_stream _ ->
+  | H.Request.Stream _ | H.Request.One_shot_stream _
+  | H.Request.Rewindable_stream _ ->
       Alcotest.fail "expected fixed request body"
 
 let together_provider () =

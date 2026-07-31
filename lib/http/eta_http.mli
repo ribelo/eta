@@ -47,6 +47,9 @@ module Retry_policy = Retry
 module Error = Error
 (** Typed eta-http error taxonomy. *)
 
+module Multipart = Multipart
+(** Transport-neutral multipart/form-data construction. *)
+
 module Error_projection = Projection
 (** Structured error projections. *)
 

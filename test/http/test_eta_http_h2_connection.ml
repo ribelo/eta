@@ -366,6 +366,491 @@ let test_h2_streaming_upload_does_not_suppress_header_idle_timeout () =
             cause);
       Alcotest.(check int) "upload body released" 1 !released)
 
+let test_h2_one_shot_known_length_body () =
+  let seen_length = ref None in
+  let seen_body = ref None in
+  with_h2_server
+    (fun reqd ->
+      let request = Eta_http_h2.Connection.Server.Reqd.request reqd in
+      seen_length := List.assoc_opt "content-length" request.headers;
+      h2_server_read_body reqd ~on_done:(fun body ->
+          seen_body := Some body;
+          Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
+            (h2_server_response 200) "ok"))
+    (fun _clock rt connection ->
+      let stream =
+        Eta_http.Body.Stream.of_bytes
+          [ Bytes.of_string "abc"; Bytes.of_string "def" ]
+      in
+      let request =
+        Eta_http.Request.make "POST"
+          "https://api.example.test/known-upload"
+          ~body:(Eta_http.Request.One_shot_stream { length = 6; stream })
+      in
+      let response =
+        Eta_http_eio.Client.request_h2_on_connection connection request
+          (Eta_http.Request.url request)
+        |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
+               Eta_http.Body.Stream.read_all response.body)
+        |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+      in
+      Alcotest.(check string) "H2 response" "ok" (Bytes.to_string response);
+      Alcotest.(check (option string)) "H2 Content-Length" (Some "6")
+        !seen_length;
+      Alcotest.(check (option string)) "H2 request body" (Some "abcdef")
+        !seen_body)
+
+let test_h2_one_shot_early_response_cancels_blocked_writer () =
+  let server_reads = ref 0 in
+  let released = ref 0 in
+  with_h2_server
+    (fun reqd ->
+      let body = Eta_http_h2.Connection.Server.Reqd.request_body reqd in
+      Eta_http_h2.Body.Reader.schedule_read body
+        ~on_eof:(fun () ->
+          Alcotest.fail "one-shot request ended before blocked suffix")
+        ~on_read:(fun _buffer ~off:_ ~len ->
+          incr server_reads;
+          Alcotest.(check int) "server received prefix length" 6 len;
+          Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
+            (h2_server_response 413) "too large"))
+    (fun _clock rt connection ->
+      let first = ref true in
+      let never, _resolver = Eio.Promise.create () in
+      let stream =
+        Eta_http.Body.Stream.of_reader
+          ~release:(fun () ->
+            incr released;
+            Eta.Effect.unit)
+          (fun () ->
+            if !first then (
+              first := false;
+              Eta.Effect.pure
+                (Eta_http.Body.Stream.Chunk (Bytes.of_string "prefix")))
+            else
+              Eta.Effect.sync (fun () -> Eio.Promise.await never)
+              |> Eta.Effect.map (fun () -> Eta_http.Body.Stream.End))
+      in
+      let request =
+        Eta_http.Request.make
+          ~response_idle_timeout:(Response_idle_timeout.of_ms 100)
+          ~body:
+            (Eta_http.Request.One_shot_stream
+               { length = 12; stream })
+          "POST" "https://api.example.test/early-reject"
+      in
+      let status, body =
+        Eta_http_eio.Client.request_h2_on_connection connection request
+          (Eta_http.Request.url request)
+        |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
+               Eta_http.Body.Stream.read_all response.body
+               |> Eta.Effect.map (fun body -> (response.status, body)))
+        |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+      in
+      Alcotest.(check int) "early response status" 413 status;
+      Alcotest.(check string) "early response body" "too large"
+        (Bytes.to_string body);
+      Alcotest.(check int) "server read only prefix" 1 !server_reads;
+      Alcotest.(check int) "cancelled one-shot released once" 1 !released)
+
+let test_h2_one_shot_early_response_surfaces_writer_cleanup () =
+  let rec has_typed_finalizer = function
+    | Eta.Cause.Finalizer (Eta.Cause.Finalizer.Fail _) -> true
+    | Eta.Cause.Suppressed { finalizer = Eta.Cause.Finalizer.Fail _; _ } -> true
+    | Eta.Cause.Sequential causes | Eta.Cause.Concurrent causes ->
+        List.exists has_typed_finalizer causes
+    | Eta.Cause.Fail _ | Eta.Cause.Die _ | Eta.Cause.Interrupt _
+    | Eta.Cause.Finalizer _ | Eta.Cause.Suppressed _ ->
+        false
+  in
+  let run release =
+    let server_reads = ref 0 in
+    let released = ref 0 in
+    let result = ref None in
+    with_h2_server
+      (fun reqd ->
+        let body = Eta_http_h2.Connection.Server.Reqd.request_body reqd in
+        Eta_http_h2.Body.Reader.schedule_read body
+          ~on_eof:(fun () ->
+            Alcotest.fail "cleanup case ended before blocked suffix")
+          ~on_read:(fun _buffer ~off:_ ~len:_ ->
+            incr server_reads;
+            Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
+              (h2_server_response 413) "too large"))
+      (fun _clock rt connection ->
+        let first = ref true in
+        let never, _resolver = Eio.Promise.create () in
+        let stream =
+          Eta_http.Body.Stream.of_reader
+            ~release:(fun () ->
+              incr released;
+              release ())
+            (fun () ->
+              if !first then (
+                first := false;
+                Eta.Effect.pure
+                  (Eta_http.Body.Stream.Chunk (Bytes.of_string "prefix")))
+              else
+                Eta.Effect.sync (fun () -> Eio.Promise.await never)
+                |> Eta.Effect.map (fun () -> Eta_http.Body.Stream.End))
+        in
+        let request =
+          Eta_http.Request.make
+            ~response_idle_timeout:(Response_idle_timeout.of_ms 100)
+            ~body:
+              (Eta_http.Request.One_shot_stream
+                 { length = 12; stream })
+            "POST" "https://api.example.test/early-cleanup"
+        in
+        result :=
+          Some
+            (Eta_http_eio.Client.request_h2_on_connection connection request
+               (Eta_http.Request.url request)
+            |> Eta.Runtime.run rt));
+    Alcotest.(check int) "cleanup case server read prefix" 1 !server_reads;
+    Alcotest.(check int) "cleanup case release once" 1 !released;
+    Option.get !result
+  in
+  let cleanup_error =
+    Eta_http.Error.make ~method_:"*" ~uri:"*"
+      (Decode_error
+         { codec = "h2-early-cleanup"; message = "typed cleanup" })
+  in
+  (match run (fun () -> Eta.Effect.fail cleanup_error) with
+  | Eta.Exit.Error cause when has_typed_finalizer cause -> ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "typed early cleanup lost its diagnostic: %a"
+        (Eta.Cause.pp Eta_http.Error.pp)
+        cause
+  | Eta.Exit.Ok _ ->
+      Alcotest.fail "typed early cleanup returned the successful 413 response");
+  let defect = Failure "H2 early-response cleanup defect" in
+  (match
+     run (fun () -> Eta.Effect.sync (fun () -> raise defect))
+   with
+  | Eta.Exit.Error cause ->
+      let defects = Eta.Cause.defects cause in
+      Alcotest.(check int) "one cleanup defect" 1 (List.length defects);
+      Alcotest.(check bool) "cleanup defect identity" true
+        (List.exists (fun die -> die.Eta.Cause.exn == defect) defects)
+  | Eta.Exit.Ok _ ->
+      Alcotest.fail "defect early cleanup returned the successful 413 response")
+
+let test_h2_one_shot_writer_success_keeps_original_response_deadline () =
+  let server_clock = ref None in
+  with_h2_server
+    (fun reqd ->
+      h2_server_read_body reqd ~on_done:(fun _body ->
+          Eio.Time.sleep (Option.get !server_clock) 0.03;
+          Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
+            (h2_server_response 200) "late"))
+    (fun clock rt connection ->
+      server_clock := Some clock;
+      let released = ref 0 in
+      let stream =
+        Eta_http.Body.Stream.of_reader
+          ~release:(fun () ->
+            incr released;
+            Eta.Effect.unit)
+          (let first = ref true in
+           fun () ->
+             if !first then (
+               first := false;
+               Eta.Effect.sync (fun () -> Eio.Time.sleep clock 0.04)
+               |> Eta.Effect.map (fun () ->
+                      Eta_http.Body.Stream.Last (Bytes.of_string "done")))
+             else Eta.Effect.pure Eta_http.Body.Stream.End)
+      in
+      let request =
+        Eta_http.Request.make
+          ~response_idle_timeout:(Response_idle_timeout.of_ms 50)
+          ~body:
+            (Eta_http.Request.One_shot_stream
+               { length = 4; stream })
+          "POST" "https://api.example.test/original-deadline"
+      in
+      (match
+         Eta_http_eio.Client.request_h2_on_connection connection request
+           (Eta_http.Request.url request)
+         |> Eta.Runtime.run rt
+       with
+      | Eta.Exit.Error
+          (Eta.Cause.Fail
+            {
+              Eta_http.Error.kind =
+                Response_header_timeout { timeout_ms = Some 50 };
+              _;
+            }) ->
+          ()
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "original response deadline returned %a"
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause
+      | Eta.Exit.Ok _ ->
+          Alcotest.fail "writer success restarted the response deadline");
+      Alcotest.(check int) "completed writer released once" 1 !released)
+
+let test_h2_one_shot_length_contract () =
+  let run_case ?(headers = []) ~length chunks =
+    let requests = ref 0 in
+    let seen_body = ref None in
+    let released = ref 0 in
+    let result = ref None in
+    with_h2_server
+      (fun reqd ->
+        incr requests;
+        h2_server_read_body reqd ~on_done:(fun body ->
+            seen_body := Some body;
+            Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
+              (h2_server_response 200) "ok"))
+      (fun _clock rt connection ->
+        let stream =
+          Eta_http.Body.Stream.of_bytes
+            ~release:(fun () ->
+              incr released;
+              Eta.Effect.unit)
+            (List.map Bytes.of_string chunks)
+        in
+        let request =
+          Eta_http.Request.make ~headers "POST"
+            "https://api.example.test/known-upload"
+            ~body:(Eta_http.Request.One_shot_stream { length; stream })
+        in
+        result :=
+          Some
+            (Eta_http_eio.Client.request_h2_on_connection connection request
+               (Eta_http.Request.url request)
+            |> Eta.Runtime.run rt));
+    Alcotest.(check int) "H2 one-shot released once" 1 !released;
+    (Option.get !result, !requests, !seen_body)
+  in
+  let expect_success label expected = function
+    | Eta.Exit.Ok response, 1, seen ->
+        Alcotest.(check (option string)) (label ^ " body") (Some expected) seen;
+        ignore response
+    | Eta.Exit.Ok _, requests, _ ->
+        Alcotest.failf "%s reached server %d times" label requests
+    | Eta.Exit.Error cause, _, _ ->
+        Alcotest.failf "%s failed: %a" label
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
+  in
+  let expect_length_error label = function
+    | ( Eta.Exit.Error
+          (Eta.Cause.Fail
+            {
+              Eta_http.Error.kind =
+                Connection_protocol_violation
+                  { kind = "request_body_length"; _ };
+              _;
+            }),
+        requests,
+        seen ) ->
+        Alcotest.(check bool) (label ^ " sends at most one request") true
+          (requests = 0 || requests = 1);
+        if String.equal label "overshoot" then
+          Alcotest.(check bool) "H2 excess bytes not emitted" true
+            (seen = None || seen = Some "")
+    | Eta.Exit.Error cause, requests, _ ->
+        Alcotest.failf "%s returned requests=%d cause=%a" label requests
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
+    | Eta.Exit.Ok _, _, _ -> Alcotest.fail (label ^ " unexpectedly succeeded")
+  in
+  let expect_preflight_error label = function
+    | Eta.Exit.Error (Eta.Cause.Fail _), 0, None -> ()
+    | Eta.Exit.Error cause, requests, seen ->
+        Alcotest.failf "%s sent headers requests=%d seen=%s cause=%a" label
+          requests
+          (Option.value ~default:"<none>" seen)
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
+    | Eta.Exit.Ok _, _, _ -> Alcotest.fail (label ^ " unexpectedly succeeded")
+  in
+  run_case ~length:3 [ "a"; "bc" ] |> expect_success "exact" "abc";
+  run_case ~headers:[ ("Content-Length", "3") ] ~length:3 [ "abc" ]
+  |> expect_success "matching Content-Length" "abc";
+  run_case ~length:0 [] |> expect_success "zero" "";
+  run_case ~length:3 [ "ab" ] |> expect_length_error "undershoot";
+  run_case ~length:2 [ "abc" ] |> expect_length_error "overshoot";
+  run_case ~length:(-1) [ "x" ] |> expect_preflight_error "negative";
+  run_case ~headers:[ ("Content-Length", "2") ] ~length:3 [ "abc" ]
+  |> expect_preflight_error "mismatched Content-Length";
+  run_case ~headers:[ ("Content-Length", "-1") ] ~length:3 [ "abc" ]
+  |> expect_preflight_error "negative Content-Length";
+  run_case ~headers:[ ("Content-Length", "nope") ] ~length:3 [ "abc" ]
+  |> expect_preflight_error "invalid Content-Length";
+  let cleanup_error =
+    Eta_http.Error.make ~method_:"*" ~uri:"*"
+      (Decode_error
+         { codec = "h2-length-cleanup"; message = "typed cleanup" })
+  in
+  let run_cleanup_case ~length raw_results release =
+    let requests = ref 0 in
+    let seen_body = ref None in
+    let released = ref 0 in
+    let result = ref None in
+    with_h2_server
+      (fun reqd ->
+        incr requests;
+        h2_server_read_body reqd ~on_done:(fun body ->
+            seen_body := Some body;
+            Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
+              (h2_server_response 200) "ok"))
+      (fun _clock rt connection ->
+        let raw_results = ref raw_results in
+        let stream =
+          Eta_http.Body.Stream.of_reader
+            ~release:(fun () ->
+              incr released;
+              release ())
+            (fun () ->
+              match !raw_results with
+              | [] -> Eta.Effect.pure Eta_http.Body.Stream.End
+              | value :: rest ->
+                  raw_results := rest;
+                  Eta.Effect.pure value)
+        in
+        let request =
+          Eta_http.Request.make "POST"
+            "https://api.example.test/known-upload"
+            ~body:(Eta_http.Request.One_shot_stream { length; stream })
+        in
+        result :=
+          Some
+            (Eta_http_eio.Client.request_h2_on_connection connection request
+               (Eta_http.Request.url request)
+            |> Eta.Runtime.run rt));
+    Alcotest.(check int) "H2 cleanup-matrix release once" 1 !released;
+    (Option.get !result, !requests, !seen_body)
+  in
+  let is_length_failure = function
+    | Eta.Cause.Fail
+        {
+          Eta_http.Error.kind =
+            Connection_protocol_violation
+              { kind = "request_body_length"; _ };
+          _;
+        } ->
+        true
+    | _ -> false
+  in
+  let expect_typed label = function
+    | ( Eta.Exit.Error
+          (Eta.Cause.Suppressed
+            {
+              primary;
+              finalizer = Eta.Cause.Finalizer.Fail _;
+            }),
+        requests,
+        seen )
+      when is_length_failure primary ->
+        Alcotest.(check bool) (label ^ " sends at most one request") true
+          (requests = 0 || requests = 1);
+        if String.equal label "H2 Last overrun typed" then
+          Alcotest.(check bool) "H2 excess Last withheld" true
+            (seen = None || seen = Some "")
+    | Eta.Exit.Error cause, requests, _ ->
+        Alcotest.failf "%s requests=%d returned %a" label requests
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
+    | Eta.Exit.Ok _, _, _ -> Alcotest.fail (label ^ " unexpectedly succeeded")
+  in
+  let expect_defect label defect = function
+    | ( Eta.Exit.Error
+          (Eta.Cause.Suppressed
+            {
+              primary;
+              finalizer = Eta.Cause.Finalizer.Die { exn; _ };
+            }),
+        requests,
+        seen )
+      when is_length_failure primary && exn == defect ->
+        Alcotest.(check bool) (label ^ " sends at most one request") true
+          (requests = 0 || requests = 1);
+        if String.equal label "H2 Last overrun defect" then
+          Alcotest.(check bool) "H2 excess Last withheld" true
+            (seen = None || seen = Some "")
+    | Eta.Exit.Error cause, requests, _ ->
+        Alcotest.failf "%s requests=%d returned %a" label requests
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
+    | Eta.Exit.Ok _, _, _ -> Alcotest.fail (label ^ " unexpectedly succeeded")
+  in
+  let last value = Eta_http.Body.Stream.Last (Bytes.of_string value) in
+  let chunk value = Eta_http.Body.Stream.Chunk (Bytes.of_string value) in
+  let typed label ~length results =
+    run_cleanup_case ~length results (fun () -> Eta.Effect.fail cleanup_error)
+    |> expect_typed label
+  in
+  let defect label ~length results =
+    let exn = Failure (label ^ " cleanup") in
+    run_cleanup_case ~length results (fun () ->
+        Eta.Effect.sync (fun () -> raise exn))
+    |> expect_defect label exn
+  in
+  typed "H2 Last underflow typed" ~length:3 [ last "ab" ];
+  defect "H2 Last underflow defect" ~length:3 [ last "ab" ];
+  typed "H2 End underflow typed" ~length:3
+    [ chunk "ab"; Eta_http.Body.Stream.End ];
+  defect "H2 End underflow defect" ~length:3
+    [ chunk "ab"; Eta_http.Body.Stream.End ];
+  typed "H2 Last overrun typed" ~length:2 [ last "abc" ];
+  defect "H2 Last overrun defect" ~length:2 [ last "abc" ]
+
+let test_h2_negative_one_shot_preflight_releases_without_request () =
+  let requests = ref 0 in
+  let released = ref 0 in
+  with_h2_server
+    (fun _reqd -> incr requests)
+    (fun _clock rt connection ->
+      for _ = 1 to 3 do
+        let stream =
+          Eta_http.Body.Stream.of_bytes
+            ~release:(fun () ->
+              incr released;
+              Eta.Effect.unit)
+            [ Bytes.of_string "x" ]
+        in
+        let request =
+          Eta_http.Request.make "POST"
+            "https://api.example.test/negative"
+            ~body:(Eta_http.Request.One_shot_stream { length = -1; stream })
+        in
+        match
+          Eta_http_eio.Client.request_h2_on_connection connection request
+            (Eta_http.Request.url request)
+          |> Eta.Runtime.run rt
+        with
+        | Eta.Exit.Error
+            (Eta.Cause.Fail
+              {
+                Eta_http.Error.kind =
+                  Connection_protocol_violation
+                    { kind = "request_body_length"; _ };
+                _;
+              }) ->
+            ()
+        | Eta.Exit.Error cause ->
+            Alcotest.failf "unexpected negative preflight failure: %a"
+              (Eta.Cause.pp Eta_http.Error.pp)
+              cause
+        | Eta.Exit.Ok _ ->
+            Alcotest.fail "negative one-shot request unexpectedly succeeded"
+      done;
+      Alcotest.(check int) "negative bodies released once" 3 !released;
+      Alcotest.(check int) "negative requests sent no headers" 0 !requests;
+      let later_failure_notifications = ref 0 in
+      let unregister =
+        Eta_http_eio.H2.Connection.register_failure_handler connection
+          (fun _ -> incr later_failure_notifications)
+      in
+      Eta_http_eio.H2.Connection.shutdown connection;
+      unregister ();
+      Alcotest.(check int)
+        "later failure invokes only its current handler" 1
+        !later_failure_notifications)
+
 let wait_until label predicate =
   let rec loop attempts =
     if predicate () then ()

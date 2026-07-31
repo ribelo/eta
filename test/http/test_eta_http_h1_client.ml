@@ -452,6 +452,219 @@ let test_h1_client_streaming_request_body_releases () =
   Alcotest.(check string) "response" "ok" (Bytes.to_string response_body);
   Alcotest.(check int) "request body released" 1 !released
 
+let test_h1_client_one_shot_known_length_body () =
+  let flow = Eio_mock.Flow.make "eta-http-h1-one-shot-known-flow" in
+  Eio_mock.Flow.on_read flow
+    [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" ];
+  let released = ref 0 in
+  let reads = ref [ Bytes.of_string "abc"; Bytes.of_string "def" ] in
+  let stream =
+    Eta_http.Body.Stream.of_reader
+      ~release:(fun () ->
+        incr released;
+        Eta.Effect.unit)
+      (fun () ->
+        match !reads with
+        | [] -> Eta.Effect.pure Eta_http.Body.Stream.End
+        | [ chunk ] ->
+            reads := [];
+            Eta.Effect.pure (Eta_http.Body.Stream.Last chunk)
+        | chunk :: rest ->
+            reads := rest;
+            Eta.Effect.pure (Eta_http.Body.Stream.Chunk chunk))
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/known-upload" in
+  let request : Eta_http_eio.H1.Client.request =
+    {
+      method_ = "POST";
+      url;
+      headers = [ ("Content-Length", "6") ];
+      body = Eta_http_eio.H1.Client.One_shot_stream { length = 6; stream };
+    }
+  in
+  with_test_clock @@ fun _sw _clock rt ->
+  let response =
+    Eta_http_eio.H1.Client.request_on_flow ~flow request
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  let response_body =
+    Eta_http.Body.Stream.read_all response.body
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  Alcotest.(check string) "known one-shot response" "ok"
+    (Bytes.to_string response_body);
+  Alcotest.(check int) "known one-shot body fully written" 0
+    (List.length !reads);
+  Alcotest.(check int) "known one-shot released" 1 !released
+
+let test_h1_client_one_shot_length_contract () =
+  let run_case ~length chunks =
+    let flow =
+      Eio_mock.Flow.make
+        (Printf.sprintf "eta-http-h1-one-shot-length-%d" length)
+    in
+    Eio_mock.Flow.on_read flow
+      [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" ];
+    let released = ref 0 in
+    let stream =
+      Eta_http.Body.Stream.of_bytes
+        ~release:(fun () ->
+          incr released;
+          Eta.Effect.unit)
+        (List.map Bytes.of_string chunks)
+    in
+    let url = Eta_http.Core.Url.of_string "http://example.test/known-upload" in
+    let request : Eta_http_eio.H1.Client.request =
+      {
+        method_ = "POST";
+        url;
+        headers = [];
+        body = Eta_http_eio.H1.Client.One_shot_stream { length; stream };
+      }
+    in
+    with_test_clock @@ fun _sw _clock rt ->
+    let result =
+      Eta_http_eio.H1.Client.request_on_flow ~flow request |> Eta.Runtime.run rt
+    in
+    (match result with
+    | Eta.Exit.Ok response ->
+        Eta_http.Body.Stream.read_all response.body
+        |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok |> ignore
+    | Eta.Exit.Error _ -> ());
+    Alcotest.(check int) "one-shot case released once" 1 !released;
+    result
+  in
+  let expect_length_error label = function
+    | Eta.Exit.Error
+        (Eta.Cause.Fail
+          {
+            Eta_http.Error.kind =
+              Connection_protocol_violation
+                { kind = "request_body_length"; _ };
+            _;
+          }) ->
+        ()
+    | Eta.Exit.Ok _ -> Alcotest.fail (label ^ " unexpectedly succeeded")
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "%s returned unexpected cause: %a" label
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
+  in
+  (match run_case ~length:3 [ "a"; "bc" ] with
+  | Eta.Exit.Ok _ -> ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "exact one-shot failed: %a"
+        (Eta.Cause.pp Eta_http.Error.pp)
+        cause);
+  (match run_case ~length:0 [] with
+  | Eta.Exit.Ok _ -> ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "zero one-shot failed: %a"
+        (Eta.Cause.pp Eta_http.Error.pp)
+        cause);
+  run_case ~length:3 [ "ab" ] |> expect_length_error "one-shot undershoot";
+  run_case ~length:2 [ "abc" ] |> expect_length_error "one-shot overshoot";
+  let cleanup_error =
+    Eta_http.Error.make ~method_:"*" ~uri:"*"
+      (Decode_error
+         { codec = "h1-length-cleanup"; message = "typed cleanup" })
+  in
+  let run_cleanup_case ~length raw_results release =
+    let flow = Eio_mock.Flow.make "eta-http-h1-one-shot-cleanup" in
+    Eio_mock.Flow.on_read flow
+      [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" ];
+    let released = ref 0 in
+    let raw_results = ref raw_results in
+    let stream =
+      Eta_http.Body.Stream.of_reader
+        ~release:(fun () ->
+          incr released;
+          release ())
+        (fun () ->
+          match !raw_results with
+          | [] -> Eta.Effect.pure Eta_http.Body.Stream.End
+          | result :: rest ->
+              raw_results := rest;
+              Eta.Effect.pure result)
+    in
+    let url = Eta_http.Core.Url.of_string "http://example.test/known-upload" in
+    let request : Eta_http_eio.H1.Client.request =
+      {
+        method_ = "POST";
+        url;
+        headers = [];
+        body = Eta_http_eio.H1.Client.One_shot_stream { length; stream };
+      }
+    in
+    with_test_clock @@ fun _sw _clock rt ->
+    let result =
+      Eta_http_eio.H1.Client.request_on_flow ~flow request |> Eta.Runtime.run rt
+    in
+    Alcotest.(check int) "H1 cleanup-matrix release once" 1 !released;
+    result
+  in
+  let is_length_failure = function
+    | Eta.Cause.Fail
+        {
+          Eta_http.Error.kind =
+            Connection_protocol_violation
+              { kind = "request_body_length"; _ };
+          _;
+        } ->
+        true
+    | _ -> false
+  in
+  let expect_typed label = function
+    | Eta.Exit.Error
+        (Eta.Cause.Suppressed
+          {
+            primary;
+            finalizer = Eta.Cause.Finalizer.Fail _;
+          })
+      when is_length_failure primary ->
+        ()
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "%s returned %a" label
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
+    | Eta.Exit.Ok _ -> Alcotest.fail (label ^ " unexpectedly succeeded")
+  in
+  let expect_defect label defect = function
+    | Eta.Exit.Error
+        (Eta.Cause.Suppressed
+          {
+            primary;
+            finalizer = Eta.Cause.Finalizer.Die { exn; _ };
+          })
+      when is_length_failure primary && exn == defect ->
+        ()
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "%s returned %a" label
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
+    | Eta.Exit.Ok _ -> Alcotest.fail (label ^ " unexpectedly succeeded")
+  in
+  let last value = Eta_http.Body.Stream.Last (Bytes.of_string value) in
+  let chunk value = Eta_http.Body.Stream.Chunk (Bytes.of_string value) in
+  let typed label ~length results =
+    run_cleanup_case ~length results (fun () -> Eta.Effect.fail cleanup_error)
+    |> expect_typed label
+  in
+  let defect label ~length results =
+    let exn = Failure (label ^ " cleanup") in
+    run_cleanup_case ~length results (fun () ->
+        Eta.Effect.sync (fun () -> raise exn))
+    |> expect_defect label exn
+  in
+  typed "H1 Last underflow typed" ~length:3 [ last "ab" ];
+  defect "H1 Last underflow defect" ~length:3 [ last "ab" ];
+  typed "H1 End underflow typed" ~length:3
+    [ chunk "ab"; Eta_http.Body.Stream.End ];
+  defect "H1 End underflow defect" ~length:3
+    [ chunk "ab"; Eta_http.Body.Stream.End ];
+  typed "H1 Last overrun typed" ~length:2 [ last "abc" ];
+  defect "H1 Last overrun defect" ~length:2 [ last "abc" ]
+
 let h1_blocking_body ~released () =
   let first = ref true in
   let never, _resolver = Eio.Promise.create () in
@@ -578,16 +791,15 @@ let test_h1_client_rejects_mismatched_stream_content_length () =
   let flow = Eio_mock.Flow.make "eta-http-h1-stream-framing-flow" in
   let released = ref 0 in
   let body =
-    Eta_http_eio.H1.Client.Rewindable_stream
+    Eta_http_eio.H1.Client.One_shot_stream
       {
-        length = Some 6;
-        make =
-          (fun () ->
-            Eta_http.Body.Stream.of_bytes
-              ~release:(fun () ->
-                incr released;
-                Eta.Effect.unit)
-              [ Bytes.of_string "abcdef" ]);
+        length = 6;
+        stream =
+          Eta_http.Body.Stream.of_bytes
+            ~release:(fun () ->
+              incr released;
+              Eta.Effect.unit)
+            [ Bytes.of_string "abcdef" ];
       }
   in
   let url = Eta_http.Core.Url.of_string "http://example.test/framing" in
@@ -608,6 +820,40 @@ let test_h1_client_rejects_mismatched_stream_content_length () =
         contains reason "Content-Length"
     | _ -> false);
   Alcotest.(check int) "rejected stream body released" 1 !released
+
+let test_h1_client_rejects_negative_one_shot_length () =
+  let flow = Eio_mock.Flow.make "eta-http-h1-negative-one-shot-length" in
+  let released = ref 0 in
+  let stream =
+    Eta_http.Body.Stream.of_bytes
+      ~release:(fun () ->
+        incr released;
+        Eta.Effect.unit)
+      [ Bytes.of_string "x" ]
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/framing" in
+  let request : Eta_http_eio.H1.Client.request =
+    {
+      method_ = "POST";
+      url;
+      headers = [];
+      body = Eta_http_eio.H1.Client.One_shot_stream { length = -1; stream };
+    }
+  in
+  with_test_clock @@ fun _sw _clock rt ->
+  let result =
+    Eta_http_eio.H1.Client.request_on_flow ~flow request |> Eta.Runtime.run rt
+  in
+  Eta_test.Expect.expect_typed_failure result (function
+    | {
+        Eta_http.Error.kind =
+          Connection_protocol_violation
+            { kind = "request_body_length"; _ };
+        _;
+      } ->
+        true
+    | _ -> false);
+  Alcotest.(check int) "negative one-shot body released" 1 !released
 
 let test_h1_client_rejects_unknown_stream_content_length () =
   let flow = Eio_mock.Flow.make "eta-http-h1-unknown-stream-content-length" in

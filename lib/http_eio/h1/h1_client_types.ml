@@ -13,6 +13,10 @@ type request_body =
   | Empty
   | Fixed of bytes list
   | Stream of Body.t
+  | One_shot_stream of {
+      length : int;
+      stream : Body.t;
+    }
   | Rewindable_stream of {
       length : int option;
       make : (unit -> Body.t);

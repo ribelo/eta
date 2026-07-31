@@ -79,7 +79,8 @@ let bool_string = function true -> "true" | false -> "false"
 
 let option_field name f = function
   | None -> []
-  | Some value -> [ C.Field (name, f value) ]
+  | Some value ->
+      [ Eta_http.Multipart.Text { name; value = f value } ]
 
 let validate request =
   let* () =
@@ -185,32 +186,44 @@ let request ?(endpoint = Endpoint.default_inference) ~api_key request =
     @ option_field "multichannel" bool_string request.multichannel
     @ option_field "channels" string_of_int request.channels
     @ option_field "diarize" bool_string request.diarize
-    @ List.map (fun value -> C.Field ("keyterm", value)) request.keyterm
+    @ List.map
+        (fun value -> Eta_http.Multipart.Text { name = "keyterm"; value })
+        request.keyterm
     @ option_field "filler_words" bool_string request.filler_words
     @ option_field "vad_threshold" (Printf.sprintf "%.17g") request.vad_threshold
   in
   let* parts =
     match request.source with
-    | Url url -> Ok (fields @ [ C.Field ("url", url) ])
+    | Url url ->
+        Ok (fields @ [ Eta_http.Multipart.Text { name = "url"; value = url } ])
     | File file ->
         let* data = read_upload file in
         Ok
           (fields
           @ [
-              C.File
+              Eta_http.Multipart.File
                 {
                   name = "file";
                   filename = file.filename;
                   content_type = file.content_type;
-                  data;
+                  data = Eta_http.Multipart.Buffered data;
                 };
             ])
   in
-  let* boundary, body = C.multipart ~label:"speech-to-text" parts in
+  let* multipart =
+    Eta_http.Multipart.make parts
+    |> Result.map_error (C.multipart_error ~label:"speech-to-text")
+  in
   let base_url = Endpoint.inference_base_url endpoint in
+  let headers =
+    C.inference_headers api_key
+    |> Eta_http.Core.Header.remove "content-type"
+    |> Eta_http.Core.Header.unsafe_add "Content-Type"
+         ("multipart/form-data; boundary=" ^ multipart.boundary)
+  in
   Ok
-    (C.multipart_request ~headers:(C.inference_headers api_key) ~base_url
-       ~path:"/v1/stt" boundary body)
+    (Eta_http.Request.make ~headers ~body:multipart.body "POST"
+       (C.join_url base_url "/v1/stt"))
 
 let word json =
   match Json.string_member "text" json with

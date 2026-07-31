@@ -317,7 +317,11 @@ let stream_framing_length = function
 
 let validate_stream_framing ~framing ~method_ ~url ~headers =
   let body_length = stream_framing_length framing in
-  if body_length < -1 then
+  if
+    match framing with
+    | Fixed_length length -> length < 0
+    | Chunked -> false
+  then
     Error
       (Error.make ~method_ ~uri:(Url.to_string url)
          (Header_invalid { reason = invalid_framing_reason }))

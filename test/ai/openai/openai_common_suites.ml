@@ -197,7 +197,8 @@ let request_body_string (request : H.Request.t) =
   | H.Request.Fixed chunks ->
       chunks |> List.map Bytes.to_string |> String.concat ""
   | H.Request.Empty -> ""
-  | H.Request.Stream _ | H.Request.Rewindable_stream _ ->
+  | H.Request.Stream _ | H.Request.One_shot_stream _
+  | H.Request.Rewindable_stream _ ->
       Alcotest.fail "expected fixed request body"
 
 let multipart_boundary (request : H.Request.t) =
@@ -2113,96 +2114,1128 @@ let test_oaobs_speech_safe_attributes () =
        (fun (span : Eta.Tracer.span) -> String.equal span.name "HTTP POST")
        spans)
 
+let transcription_file ?(content_type = "audio/wav") data =
+  { A.Audio.filename = "sample.wav"; content_type; source = A.Audio.bytes data }
+
+let expect_decode_raw label raw = function
+  | Error (O.Error.Decode { raw_body = Some actual; _ }) ->
+      Alcotest.(check string) (label ^ " raw") raw actual
+  | Error error ->
+      Alcotest.failf "%s: expected Decode, got %a" label O.Error.pp error
+  | Ok _ -> Alcotest.fail (label ^ ": expected Decode")
+
+let transcription_segment_json =
+  {|{"id":7,"seek":12,"start":1.25,"end":2.5,"text":" segment","tokens":[1,2,3],"temperature":0.2,"avg_logprob":-0.3,"compression_ratio":1.1,"no_speech_prob":0.01,"future":"segment-raw"}|}
+
+let test_transcription_format_canonicalization_and_validation () =
+  let open O.Audio.Speech_to_text in
+  let json =
+    {|{"text":"hello","usage":{"type":"duration","seconds":1.5}}|}
+  in
+  let verbose =
+    Printf.sprintf
+      {|{"text":"hello","language":"english","duration":2.5,"segments":[%s],"words":[{"word":"hello","start":0.0,"end":1.0}],"usage":{"type":"duration","seconds":3.0}}|}
+      transcription_segment_json
+  in
+  let diarized =
+    {|{"text":"hello","duration":2.0,"task":"transcribe","segments":[{"id":"seg_1","speaker":"A","start":0.0,"end":2.0,"text":"hello","type":"transcript.text.segment"}],"usage":{"type":"duration","seconds":2.0}}|}
+  in
+  let cases =
+    [
+      (Json, "json", json);
+      (Text, "text", "plain text");
+      (Srt, "srt", "1\n00:00:00,000 --> 00:00:01,000\nhello");
+      (Verbose_json, "verbose_json", verbose);
+      (Vtt, "vtt", "WEBVTT\n\nhello");
+      (Diarized_json, "diarized_json", diarized);
+    ]
+  in
+  List.iter
+    (fun (named, wire, body) ->
+      let named = decode_response (Some named) body in
+      let other = decode_response (Some (Other_format wire)) body in
+      Alcotest.(check bool)
+        ("named/Other decode equivalence " ^ wire)
+        true (named = other))
+    cases;
+  (match decode_response (Some (Other_format "future_format")) "opaque" with
+  | Ok (Other_result { format = "future_format"; body = "opaque" }) -> ()
+  | _ -> Alcotest.fail "unknown transcription format was not preserved");
+  let file = transcription_file (Bytes.of_string "RIFF") in
+  let accepted model format =
+    match request ~model ~file ~response_format:format () with
+    | Ok _ -> true
+    | Error _ -> false
+  in
+  let whisper_formats = [ Json; Text; Srt; Verbose_json; Vtt ] in
+  List.iter
+    (fun named ->
+      let wire = response_format_to_string named in
+      Alcotest.(check bool)
+        ("whisper named format accepted " ^ wire)
+        true (accepted Whisper_1 named);
+      Alcotest.(check bool)
+        ("whisper Other format accepted " ^ wire)
+        true (accepted Whisper_1 (Other_format wire)))
+    whisper_formats;
+  Alcotest.(check bool) "whisper named diarized rejected" false
+    (accepted Whisper_1 Diarized_json);
+  Alcotest.(check bool) "whisper Other diarized rejected" false
+    (accepted Whisper_1 (Other_format "diarized_json"));
+  List.iter
+    (fun (named, wire) ->
+      Alcotest.(check bool)
+        ("gpt format restriction named " ^ wire)
+        false (accepted Gpt_4o_transcribe named);
+      Alcotest.(check bool)
+        ("gpt format restriction Other " ^ wire)
+        false (accepted Gpt_4o_transcribe (Other_format wire)))
+    [
+      (Text, "text");
+      (Srt, "srt");
+      (Verbose_json, "verbose_json");
+      (Vtt, "vtt");
+      (Diarized_json, "diarized_json");
+    ];
+  let timestamp_named =
+    request ~model:Whisper_1 ~file ~response_format:Verbose_json
+      ~timestamp_granularities:[ Word ] ()
+  in
+  let timestamp_other =
+    request ~model:Whisper_1 ~file
+      ~response_format:(Other_format "verbose_json")
+      ~timestamp_granularities:[ Word ] ()
+  in
+  Alcotest.(check bool) "timestamp named/Other accepted" true
+    (Result.is_ok timestamp_named && Result.is_ok timestamp_other);
+  let bypass =
+    request ~model:Whisper_1 ~file
+      ~response_format:(Other_format "json")
+      ~timestamp_granularities:[ Word ] ()
+  in
+  ignore (expect_invalid_request "Other json timestamp bypass" bypass)
+
+let test_transcription_buffered_result_matrix () =
+  let open O.Audio.Speech_to_text in
+  let json_raw =
+    {|{"text":"hello","languages":[{"code":"en","future":"language"}],"logprobs":[{"token":"h","bytes":[104],"logprob":-0.25,"future":"logprob"}],"usage":{"type":"tokens","input_tokens":3,"output_tokens":2,"total_tokens":5,"input_token_details":{"audio_tokens":3,"text_tokens":0,"future":"input-details"},"output_token_details":{"audio_tokens":0,"text_tokens":2,"future":"output-details"},"future":"usage"},"future":"top"}|}
+  in
+  (match decode_response (Some Json) json_raw with
+  | Ok
+      (Json_result
+        {
+          text = "hello";
+          languages = Some [ { code = "en"; raw = language_raw } ];
+          logprobs =
+            Some
+              [
+                {
+                  token = Some "h";
+                  bytes = Some [ 104 ];
+                  logprob = Some probability;
+                  raw = logprob_raw;
+                };
+              ];
+          usage =
+            Some
+              (Tokens
+                {
+                  input_tokens = 3;
+                  output_tokens = 2;
+                  total_tokens = 5;
+                  input_token_details =
+                    Some { audio_tokens = Some 3; text_tokens = Some 0; _ };
+                  output_token_details =
+                    Some { audio_tokens = Some 0; text_tokens = Some 2; _ };
+                  raw = usage_raw;
+                });
+          raw;
+        }) ->
+      Alcotest.(check (float 0.0001)) "log probability" (-0.25) probability;
+      Alcotest.(check bool) "language raw complete" true
+        (Option.is_some (A.Json.string_member "future" language_raw));
+      Alcotest.(check bool) "logprob raw complete" true
+        (Option.is_some (A.Json.string_member "future" logprob_raw));
+      Alcotest.(check bool) "usage raw complete" true
+        (Option.is_some (A.Json.string_member "future" usage_raw));
+      Alcotest.(check bool) "top raw complete" true
+        (Option.is_some (A.Json.string_member "future" raw))
+  | _ -> Alcotest.fail "complete JSON transcription did not decode");
+  let duration_raw =
+    {|{"text":"duration","usage":{"type":"duration","seconds":4.5}}|}
+  in
+  (match decode_response (Some Json) duration_raw with
+  | Ok
+      (Json_result
+        { usage = Some (Duration { seconds = 4.5; _ }); _ }) ->
+      ()
+  | _ -> Alcotest.fail "JSON duration usage did not decode");
+  let verbose_raw =
+    Printf.sprintf
+      {|{"text":"hello","language":"english","duration":2.5,"segments":[%s],"words":[{"word":"hello","start":0.0,"end":1.0,"future":"word"}],"usage":{"type":"duration","seconds":3.0},"future":"verbose"}|}
+      transcription_segment_json
+  in
+  (match decode_response (Some Verbose_json) verbose_raw with
+  | Ok
+      (Verbose_json_result
+        {
+          text = "hello";
+          language = "english";
+          duration = 2.5;
+          segments = Some [ segment ];
+          words = Some [ word ];
+          usage = Some (Duration { seconds = 3.0; _ });
+          raw;
+        }) ->
+      Alcotest.(check int) "segment id" 7 segment.id;
+      Alcotest.(check int) "segment seek" 12 segment.seek;
+      Alcotest.(check (list int)) "segment tokens" [ 1; 2; 3 ]
+        segment.tokens;
+      Alcotest.(check string) "word" "hello" word.word;
+      Alcotest.(check bool) "verbose raw complete" true
+        (Option.is_some (A.Json.string_member "future" raw))
+  | _ -> Alcotest.fail "complete verbose transcription did not decode");
+  let diarized_raw =
+    {|{"text":"hello","duration":2.0,"task":"transcribe","segments":[{"id":"seg_1","speaker":"agent","start":0.0,"end":2.0,"text":"hello","type":"transcript.text.segment","future":"segment"}],"usage":{"type":"tokens","input_tokens":2,"output_tokens":1,"total_tokens":3},"future":"diarized"}|}
+  in
+  (match decode_response (Some Diarized_json) diarized_raw with
+  | Ok
+      (Diarized_json_result
+        {
+          text = "hello";
+          duration = 2.0;
+          task = "transcribe";
+          segments = [ segment ];
+          usage = Some (Tokens { total_tokens = 3; _ });
+          raw;
+        }) ->
+      Alcotest.(check string) "speaker" "agent" segment.speaker;
+      Alcotest.(check bool) "diarized segment raw complete" true
+        (Option.is_some (A.Json.string_member "future" segment.raw));
+      Alcotest.(check bool) "diarized raw complete" true
+        (Option.is_some (A.Json.string_member "future" raw))
+  | _ -> Alcotest.fail "complete diarized transcription did not decode");
+  (match decode_response (Some Text) "plain" with
+  | Ok (Text_result "plain") -> ()
+  | _ -> Alcotest.fail "text result");
+  (match decode_response (Some Srt) "subtitle" with
+  | Ok (Srt_result "subtitle") -> ()
+  | _ -> Alcotest.fail "SRT result");
+  (match decode_response (Some Vtt) "captions" with
+  | Ok (Vtt_result "captions") -> ()
+  | _ -> Alcotest.fail "VTT result");
+  (match decode_response (Some (Other_format "future")) "opaque" with
+  | Ok (Other_result { format = "future"; body = "opaque" }) -> ()
+  | _ -> Alcotest.fail "unknown result");
+  let huge = String.make 400 '9' in
+  let malformed =
+    [
+      ("json missing text", Json, {|{"usage":{"type":"duration","seconds":1}}|});
+      ("json languages shape", Json, {|{"text":"x","languages":{}}|});
+      ("json logprob finite", Json, {|{"text":"x","logprobs":[{"logprob":1e999}]}|});
+      ("json usage missing discriminator", Json,
+       {|{"text":"x","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}|});
+      ("json usage null", Json, {|{"text":"x","usage":null}|});
+      ("json token usage missing total", Json,
+       {|{"text":"x","usage":{"type":"tokens","input_tokens":1,"output_tokens":1}}|});
+      ("json token details shape", Json,
+       {|{"text":"x","usage":{"type":"tokens","input_tokens":1,"output_tokens":1,"total_tokens":2,"input_token_details":[]}}|});
+      ("json token details null", Json,
+       {|{"text":"x","usage":{"type":"tokens","input_tokens":1,"output_tokens":1,"total_tokens":2,"input_token_details":null}}|});
+      ("json token detail numeric", Json,
+       {|{"text":"x","usage":{"type":"tokens","input_tokens":1,"output_tokens":1,"total_tokens":2,"input_token_details":{"audio_tokens":1.5}}}|});
+      ("verbose token usage", Verbose_json,
+       {|{"text":"x","language":"en","duration":1,"usage":{"type":"tokens","input_tokens":1,"output_tokens":1,"total_tokens":2}}|});
+      ("verbose huge duration", Verbose_json,
+       Printf.sprintf {|{"text":"x","language":"en","duration":%s}|} huge);
+      ("diarized segment type", Diarized_json,
+       {|{"text":"x","duration":1,"task":"transcribe","segments":[{"id":"s","speaker":"A","start":0,"end":1,"text":"x","type":"wrong"}]}|});
+      ("diarized missing segments", Diarized_json,
+       {|{"text":"x","duration":1,"task":"transcribe"}|});
+    ]
+  in
+  List.iter
+    (fun (label, format, raw) ->
+      expect_decode_raw label raw (decode_response (Some format) raw))
+    malformed
+
+let test_translation_result_and_malformed_matrix () =
+  let open O.Audio.Translation in
+  let verbose =
+    Printf.sprintf
+      {|{"language":"english","duration":2.5,"text":"hello","segments":[%s],"future":"translation"}|}
+      transcription_segment_json
+  in
+  let cases =
+    [
+      (Json, "json", {|{"text":"hello","future":"json"}|});
+      (Text, "text", "plain");
+      (Srt, "srt", "subtitle");
+      (Verbose_json, "verbose_json", verbose);
+      (Vtt, "vtt", "captions");
+    ]
+  in
+  List.iter
+    (fun (named, wire, raw) ->
+      Alcotest.(check bool)
+        ("translation named/Other " ^ wire)
+        true
+        (decode_response (Some named) raw
+        = decode_response (Some (Other_format wire)) raw))
+    cases;
+  let file = transcription_file (Bytes.of_string "RIFF") in
+  List.iter
+    (fun (named, wire, _) ->
+      Alcotest.(check bool)
+        ("translation request named/Other " ^ wire)
+        true
+        (Result.is_ok (request ~file ~response_format:named ())
+        && Result.is_ok
+             (request ~file ~response_format:(Other_format wire) ())))
+    cases;
+  request ~file ~response_format:(Other_format "") ()
+  |> expect_invalid_request "blank translation response format"
+  |> ignore;
+  (match decode_response (Some Json) {|{"text":"hello","future":"json"}|} with
+  | Ok (Json_result { text = "hello"; raw }) ->
+      Alcotest.(check bool) "translation JSON raw" true
+        (Option.is_some (A.Json.string_member "future" raw))
+  | _ -> Alcotest.fail "translation JSON result");
+  (match decode_response (Some Verbose_json) verbose with
+  | Ok
+      (Verbose_json_result
+        {
+          language = "english";
+          duration = 2.5;
+          text = "hello";
+          segments = Some [ segment ];
+          raw;
+        }) ->
+      Alcotest.(check int) "translation segment id" 7 segment.id;
+      Alcotest.(check bool) "translation segment raw" true
+        (Option.is_some (A.Json.string_member "future" segment.raw));
+      Alcotest.(check bool) "translation verbose raw" true
+        (Option.is_some (A.Json.string_member "future" raw))
+  | _ -> Alcotest.fail "translation verbose result");
+  (match decode_response (Some (Other_format "future")) "opaque" with
+  | Ok (Other_result { format = "future"; body = "opaque" }) -> ()
+  | _ -> Alcotest.fail "translation unknown result");
+  let huge = String.make 400 '9' in
+  let malformed =
+    [
+      ("translation missing text", Json, "{}");
+      ("translation wrong text", Json, {|{"text":1}|});
+      ("translation non-English", Verbose_json,
+       {|{"language":"french","duration":1,"text":"x"}|});
+      ("translation bad segments", Verbose_json,
+       {|{"language":"english","duration":1,"text":"x","segments":{}}|});
+      ("translation bad segment", Verbose_json,
+       {|{"language":"english","duration":1,"text":"x","segments":[{"id":1}]}|});
+      ("translation huge duration", Verbose_json,
+       Printf.sprintf
+         {|{"language":"english","duration":%s,"text":"x"}|} huge);
+    ]
+  in
+  List.iter
+    (fun (label, format, raw) ->
+      expect_decode_raw label raw (decode_response (Some format) raw))
+    malformed
+
 let test_transcription_request_and_decode () =
+  let transcription =
+    O.Audio.Speech_to_text.request
+      ~model:O.Audio.Speech_to_text.Gpt_4o_transcribe
+      ~file:(transcription_file (Bytes.of_string "RIFF")) ~language:"en"
+      ~response_format:O.Audio.Speech_to_text.Json ~temperature:0.0 ()
+    |> expect_ok "transcription constructor"
+  in
   let request =
-    O.Audio.Speech_to_text.request ~api_key:(A.api_key "sk-test")
-      {
-        O.Audio.Speech_to_text.model = "gpt-4o-transcribe";
-        file =
-          {
-            A.Audio.filename = "sample.wav";
-            content_type = "audio/wav";
-            source = A.Audio.bytes (Bytes.of_string "RIFF");
-          };
-        language = Some "en";
-        prompt = None;
-        response_format = Some "json";
-        temperature = Some 0.0;
-        extra_fields = [];
-      }
+    O.Audio.Speech_to_text.http_request ~api_key:(A.api_key "sk-test") transcription
     |> expect_ok "transcription request"
   in
-  Alcotest.(check string)
-    "uri" "https://api.openai.com/v1/audio/transcriptions" request.uri;
-  Alcotest.(check bool)
-    "multipart" true
+  Alcotest.(check string) "uri" "https://api.openai.com/v1/audio/transcriptions" request.uri;
+  Alcotest.(check bool) "multipart" true
     (Option.is_some (H.Core.Header.get "content-type" request.headers));
-  let response =
-    O.Audio.Speech_to_text.decode_response (read_fixture "transcription.json")
-    |> expect_ok "transcription fixture"
-  in
-  Alcotest.(check (option string)) "text" (Some "hello eta") response.text
+  match O.Audio.Speech_to_text.decode_response (Some O.Audio.Speech_to_text.Json)
+          (read_fixture "transcription.json") |> expect_ok "transcription fixture" with
+  | O.Audio.Speech_to_text.Json_result result ->
+      Alcotest.(check string) "text" "hello eta" result.text
+  | _ -> Alcotest.fail "expected JSON transcription"
 
 let test_transcription_request_rejects_multipart_header_injection () =
-  let make_request ?(content_type = "audio/wav") ?(extra_fields = []) () =
-    {
-      O.Audio.Speech_to_text.model = "gpt-4o-transcribe";
-      file =
-        {
-          A.Audio.filename = "sample.wav";
-          content_type;
-          source = A.Audio.bytes (Bytes.of_string "RIFF");
-        };
-      language = None;
-      prompt = None;
-      response_format = None;
-      temperature = None;
-      extra_fields;
-    }
+  let make ?(content_type = "audio/wav") ?(extra_fields = []) () =
+    O.Audio.Speech_to_text.request
+      ~model:O.Audio.Speech_to_text.Gpt_4o_transcribe
+      ~file:(transcription_file ~content_type (Bytes.of_string "RIFF"))
+      ~extra_fields ()
   in
   let field_error =
-    O.Audio.Speech_to_text.request ~api_key:(A.api_key "sk-test")
-      (make_request ~extra_fields:[ ("bad\r\nname", "value") ] ())
+    make ~extra_fields:[ ("bad\r\nname", "value") ] ()
     |> expect_invalid_request "transcription extra field name"
   in
   require_contains "field name error" ~needle:"field name" field_error;
   let content_type_error =
-    O.Audio.Speech_to_text.request ~api_key:(A.api_key "sk-test")
-      (make_request ~content_type:"audio/wav\r\nX-Injected: yes" ())
+    make ~content_type:"audio/wav\r\nX-Injected: yes" ()
     |> expect_invalid_request "transcription content type"
   in
-  require_contains "content type error" ~needle:"content type"
-    content_type_error
+  require_contains "content type error" ~needle:"content type" content_type_error
 
 let test_transcription_request_avoids_boundary_collision () =
-  let data = Bytes.of_string "RIFF" in
-  let digest_boundary = "eta-ai-" ^ Digest.to_hex (Digest.bytes data) in
-  let request =
-    O.Audio.Speech_to_text.request ~api_key:(A.api_key "sk-test")
-      {
-        O.Audio.Speech_to_text.model = "gpt-4o-transcribe";
-        file =
-          {
-            A.Audio.filename = "sample.wav";
-            content_type = "audio/wav";
-            source = A.Audio.bytes data;
-          };
-        language = None;
-        prompt = Some ("please transcribe --" ^ digest_boundary);
-        response_format = None;
-        temperature = None;
-        extra_fields = [];
-      }
-    |> expect_ok "transcription request"
+  let transcription =
+    O.Audio.Speech_to_text.request
+      ~model:O.Audio.Speech_to_text.Gpt_4o_transcribe
+      ~file:(transcription_file (Bytes.of_string "RIFF"))
+      ~prompt:"please transcribe" () |> expect_ok "transcription constructor"
   in
+  let request = O.Audio.Speech_to_text.http_request ~api_key:(A.api_key "sk-test") transcription
+    |> expect_ok "transcription request" in
   let boundary = multipart_boundary request in
-  Alcotest.(check bool)
-    "boundary changed away from colliding digest" true
-    (not (String.equal digest_boundary boundary));
-  Alcotest.(check bool)
-    "prompt does not contain chosen boundary" false
-    (contains ~needle:boundary ("please transcribe --" ^ digest_boundary));
-  ignore (request_body_string request : string)
+  Alcotest.(check bool) "nonempty boundary" true (String.length boundary > 20)
+
+let test_transcription_chunking_speakers_repetition_and_size () =
+  with_runtime @@ fun rt ->
+  let request_body request =
+    H.Request.body_source request.H.Request.body |> H.Body.Source.to_stream
+    |> H.Body.Stream.read_all ~max_bytes:200_000
+    |> run_ok rt "multipart body" |> Bytes.to_string
+  in
+  let find_from body start needle =
+    let rec loop index =
+      if index + String.length needle > String.length body then None
+      else if String.sub body index (String.length needle) = needle then
+        Some index
+      else loop (index + 1)
+    in
+    loop start
+  in
+  let assert_repeated_order body name values =
+    let field_marker = "name=\"" ^ name ^ "\"" in
+    let rec count_markers start count =
+      match find_from body start field_marker with
+      | None -> count
+      | Some index ->
+          count_markers (index + String.length field_marker) (count + 1)
+    in
+    let _, count =
+      List.fold_left
+        (fun (start, count) value ->
+          let needle =
+            "name=\"" ^ name ^ "\"\r\n\r\n" ^ value ^ "\r\n"
+          in
+          match find_from body start needle with
+          | Some index -> (index + String.length needle, count + 1)
+          | None ->
+              Alcotest.failf "missing ordered multipart %s value %S" name value)
+        (0, 0) values
+    in
+    Alcotest.(check int) (name ^ " exact repetitions")
+      (List.length values) count;
+    Alcotest.(check int) (name ^ " no additional repetitions")
+      (List.length values) (count_markers 0 0)
+  in
+  let open O.Audio.Speech_to_text in
+  let ordinary_file = transcription_file (Bytes.of_string "RIFF") in
+  let context_request =
+    request ~model:Gpt_transcribe ~file:ordinary_file
+      ~keywords:[ "keyword-one"; "keyword-two" ]
+      ~languages:[ "en"; "fr" ] ~chunking_strategy:Auto ()
+    |> expect_ok "context/chunking request"
+    |> http_request ~api_key:(A.api_key "key")
+    |> expect_ok "context/chunking HTTP request"
+  in
+  let context_body = request_body context_request in
+  assert_repeated_order context_body "keywords[]"
+    [ "keyword-one"; "keyword-two" ];
+  assert_repeated_order context_body "languages[]" [ "en"; "fr" ];
+  require_contains "chunking is not diarization-only"
+    ~needle:"name=\"chunking_strategy\"\r\n\r\nauto\r\n" context_body;
+  let timestamp_request =
+    request ~model:Whisper_1 ~file:ordinary_file
+      ~response_format:Verbose_json
+      ~timestamp_granularities:[ Word; Segment ] ()
+    |> expect_ok "timestamp request"
+    |> http_request ~api_key:(A.api_key "key")
+    |> expect_ok "timestamp HTTP request"
+  in
+  assert_repeated_order (request_body timestamp_request)
+    "timestamp_granularities[]" [ "word"; "segment" ];
+  let references =
+    [ "data:audio/wav;base64,QUFB"; "data:audio/mpeg;base64,QkJC" ]
+  in
+  let speaker_request =
+    request ~model:Gpt_4o_transcribe_diarize ~file:ordinary_file
+      ~response_format:Diarized_json
+      ~known_speaker_names:[ "agent"; "customer" ]
+      ~known_speaker_references:references ()
+    |> expect_ok "speaker request"
+    |> http_request ~api_key:(A.api_key "key")
+    |> expect_ok "speaker HTTP request"
+  in
+  let speaker_body = request_body speaker_request in
+  assert_repeated_order speaker_body "known_speaker_names[]"
+    [ "agent"; "customer" ];
+  assert_repeated_order speaker_body "known_speaker_references[]" references;
+  List.iter
+    (fun subtype ->
+      request ~model:Gpt_4o_transcribe_diarize ~file:ordinary_file
+        ~response_format:Diarized_json ~known_speaker_names:[ "agent" ]
+        ~known_speaker_references:
+          [ "data:audio/" ^ subtype ^ ";base64,QUFB" ]
+        ()
+      |> expect_ok ("valid speaker subtype " ^ subtype)
+      |> ignore)
+    [ "mpeg"; "mp4"; "wav"; "webm" ];
+  List.iter
+    (fun payload ->
+      request ~model:Gpt_4o_transcribe_diarize ~file:ordinary_file
+        ~response_format:Diarized_json ~known_speaker_names:[ "agent" ]
+        ~known_speaker_references:
+          [ "data:audio/wav;base64," ^ payload ]
+        ()
+      |> expect_ok ("valid speaker base64 " ^ payload)
+      |> ignore)
+    [ "QQ=="; "+/8=" ];
+  let valid_vad =
+    `Assoc
+      [
+        ("type", `String "server_vad");
+        ("prefix_padding_ms", `Int 100);
+        ("silence_duration_ms", `Int 500);
+        ("threshold", `Float 0.4);
+        ("future", `String "preserved");
+      ]
+  in
+  ignore
+    (request ~model:Gpt_4o_transcribe ~file:ordinary_file
+       ~chunking_strategy:
+         (Server_vad
+            {
+              prefix_padding_ms = Some 100;
+              silence_duration_ms = Some 500;
+              threshold = Some 0.4;
+            })
+       ()
+    |> expect_ok "typed server_vad");
+  ignore
+    (request ~model:Gpt_4o_transcribe ~file:ordinary_file
+       ~chunking_strategy:(Other_chunking (`String "auto")) ()
+    |> expect_ok "Other auto");
+  ignore
+    (request ~model:Gpt_4o_transcribe ~file:ordinary_file
+       ~chunking_strategy:(Other_chunking valid_vad) ()
+    |> expect_ok "Other server_vad");
+  ignore
+    (request ~model:Gpt_4o_transcribe ~file:ordinary_file
+       ~chunking_strategy:
+         (Other_chunking
+            (`Assoc
+              [
+                ("type", `String "future_vad");
+                ("future", `String "value");
+              ]))
+       ()
+    |> expect_ok "future chunking strategy");
+  let invalid_chunking =
+    [
+      Server_vad
+        {
+          prefix_padding_ms = None;
+          silence_duration_ms = None;
+          threshold = Some infinity;
+        };
+      Other_chunking
+        (`Assoc
+          [
+            ("type", `String "server_vad");
+            ("threshold", `Float nan);
+          ]);
+      Other_chunking
+        (`Assoc
+          [
+            ("type", `String "server_vad");
+            ("prefix_padding_ms", `Int (-1));
+          ]);
+      Other_chunking
+        (`Assoc
+          [
+            ("type", `String "server_vad");
+            ("silence_duration_ms", `String "500");
+          ]);
+      Other_chunking
+        (`Assoc
+          [
+            ("type", `String "server_vad");
+            ("threshold", `Intlit (String.make 400 '9'));
+          ]);
+      Other_chunking (`String "server_vad");
+      Other_chunking (`Assoc [ ("type", `String "auto") ]);
+    ]
+  in
+  List.iteri
+    (fun index chunking_strategy ->
+      request ~model:Gpt_4o_transcribe ~file:ordinary_file ~chunking_strategy ()
+      |> expect_invalid_request
+           (Printf.sprintf "invalid canonical chunking %d" index)
+      |> ignore)
+    invalid_chunking;
+  List.iter
+    (fun reference ->
+      request ~model:Gpt_4o_transcribe_diarize ~file:ordinary_file
+        ~response_format:Diarized_json ~known_speaker_names:[ "agent" ]
+        ~known_speaker_references:[ reference ] ()
+      |> expect_invalid_request ("invalid speaker reference " ^ reference)
+      |> ignore)
+    [
+      "https://example.test/audio.wav";
+      "data:text/plain;base64,QUFB";
+      "data:audio/wav,QUFB";
+      "data:audio/wav;base64,";
+      "data:audio/wav;base64,%%%";
+      "data:audio/wav\r\n;base64,QUFB";
+      "data:audio/mp3;base64,QUFB";
+      "data:audio/m4a;base64,QUFB";
+      "data:audio/x-wav;base64,QUFB";
+      "data:audio/x-m4a;base64,QUFB";
+      "data:audio/ogg;base64,QUFB";
+      "data:audio/future;base64,QUFB";
+      "data:audio/wav;name=clip;base64,QUFB";
+      "data:audio/wav,extra;base64,QUFB";
+      "data:audio/wav;base64;base64,QUFB";
+      "data:audio/wav;base64,QUFB,";
+      "data:audio/wav;base64,QU FB";
+      "data:audio/wav;base64,QU=F";
+      "data:audio/wav;base64,QUFB====";
+    ];
+  let sized_source length =
+    A.Audio.stream ~length ~replayability:A.Audio.Replayable (fun () ->
+        fun () -> None)
+  in
+  let sized_file length =
+    {
+      A.Audio.filename = "sized.wav";
+      content_type = "audio/wav";
+      source = sized_source length;
+    }
+  in
+  ignore
+    (request ~model:Gpt_4o_transcribe
+       ~file:(sized_file 26_214_400L) ()
+    |> expect_ok "transcription exact 25 MiB");
+  let transcription_limit =
+    request ~model:Gpt_4o_transcribe ~file:(sized_file 26_214_401L) ()
+    |> expect_invalid_request "transcription one over 25 MB"
+  in
+  Alcotest.(check string) "transcription documented upload limit"
+    "transcription upload exceeds the documented 25 MB (26,214,400 bytes) maximum"
+    transcription_limit;
+  ignore
+    (O.Audio.Translation.request ~file:(sized_file 26_214_400L) ()
+    |> expect_ok "translation exact 25 MiB");
+  let translation_limit =
+    O.Audio.Translation.request ~file:(sized_file 26_214_401L) ()
+    |> expect_invalid_request "translation one over 25 MB"
+  in
+  Alcotest.(check string) "translation documented upload limit"
+    "translation upload exceeds the documented 25 MB (26,214,400 bytes) maximum"
+    translation_limit
+
+let test_transcription_streaming_multipart_and_translation () =
+  with_runtime @@ fun rt ->
+  let opens = ref 0 in
+  let source =
+    A.Audio.stream ~length:6L ~replayability:A.Audio.Replayable (fun () ->
+        incr opens;
+        let chunks = ref [ Bytes.of_string "a"; Bytes.empty; Bytes.of_string "bc";
+                           Bytes.of_string "def" ] in
+        fun () ->
+          match !chunks with
+          | [] -> None
+          | chunk :: rest ->
+              chunks := rest;
+              Some chunk)
+  in
+  let file = { A.Audio.filename = "audio.wav"; content_type = "audio/wav"; source } in
+  let transcription =
+    O.Audio.Speech_to_text.request
+      ~model:O.Audio.Speech_to_text.Gpt_transcribe ~file
+      ~keywords:[ "first"; "second" ] ~languages:[ "en"; "fr" ]
+      ~extra_fields:[ ("future", "value") ] ()
+    |> expect_ok "streaming multipart constructor"
+  in
+  let request =
+    O.Audio.Speech_to_text.http_request ~api_key:(A.api_key "sk") transcription
+    |> expect_ok "streaming multipart request"
+  in
+  Alcotest.(check int) "request construction does not open upload" 0 !opens;
+  Alcotest.(check (option string)) "multipart removes inherited Accept" None
+    (H.Core.Header.get "accept" request.headers);
+  let read_body () =
+    H.Request.body_source request.body |> H.Body.Source.to_stream
+    |> H.Body.Stream.read_all ~max_bytes:100_000
+    |> run_ok rt "read streaming multipart" |> Bytes.to_string
+  in
+  let body = read_body () in
+  Alcotest.(check int) "first upload opening" 1 !opens;
+  require_contains "multipart preserves upload bytes"
+    ~needle:"\r\n\r\nabcdef\r\n--" body;
+  let find_from start needle =
+    let rec loop index =
+      if index + String.length needle > String.length body then None
+      else if String.sub body index (String.length needle) = needle then Some index
+      else loop (index + 1)
+    in
+    loop start
+  in
+  let first =
+    match find_from 0 "\r\n\r\nfirst\r\n" with
+    | Some index -> index
+    | None -> Alcotest.fail "missing first repeated field"
+  in
+  let second =
+    match find_from (first + 1) "\r\n\r\nsecond\r\n" with
+    | Some index -> index
+    | None -> Alcotest.fail "missing second repeated field"
+  in
+  Alcotest.(check bool) "repeated caller order" true (first < second);
+  Alcotest.(check (option string)) "provider leaves Content-Length to transport"
+    None
+    (H.Core.Header.get "content-length" request.headers);
+  let body_again = read_body () in
+  Alcotest.(check int) "replayable upload reopens" 2 !opens;
+  Alcotest.(check string) "replayed multipart is exact" body body_again;
+  let translation =
+    O.Audio.Translation.request ~file
+      ~response_format:O.Audio.Translation.Verbose_json ()
+    |> expect_ok "translation constructor"
+  in
+  let translation_request =
+    O.Audio.Translation.http_request ~api_key:(A.api_key "sk") translation
+    |> expect_ok "translation HTTP request"
+  in
+  Alcotest.(check string) "translation endpoint"
+    "https://api.openai.com/v1/audio/translations" translation_request.uri;
+  Alcotest.(check (option string))
+    "translation leaves Content-Length to transport" None
+    (H.Core.Header.get "content-length" translation_request.headers);
+  (match
+     O.Audio.Translation.decode_response
+       (Some O.Audio.Translation.Verbose_json)
+       {|{"language":"english","duration":1.5,"text":"hello","segments":[]}|}
+   with
+  | Ok (O.Audio.Translation.Verbose_json_result result) ->
+      Alcotest.(check string) "translated English text" "hello" result.text
+  | Ok _ | Error _ -> Alcotest.fail "expected verbose translation")
+
+let test_transcription_stream_events_typed_and_released () =
+  with_runtime @@ fun rt ->
+  let releases = ref 0 in
+  let body =
+    H.Body.Stream.of_bytes
+      ~release:(fun () -> E.sync (fun () -> incr releases))
+      [
+        Bytes.of_string
+          "data: {\"type\":\"transcript.text.delta\",\"delta\":\"hi\",\"segment_id\":\"s1\",\"logprobs\":[{\"token\":\"hi\",\"bytes\":[104,105],\"logprob\":-0.1}],\"future\":\"delta\"}\r\n\r\n";
+        Bytes.of_string
+          "data: {\"type\":\"transcript.text.segment\",\"id\":\"seg_1\",\"speaker\":\"agent\",\"start\":0.0,\"end\":1.0,\"text\":\"hi\",\"future\":\"segment\"}\r\r";
+        Bytes.of_string
+          "data: {\"type\":\"transcript.text.done\",\"text\":\"hi\",\"logprobs\":[{\"token\":\"hi\",\"bytes\":[104,105],\"logprob\":-0.1}],\"languages\":[{\"code\":\"en\"}],\"usage\":{\"type\":\"tokens\",\"input_tokens\":2,\"output_tokens\":1,\"total_tokens\":3,\"input_token_details\":{\"audio_tokens\":2,\"text_tokens\":0}},\"future\":\"done\"}\n\n";
+        Bytes.of_string
+          "data: {\"type\":\"future.transcript\",\"nested\":{\"x\":1}}\n\n";
+      ]
+  in
+  let client =
+    test_client (H.Response.make ~status:200 ~body ()) (ref None)
+  in
+  let file = transcription_file (Bytes.of_string "RIFF") in
+  let request =
+    O.Audio.Speech_to_text.request
+      ~model:O.Audio.Speech_to_text.Gpt_transcribe ~file ~stream:true ()
+    |> expect_ok "stream request"
+  in
+  let operation =
+    O.Audio.Speech_to_text.stream_events client ~api_key:(A.api_key "sk") request
+    |> E.bind (fun stream ->
+           let rec loop acc =
+             O.Audio.Speech_to_text.read_event stream
+             |> E.bind (function
+                  | None -> E.pure (List.rev acc)
+                  | Some event -> loop (event :: acc))
+           in
+           loop [])
+  in
+  let events = run_ok rt "typed transcription SSE" operation in
+  Alcotest.(check int) "four events" 4 (List.length events);
+  (match events with
+  | O.Audio.Speech_to_text.Text_delta {
+      delta = "hi";
+      segment_id = Some "s1";
+      logprobs =
+        Some
+          [
+            {
+              token = Some "hi";
+              bytes = Some [ 104; 105 ];
+              logprob = Some delta_logprob;
+              _;
+            };
+          ];
+      raw = delta_raw;
+    }
+    :: O.Audio.Speech_to_text.Text_segment segment
+    :: O.Audio.Speech_to_text.Text_done {
+         text = "hi";
+         languages = Some [ language ];
+         logprobs = Some [ _ ];
+         usage =
+           Some
+             (O.Audio.Speech_to_text.Tokens
+               {
+                 input_tokens = 2;
+                 output_tokens = 1;
+                 total_tokens = 3;
+                 input_token_details =
+                   Some
+                     {
+                       audio_tokens = Some 2;
+                       text_tokens = Some 0;
+                       _;
+                     };
+                 _;
+               });
+         raw = done_raw;
+       }
+    :: O.Audio.Speech_to_text.Unknown { type_ = "future.transcript"; raw }
+    :: [] ->
+      Alcotest.(check (float 0.0001)) "delta logprob" (-0.1) delta_logprob;
+      Alcotest.(check bool) "delta raw complete" true
+        (Option.is_some (A.Json.string_member "future" delta_raw));
+      Alcotest.(check string) "segment ID" "seg_1" segment.id;
+      Alcotest.(check string) "segment speaker" "agent" segment.speaker;
+      Alcotest.(check bool) "segment raw complete" true
+        (Option.is_some (A.Json.string_member "future" segment.raw));
+      Alcotest.(check string) "detected language" "en" language.code;
+      Alcotest.(check bool) "done raw complete" true
+        (Option.is_some (A.Json.string_member "future" done_raw));
+      Alcotest.(check bool) "unknown complete JSON" true
+        (Option.is_some (A.Json.object_member "nested" raw))
+  | _ -> Alcotest.fail "unexpected transcription SSE event sequence");
+  Alcotest.(check int) "response released once" 1 !releases;
+  let malformed =
+    [
+      "{bad";
+      {|{"type":"transcript.text.delta"}|};
+      {|{"type":"transcript.text.segment","id":1,"speaker":"A","start":0,"end":1,"text":"x"}|};
+      {|{"type":"transcript.text.done","text":"x","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}|};
+      {|{"type":"transcript.text.done","text":"x","usage":{"type":"duration","seconds":1}}|};
+      {|{"type":"transcript.text.done","text":"x","logprobs":[{"logprob":1e999}]}|};
+    ]
+  in
+  List.iteri
+    (fun index raw ->
+      let releases = ref 0 in
+      let framed = "data: " ^ raw ^ "\n\n" in
+      let body =
+        H.Body.Stream.of_bytes
+          ~release:(fun () -> E.sync (fun () -> incr releases))
+          [ Bytes.of_string framed ]
+      in
+      let client =
+        test_client (H.Response.make ~status:200 ~body ()) (ref None)
+      in
+      let request =
+        O.Audio.Speech_to_text.request
+          ~model:O.Audio.Speech_to_text.Gpt_transcribe
+          ~file:(transcription_file (Bytes.of_string "RIFF")) ~stream:true ()
+        |> expect_ok "malformed stream request"
+      in
+      (match
+         B.run rt
+           (O.Audio.Speech_to_text.stream_events client
+              ~api_key:(A.api_key "sk") request
+           |> E.bind O.Audio.Speech_to_text.read_event)
+       with
+      | Eta.Exit.Error
+          (Eta.Cause.Fail
+            (O.Error.Decode { raw_body = Some actual; _ })) ->
+          Alcotest.(check string)
+            (Printf.sprintf "malformed event raw %d" index)
+            raw actual
+      | _ ->
+          Alcotest.failf "malformed event %d did not fail Decode" index);
+      Alcotest.(check int)
+        (Printf.sprintf "malformed event release %d" index)
+        1 !releases)
+    malformed;
+  let diarized_file = transcription_file (Bytes.of_string "RIFF") in
+  let named =
+    O.Audio.Speech_to_text.request
+      ~model:O.Audio.Speech_to_text.Gpt_4o_transcribe_diarize
+      ~file:diarized_file
+      ~response_format:O.Audio.Speech_to_text.Diarized_json ~stream:true ()
+  in
+  let other =
+    O.Audio.Speech_to_text.request
+      ~model:O.Audio.Speech_to_text.Gpt_4o_transcribe_diarize
+      ~file:diarized_file
+      ~response_format:
+        (O.Audio.Speech_to_text.Other_format "diarized_json")
+      ~stream:true ()
+  in
+  Alcotest.(check bool) "stream named/Other diarized routing" true
+    (Result.is_ok named && Result.is_ok other)
+
+let test_transcription_translation_wrapper_failures_and_large_errors () =
+  B.with_runtime @@ fun ctx rt ->
+  let file = transcription_file (Bytes.of_string "audio-wrapper-sentinel") in
+  let transcription =
+    O.Audio.Speech_to_text.request
+      ~model:O.Audio.Speech_to_text.Gpt_4o_transcribe ~file ()
+    |> expect_ok "wrapper transcription"
+  in
+  let translation =
+    O.Audio.Translation.request ~file ()
+    |> expect_ok "wrapper translation"
+  in
+  let transport =
+    H.Error.make ~method_:"POST" ~uri:"wrapper-transport"
+      (H.Error.Connect_error { message = "wrapper-transport-sentinel" })
+  in
+  let transport_client =
+    H.Client.make_custom ~protocol:H.Client.H1
+      ~request:(fun _ -> E.fail transport)
+      ~stats:(fun () -> E.pure (Some zero_stats))
+      ~shutdown:(fun () -> E.unit)
+  in
+  let expect_http label outcome =
+    match outcome with
+    | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Http _)) -> ()
+    | _ -> Alcotest.fail (label ^ " did not map transport failure")
+  in
+  expect_http "transcription"
+    (B.run rt
+       (O.Audio.Speech_to_text.create transport_client
+          ~api_key:(A.api_key "key") transcription));
+  expect_http "translation"
+    (B.run rt
+       (O.Audio.Translation.create transport_client
+          ~api_key:(A.api_key "key") translation));
+  let large_padding = String.make (1024 * 1024 + 33) 'x' in
+  let large_raw =
+    Printf.sprintf
+      {|{"error":{"message":"wrapper-large-provider","code":"wrapper_large"},"padding":"%s"}|}
+      large_padding
+  in
+  let run_large label run =
+    let releases = ref 0 in
+    let body =
+      H.Body.Stream.of_bytes
+        ~release:(fun () -> E.sync (fun () -> incr releases))
+        [ Bytes.of_string large_raw ]
+    in
+    let headers =
+      H.Core.Header.unsafe_of_list
+        [
+          ("x-ordered", "first");
+          ("x-ordered", "second");
+          ("content-type", "application/json");
+        ]
+    in
+    let client =
+      test_client
+        (H.Response.make ~status:503 ~headers ~body ())
+        (ref None)
+    in
+    (match B.run rt (run client) with
+    | Eta.Exit.Error
+        (Eta.Cause.Fail
+          (O.Error.Provider
+            {
+              status = 503;
+              headers;
+              raw_body;
+              payload =
+                Some
+                  {
+                    message = Some "wrapper-large-provider";
+                    code = Some (`String "wrapper_large");
+                    _;
+                  };
+            })) ->
+        Alcotest.(check string) (label ^ " large raw exact")
+          large_raw raw_body;
+        Alcotest.(check (list string)) (label ^ " ordered headers")
+          [ "first"; "second" ]
+          (H.Core.Header.get_all "x-ordered" headers)
+    | _ -> Alcotest.fail (label ^ " large provider error not preserved"));
+    Alcotest.(check int) (label ^ " large response release") 1 !releases
+  in
+  run_large "transcription" (fun client ->
+      O.Audio.Speech_to_text.create client ~api_key:(A.api_key "key")
+        transcription);
+  run_large "translation" (fun client ->
+      O.Audio.Translation.create client ~api_key:(A.api_key "key")
+        translation);
+  let started, started_resolver = B.create_promise () in
+  let gate, _gate_resolver = B.create_promise () in
+  let releases = ref 0 in
+  let body =
+    H.Body.Stream.of_reader
+      ~release:(fun () -> E.sync (fun () -> incr releases))
+      (fun () ->
+        E.sync (fun () -> B.try_resolve started_resolver ())
+        |> E.bind (fun () -> B.await_effect gate)
+        |> E.map (fun () -> H.Body.Stream.End))
+  in
+  let stream_client =
+    test_client (H.Response.make ~status:200 ~body ()) (ref None)
+  in
+  let stream_request =
+    O.Audio.Speech_to_text.request
+      ~model:O.Audio.Speech_to_text.Gpt_transcribe ~file ~stream:true ()
+    |> expect_ok "cancellable transcription stream"
+  in
+  let stream =
+    run_ok rt "open cancellable transcription stream"
+      (O.Audio.Speech_to_text.stream_events stream_client
+         ~api_key:(A.api_key "key") stream_request)
+  in
+  let reading =
+    B.fork_run_cancelable ctx rt
+      (O.Audio.Speech_to_text.read_event stream)
+  in
+  ignore (B.await started : unit);
+  B.cancel_fiber reading;
+  (match B.await_cancelable reading with
+  | `Cancelled | `Returned (Eta.Exit.Error _) -> ()
+  | `Returned (Eta.Exit.Ok _) ->
+      Alcotest.fail "transcription stream cancellation did not propagate");
+  Alcotest.(check int) "transcription cancellation release" 1 !releases;
+  let request_started, request_started_resolver = B.create_promise () in
+  let request_gate, _request_gate_resolver = B.create_promise () in
+  let blocking_client =
+    H.Client.make_custom ~protocol:H.Client.H1
+      ~request:(fun _ ->
+        E.sync (fun () -> B.try_resolve request_started_resolver ())
+        |> E.bind (fun () -> B.await_effect request_gate)
+        |> E.map (fun () -> response_of_bytes "{}"))
+      ~stats:(fun () -> E.pure (Some zero_stats))
+      ~shutdown:(fun () -> E.unit)
+  in
+  let translating =
+    B.fork_run_cancelable ctx rt
+      (O.Audio.Translation.create blocking_client
+         ~api_key:(A.api_key "key") translation)
+  in
+  ignore (B.await request_started : unit);
+  B.cancel_fiber translating;
+  (match B.await_cancelable translating with
+  | `Cancelled | `Returned (Eta.Exit.Error _) -> ()
+  | `Returned (Eta.Exit.Ok _) ->
+      Alcotest.fail "translation cancellation did not propagate");
+  B.drain rt
+
+let test_transcription_translation_safe_telemetry () =
+  B.with_traced_runtime @@ fun _ctx rt tracer ->
+  let provider = O.provider ~base_url:"https://api.openai.test:8443" () in
+  let key = A.api_key "audio-api-key-sentinel" in
+  let file =
+    {
+      A.Audio.filename = "sensitive-filename-sentinel.wav";
+      content_type = "audio/wav";
+      source = A.Audio.bytes (Bytes.of_string "source-audio-sentinel");
+    }
+  in
+  let transcription =
+    O.Audio.Speech_to_text.request
+      ~model:O.Audio.Speech_to_text.Gpt_4o_transcribe ~file
+      ~prompt:"transcription-prompt-sentinel" ()
+    |> expect_ok "telemetry transcription"
+  in
+  let translation =
+    O.Audio.Translation.request ~file
+      ~prompt:"translation-prompt-sentinel" ()
+    |> expect_ok "telemetry translation"
+  in
+  let transcription_client =
+    test_client ~with_http_span:true
+      (response_of_bytes {|{"text":"transcript-output-sentinel"}|})
+      (ref None)
+  in
+  let translation_client =
+    test_client ~with_http_span:true
+      (response_of_bytes {|{"text":"translation-output-sentinel"}|})
+      (ref None)
+  in
+  ignore
+    (run_ok rt "traced transcription"
+       (O.Audio.Speech_to_text.create ~provider transcription_client ~api_key:key
+          transcription));
+  ignore
+    (run_ok rt "traced translation"
+       (O.Audio.Translation.create ~provider translation_client ~api_key:key
+          translation));
+  let failure_client =
+    test_client ~with_http_span:true
+      (response_of_bytes ~status:400
+         {|{"error":{"message":"audio-provider-message-sentinel","code":"audio_bad"}}|})
+      (ref None)
+  in
+  ignore
+    (B.run rt
+       (O.Audio.Speech_to_text.create ~provider failure_client ~api_key:key
+          transcription));
+  let spans = Eta.Tracer.dump tracer in
+  let find_span name status =
+    List.find
+      (fun (span : Eta.Tracer.span) ->
+        String.equal span.name name && span.status = status)
+      spans
+  in
+  let transcription_span =
+    find_span "transcription.create openai" Eta.Tracer.Ok
+  in
+  check_attr "transcription operation" "transcription.create"
+    transcription_span.attrs "eta_ai.operation.name";
+  check_attr "transcription format" "json" transcription_span.attrs
+    "eta_ai.request.response_format";
+  let translation_span =
+    find_span "translation.create openai" Eta.Tracer.Ok
+  in
+  check_attr "translation operation" "translation.create"
+    translation_span.attrs "eta_ai.operation.name";
+  check_attr "translation model" "whisper-1" translation_span.attrs
+    "gen_ai.request.model";
+  ignore
+    (find_span "transcription.create openai"
+       (Eta.Tracer.Error "audio_bad"));
+  let rendered =
+    spans
+    |> List.map (fun (span : Eta.Tracer.span) ->
+           span.name ^ "\n"
+           ^ String.concat "\n"
+               (List.map
+                  (fun (name, value) -> name ^ "=" ^ value)
+                  span.attrs))
+    |> String.concat "\n"
+  in
+  List.iter
+    (fun sentinel ->
+      Alcotest.(check bool) ("telemetry excludes " ^ sentinel) false
+        (contains ~needle:sentinel rendered))
+    [
+      "audio-api-key-sentinel";
+      "sensitive-filename-sentinel";
+      "source-audio-sentinel";
+      "transcription-prompt-sentinel";
+      "translation-prompt-sentinel";
+      "transcript-output-sentinel";
+      "translation-output-sentinel";
+      "audio-provider-message-sentinel";
+    ];
+  Alcotest.(check bool) "wrapper nested HTTP spans suppressed" false
+    (List.exists
+       (fun (span : Eta.Tracer.span) -> String.equal span.name "HTTP POST")
+       spans)
 
 let test_oabridge_openai_neutral_conversion_and_projection () =
   let neutral_tts : A.Audio.Text_to_speech.request =
@@ -2265,24 +3298,33 @@ let test_oabridge_openai_neutral_conversion_and_projection () =
   let configured =
     O.Audio.Speech_to_text.configure
       {
-        model = "gpt-4o-transcribe";
+        model = O.Audio.Speech_to_text.Whisper_1;
         prompt = Some "Eta";
-        response_format = Some "json";
+        response_format = Some O.Audio.Speech_to_text.Verbose_json;
         temperature = Some 0.0;
+        stream = None;
+        include_ = [];
+        timestamp_granularities = [];
+        chunking_strategy = None;
+        known_speaker_names = [];
+        known_speaker_references = [];
+        keywords = [];
+        languages = [];
         extra_fields = [];
       }
       construction
     |> expect_ok "oabridge-pmod/d348 OpenAI STT configure"
   in
-  Alcotest.(check string) "STT provider model supplied separately"
-    "gpt-4o-transcribe" configured.model;
+  Alcotest.(check string) "STT provider model supplied separately" "whisper-1"
+    (O.Audio.Speech_to_text.model_to_string configured.model);
   (* oabridge-ff14: every neutral field is decoded from the provider body and
      projected; none is silently dropped. *)
   let body =
     {|{"text":"hello","language":"french","duration":12.5}|}
   in
   let decoded =
-    O.Audio.Speech_to_text.decode_response body
+    O.Audio.Speech_to_text.decode_response
+      (Some O.Audio.Speech_to_text.Verbose_json) body
     |> expect_ok "oabridge-ff14 STT decode"
   in
   let projected = O.Audio.Speech_to_text.to_eta_ai decoded in
@@ -2293,7 +3335,8 @@ let test_oabridge_openai_neutral_conversion_and_projection () =
   Alcotest.(check (option (float 0.0001))) "oabridge-ff14 projected duration"
     (Some 12.5) projected.duration_s;
   let bare =
-    O.Audio.Speech_to_text.decode_response {|{"text":"hello"}|}
+    O.Audio.Speech_to_text.decode_response
+      (Some O.Audio.Speech_to_text.Json) {|{"text":"hello"}|}
     |> expect_ok "oabridge-ff14 STT decode without optional fields"
     |> O.Audio.Speech_to_text.to_eta_ai
   in
@@ -2757,21 +3800,15 @@ let test_aierr_openai_local_codec_and_transport_classes () =
   | Stdlib.Error (O.Error.Invalid_request _) -> ()
   | _ -> Alcotest.fail "blank image prompt is Invalid_request");
   (match
-     O.Audio.Speech_to_text.request ~api_key:(A.api_key "sk")
-       {
-         O.Audio.Speech_to_text.model = "m";
-         file =
-           {
-             A.Audio.filename = "a.wav";
-             content_type = "audio/wav\r\nX:1";
-             source = A.Audio.bytes (Bytes.of_string "RIFF");
-           };
-         language = None;
-         prompt = None;
-         response_format = None;
-         temperature = None;
-         extra_fields = [];
-       }
+     O.Audio.Speech_to_text.request
+       ~model:(O.Audio.Speech_to_text.Other "m")
+       ~file:
+         {
+           A.Audio.filename = "a.wav";
+           content_type = "audio/wav\r\nX:1";
+           source = A.Audio.bytes (Bytes.of_string "RIFF");
+         }
+       ()
    with
   | Stdlib.Error (O.Error.Invalid_request _) -> ()
   | _ -> Alcotest.fail "multipart header injection is Invalid_request");
@@ -4189,10 +5226,29 @@ let tests =
             test_oaobs_speech_safe_attributes;
           Alcotest.test_case "transcription request and decode" `Quick
             test_transcription_request_and_decode;
+          Alcotest.test_case
+            "transcription canonical format validation and decode" `Quick
+            test_transcription_format_canonicalization_and_validation;
+          Alcotest.test_case "transcription buffered result matrix" `Quick
+            test_transcription_buffered_result_matrix;
+          Alcotest.test_case "translation result and malformed matrix" `Quick
+            test_translation_result_and_malformed_matrix;
           Alcotest.test_case "transcription multipart validation" `Quick
             test_transcription_request_rejects_multipart_header_injection;
           Alcotest.test_case "transcription multipart boundary collision" `Quick
             test_transcription_request_avoids_boundary_collision;
+          Alcotest.test_case "transcription streaming multipart and translation"
+            `Quick test_transcription_streaming_multipart_and_translation;
+          Alcotest.test_case
+            "transcription chunking speakers repetition and size" `Quick
+            test_transcription_chunking_speakers_repetition_and_size;
+          Alcotest.test_case "transcription typed SSE events and release" `Quick
+            test_transcription_stream_events_typed_and_released;
+          Alcotest.test_case
+            "transcription translation wrapper failure lifecycle" `Quick
+            test_transcription_translation_wrapper_failures_and_large_errors;
+          Alcotest.test_case "transcription translation safe telemetry" `Quick
+            test_transcription_translation_safe_telemetry;
           Alcotest.test_case
             "oabridge-pmod/d348/ff14 OpenAI neutral conversion and projection"
             `Quick test_oabridge_openai_neutral_conversion_and_projection;

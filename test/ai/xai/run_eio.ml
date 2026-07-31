@@ -24,13 +24,15 @@ let body request =
   | H.Request.Fixed chunks ->
       chunks |> List.map Bytes.to_string |> String.concat ""
   | H.Request.Empty -> ""
-  | H.Request.Stream _ | H.Request.Rewindable_stream _ ->
+  | H.Request.Stream _ | H.Request.One_shot_stream _
+  | H.Request.Rewindable_stream _ ->
       Alcotest.fail "expected fixed request body"
 
 let fixed_chunks request =
   match request.H.Request.body with
   | H.Request.Fixed chunks -> chunks
-  | H.Request.Empty | H.Request.Stream _ | H.Request.Rewindable_stream _ ->
+  | H.Request.Empty | H.Request.Stream _ | H.Request.One_shot_stream _
+  | H.Request.Rewindable_stream _ ->
       Alcotest.fail "expected fixed request chunks"
 
 let require label needle value =

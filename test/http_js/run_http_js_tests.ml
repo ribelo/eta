@@ -3,6 +3,7 @@ module Unsafe = Js_of_ocaml.Js.Unsafe
 
 module E = Eta.Effect
 module H = Eta_http
+module O = Eta_ai_openai
 
 let fail name message = Eta_js_test.fail name message
 
@@ -299,6 +300,7 @@ let install_upload_fetch state =
       {|
       (function(state) {
         return function(_url, init) {
+          state.fetches = (state.fetches || 0) + 1;
           state.bodyLength = init.body ? init.body.length : 0;
           return Promise.resolve({
             type: "basic",
@@ -349,6 +351,450 @@ let test_rewindable_upload_cap done_ =
       expect_effect_error "rewindable cap"
         (kind is_request_body_too_large)
         failure)
+
+let test_one_shot_known_upload done_ =
+  let state = Unsafe.obj [||] in
+  Unsafe.set state "fetches" 0;
+  let restore = install_upload_fetch state in
+  let success_client = Eta_http_js.Client.make () in
+  let capped_client =
+    Eta_http_js.Client.make ~max_buffered_request_body_bytes:2 ()
+  in
+  let released = ref 0 in
+  let body length chunks =
+    H.Request.One_shot_stream
+      {
+        length;
+        stream =
+          H.Body.Stream.of_bytes
+            ~release:(fun () ->
+              incr released;
+              E.unit)
+            (List.map bytes chunks);
+      }
+  in
+  let success =
+    H.Client.request success_client
+      (H.Request.make ~body:(body 3 [ "a"; "bc" ]) "POST"
+         "https://example.test/upload")
+  in
+  let zero =
+    H.Client.request success_client
+      (H.Request.make ~body:(body 0 []) "POST"
+         "https://example.test/upload-zero")
+  in
+  let mismatch length chunks =
+    capture
+      (H.Client.request success_client
+         (H.Request.make ~body:(body length chunks) "POST"
+            "https://example.test/upload-mismatch"))
+  in
+  let capped =
+    capture
+      (H.Client.request capped_client
+         (H.Request.make ~body:(body 3 [ "abc" ]) "POST"
+            "https://example.test/upload"))
+  in
+  run_eta ~finally:restore
+    (success
+    |> E.bind (fun _ ->
+           zero
+           |> E.bind (fun _ ->
+                  mismatch 3 [ "ab" ]
+                  |> E.bind (fun undershoot ->
+                         mismatch 2 [ "abc" ]
+                         |> E.bind (fun overshoot ->
+                                mismatch (-1) [ "x" ]
+                                |> E.bind (fun negative ->
+                                       capped
+                                       |> E.map (fun capped ->
+                                              ( undershoot,
+                                                overshoot,
+                                                negative,
+                                                capped ))))))))
+    done_ (fun result ->
+      let undershoot, overshoot, negative, capped =
+        expect_ok "one-shot upload" result
+      in
+      check_equal_int "one-shot successful fetches" 2
+        (js_get_int state "fetches");
+      check_equal_int "one-shot zero uploaded length" 0
+        (js_get_int state "bodyLength");
+      List.iter
+        (fun (name, result) ->
+          expect_effect_error name
+            (kind (is_protocol_violation "request_body_length"))
+            result)
+        [
+          ("one-shot undershoot", undershoot);
+          ("one-shot overshoot", overshoot);
+          ("one-shot negative", negative);
+        ];
+      expect_effect_error "one-shot cap" (kind is_request_body_too_large)
+        capped;
+      check_equal_int "all one-shot bodies released once" 6 !released)
+
+let test_one_shot_validation_owns_stream done_ =
+  let state = Unsafe.obj [||] in
+  Unsafe.set state "fetches" 0;
+  let restore = install_upload_fetch state in
+  let client = Eta_http_js.Client.make () in
+  let released = ref 0 in
+  let rewindable_opens = ref 0 in
+  let one_shot () =
+    H.Request.One_shot_stream
+      {
+        length = 1;
+        stream =
+          H.Body.Stream.of_bytes
+            ~release:(fun () ->
+              incr released;
+              E.unit)
+            [ bytes "x" ];
+      }
+  in
+  let cases =
+    [
+      ( "invalid method",
+        H.Request.make ~body:(one_shot ()) "BAD METHOD"
+          "https://example.test/upload",
+        kind (is_protocol_violation "method") );
+      ( "invalid URL",
+        H.Request.make ~body:(one_shot ()) "POST" "/relative",
+        kind (is_protocol_violation "url") );
+      ( "forbidden Content-Length",
+        H.Request.make ~headers:[ ("Content-Length", "1") ]
+          ~body:(one_shot ()) "POST" "https://example.test/upload",
+        kind (is_host_policy "fetch-forbidden-header") );
+    ]
+  in
+  let rewindable =
+    H.Request.make
+      ~body:
+        (H.Request.Rewindable_stream
+           {
+             length = Some 1;
+             make =
+               (fun () ->
+                 incr rewindable_opens;
+                 H.Body.Stream.of_bytes [ bytes "x" ]);
+           })
+      "BAD METHOD" "https://example.test/upload"
+  in
+  let eff =
+    E.all
+      (List.map
+         (fun (_, request, _) -> capture (H.Client.request client request))
+         cases)
+    |> E.bind (fun results ->
+           capture (H.Client.request client rewindable)
+           |> E.map (fun rewindable -> (results, rewindable)))
+  in
+  run_eta ~finally:restore eff done_ (fun result ->
+      let results, rewindable = expect_ok "one-shot validation ownership" result in
+      List.iter2
+        (fun (name, _, pred) result -> expect_effect_error name pred result)
+        cases results;
+      expect_effect_error "rewindable invalid method"
+        (kind (is_protocol_violation "method"))
+        rewindable;
+      check_equal_int "validation one-shot releases" 3 !released;
+      check_equal_int "validation rewindable opens" 0 !rewindable_opens;
+      check_equal_int "validation fetches" 0 (js_get_int state "fetches"))
+
+let test_one_shot_limit_suppresses_typed_cleanup done_ =
+  let state = Unsafe.obj [||] in
+  Unsafe.set state "fetches" 0;
+  let restore = install_upload_fetch state in
+  let client = Eta_http_js.Client.make ~max_buffered_request_body_bytes:2 () in
+  let released = ref 0 in
+  let cleanup_error =
+    H.Error.make ~method_:"POST" ~uri:"https://example.test/upload"
+      (H.Error.Decode_error
+         { codec = "test-release"; message = "typed cleanup failed" })
+  in
+  let stream =
+    H.Body.Stream.of_bytes
+      ~release:(fun () ->
+        incr released;
+        E.fail cleanup_error)
+      [ bytes "abc" ]
+  in
+  let request =
+    H.Request.make
+      ~body:(H.Request.One_shot_stream { length = 3; stream })
+      "POST" "https://example.test/upload"
+  in
+  run_eta ~finally:restore (H.Client.request client request) done_ (function
+    | Eta.Exit.Error
+        (Eta.Cause.Suppressed
+          {
+            primary =
+              Eta.Cause.Fail
+                {
+                  H.Error.kind =
+                    H.Error.Request_body_too_large { limit = 2; length = 3 };
+                  _;
+                };
+            finalizer = Eta.Cause.Finalizer.Fail _;
+          }) ->
+        check_equal_int "typed cleanup release count" 1 !released;
+        check_equal_int "typed cleanup fetches" 0 (js_get_int state "fetches")
+    | Eta.Exit.Error cause ->
+        fail "typed cleanup suppression"
+          ("unexpected failure cause: " ^ pp_cause cause)
+    | Eta.Exit.Ok _ ->
+        fail "typed cleanup suppression" "expected suppressed failure")
+
+let test_one_shot_limit_suppresses_cleanup_defect done_ =
+  let state = Unsafe.obj [||] in
+  Unsafe.set state "fetches" 0;
+  let restore = install_upload_fetch state in
+  let client = Eta_http_js.Client.make ~max_buffered_request_body_bytes:2 () in
+  let released = ref 0 in
+  let cleanup_defect = Failure "cleanup defect" in
+  let stream =
+    H.Body.Stream.of_bytes
+      ~release:(fun () ->
+        incr released;
+        E.sync (fun () -> raise cleanup_defect))
+      [ bytes "abc" ]
+  in
+  let request =
+    H.Request.make
+      ~body:(H.Request.One_shot_stream { length = 3; stream })
+      "POST" "https://example.test/upload"
+  in
+  run_eta ~finally:restore (H.Client.request client request) done_ (function
+    | Eta.Exit.Error
+        (Eta.Cause.Suppressed
+          {
+            primary =
+              Eta.Cause.Fail
+                {
+                  H.Error.kind =
+                    H.Error.Request_body_too_large { limit = 2; length = 3 };
+                  _;
+                };
+            finalizer = Eta.Cause.Finalizer.Die { exn; _ };
+          })
+      when exn == cleanup_defect ->
+        check_equal_int "defect cleanup release count" 1 !released;
+        check_equal_int "defect cleanup fetches" 0 (js_get_int state "fetches")
+    | Eta.Exit.Error cause ->
+        fail "defect cleanup suppression"
+          ("unexpected failure cause: " ^ pp_cause cause)
+    | Eta.Exit.Ok _ ->
+        fail "defect cleanup suppression" "expected suppressed failure")
+
+let test_one_shot_mismatch_suppresses_cleanup done_ =
+  let state = Unsafe.obj [||] in
+  Unsafe.set state "fetches" 0;
+  let restore = install_upload_fetch state in
+  let client = Eta_http_js.Client.make () in
+  let cleanup_error =
+    H.Error.make ~method_:"POST" ~uri:"https://example.test/upload"
+      (H.Error.Decode_error
+         { codec = "test-release"; message = "typed cleanup failed" })
+  in
+  let last value = H.Body.Stream.Last (bytes value) in
+  let chunk value = H.Body.Stream.Chunk (bytes value) in
+  let make_case label ~length raw_results cleanup =
+    let released = ref 0 in
+    let raw_results = ref raw_results in
+    let release, expected =
+      match cleanup with
+      | `Typed ->
+          ( (fun () ->
+              incr released;
+              E.fail cleanup_error),
+            `Typed )
+      | `Defect ->
+          let defect = Failure (label ^ " cleanup") in
+          ( (fun () ->
+              incr released;
+              E.sync (fun () -> raise defect)),
+            `Defect defect )
+    in
+    let stream =
+      H.Body.Stream.of_reader ~release (fun () ->
+          match !raw_results with
+          | [] -> E.pure H.Body.Stream.End
+          | result :: rest ->
+              raw_results := rest;
+              E.pure result)
+    in
+    let request =
+      H.Request.make
+        ~body:(H.Request.One_shot_stream { length; stream })
+        "POST" "https://example.test/upload"
+    in
+    (label, released, expected, H.Client.request client request)
+  in
+  let cases =
+    [
+      make_case "JS Last underflow typed" ~length:3 [ last "ab" ] `Typed;
+      make_case "JS Last underflow defect" ~length:3 [ last "ab" ] `Defect;
+      make_case "JS End underflow typed" ~length:3
+        [ chunk "ab"; H.Body.Stream.End ]
+        `Typed;
+      make_case "JS End underflow defect" ~length:3
+        [ chunk "ab"; H.Body.Stream.End ]
+        `Defect;
+      make_case "JS Last overrun typed" ~length:2 [ last "abc" ] `Typed;
+      make_case "JS Last overrun defect" ~length:2 [ last "abc" ] `Defect;
+    ]
+  in
+  let effects = List.map (fun (_, _, _, eff) -> eff) cases in
+  run_eta ~finally:restore (E.all_settled effects) done_ (fun result ->
+      let outcomes = expect_ok "one-shot mismatch cleanup matrix" result in
+      List.iter2
+        (fun (label, released, expected, _) outcome ->
+          check_equal_int (label ^ " release once") 1 !released;
+          match (expected, outcome) with
+          | ( `Typed,
+              Error
+                (Eta.Cause.Suppressed
+                  {
+                    primary =
+                      Eta.Cause.Fail
+                        {
+                          H.Error.kind =
+                            H.Error.Connection_protocol_violation
+                              { kind = "request_body_length"; _ };
+                          _;
+                        };
+                    finalizer = Eta.Cause.Finalizer.Fail _;
+                  }) ) ->
+              ()
+          | ( `Defect defect,
+              Error
+                (Eta.Cause.Suppressed
+                  {
+                    primary =
+                      Eta.Cause.Fail
+                        {
+                          H.Error.kind =
+                            H.Error.Connection_protocol_violation
+                              { kind = "request_body_length"; _ };
+                          _;
+                        };
+                    finalizer = Eta.Cause.Finalizer.Die { exn; _ };
+                  }) )
+            when exn == defect ->
+              ()
+          | _, Error cause ->
+              fail label ("unexpected failure cause: " ^ pp_cause cause)
+          | _, Ok _ -> fail label "mismatch unexpectedly fetched")
+        cases outcomes;
+      check_equal_int "mismatch cleanup fetches" 0 (js_get_int state "fetches"))
+
+let install_openai_upload_fetch state =
+  let factory =
+    Unsafe.js_expr
+      {|
+      (function(state) {
+        return function(url, init) {
+          const body = Buffer.from(init.body || []).toString("latin1");
+          const contentLength = init.headers.get("content-length") || "";
+          if (!state.firstUrl) {
+            state.firstUrl = String(url);
+            state.firstBody = body;
+            state.firstContentLength = contentLength;
+          } else {
+            state.secondUrl = String(url);
+            state.secondBody = body;
+            state.secondContentLength = contentLength;
+          }
+          return Promise.resolve({
+            type: "basic",
+            status: 200,
+            headers: { forEach: function(_cb) {} },
+            body: null,
+            arrayBuffer: function() {
+              return Promise.resolve(new Uint8Array([]).buffer);
+            }
+          });
+        };
+      })
+    |}
+  in
+  install_global "fetch" (Unsafe.fun_call factory [| Unsafe.inject state |])
+
+let collect_request_body name request =
+  match request.H.Request.body with
+  | H.Request.Fixed chunks ->
+      E.pure (Bytes.concat Bytes.empty chunks |> Bytes.to_string)
+  | H.Request.Rewindable_stream { make; _ } ->
+      H.Body.Stream.read_all ~max_bytes:1_000_000 (make ())
+      |> E.map Bytes.to_string
+  | H.Request.Empty | H.Request.Stream _ | H.Request.One_shot_stream _
+      ->
+      fail name "expected a replayable multipart body"
+
+let openai_request name = function
+  | Ok value -> value
+  | Error error -> fail name (Format.asprintf "%a" O.Error.pp error)
+
+let test_openai_multipart_uploads_through_fetch done_ =
+  let state = Unsafe.obj [||] in
+  let restore = install_openai_upload_fetch state in
+  let client = Eta_http_js.Client.make () in
+  let file payload =
+    {
+      Eta_ai.Audio.filename = "sample.wav";
+      content_type = "audio/wav";
+      source = Eta_ai.Audio.bytes (bytes payload);
+    }
+  in
+  let transcription =
+    O.Audio.Speech_to_text.request ~model:O.Audio.Speech_to_text.Whisper_1
+      ~file:(file "transcription-audio") ()
+    |> openai_request "OpenAI transcription request"
+    |> O.Audio.Speech_to_text.http_request ~api_key:(Eta_ai.api_key "test-key")
+    |> openai_request "OpenAI transcription HTTP request"
+  in
+  let translation =
+    O.Audio.Translation.request ~file:(file "translation-audio") ()
+    |> openai_request "OpenAI translation request"
+    |> O.Audio.Translation.http_request ~api_key:(Eta_ai.api_key "test-key")
+    |> openai_request "OpenAI translation HTTP request"
+  in
+  check "transcription has no provider Content-Length"
+    (Option.is_none
+       (H.Core.Header.get "content-length" transcription.H.Request.headers));
+  check "translation has no provider Content-Length"
+    (Option.is_none
+       (H.Core.Header.get "content-length" translation.H.Request.headers));
+  let eff =
+    collect_request_body "OpenAI transcription body" transcription
+    |> E.bind (fun expected_transcription ->
+           collect_request_body "OpenAI translation body" translation
+           |> E.bind (fun expected_translation ->
+                  H.Client.request client transcription
+                  |> E.bind (fun _ ->
+                         H.Client.request client translation
+                         |> E.map (fun _ ->
+                                (expected_transcription, expected_translation)))))
+  in
+  run_eta ~finally:restore eff done_ (fun result ->
+      let expected_transcription, expected_translation =
+        expect_ok "OpenAI multipart fetch" result
+      in
+      check_equal_string "transcription fetch path"
+        "https://api.openai.com/v1/audio/transcriptions"
+        (js_get_string state "firstUrl");
+      check_equal_string "translation fetch path"
+        "https://api.openai.com/v1/audio/translations"
+        (js_get_string state "secondUrl");
+      check_equal_string "transcription fetch Content-Length" ""
+        (js_get_string state "firstContentLength");
+      check_equal_string "translation fetch Content-Length" ""
+        (js_get_string state "secondContentLength");
+      check_equal_string "transcription exact fetch body" expected_transcription
+        (js_get_string state "firstBody");
+      check_equal_string "translation exact fetch body" expected_translation
+        (js_get_string state "secondBody"))
 
 let install_never_fetch state =
   let factory =
@@ -723,6 +1169,15 @@ let tests =
     ("local server runtime service", test_local_server_runtime_service);
     ("fake fetch options and stream", test_fake_fetch_options_and_stream);
     ("rewindable upload cap", test_rewindable_upload_cap);
+    ("known one-shot upload", test_one_shot_known_upload);
+    ("one-shot validation owns stream", test_one_shot_validation_owns_stream);
+    ( "one-shot limit suppresses typed cleanup",
+      test_one_shot_limit_suppresses_typed_cleanup );
+    ( "one-shot limit suppresses cleanup defect",
+      test_one_shot_limit_suppresses_cleanup_defect );
+    ( "one-shot mismatch suppresses cleanup",
+      test_one_shot_mismatch_suppresses_cleanup );
+    ("OpenAI multipart uploads through fetch", test_openai_multipart_uploads_through_fetch);
     ("cancellation aborts fetch", test_cancellation_aborts_fetch);
     ("validation failures", test_validation_failures);
     ("runtime unsupported options", test_runtime_unsupported_options);

@@ -7,4 +7,13 @@
 
 (test
  (name http_law_properties)
- (libraries eta_http qcheck qcheck-core.runner))
+ (libraries
+  eta
+  eta_http
+  eta_test
+  eta_test_backend_eio
+  qcheck
+  qcheck-core.runner)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

@@ -12,12 +12,14 @@ module Write = Write
 let write_body = function
   | Empty -> Write.Empty
   | Fixed chunks -> Write.Fixed chunks
-  | Stream _ | Rewindable_stream _ -> Write.Empty
+  | Stream _ | One_shot_stream _ | Rewindable_stream _ -> Write.Empty
 
 let request_body_source = function
   | Empty -> Body_source.Empty
   | Fixed chunks -> Body_source.Fixed chunks
   | Stream body -> Body_source.Stream body
+  | One_shot_stream { length; stream } ->
+      Body_source.One_shot_stream { length; stream }
   | Rewindable_stream { length; make } ->
       Body_source.Rewindable_stream { length; make }
 

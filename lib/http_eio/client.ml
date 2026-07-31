@@ -65,6 +65,8 @@ module H1 = struct
     | Request.Empty -> H1_client.Empty
     | Fixed chunks -> H1_client.Fixed chunks
     | Stream body -> H1_client.Stream body
+    | One_shot_stream { length; stream } ->
+        H1_client.One_shot_stream { length; stream }
     | Rewindable_stream { length; make } ->
         H1_client.Rewindable_stream { length; make }
 

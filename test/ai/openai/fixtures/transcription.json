@@ -1,1 +1,1 @@
-{"text":"hello eta","usage":{"input_tokens":7,"total_tokens":7}}
+{"text":"hello eta","usage":{"type":"tokens","input_tokens":7,"output_tokens":0,"total_tokens":7}}
