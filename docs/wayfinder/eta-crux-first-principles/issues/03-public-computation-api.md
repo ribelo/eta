@@ -1,7 +1,7 @@
 # Public computation and construction API
 
 Type: prototype
-Status: claimed
+Status: resolved
 Blocked by: 02
 
 ## Question
@@ -26,3 +26,119 @@ raw signals, observers, stabilization, or private graph scopes.
 Judge the candidates by call-site clarity, inferred types, error messages,
 dynamic construction, and the amount of engine machinery exposed. Link the
 prototype assets from the answer.
+
+## Answer
+
+### Decision
+
+Eta Crux uses one global, graph-neutral type named `'a t`. A value of this type
+is an immutable computation description. It is not a live signal or a running
+application.
+
+The public description algebra has this semantic core:
+
+```ocaml
+type 'a t
+type ('action, 'delivery) transition
+type ('action, 'delivery) injector
+type lifecycle
+
+val return : 'a -> 'a t
+val map : 'a t -> f:('a -> 'b) -> 'b t
+val both : 'a t -> 'b t -> ('a * 'b) t
+val cutoff : 'a t -> equal:('a -> 'a -> bool) -> 'a t
+val bind : 'a t -> f:('a -> 'b t) -> 'b t
+
+val state_machine :
+  ?equal:('model -> 'model -> bool) ->
+  default_model:'model ->
+  apply_action:
+    (('action, 'delivery) transition -> 'model -> 'action -> 'model) ->
+  unit ->
+  ('model * ('action, 'delivery) injector) t
+
+val lifecycle : lifecycle -> unit t
+
+module Root : sig
+  type 'a description := 'a t
+  type 'a t
+
+  val create : 'a description -> 'a t
+end
+```
+
+Ticket 05 defines transition and injector delivery. Ticket 06 adds root
+advancement and root observation. Ticket 07 defines lifecycle values and their
+ownership rules. Ticket 14 decides derived helpers and syntax.
+
+Children are ordinary functions that return descriptions. Eta Crux does not
+provide a pass-through `child` combinator.
+
+### Identity and isolation
+
+Each allocating constructor creates a stable description-node identity. A root
+instantiates these nodes in one private `eta_signal` graph.
+
+Reusing one description in one scope shares its state machine:
+
+```ocaml
+let counter = Counter.create () in
+both counter counter
+```
+
+Two constructor calls create independent state machines:
+
+```ocaml
+both (Counter.create ()) (Counter.create ())
+```
+
+A live cell has three identity parts: the root, the dynamic or keyed scope, and
+the description node. Thus, two roots have isolated state. Two keyed scopes can
+also instantiate the same description as separate children. Ticket 04 refines
+the keyed rule.
+
+The original cross-application rule was too broad. Ordinary closures can carry
+any OCaml value. The type rule covers live graph dependencies.
+
+Description combinators never accept `Root.t`. Therefore, a live graph node
+from one root cannot become a dependency of another root. Eta Crux does not
+provide a root-to-description bridge.
+
+This rule does not prohibit ordinary OCaml value capture. For example, a
+description can contain a shared reference as data. Pure callbacks must not use
+such values as hidden reactive dependencies.
+
+### Comparison
+
+The separate `Value.t` and `Computation.t` design makes allocation visible in
+types. It also duplicates combinators and requires lifts between two algebras.
+Inert descriptions provide the required construction safety with one interface.
+
+A generative `Make ()` design rejects values from different module instances.
+However, the brand identifies the module instance, not each root. Reusable
+children also require functors or first-class modules.
+
+A rank-2 builder rejects brand escape and supports ordinary reusable functions.
+However, it exposes an application parameter and a construction capability.
+The capability can also enter a callback closure. These costs do not provide
+needed graph safety.
+
+An explicit graph or scope argument exposes private engine machinery. It also
+adds an argument to every structural constructor. The description interpreter
+already owns this information.
+
+### Prototype evidence
+
+The selected prototype is on branch
+`prototype/eta-crux-api-description-neutral` at commit `f30b9024`:
+
+- [description-neutral prototype](https://github.com/ribelo/eta/tree/f30b9024/.scratch/prototypes/eta-crux-api/description-neutral)
+
+Two rejected alternatives remain as comparison evidence:
+
+- [separate value and computation types](https://github.com/ribelo/eta/tree/04d1822c/.scratch/prototypes/eta-crux-api/staged), branch `prototype/eta-crux-api-staged`, commit `04d1822c`.
+- [rank-2 branded builder](https://github.com/ribelo/eta/tree/58544ba9/.scratch/prototypes/eta-crux-api/rank2-builder), branch `prototype/eta-crux-api-rank2`, commit `58544ba9`.
+
+All three positive sketches compile in the repository Nix shell. Their negative
+cases reject root or application mixing at compile time. The selected prototype
+also rejects a `Root.t` value as an argument to `both`.
