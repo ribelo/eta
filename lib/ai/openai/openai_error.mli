@@ -36,6 +36,12 @@ type t =
       raw_body : Eta_ai.raw_json option;
     }
   | Invalid_request of string
+  | Concurrent_use of string
+  | Limit_exceeded of {
+      kind : string;
+      limit : int;
+      actual : int;
+    }
   | Unsupported of string
   | Invalid_tool of {
       name : string;

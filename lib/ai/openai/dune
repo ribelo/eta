@@ -2,7 +2,15 @@
  (name eta_ai_openai)
  (public_name eta_ai_openai)
  (synopsis "OpenAI provider for eta_ai (chat, streaming, realtime)")
- (private_modules chat_completions common images openai_error responses speech transcriptions)
+ (private_modules
+  chat_completions
+  collector_math
+  common
+  images
+  openai_error
+  responses
+  speech
+  transcriptions)
  (libraries
   eta
   eta_observability

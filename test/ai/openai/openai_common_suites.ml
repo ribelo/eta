@@ -558,7 +558,9 @@ let test_decode_responses_failed_status_is_error () =
         | O.Error.Invalid_tool _ -> "invalid_tool"
         | O.Error.Http _ -> "http"
         | O.Error.Unknown_response _ -> "unknown"
-        | O.Error.Invalid_request _ -> "invalid_request")
+        | O.Error.Invalid_request _ -> "invalid_request"
+        | O.Error.Concurrent_use _ -> "concurrent_use"
+        | O.Error.Limit_exceeded _ -> "limit_exceeded")
   | Ok response ->
       Alcotest.failf
         "failed provider response decoded as Ok; finish_reasons length=%d"
@@ -916,6 +918,13 @@ let test_image_generation_request_and_decode () =
         image.url
   | [] -> Alcotest.fail "expected generated image"
 
+let speech_request ?(model = O.Audio.Text_to_speech.Gpt_4o_mini_tts)
+    ?(voice = O.Audio.Voices.Built_in O.Audio.Voices.Alloy) ?instructions
+    ?response_format ?speed ?stream_format ?(extra = []) input =
+  O.Audio.Text_to_speech.request ~model ~input ~voice ?instructions
+    ?response_format ?speed ?stream_format ~extra ()
+  |> expect_ok "speech request"
+
 let test_speech_runner () =
   with_runtime @@ fun rt ->
   let captured = ref None in
@@ -925,24 +934,1184 @@ let test_speech_runner () =
       captured
   in
   let response =
+    let request =
+      speech_request ~response_format:O.Audio.Text_to_speech.Mp3 ~speed:1.0
+        "hello"
+    in
     run_ok rt "speech runner"
       (O.Audio.Text_to_speech.create client ~api_key:(A.api_key "sk-test")
-         {
-           O.Audio.Text_to_speech.model = "gpt-4o-mini-tts";
-           input = "hello";
-           voice = "alloy";
-           response_format = Some "mp3";
-           speed = Some 1.0;
-           instructions = None;
-           extra = [];
-         })
+         request)
   in
   Alcotest.(check string) "speech body" "MP3" (Bytes.to_string response.audio);
+  Alcotest.(check (option string)) "speech content type" (Some "audio/mpeg")
+    response.content_type;
   match !captured with
   | Some request ->
       Alcotest.(check string)
         "uri" "https://api.openai.com/v1/audio/speech" request.uri
+      ;
+      Alcotest.(check (option string)) "speech omits JSON accept" None
+        (H.Core.Header.get "accept" request.headers)
   | None -> Alcotest.fail "expected speech request"
+
+let test_oatts_speech_full_request_vocabulary () =
+  let models =
+    [
+      (O.Audio.Text_to_speech.Tts_1, "tts-1");
+      (Tts_1_hd, "tts-1-hd");
+      (Gpt_4o_mini_tts, "gpt-4o-mini-tts");
+      (Gpt_4o_mini_tts_2025_12_15, "gpt-4o-mini-tts-2025-12-15");
+      (Other "future-tts", "future-tts");
+    ]
+  in
+  List.iter
+    (fun (model, expected) ->
+      let raw = speech_request ~model "hello" |> O.Audio.Text_to_speech.encode
+        |> expect_ok "speech model encode" in
+      require_contains expected ~needle:("\"model\":\"" ^ expected ^ "\"") raw)
+    models;
+  let voices =
+    [
+      (O.Audio.Voices.Alloy, "alloy");
+      (Ash, "ash");
+      (Ballad, "ballad");
+      (Coral, "coral");
+      (Echo, "echo");
+      (Fable, "fable");
+      (Onyx, "onyx");
+      (Nova, "nova");
+      (Sage, "sage");
+      (Shimmer, "shimmer");
+      (Verse, "verse");
+      (Marin, "marin");
+      (Cedar, "cedar");
+      (Other "future-voice", "future-voice");
+    ]
+  in
+  List.iter
+    (fun (voice, expected) ->
+      let raw =
+        speech_request ~voice:(O.Audio.Voices.Built_in voice) "hello"
+        |> O.Audio.Text_to_speech.encode
+        |> expect_ok "speech voice encode"
+      in
+      require_contains expected ~needle:("\"voice\":\"" ^ expected ^ "\"") raw)
+    voices;
+  let custom_id =
+    O.Audio.Voices.custom_id "voice_1234" |> expect_ok "custom voice ID"
+  in
+  let custom =
+    speech_request ~voice:(O.Audio.Voices.Custom custom_id) "hello"
+    |> O.Audio.Text_to_speech.encode
+    |> expect_ok "custom voice encode"
+  in
+  require_contains "custom voice object" ~needle:{|"voice":{"id":"voice_1234"}|}
+    custom;
+  let formats =
+    [
+      (O.Audio.Text_to_speech.Mp3, "mp3");
+      (Opus, "opus");
+      (Aac, "aac");
+      (Flac, "flac");
+      (Wav, "wav");
+      (Pcm, "pcm");
+    ]
+  in
+  List.iter
+    (fun (format, expected) ->
+      let raw =
+        speech_request ~response_format:format "hello"
+        |> O.Audio.Text_to_speech.encode
+        |> expect_ok "speech format encode"
+      in
+      require_contains expected
+        ~needle:("\"response_format\":\"" ^ expected ^ "\"") raw)
+    formats;
+  let raw =
+    speech_request ~instructions:"warm" ~speed:0.25
+      ~stream_format:O.Audio.Text_to_speech.Audio
+      ~extra:[ ("future_field", `Bool true) ] "hello"
+    |> O.Audio.Text_to_speech.encode
+    |> expect_ok "full speech encode"
+  in
+  List.iter
+    (fun needle -> require_contains needle ~needle raw)
+    [
+      {|"instructions":"warm"|};
+      {|"speed":0.25|};
+      {|"stream_format":"audio"|};
+      {|"future_field":true|};
+    ]
+
+let test_oaerr_speech_validation_matrix () =
+  let reject label result needle =
+    let message = expect_invalid_request label result in
+    require_contains label ~needle message
+  in
+  reject "empty custom voice" (O.Audio.Voices.custom_id " ") "must not be empty";
+  reject "empty built-in voice"
+    (O.Audio.Text_to_speech.request
+       ~model:O.Audio.Text_to_speech.Gpt_4o_mini_tts ~input:"hello"
+       ~voice:(O.Audio.Voices.Built_in (O.Audio.Voices.Other " ")) ())
+    "must not be empty";
+  reject "empty input"
+    (O.Audio.Text_to_speech.request
+       ~model:O.Audio.Text_to_speech.Gpt_4o_mini_tts ~input:""
+       ~voice:(O.Audio.Voices.Built_in O.Audio.Voices.Alloy) ())
+    "must not be empty";
+  let unicode_4096 = String.concat "" (List.init 4096 (fun _ -> "é")) in
+  ignore (speech_request unicode_4096 : O.Audio.Text_to_speech.request);
+  reject "unicode input over max"
+    (O.Audio.Text_to_speech.request
+       ~model:O.Audio.Text_to_speech.Gpt_4o_mini_tts
+       ~input:(unicode_4096 ^ "é")
+       ~voice:(O.Audio.Voices.Built_in O.Audio.Voices.Alloy) ())
+    "4096";
+  List.iter
+    (fun speed ->
+      reject (Printf.sprintf "speed %.17g" speed)
+        (O.Audio.Text_to_speech.request
+           ~model:O.Audio.Text_to_speech.Gpt_4o_mini_tts ~input:"hello"
+           ~voice:(O.Audio.Voices.Built_in O.Audio.Voices.Alloy) ~speed ())
+        "between 0.25 and 4.0")
+    [ 0.249; 4.001; Float.nan; Float.infinity; Float.neg_infinity ];
+  ignore (speech_request ~speed:0.25 "lower speed boundary");
+  ignore (speech_request ~speed:4.0 "upper speed boundary");
+  List.iter
+    (fun model ->
+      reject "legacy instructions"
+        (O.Audio.Text_to_speech.request ~model ~input:"hello"
+           ~voice:(O.Audio.Voices.Built_in O.Audio.Voices.Alloy)
+           ~instructions:"warm" ())
+        "instructions";
+      reject "legacy SSE"
+        (O.Audio.Text_to_speech.request ~model ~input:"hello"
+           ~voice:(O.Audio.Voices.Built_in O.Audio.Voices.Alloy)
+           ~stream_format:O.Audio.Text_to_speech.Sse ())
+        "SSE")
+    [ O.Audio.Text_to_speech.Tts_1; Tts_1_hd ];
+  List.iter
+    (fun model ->
+      reject "legacy Other instructions"
+        (O.Audio.Text_to_speech.request
+           ~model:(O.Audio.Text_to_speech.Other model) ~input:"hello"
+           ~voice:(O.Audio.Voices.Built_in O.Audio.Voices.Alloy)
+           ~instructions:"warm" ())
+        "instructions";
+      reject "legacy Other SSE"
+        (O.Audio.Text_to_speech.request
+           ~model:(O.Audio.Text_to_speech.Other model) ~input:"hello"
+           ~voice:(O.Audio.Voices.Built_in O.Audio.Voices.Alloy)
+           ~stream_format:O.Audio.Text_to_speech.Sse ())
+        "SSE")
+    [ "tts-1"; "tts-1-hd" ];
+  let legacy_allowed =
+    [
+      O.Audio.Voices.Alloy;
+      Ash;
+      Coral;
+      Echo;
+      Fable;
+      Onyx;
+      Nova;
+      Sage;
+      Shimmer;
+    ]
+  in
+  List.iter
+    (fun model ->
+      List.iter
+        (fun voice ->
+          ignore
+            (speech_request ~model
+               ~voice:(O.Audio.Voices.Built_in voice) "legacy voice"))
+        legacy_allowed;
+      List.iter
+        (fun (voice, wire) ->
+          reject ("legacy voice " ^ wire)
+            (O.Audio.Text_to_speech.request ~model ~input:"hello"
+               ~voice:(O.Audio.Voices.Built_in voice) ())
+            "voice";
+          reject ("legacy Other voice " ^ wire)
+            (O.Audio.Text_to_speech.request ~model ~input:"hello"
+               ~voice:
+                 (O.Audio.Voices.Built_in (O.Audio.Voices.Other wire))
+               ())
+            "voice")
+        [
+          (O.Audio.Voices.Ballad, "ballad");
+          (Verse, "verse");
+          (Marin, "marin");
+          (Cedar, "cedar");
+        ])
+    [ O.Audio.Text_to_speech.Tts_1; Tts_1_hd ];
+  List.iter
+    (fun input ->
+      reject "malformed UTF-8 input"
+        (O.Audio.Text_to_speech.request
+           ~model:O.Audio.Text_to_speech.Gpt_4o_mini_tts ~input
+           ~voice:(O.Audio.Voices.Built_in O.Audio.Voices.Alloy) ())
+        "UTF-8";
+      reject "malformed UTF-8 instructions"
+        (O.Audio.Text_to_speech.request
+           ~model:O.Audio.Text_to_speech.Gpt_4o_mini_tts ~input:"hello"
+           ~voice:(O.Audio.Voices.Built_in O.Audio.Voices.Alloy)
+           ~instructions:input ())
+        "UTF-8")
+    [ "\xc0\xaf"; "\xed\xa0\x80"; "\xf4\x90\x80\x80" ];
+  reject "instructions over max"
+    (O.Audio.Text_to_speech.request
+       ~model:O.Audio.Text_to_speech.Gpt_4o_mini_tts ~input:"hello"
+       ~voice:(O.Audio.Voices.Built_in O.Audio.Voices.Alloy)
+       ~instructions:(String.make 4097 'x') ())
+    "4096";
+  ignore
+    (speech_request ~model:(O.Audio.Text_to_speech.Other "future")
+       ~instructions:"warm" ~stream_format:O.Audio.Text_to_speech.Sse "hello"
+      : O.Audio.Text_to_speech.request);
+  List.iter
+    (fun field ->
+      reject ("collision " ^ field)
+        (O.Audio.Text_to_speech.request
+           ~model:O.Audio.Text_to_speech.Gpt_4o_mini_tts ~input:"hello"
+           ~voice:(O.Audio.Voices.Built_in O.Audio.Voices.Alloy)
+           ~extra:[ (field, `Null) ] ())
+        field)
+    [
+      "model";
+      "input";
+      "voice";
+      "instructions";
+      "response_format";
+      "speed";
+      "stream_format";
+    ]
+
+let test_oatts_raw_stream_chunks_collection_and_release () =
+  with_runtime @@ fun rt ->
+  let run chunks ~max_bytes =
+    let releases = ref 0 in
+    let body =
+      H.Body.Stream.of_bytes
+        ~release:(fun () -> E.sync (fun () -> incr releases))
+        chunks
+    in
+    let client =
+      test_client (H.Response.make ~status:200 ~body ()) (ref None)
+    in
+    let stream =
+      run_ok rt "open raw speech"
+        (O.Audio.Text_to_speech.stream_audio client
+           ~api_key:(A.api_key "key")
+           (speech_request ~stream_format:O.Audio.Text_to_speech.Audio "hello"))
+    in
+    let exit = B.run rt (O.Audio.Text_to_speech.collect_audio ~max_bytes stream) in
+    (exit, !releases)
+  in
+  let exact, releases =
+    run [ Bytes.of_string "abc"; Bytes.of_string "def" ] ~max_bytes:6
+  in
+  (match exact with
+  | Eta.Exit.Ok bytes ->
+      Alcotest.(check string) "exact collector" "abcdef" (Bytes.to_string bytes)
+  | Eta.Exit.Error _ -> Alcotest.fail "exact collector failed");
+  Alcotest.(check int) "exact collector release" 1 releases;
+  let over, releases =
+    run [ Bytes.of_string "abc"; Bytes.of_string "def" ] ~max_bytes:5
+  in
+  (match over with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (O.Error.Limit_exceeded { limit = 5; actual = 6; _ })) ->
+      ()
+  | _ -> Alcotest.fail "over-limit collector did not fail nominally");
+  Alcotest.(check int) "over-limit collector release" 1 releases;
+  let negative, releases =
+    run [ Bytes.of_string "abc" ] ~max_bytes:(-1)
+  in
+  (match negative with
+  | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Invalid_request _)) -> ()
+  | _ -> Alcotest.fail "negative collector limit was accepted");
+  Alcotest.(check int) "negative collector release" 1 releases;
+  let large = Bytes.make (2 * 1024 * 1024) 'a' in
+  let unlimited, releases = run [ large; large ] ~max_bytes:(5 * 1024 * 1024) in
+  (match unlimited with
+  | Eta.Exit.Ok bytes ->
+      Alcotest.(check int) "raw total exceeds parser defaults"
+        (4 * 1024 * 1024) (Bytes.length bytes)
+  | Eta.Exit.Error _ -> Alcotest.fail "large raw stream failed");
+  Alcotest.(check int) "large stream release" 1 releases;
+  let releases = ref 0 in
+  let body =
+    H.Body.Stream.of_bytes
+      ~release:(fun () -> E.sync (fun () -> incr releases))
+      [ Bytes.of_string "one"; Bytes.of_string "two" ]
+  in
+  let client =
+    test_client (H.Response.make ~status:200 ~body ()) (ref None)
+  in
+  let stream =
+    run_ok rt "open pull stream"
+      (O.Audio.Text_to_speech.stream_audio client ~api_key:(A.api_key "key")
+         (speech_request ~stream_format:O.Audio.Text_to_speech.Audio "hello"))
+  in
+  let first =
+    run_ok rt "raw first chunk" (O.Audio.Text_to_speech.read_audio stream)
+  in
+  Alcotest.(check (option string)) "raw chunk" (Some "one")
+    (Option.map Bytes.to_string first);
+  run_ok rt "early close" (O.Audio.Text_to_speech.close_audio stream);
+  Alcotest.(check int) "early close release" 1 !releases;
+  run_ok rt "idempotent close" (O.Audio.Text_to_speech.close_audio stream);
+  Alcotest.(check int) "idempotent close release" 1 !releases
+
+let test_oatts_sse_unknown_bounds_and_release () =
+  with_runtime @@ fun rt ->
+  List.iter
+    (fun bound -> Alcotest.(check bool) "positive default bound" true (bound > 0))
+    [
+      O.Audio.Text_to_speech.default_max_buffer_bytes;
+      O.Audio.Text_to_speech.default_max_json_bytes;
+      O.Audio.Text_to_speech.default_max_pending_events;
+    ];
+  let run ?max_buffer_bytes ?max_json_bytes ?max_pending_events payload =
+    let releases = ref 0 in
+    let body =
+      H.Body.Stream.of_bytes
+        ~release:(fun () -> E.sync (fun () -> incr releases))
+        [ Bytes.of_string payload ]
+    in
+    let headers =
+      H.Core.Header.unsafe_of_list [ ("content-type", "text/event-stream") ]
+    in
+    let client =
+      test_client (H.Response.make ~status:200 ~headers ~body ()) (ref None)
+    in
+    let stream =
+      run_ok rt "open speech SSE"
+        (O.Audio.Text_to_speech.stream_events ?max_buffer_bytes ?max_json_bytes
+           ?max_pending_events client ~api_key:(A.api_key "key")
+           (speech_request ~stream_format:O.Audio.Text_to_speech.Sse "hello"))
+    in
+    let exit = B.run rt (O.Audio.Text_to_speech.read_event stream) in
+    (exit, !releases)
+  in
+  let raw = {|{"type":"speech.future","nested":{"marker":17},"extra":true}|} in
+  let exit, releases = run ("event: ignored\ndata: " ^ raw ^ "\n\n") in
+  (match exit with
+  | Eta.Exit.Ok
+      (Some
+        (O.Audio.Text_to_speech.Unknown
+          { type_ = "speech.future"; raw = json })) ->
+      Alcotest.(check string) "complete unknown JSON" (A.Json.compact (`Assoc [
+        ("type", `String "speech.future");
+        ("nested", `Assoc [ ("marker", `Int 17) ]);
+        ("extra", `Bool true);
+      ])) (A.Json.compact json)
+  | _ -> Alcotest.fail "unknown SSE event not preserved");
+  Alcotest.(check int) "unknown last-chunk release" 1 releases;
+  let malformed, releases = run "data: {bad\n\n" in
+  (match malformed with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail (O.Error.Decode { raw_body = Some "{bad"; _ })) ->
+      ()
+  | _ -> Alcotest.fail "malformed speech SSE did not Decode");
+  Alcotest.(check int) "malformed release" 1 releases;
+  let oversized, releases =
+    run ~max_json_bytes:20
+      ("data: "
+      ^ {|{"type":"speech.future","payload":"too-large"}|}
+      ^ "\n\n")
+  in
+  (match oversized with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (O.Error.Limit_exceeded { kind; limit = 20; _ })) ->
+      require_contains "JSON bound kind" ~needle:"JSON" kind
+  | _ -> Alcotest.fail "oversized JSON did not fail nominally");
+  Alcotest.(check int) "oversized JSON release" 1 releases;
+  let unframed, _ = run ~max_buffer_bytes:8 "data: 123456789" in
+  (match unframed with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail (O.Error.Limit_exceeded { limit = 8; _ })) ->
+      ()
+  | _ -> Alcotest.fail "unframed override did not apply");
+  let two =
+    "data: {\"type\":\"one\"}\n\ndata: {\"type\":\"two\"}\n\n"
+  in
+  let pending, _ = run ~max_pending_events:1 two in
+  (match pending with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail (O.Error.Limit_exceeded { limit = 1; actual = 2; _ })) ->
+      ()
+  | _ -> Alcotest.fail "pending-event override did not apply");
+  let default_unframed, _ =
+    run
+      (String.make
+         (O.Audio.Text_to_speech.default_max_buffer_bytes + 1)
+         'x')
+  in
+  (match default_unframed with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (O.Error.Limit_exceeded
+          { limit; actual; _ })) ->
+      Alcotest.(check int) "default unframed limit"
+        O.Audio.Text_to_speech.default_max_buffer_bytes limit;
+      Alcotest.(check int) "default unframed actual" (limit + 1) actual
+  | _ -> Alcotest.fail "default unframed bound did not apply");
+  let json_payload =
+    {|{"type":"large","payload":"|}
+    ^ String.make O.Audio.Text_to_speech.default_max_json_bytes 'x'
+    ^ {|"}|}
+  in
+  let default_json, _ =
+    run
+      ~max_buffer_bytes:(String.length json_payload + 32)
+      ("data: " ^ json_payload ^ "\n\n")
+  in
+  (match default_json with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (O.Error.Limit_exceeded { kind; limit; _ })) ->
+      require_contains "default JSON kind" ~needle:"JSON" kind;
+      Alcotest.(check int) "default JSON limit"
+        O.Audio.Text_to_speech.default_max_json_bytes limit
+  | _ -> Alcotest.fail "default JSON bound did not apply");
+  let default_pending_payload =
+    List.init
+      (O.Audio.Text_to_speech.default_max_pending_events + 1)
+      (fun index ->
+        Printf.sprintf "data: {\"type\":\"event.%d\"}\n\n" index)
+    |> String.concat ""
+  in
+  let default_pending, _ = run default_pending_payload in
+  match default_pending with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (O.Error.Limit_exceeded { limit; actual; _ })) ->
+      Alcotest.(check int) "default pending limit"
+        O.Audio.Text_to_speech.default_max_pending_events limit;
+      Alcotest.(check int) "default pending actual" (limit + 1) actual
+  | _ -> Alcotest.fail "default pending bound did not apply"
+
+let test_oastr_speech_concurrent_use_and_cancellation () =
+  B.with_runtime @@ fun ctx rt ->
+  let started, started_resolver = B.create_promise () in
+  let gate, gate_resolver = B.create_promise () in
+  let releases = ref 0 in
+  let body =
+    H.Body.Stream.of_reader
+      ~release:(fun () -> E.sync (fun () -> incr releases))
+      (fun () ->
+        E.sync (fun () -> B.try_resolve started_resolver ())
+        |> E.bind (fun () -> B.await_effect gate)
+        |> E.map (fun () -> H.Body.Stream.Chunk (Bytes.of_string "audio")))
+  in
+  let client =
+    test_client (H.Response.make ~status:200 ~body ()) (ref None)
+  in
+  let stream =
+    run_ok rt "open concurrent raw speech"
+      (O.Audio.Text_to_speech.stream_audio client ~api_key:(A.api_key "key")
+         (speech_request ~stream_format:O.Audio.Text_to_speech.Audio "hello"))
+  in
+  let first =
+    B.fork_run_cancelable ctx rt (O.Audio.Text_to_speech.read_audio stream)
+  in
+  ignore (B.await started : unit);
+  (match B.run rt (O.Audio.Text_to_speech.close_audio stream) with
+  | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Concurrent_use "speech audio")) -> ()
+  | _ -> Alcotest.fail "second operation did not fail immediately");
+  Alcotest.(check int) "concurrent rejection has no release" 0 !releases;
+  B.cancel_fiber first;
+  (match B.await_cancelable first with
+  | `Cancelled | `Returned (Eta.Exit.Error _) -> ()
+  | `Returned (Eta.Exit.Ok _) -> Alcotest.fail "cancelled read succeeded");
+  Alcotest.(check int) "cancelled read release exactly once" 1 !releases;
+  B.try_resolve gate_resolver ();
+  let event_started, event_started_resolver = B.create_promise () in
+  let event_gate, event_gate_resolver = B.create_promise () in
+  let event_releases = ref 0 in
+  let event_body =
+    H.Body.Stream.of_reader
+      ~release:(fun () -> E.sync (fun () -> incr event_releases))
+      (fun () ->
+        E.sync (fun () -> B.try_resolve event_started_resolver ())
+        |> E.bind (fun () -> B.await_effect event_gate)
+        |> E.map (fun () ->
+               H.Body.Stream.Chunk
+                 (Bytes.of_string "data: {\"type\":\"future\"}\n\n")))
+  in
+  let event_request = ref None in
+  let event_client =
+    test_client (H.Response.make ~status:200 ~body:event_body ()) event_request
+  in
+  let events =
+    run_ok rt "open concurrent event speech"
+      (O.Audio.Text_to_speech.stream_events event_client
+         ~api_key:(A.api_key "key")
+         (speech_request ~stream_format:O.Audio.Text_to_speech.Sse "hello"))
+  in
+  (match !event_request with
+  | Some request ->
+      Alcotest.(check (option string)) "SSE omits undocumented accept" None
+        (H.Core.Header.get "accept" request.headers)
+  | None -> Alcotest.fail "SSE request was not executed");
+  let event_first =
+    B.fork_run_cancelable ctx rt (O.Audio.Text_to_speech.read_event events)
+  in
+  ignore (B.await event_started : unit);
+  (match B.run rt (O.Audio.Text_to_speech.close_events events) with
+  | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Concurrent_use "speech SSE")) -> ()
+  | _ -> Alcotest.fail "second SSE operation did not fail immediately");
+  Alcotest.(check int) "concurrent SSE rejection has no release" 0
+    !event_releases;
+  B.cancel_fiber event_first;
+  ignore (B.await_cancelable event_first);
+  B.try_resolve event_gate_resolver ();
+  Alcotest.(check int) "cancelled SSE release exactly once" 1 !event_releases;
+  B.drain rt
+
+let test_oastr_speech_effect_construction_is_inert () =
+  with_runtime @@ fun rt ->
+  let requests = ref 0 in
+  let releases = ref 0 in
+  let body =
+    H.Body.Stream.of_bytes
+      ~release:(fun () -> E.sync (fun () -> incr releases))
+      [ Bytes.of_string "chunk" ]
+  in
+  let client =
+    H.Client.make_custom ~protocol:H.Client.H1
+      ~request:(fun _ ->
+        incr requests;
+        E.pure (H.Response.make ~status:200 ~body ()))
+      ~stats:(fun () -> E.pure (Some zero_stats))
+      ~shutdown:(fun () -> E.unit)
+  in
+  let open_effect =
+    O.Audio.Text_to_speech.stream_audio client ~api_key:(A.api_key "key")
+      (speech_request ~stream_format:O.Audio.Text_to_speech.Audio "hello")
+  in
+  Alcotest.(check int) "acquisition construction has no request" 0 !requests;
+  let impossible_effects =
+    [
+      ( "buffer",
+        O.Audio.Text_to_speech.stream_events ~max_buffer_bytes:max_int client
+          ~api_key:(A.api_key "key")
+          (speech_request ~stream_format:O.Audio.Text_to_speech.Sse "hello") );
+      ( "JSON",
+        O.Audio.Text_to_speech.stream_events ~max_json_bytes:max_int client
+          ~api_key:(A.api_key "key")
+          (speech_request ~stream_format:O.Audio.Text_to_speech.Sse "hello") );
+    ]
+  in
+  List.iter (fun (_, operation) -> ignore operation) impossible_effects;
+  Alcotest.(check int)
+    "impossible parser allocation construction has no request" 0 !requests;
+  List.iter
+    (fun (label, operation) ->
+      match B.run rt operation with
+      | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Invalid_request _)) -> ()
+      | exit ->
+          Alcotest.failf "%s parser allocation was not nominal: %a" label
+            (Eta.Exit.pp
+               (fun fmt _ -> Format.pp_print_string fmt "<stream>")
+               O.Error.pp)
+            exit)
+    impossible_effects;
+  Alcotest.(check int) "impossible parser allocation acquires no body" 0 !requests;
+  let stream = run_ok rt "run inert acquisition" open_effect in
+  Alcotest.(check int) "acquisition executes one request" 1 !requests;
+  let discarded_close = O.Audio.Text_to_speech.close_audio stream in
+  let discarded_collect =
+    O.Audio.Text_to_speech.collect_audio ~max_bytes:(-1) stream
+  in
+  ignore discarded_close;
+  ignore discarded_collect;
+  Alcotest.(check int) "discarded operations do not release" 0 !releases;
+  let chunk =
+    run_ok rt "read after discarded operations"
+      (O.Audio.Text_to_speech.read_audio stream)
+  in
+  Alcotest.(check (option string)) "raw state unchanged" (Some "chunk")
+    (Option.map Bytes.to_string chunk);
+  Alcotest.(check int) "executed last pull releases" 1 !releases;
+  let event_releases = ref 0 in
+  let event_body =
+    H.Body.Stream.of_bytes
+      ~release:(fun () -> E.sync (fun () -> incr event_releases))
+      [
+        Bytes.of_string
+          "data: {\"type\":\"first\"}\n\ndata: {\"type\":\"second\"}\n\n";
+      ]
+  in
+  let event_client =
+    test_client (H.Response.make ~status:200 ~body:event_body ()) (ref None)
+  in
+  let events =
+    run_ok rt "open pending event stream"
+      (O.Audio.Text_to_speech.stream_events event_client
+         ~api_key:(A.api_key "key")
+         (speech_request ~stream_format:O.Audio.Text_to_speech.Sse "hello"))
+  in
+  let first =
+    run_ok rt "first pending event"
+      (O.Audio.Text_to_speech.read_event events)
+  in
+  (match first with
+  | Some (O.Audio.Text_to_speech.Unknown { type_ = "first"; _ }) -> ()
+  | _ -> Alcotest.fail "first event missing");
+  let discarded_read = O.Audio.Text_to_speech.read_event events in
+  let discarded_close = O.Audio.Text_to_speech.close_events events in
+  ignore discarded_read;
+  ignore discarded_close;
+  let second =
+    run_ok rt "pending event after discarded operations"
+      (O.Audio.Text_to_speech.read_event events)
+  in
+  (match second with
+  | Some (O.Audio.Text_to_speech.Unknown { type_ = "second"; _ }) -> ()
+  | _ -> Alcotest.fail "effect construction popped pending event");
+  Alcotest.(check int) "body release remains exact" 1 !event_releases
+
+let test_oastr_speech_close_cancellation_waits_for_release () =
+  B.with_runtime @@ fun ctx rt ->
+  let check label make_stream close =
+    let release_started, release_started_resolver = B.create_promise () in
+    let release_gate, release_gate_resolver = B.create_promise () in
+    let releases = ref 0 in
+    let body =
+      H.Body.Stream.of_reader
+        ~release:(fun () ->
+          E.sync (fun () -> B.try_resolve release_started_resolver ())
+          |> E.bind (fun () -> B.await_effect release_gate)
+          |> E.bind (fun () -> E.sync (fun () -> incr releases)))
+        (fun () -> E.never)
+    in
+    let stream = make_stream body in
+    let first = B.fork_run_cancelable ctx rt (close stream) in
+    ignore (B.await release_started : unit);
+    B.cancel_fiber first;
+    B.yield ();
+    (match B.run rt (close stream) with
+    | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Concurrent_use _)) -> ()
+    | _ ->
+        Alcotest.failf "%s close cancellation escaped blocked release" label);
+    Alcotest.(check int)
+      (label ^ " blocked release has not completed") 0 !releases;
+    B.try_resolve release_gate_resolver ();
+    (match B.await_cancelable first with
+    | `Cancelled
+    | `Returned (Eta.Exit.Ok ())
+    | `Returned (Eta.Exit.Error (Eta.Cause.Interrupt _)) ->
+        ()
+    | `Returned exit ->
+        Alcotest.failf "%s cancelled close returned unexpectedly: %a" label
+          (Eta.Exit.pp
+             (fun fmt () -> Format.pp_print_string fmt "()")
+             O.Error.pp)
+          exit);
+    Alcotest.(check int) (label ^ " release completes once") 1 !releases;
+    (match B.run rt (close stream) with
+    | Eta.Exit.Ok () -> ()
+    | _ -> Alcotest.failf "%s subsequent close did not become a no-op" label);
+    Alcotest.(check int) (label ^ " subsequent close stays exact") 1 !releases
+  in
+  check "audio"
+    (fun body ->
+      let client =
+        test_client (H.Response.make ~status:200 ~body ()) (ref None)
+      in
+      run_ok rt "open audio for blocked close"
+        (O.Audio.Text_to_speech.stream_audio client ~api_key:(A.api_key "key")
+           (speech_request ~stream_format:O.Audio.Text_to_speech.Audio "hello")))
+    O.Audio.Text_to_speech.close_audio;
+  check "SSE"
+    (fun body ->
+      let client =
+        test_client (H.Response.make ~status:200 ~body ()) (ref None)
+      in
+      run_ok rt "open SSE for blocked close"
+        (O.Audio.Text_to_speech.stream_events client ~api_key:(A.api_key "key")
+           (speech_request ~stream_format:O.Audio.Text_to_speech.Sse "hello")))
+    O.Audio.Text_to_speech.close_events;
+  let transport =
+    Eta_http.Error.make ~method_:"POST" ~uri:"speech-close"
+      (Eta_http.Error.Connect_error { message = "release failed" })
+  in
+  let check_failure label make_stream close =
+    let release_attempts = ref 0 in
+    let body =
+      H.Body.Stream.of_reader
+        ~release:(fun () ->
+          E.sync (fun () -> incr release_attempts)
+          |> E.bind (fun () -> E.fail transport))
+        (fun () -> E.never)
+    in
+    let stream = make_stream body in
+    (match B.run rt (close stream) with
+    | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Http _)) -> ()
+    | _ -> Alcotest.failf "%s close did not preserve typed release failure" label);
+    Alcotest.(check int) (label ^ " failing release attempted once") 1
+      !release_attempts;
+    (match B.run rt (close stream) with
+    | Eta.Exit.Ok () -> ()
+    | _ -> Alcotest.failf "%s close retried a failed one-shot release" label);
+    Alcotest.(check int) (label ^ " failed release remains one-shot") 1
+      !release_attempts
+  in
+  check_failure "audio"
+    (fun body ->
+      run_ok rt "open audio for failing close"
+        (O.Audio.Text_to_speech.stream_audio
+           (test_client (H.Response.make ~status:200 ~body ()) (ref None))
+           ~api_key:(A.api_key "key")
+           (speech_request ~stream_format:O.Audio.Text_to_speech.Audio "hello")))
+    O.Audio.Text_to_speech.close_audio;
+  check_failure "SSE"
+    (fun body ->
+      run_ok rt "open SSE for failing close"
+        (O.Audio.Text_to_speech.stream_events
+           (test_client (H.Response.make ~status:200 ~body ()) (ref None))
+           ~api_key:(A.api_key "key")
+           (speech_request ~stream_format:O.Audio.Text_to_speech.Sse "hello")))
+    O.Audio.Text_to_speech.close_events;
+  B.drain rt
+
+let test_oastr_speech_primary_cleanup_precedence () =
+  with_runtime @@ fun rt ->
+  let releases = ref 0 in
+  let body =
+    H.Body.Stream.of_reader
+      ~release:(fun () ->
+        E.sync (fun () -> incr releases)
+        |> E.bind (fun () -> E.die_message "speech cleanup defect"))
+      (let first = ref true in
+       fun () ->
+         if !first then begin
+           first := false;
+           E.pure (H.Body.Stream.Chunk (Bytes.of_string "data: {bad\n\n"))
+         end
+         else E.pure H.Body.Stream.End)
+  in
+  let client =
+    test_client (H.Response.make ~status:200 ~body ()) (ref None)
+  in
+  let stream =
+    run_ok rt "open failing speech SSE"
+      (O.Audio.Text_to_speech.stream_events client ~api_key:(A.api_key "key")
+         (speech_request ~stream_format:O.Audio.Text_to_speech.Sse "hello"))
+  in
+  (match B.run rt (O.Audio.Text_to_speech.read_event stream) with
+  | Eta.Exit.Error
+      (Eta.Cause.Suppressed
+        {
+          primary =
+            Eta.Cause.Fail
+              (O.Error.Decode { raw_body = Some "{bad"; _ });
+          finalizer = Eta.Cause.Finalizer.Die die;
+        }) ->
+      Alcotest.(check string) "exact cleanup diagnostic"
+        "Failure(\"speech cleanup defect\")"
+        (Printexc.to_string die.exn)
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "cleanup precedence shape was not exact: %a"
+        (Eta.Cause.pp O.Error.pp) cause
+  | Eta.Exit.Ok _ -> Alcotest.fail "malformed SSE succeeded");
+  Alcotest.(check int) "failing cleanup release exactly once" 1 !releases
+
+let test_oaerr_speech_runner_failure_matrix () =
+  with_runtime @@ fun rt ->
+  let calls = ref 0 in
+  let inert_client =
+    H.Client.make_custom ~protocol:H.Client.H1
+      ~request:(fun _ ->
+        incr calls;
+        E.pure (response_of_bytes "unused"))
+      ~stats:(fun () -> E.pure (Some zero_stats))
+      ~shutdown:(fun () -> E.unit)
+  in
+  let sse_request =
+    speech_request ~stream_format:O.Audio.Text_to_speech.Sse "hello"
+  in
+  (match
+     B.run rt
+       (O.Audio.Text_to_speech.create inert_client ~api_key:(A.api_key "key")
+          sse_request)
+   with
+  | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Invalid_request _)) -> ()
+  | _ -> Alcotest.fail "create accepted SSE request");
+  let audio_request =
+    speech_request ~stream_format:O.Audio.Text_to_speech.Audio "hello"
+  in
+  (match
+     B.run rt
+       (O.Audio.Text_to_speech.stream_events inert_client
+          ~api_key:(A.api_key "key") audio_request)
+   with
+  | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Invalid_request _)) -> ()
+  | _ -> Alcotest.fail "event stream accepted audio request");
+  List.iter
+    (fun (label, operation) ->
+      match B.run rt operation with
+      | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Invalid_request _)) -> ()
+      | _ -> Alcotest.fail (label ^ " bound was accepted"))
+    [
+      ( "buffer",
+        O.Audio.Text_to_speech.stream_events ~max_buffer_bytes:0 inert_client
+          ~api_key:(A.api_key "key") sse_request );
+      ( "JSON",
+        O.Audio.Text_to_speech.stream_events ~max_json_bytes:(-1) inert_client
+          ~api_key:(A.api_key "key") sse_request );
+      ( "pending",
+        O.Audio.Text_to_speech.stream_events ~max_pending_events:0 inert_client
+          ~api_key:(A.api_key "key") sse_request );
+    ];
+  Alcotest.(check int) "mismatches rejected before transport" 0 !calls;
+  let transport =
+    Eta_http.Error.make ~method_:"POST" ~uri:"speech"
+      (Eta_http.Error.Connect_error { message = "offline" })
+  in
+  let transport_client =
+    H.Client.make_custom ~protocol:H.Client.H1
+      ~request:(fun _ -> E.fail transport)
+      ~stats:(fun () -> E.pure (Some zero_stats))
+      ~shutdown:(fun () -> E.unit)
+  in
+  (match
+     B.run rt
+       (O.Audio.Text_to_speech.stream_audio transport_client
+          ~api_key:(A.api_key "key") audio_request)
+   with
+  | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Http _)) -> ()
+  | _ -> Alcotest.fail "transport failure escaped nominal channel");
+  let read_releases = ref 0 in
+  let read_body =
+    H.Body.Stream.of_reader
+      ~release:(fun () -> E.sync (fun () -> incr read_releases))
+      (fun () -> E.fail transport)
+  in
+  let read_client =
+    test_client (H.Response.make ~status:200 ~body:read_body ()) (ref None)
+  in
+  let read_stream =
+    run_ok rt "open read-failing audio"
+      (O.Audio.Text_to_speech.stream_audio read_client
+         ~api_key:(A.api_key "key") audio_request)
+  in
+  (match B.run rt (O.Audio.Text_to_speech.read_audio read_stream) with
+  | Eta.Exit.Error (Eta.Cause.Fail (O.Error.Http _)) -> ()
+  | _ -> Alcotest.fail "midstream transport failure escaped nominal channel");
+  Alcotest.(check int) "midstream transport release exactly once" 1
+    !read_releases;
+  let defect_releases = ref 0 in
+  let defect_body =
+    H.Body.Stream.of_reader
+      ~release:(fun () -> E.sync (fun () -> incr defect_releases))
+      (fun () -> E.die_message "speech parser pull defect")
+  in
+  let defect_client =
+    test_client (H.Response.make ~status:200 ~body:defect_body ()) (ref None)
+  in
+  let defect_stream =
+    run_ok rt "open defecting event stream"
+      (O.Audio.Text_to_speech.stream_events defect_client
+         ~api_key:(A.api_key "key") sse_request)
+  in
+  (match B.run rt (O.Audio.Text_to_speech.read_event defect_stream) with
+  | Eta.Exit.Error (Eta.Cause.Die _) -> ()
+  | _ -> Alcotest.fail "post-response pull defect escaped cleanup guard");
+  Alcotest.(check int) "post-response defect release exactly once" 1
+    !defect_releases;
+  let headers =
+    H.Core.Header.unsafe_of_list
+      [ ("content-type", "application/json"); ("x-request-id", "req_speech") ]
+  in
+  let provider_client =
+    test_client
+      (response_of_bytes ~status:429 ~headers
+         {|{"error":{"message":"slow down","code":"rate_limit"}}|})
+      (ref None)
+  in
+  (match
+    B.run rt
+      (O.Audio.Text_to_speech.stream_audio provider_client
+         ~api_key:(A.api_key "key") audio_request)
+  with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (O.Error.Provider
+          {
+            status = 429;
+            headers = preserved;
+            raw_body;
+            payload =
+              Some
+                {
+                  message = Some "slow down";
+                  code = Some (`String "rate_limit");
+                  _;
+                };
+          })) ->
+      Alcotest.(check (option string)) "ordered/provider header"
+        (Some "req_speech")
+        (H.Core.Header.get "x-request-id" preserved);
+      require_contains "provider raw body" ~needle:"slow down" raw_body
+  | _ -> Alcotest.fail "provider failure was not preserved");
+  let large_marker = String.make (1024 * 1024 + 17) 'z' in
+  let large_raw =
+    Printf.sprintf
+      {|{"error":{"message":"large-provider-sentinel","code":"large_error"},"padding":"%s"}|}
+      large_marker
+  in
+  let large_releases = ref 0 in
+  let large_body =
+    H.Body.Stream.of_bytes
+      ~release:(fun () -> E.sync (fun () -> incr large_releases))
+      [ Bytes.of_string large_raw ]
+  in
+  let large_headers =
+    H.Core.Header.unsafe_of_list
+      [
+        ("x-ordered", "first");
+        ("x-ordered", "second");
+        ("content-type", "application/json");
+      ]
+  in
+  let large_client =
+    test_client
+      (H.Response.make ~status:503 ~headers:large_headers ~body:large_body ())
+      (ref None)
+  in
+  (match
+     B.run rt
+       (O.Audio.Text_to_speech.stream_audio large_client
+          ~api_key:(A.api_key "key") audio_request)
+   with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (O.Error.Provider
+          {
+            status = 503;
+            headers;
+            raw_body;
+            payload =
+              Some
+                {
+                  message = Some "large-provider-sentinel";
+                  code = Some (`String "large_error");
+                  _;
+                };
+          })) ->
+      Alcotest.(check (list string)) "ordered duplicate headers"
+        [ "first"; "second" ]
+        (H.Core.Header.get_all "x-ordered" headers);
+      Alcotest.(check int) "complete large raw body" (String.length large_raw)
+        (String.length raw_body);
+      Alcotest.(check string) "large raw body exact" large_raw raw_body
+  | _ -> Alcotest.fail "large non-2xx body was not preserved");
+  Alcotest.(check int) "large non-2xx release exactly once" 1 !large_releases;
+  B.drain rt
+
+let test_oaobs_speech_safe_attributes () =
+  B.with_traced_runtime @@ fun ctx rt tracer ->
+  let provider = O.provider ~base_url:"https://api.openai.test:8443" () in
+  let api_key = A.api_key "secret-key-sentinel" in
+  let client =
+    test_client ~with_http_span:true
+      (response_of_bytes ~headers:[ ("content-type", "audio/mpeg") ]
+         "audio-bytes-sentinel")
+      (ref None)
+  in
+  ignore
+    (run_ok rt "traced speech"
+       (O.Audio.Text_to_speech.create
+          ~provider client ~api_key
+          (speech_request ~instructions:"instruction-sentinel"
+             "input-text-sentinel")));
+  let open_audio body =
+    let client =
+      test_client (H.Response.make ~status:200 ~body ()) (ref None)
+    in
+    run_ok rt "open traced speech stream"
+      (O.Audio.Text_to_speech.stream_audio ~provider client ~api_key
+         (speech_request ~stream_format:O.Audio.Text_to_speech.Audio
+            "input-text-sentinel"))
+  in
+  let close_stream =
+    open_audio
+      (H.Body.Stream.of_bytes [ Bytes.of_string "audio-close-sentinel" ])
+  in
+  run_ok rt "close traced speech stream"
+    (O.Audio.Text_to_speech.close_audio close_stream);
+  let collect_stream =
+    open_audio
+      (H.Body.Stream.of_bytes [ Bytes.of_string "audio-collect-sentinel" ])
+  in
+  ignore
+    (run_ok rt "collect traced speech stream"
+       (O.Audio.Text_to_speech.collect_audio ~max_bytes:64 collect_stream));
+  let limit_stream =
+    open_audio
+      (H.Body.Stream.of_bytes [ Bytes.of_string "audio-limit-sentinel" ])
+  in
+  ignore
+    (B.run rt
+       (O.Audio.Text_to_speech.collect_audio ~max_bytes:1 limit_stream));
+  let transport =
+    Eta_http.Error.make ~method_:"POST" ~uri:"speech-read"
+      (Eta_http.Error.Connect_error
+         { message = "transport-message-sentinel" })
+  in
+  let http_stream =
+    open_audio (H.Body.Stream.of_reader (fun () -> E.fail transport))
+  in
+  ignore (B.run rt (O.Audio.Text_to_speech.read_audio http_stream));
+  let malformed_client =
+    test_client
+      (response_of_bytes
+         "data: decode-fragment-sentinel\n\n")
+      (ref None)
+  in
+  let malformed_stream =
+    run_ok rt "open malformed traced SSE"
+      (O.Audio.Text_to_speech.stream_events ~provider malformed_client ~api_key
+         (speech_request ~stream_format:O.Audio.Text_to_speech.Sse
+            "input-text-sentinel"))
+  in
+  ignore (B.run rt (O.Audio.Text_to_speech.read_event malformed_stream));
+  let close_event_client =
+    test_client
+      (response_of_bytes "data: {\"type\":\"unused\"}\n\n")
+      (ref None)
+  in
+  let close_event_stream =
+    run_ok rt "open close-only traced SSE"
+      (O.Audio.Text_to_speech.stream_events ~provider close_event_client ~api_key
+         (speech_request ~stream_format:O.Audio.Text_to_speech.Sse
+            "input-text-sentinel"))
+  in
+  run_ok rt "close traced SSE"
+    (O.Audio.Text_to_speech.close_events close_event_stream);
+  let started, started_resolver = B.create_promise () in
+  let gate, _gate_resolver = B.create_promise () in
+  let cancellation_releases = ref 0 in
+  let blocked_body =
+    H.Body.Stream.of_reader
+      ~release:(fun () ->
+        E.sync (fun () -> incr cancellation_releases))
+      (fun () ->
+        E.sync (fun () -> B.try_resolve started_resolver ())
+        |> E.bind (fun () -> B.await_effect gate)
+        |> E.map (fun () ->
+               H.Body.Stream.Chunk
+                 (Bytes.of_string "audio-cancel-sentinel")))
+  in
+  let blocked = open_audio blocked_body in
+  let blocked_read =
+    B.fork_run_cancelable ctx rt (O.Audio.Text_to_speech.read_audio blocked)
+  in
+  ignore (B.await started : unit);
+  ignore (B.run rt (O.Audio.Text_to_speech.close_audio blocked));
+  Alcotest.(check int) "concurrent telemetry operation has no release" 0
+    !cancellation_releases;
+  B.cancel_fiber blocked_read;
+  ignore (B.await_cancelable blocked_read);
+  Alcotest.(check int) "telemetry cancellation releases once" 1
+    !cancellation_releases;
+  let failure_client =
+    test_client
+      (response_of_bytes ~status:400
+         {|{"error":{"message":"provider-message-sentinel","code":"bad_speech"}}|})
+      (ref None)
+  in
+  ignore
+    (B.run rt
+       (O.Audio.Text_to_speech.create ~provider failure_client ~api_key
+          (speech_request "input-text-sentinel")));
+  let spans = Eta.Tracer.dump tracer in
+  let span =
+    spans
+    |> List.find (fun (span : Eta.Tracer.span) ->
+           String.equal span.name "speech.create openai"
+           && span.status = Eta.Tracer.Ok)
+  in
+  check_attr "speech operation" "speech.create" span.attrs
+    "eta_ai.operation.name";
+  check_attr "speech provider" "openai" span.attrs "eta_ai.provider.name";
+  check_attr "speech model" "gpt-4o-mini-tts" span.attrs
+    "gen_ai.request.model";
+  check_attr "speech authority" "api.openai.test" span.attrs "server.address";
+  let find_span name status =
+    List.find
+      (fun (span : Eta.Tracer.span) ->
+        String.equal span.name name && span.status = status)
+      spans
+  in
+  let stream_span =
+    find_span "speech.stream_audio openai" Eta.Tracer.Ok
+  in
+  check_attr "stream mode" "audio" stream_span.attrs
+    "eta_ai.request.stream_format";
+  ignore (find_span "speech.stream_events openai" Eta.Tracer.Ok);
+  ignore (find_span "speech.close_audio openai" Eta.Tracer.Ok);
+  ignore (find_span "speech.close_events openai" Eta.Tracer.Ok);
+  ignore (find_span "speech.collect_audio openai" Eta.Tracer.Ok);
+  ignore
+    (find_span "speech.collect_audio openai"
+       (Eta.Tracer.Error "limit_exceeded"));
+  ignore
+    (find_span "speech.read_audio openai" (Eta.Tracer.Error "http_error"));
+  ignore
+    (find_span "speech.read_event openai"
+       (Eta.Tracer.Error "decode_error"));
+  ignore
+    (find_span "speech.close_audio openai"
+       (Eta.Tracer.Error "concurrent_use"));
+  ignore (find_span "speech.read_audio openai" Eta.Tracer.Cancelled);
+  let failure_span =
+    find_span "speech.create openai" (Eta.Tracer.Error "bad_speech")
+  in
+  check_attr "speech error classification" "bad_speech" failure_span.attrs
+    "error.type";
+  let rendered =
+    spans
+    |> List.map (fun (span : Eta.Tracer.span) ->
+           let status =
+             match span.status with
+             | Eta.Tracer.Ok -> "ok"
+             | Cancelled -> "cancelled"
+             | Error message -> "error:" ^ message
+           in
+           span.name ^ "\n" ^ status ^ "\n"
+           ^ (span.attrs
+             |> List.map (fun (key, value) -> key ^ "=" ^ value)
+             |> String.concat "\n"))
+    |> String.concat "\n"
+  in
+  List.iter
+    (fun secret ->
+      Alcotest.(check bool) ("telemetry excludes " ^ secret) false
+        (contains ~needle:secret rendered))
+    [
+      "secret-key-sentinel";
+      "instruction-sentinel";
+      "input-text-sentinel";
+      "audio-bytes-sentinel";
+      "audio-close-sentinel";
+      "audio-collect-sentinel";
+      "audio-limit-sentinel";
+      "audio-cancel-sentinel";
+      "provider-message-sentinel";
+      "transport-message-sentinel";
+      "decode-fragment-sentinel";
+    ];
+  Alcotest.(check bool) "nested HTTP span suppressed" false
+    (List.exists
+       (fun (span : Eta.Tracer.span) -> String.equal span.name "HTTP POST")
+       spans)
 
 let test_transcription_request_and_decode () =
   let request =
@@ -1050,18 +2219,27 @@ let test_oabridge_openai_neutral_conversion_and_projection () =
      configuration, including OpenAI's required model. *)
   let configured =
     O.Audio.Text_to_speech.configure
-      { model = "gpt-4o-mini-tts"; instructions = Some "brief"; extra = [] }
+      {
+        model = O.Audio.Text_to_speech.Gpt_4o_mini_tts;
+        instructions = Some "brief";
+        extra = [];
+      }
       construction
     |> expect_ok "oabridge-pmod/d348 OpenAI TTS configure"
   in
   Alcotest.(check string) "provider model supplied separately"
-    "gpt-4o-mini-tts" configured.model;
+    "gpt-4o-mini-tts"
+    (O.Audio.Text_to_speech.model_to_string configured.model);
   Alcotest.(check string) "neutral text converted" "hello" configured.input;
-  Alcotest.(check (option string)) "neutral encoding converted" (Some "wav")
-    configured.response_format;
+  Alcotest.(check bool) "neutral encoding converted" true
+    (configured.response_format = Some O.Audio.Text_to_speech.Wav);
   (match
      O.Audio.Text_to_speech.configure
-       { model = ""; instructions = None; extra = [] }
+       {
+         model = O.Audio.Text_to_speech.Other "";
+         instructions = None;
+         extra = [];
+       }
        construction
    with
   | Error (O.Error.Invalid_request _) -> ()
@@ -1740,6 +2918,9 @@ let test_aierr_openai_total_projection_and_no_fabricated_http () =
         };
       O.Error.Decode { message = "d"; raw_body = None };
       O.Error.Invalid_request "bad";
+      O.Error.Concurrent_use "speech audio";
+      O.Error.Limit_exceeded
+        { kind = "speech audio bytes"; limit = 1; actual = 2 };
       O.Error.Unsupported "feature";
       O.Error.Invalid_tool { name = "t"; message = "m" };
     ]
@@ -1761,6 +2942,8 @@ let test_aierr_openai_total_projection_and_no_fabricated_http () =
       "server_error";
       "decode_error";
       "invalid_request";
+      "concurrent_use";
+      "limit_exceeded";
       "unsupported";
       "invalid_tool";
     ];
@@ -2984,6 +4167,26 @@ let tests =
           Alcotest.test_case "image generation request and decode" `Quick
             test_image_generation_request_and_decode;
           Alcotest.test_case "speech runner" `Quick test_speech_runner;
+          Alcotest.test_case "oatts full request vocabulary" `Quick
+            test_oatts_speech_full_request_vocabulary;
+          Alcotest.test_case "oaerr speech validation matrix" `Quick
+            test_oaerr_speech_validation_matrix;
+          Alcotest.test_case "oatts raw stream collection and release" `Quick
+            test_oatts_raw_stream_chunks_collection_and_release;
+          Alcotest.test_case "oatts SSE unknown bounds and release" `Quick
+            test_oatts_sse_unknown_bounds_and_release;
+          Alcotest.test_case "oastr concurrent use and cancellation" `Quick
+            test_oastr_speech_concurrent_use_and_cancellation;
+          Alcotest.test_case "oastr effect construction is inert" `Quick
+            test_oastr_speech_effect_construction_is_inert;
+          Alcotest.test_case "oastr close cancellation waits for release" `Quick
+            test_oastr_speech_close_cancellation_waits_for_release;
+          Alcotest.test_case "oastr primary cleanup precedence" `Quick
+            test_oastr_speech_primary_cleanup_precedence;
+          Alcotest.test_case "oaerr speech runner failure matrix" `Quick
+            test_oaerr_speech_runner_failure_matrix;
+          Alcotest.test_case "oaobs speech safe attributes" `Quick
+            test_oaobs_speech_safe_attributes;
           Alcotest.test_case "transcription request and decode" `Quick
             test_transcription_request_and_decode;
           Alcotest.test_case "transcription multipart validation" `Quick

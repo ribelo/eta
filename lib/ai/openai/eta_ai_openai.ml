@@ -51,9 +51,7 @@ let image_generation_request = Image_endpoint.request
 let image_generation = Image_endpoint.run
 
 module Audio = struct
-  module Voices = struct
-    type t = string
-  end
+  module Voices = Speech.Voices
 
   module Speech_to_text = Transcriptions
   module Text_to_speech = Speech

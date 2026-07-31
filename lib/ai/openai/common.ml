@@ -386,6 +386,48 @@ let run_binary ?max_bytes provider client request decode =
   run_request request (fun http_request ->
       perform_binary ?max_bytes provider client http_request |> E.map decode)
 
+let authority_attrs provider =
+  match H.Core.Url.parse provider.A.base_url with
+  | Stdlib.Error _ -> []
+  | Stdlib.Ok url ->
+      [
+        ("server.address", H.Core.Url.host url);
+        ("server.port", string_of_int (H.Core.Url.effective_port url));
+      ]
+
+let with_provider_span provider ~operation ~model ?(attrs = []) eff =
+  let attrs =
+    [
+      ("eta_ai.operation.name", operation);
+      ("eta_ai.provider.name", provider.A.name);
+      ("gen_ai.request.model", model);
+    ]
+    @ authority_attrs provider @ attrs
+  in
+  let rec primary_error = function
+    | Eta.Cause.Fail error -> Some error
+    | Eta.Cause.Suppressed { primary; _ } -> primary_error primary
+    | Eta.Cause.Sequential causes | Eta.Cause.Concurrent causes ->
+        List.find_map primary_error causes
+    | Eta.Cause.Die _ | Eta.Cause.Interrupt _ | Eta.Cause.Finalizer _ -> None
+  in
+  eff
+  |> E.on_exit (function
+       | Eta.Exit.Ok _ -> E.unit
+       | Eta.Exit.Error cause -> (
+           match primary_error cause with
+           | Some error ->
+               E.unit
+               |> E.annotate_all
+                    [ ("error.type", Error.classification error) ]
+           | None -> E.unit))
+  |> E.annotate_all attrs
+  |> E.named
+       ~error_pp:(fun fmt error ->
+         Format.pp_print_string fmt (Error.classification error))
+       ~kind:Eta.Capabilities.Client
+       (operation ^ " " ^ provider.name)
+
 (* Primary provider failure with protected cleanup finalizer (Sse.fail_and_close). *)
 let fail_stream_preserving (stream : stream) error =
   E.fail error

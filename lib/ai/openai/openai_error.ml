@@ -29,6 +29,12 @@ type t =
       raw_body : A.raw_json option;
     }
   | Invalid_request of string
+  | Concurrent_use of string
+  | Limit_exceeded of {
+      kind : string;
+      limit : int;
+      actual : int;
+    }
   | Unsupported of string
   | Invalid_tool of {
       name : string;
@@ -162,6 +168,8 @@ let classification = function
   | Provider_response _ -> "provider_error"
   | Decode _ -> "decode_error"
   | Invalid_request _ -> "invalid_request"
+  | Concurrent_use _ -> "concurrent_use"
+  | Limit_exceeded _ -> "limit_exceeded"
   | Unsupported _ -> "unsupported"
   | Invalid_tool _ -> "invalid_tool"
 
@@ -215,6 +223,19 @@ let to_ai_error = function
       A.Decode_error { provider = "openai"; message; raw = raw_body }
   | Invalid_request message ->
       A.Invalid_request { provider = "openai"; message }
+  | Concurrent_use operation ->
+      A.Invalid_request
+        {
+          provider = "openai";
+          message = "concurrent OpenAI " ^ operation ^ " stream use";
+        }
+  | Limit_exceeded { kind; limit; actual } ->
+      A.Invalid_request
+        {
+          provider = "openai";
+          message =
+            Printf.sprintf "%s exceeded limit %d (actual %d)" kind limit actual;
+        }
   | Unsupported feature -> A.Unsupported { provider = "openai"; feature }
   | Invalid_tool { name; message } -> A.Invalid_tool { name; message }
 
@@ -246,6 +267,11 @@ let pp fmt = function
       Format.fprintf fmt "OpenAI decode error: %s" message
   | Invalid_request message ->
       Format.fprintf fmt "invalid OpenAI request: %s" message
+  | Concurrent_use operation ->
+      Format.fprintf fmt "concurrent OpenAI %s stream use" operation
+  | Limit_exceeded { kind; limit; actual } ->
+      Format.fprintf fmt "OpenAI %s exceeded limit %d (actual %d)" kind limit
+        actual
   | Unsupported feature -> Format.fprintf fmt "openai unsupported %s" feature
   | Invalid_tool { name; message } ->
       Format.fprintf fmt "invalid OpenAI tool %s: %s" name message

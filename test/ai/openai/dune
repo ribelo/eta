@@ -42,6 +42,23 @@
  (libraries eta_ai eta_ai_openai qcheck qcheck-core.runner))
 
 (test
+ (name test_speech_laws)
+ (modules test_speech_laws collector_math)
+ (libraries
+  eta
+  eta_ai
+  eta_ai_openai
+  eta_http
+  eta_test
+  qcheck
+  qcheck-core.runner)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))
+
+(copy_files ../../../lib/ai/openai/collector_math.ml)
+
+(test
  (name realtime_laws)
  (modules realtime_laws)
  (libraries eta_ai eta_ai_openai qcheck qcheck-core.runner))

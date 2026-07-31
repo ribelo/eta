@@ -143,7 +143,27 @@ end
 
 module Audio : sig
   module Voices : sig
-    type t = string
+    type custom_id = private string
+
+    val custom_id : string -> (custom_id, Error.t) Stdlib.result
+
+    type built_in =
+      | Alloy
+      | Ash
+      | Ballad
+      | Coral
+      | Echo
+      | Fable
+      | Onyx
+      | Nova
+      | Sage
+      | Shimmer
+      | Verse
+      | Marin
+      | Cedar
+      | Other of string
+
+    type t = Built_in of built_in | Custom of custom_id
   end
 
   module Speech_to_text : sig
@@ -200,13 +220,26 @@ module Audio : sig
   end
 
   module Text_to_speech : sig
-    type request = {
-      model : Eta_ai.model;
+    type model =
+      | Tts_1
+      | Tts_1_hd
+      | Gpt_4o_mini_tts
+      | Gpt_4o_mini_tts_2025_12_15
+      | Other of string
+
+    type response_format = Mp3 | Opus | Aac | Flac | Wav | Pcm
+    type stream_format = Audio | Sse
+
+    val model_to_string : model -> string
+
+    type request = private {
+      model : model;
       input : string;
       voice : Voices.t;
-      response_format : string option;
-      speed : float option;
       instructions : string option;
+      response_format : response_format option;
+      speed : float option;
+      stream_format : stream_format option;
       extra : (string * Eta_ai.Json.t) list;
     }
 
@@ -216,7 +249,7 @@ module Audio : sig
     }
 
     type configuration = {
-      model : Eta_ai.model;
+      model : model;
       instructions : string option;
       extra : (string * Eta_ai.Json.t) list;
     }
@@ -231,9 +264,32 @@ module Audio : sig
          and type configuration := configuration
          and type request_construction := request_construction
 
+    val request :
+      model:model ->
+      input:string ->
+      voice:Voices.t ->
+      ?instructions:string ->
+      ?response_format:response_format ->
+      ?speed:float ->
+      ?stream_format:stream_format ->
+      ?extra:(string * Eta_ai.Json.t) list ->
+      unit ->
+      (request, Error.t) Stdlib.result
+    (** Validates [input] as UTF-8 with the documented 4096-scalar limit.
+        Validates [instructions] as UTF-8 with a 4096-scalar limit.
+        Validates the inclusive finite 0.25-4.0 speed range.
+        Applies known-model instruction and SSE restrictions by canonical wire
+        identifier, including identifiers carried by [Other].
+        Known [tts-1] and [tts-1-hd] models reject built-in voices outside
+        their documented voice set, including known voices carried by [Other].
+        Rejects empty built-in and custom voice identifiers.
+        Rejects collisions between provider extra fields and owned fields.
+        Unknown future model and built-in voice identifiers remain
+        representable. *)
+
     val encode : request -> (Eta_ai.raw_json, Error.t) Stdlib.result
 
-    val request :
+    val http_request :
       ?provider:Eta_ai.provider ->
       api_key:Eta_ai.api_key ->
       request ->
@@ -245,6 +301,71 @@ module Audio : sig
       api_key:Eta_ai.api_key ->
       request ->
       (result, Error.t) Eta.Effect.t
+
+    type audio_stream
+    type event_stream
+
+    type event =
+      | Unknown of {
+          type_ : string;
+          raw : Eta_ai.Json.t;
+        }
+    (** Until OpenAI publishes a Speech SSE schema, every well-formed event is
+        preserved as [Unknown] with its event type and complete parsed JSON.
+        Framing accepts one leading UTF-8 BOM, CR, LF, CRLF, comments, ignored
+        fields, colonless fields, and multiline data according to WHATWG SSE.
+        An incomplete event at EOF is discarded. *)
+
+    val default_max_buffer_bytes : int
+    val default_max_json_bytes : int
+    val default_max_pending_events : int
+
+    val stream_audio :
+      ?provider:Eta_ai.provider ->
+      Eta_http.Client.t ->
+      api_key:Eta_ai.api_key ->
+      request ->
+      (audio_stream, Error.t) Eta.Effect.t
+
+    val read_audio :
+      audio_stream -> (bytes option, Error.t) Eta.Effect.t
+
+    val collect_audio :
+      max_bytes:int -> audio_stream -> (bytes, Error.t) Eta.Effect.t
+    (** Collection requires a caller-supplied nonnegative [max_bytes].
+        An over-limit pull fails nominally.
+        An invalid or exceeded collection limit releases the stream.
+        Streaming itself has no total-audio limit. *)
+
+    val close_audio : audio_stream -> (unit, Error.t) Eta.Effect.t
+
+    val stream_events :
+      ?max_buffer_bytes:int ->
+      ?max_json_bytes:int ->
+      ?max_pending_events:int ->
+      ?provider:Eta_ai.provider ->
+      Eta_http.Client.t ->
+      api_key:Eta_ai.api_key ->
+      request ->
+      (event_stream, Error.t) Eta.Effect.t
+    (** An unallocatable [max_buffer_bytes] or [max_json_bytes] override fails
+        with [Error.Invalid_request] without issuing an HTTP request. *)
+
+    val read_event :
+      event_stream -> (event option, Error.t) Eta.Effect.t
+
+    val close_events : event_stream -> (unit, Error.t) Eta.Effect.t
+    (** Constructing a speech stream operation does not mutate stream state,
+        acquire its operation gate, or release its response body.
+        Each speech stream permits one active read, collection, or close;
+        concurrent use fails immediately with [Error.Concurrent_use].
+        Normal completion, failure, cancellation, and explicit close release
+        the response body exactly once.
+        Cleanup failure is suppressed beneath the triggering failure.
+        Speech SSE applies positive default bounds to unframed bytes, decoded
+        JSON bytes, and pending events.
+        Each accepted per-operation override becomes the corresponding Speech
+        SSE bound. *)
   end
 
   module Realtime = Realtime
