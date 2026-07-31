@@ -1,7 +1,7 @@
 # Reference semantics worth keeping
 
 Type: research
-Status: open
+Status: claimed
 
 ## Question
 
