@@ -743,11 +743,11 @@ and handle_continuation t reader fragment frame =
           else reader_loop t reader (Some fragment))
 
 let make_connection ~sw ~flow ~selected_protocol ~max_frame_size
-    ~max_consecutive_pings initial =
+    ~incoming_capacity ~max_consecutive_pings initial =
   let t =
     {
       flow;
-      incoming = Queue.bounded ~capacity:default_incoming_capacity ();
+      incoming = Queue.bounded ~capacity:incoming_capacity ();
       write_mutex = Eio.Mutex.create ();
       close_sent = Atomic.make false;
       flow_closed = Atomic.make false;
@@ -772,9 +772,12 @@ let make_connection ~sw ~flow ~selected_protocol ~max_frame_size
   Spi.daemon (reader_loop t reader None) |> Effect.map (fun () -> t)
 
 let connect_on_flow ?(key = Codec.key_of_nonce (Openssl.random_bytes 16))
-    ?(max_frame_size = default_max_frame_size) ?headers ?protocols
+    ?(max_frame_size = default_max_frame_size)
+    ?(incoming_capacity = default_incoming_capacity) ?headers ?protocols
     ?(max_consecutive_pings = default_max_consecutive_pings) ~sw ~flow url =
   check_max_frame_size max_frame_size;
+  if incoming_capacity <= 0 then
+    invalid_arg "Eta_http_eio.Ws.Client: incoming_capacity must be > 0";
   check_max_consecutive_pings max_consecutive_pings;
   let open Effect in
   let connect =
@@ -796,14 +799,14 @@ let connect_on_flow ?(key = Codec.key_of_nonce (Openssl.random_bytes 16))
              match validate_handshake ?protocols key head with
              | Ok selected_protocol ->
                  make_connection ~sw ~flow ~selected_protocol ~max_frame_size
-                   ~max_consecutive_pings head.initial
+                   ~incoming_capacity ~max_consecutive_pings head.initial
              | Error error -> fail error)
   in
   connect
   |> bind_error (fun error ->
          sync (fun () -> close_flow flow) |> bind (fun () -> fail error))
 
-let connect ?ca_file ?key ?max_frame_size ?headers ?protocols
+let connect ?ca_file ?key ?max_frame_size ?incoming_capacity ?headers ?protocols
     ?max_consecutive_pings ~sw ~net raw_url =
   match validate_protocols (Option.value ~default:[] protocols) with
   | Error error -> Effect.fail error
@@ -817,14 +820,14 @@ let connect ?ca_file ?key ?max_frame_size ?headers ?protocols
           |> Effect.bind (fun tcp ->
                  match Url.scheme url with
                  | Http ->
-                     connect_on_flow ?key ?max_frame_size ?headers ?protocols
+                     connect_on_flow ?key ?max_frame_size ?incoming_capacity ?headers ?protocols
                        ~sw ?max_consecutive_pings ~flow:tcp url
                  | Https ->
                      Connect.connect_tls ~alpn_protocols:[ "http/1.1" ]
                        ?ca_file ~method_:"GET" target tcp
                      |> map_http_error
                      |> Effect.bind (fun (tls, _alpn) ->
-                            connect_on_flow ?key ?max_frame_size ?headers
+                            connect_on_flow ?key ?max_frame_size ?incoming_capacity ?headers
                               ?protocols ?max_consecutive_pings ~sw ~flow:tls
                               url)))
 

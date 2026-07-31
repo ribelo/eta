@@ -14,7 +14,7 @@
 
 (test
  (name run_eio)
- (modules run_eio openai_realtime_eio_tests)
+ (modules run_eio openai_realtime_protocol_tests openai_realtime_eio_tests)
  (libraries
   eta_ai_openai_common_tests
   eta_test_backend_eio
@@ -41,6 +41,11 @@
  (modules test_audio_laws)
  (libraries eta_ai eta_ai_openai qcheck qcheck-core.runner))
 
+(test
+ (name realtime_laws)
+ (modules realtime_laws)
+ (libraries eta_ai eta_ai_openai qcheck qcheck-core.runner))
+
 (rule
  (alias runtest)
  (deps
@@ -51,6 +56,7 @@
   %{workspace_root}/lib/ai/openai/realtime.mli
   %{workspace_root}/lib/ai/openai_compat/eta_ai_openai_compat.mli
   %{workspace_root}/lib/ai/openai_compat/compat_error.mli
-  %{workspace_root}/lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.mli)
+  %{workspace_root}/lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.mli
+  %{workspace_root}/lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml)
  (action
   (run bash %{dep:check_no_ai_error_leak.sh})))

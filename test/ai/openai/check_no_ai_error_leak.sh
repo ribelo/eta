@@ -16,6 +16,7 @@ files = [
     root / "lib/ai/openai_compat/eta_ai_openai_compat.mli",
     root / "lib/ai/openai_compat/compat_error.mli",
     root / "lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.mli",
+    root / "lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml",
 ]
 
 def strip_ocaml_comments(text: str) -> str:
@@ -101,18 +102,47 @@ if re.search(r"\bval stream_provider\b", eta_text):
     errors.append("lib/ai/eta_ai.mli: forbidden top-level stream_provider")
 
 realtime = texts[root / "lib/ai/openai/realtime.mli"]
-if not re.search(r"val decode_server_event : Eta_ai\.raw_json -> \(server_event, error\) result", realtime):
-    errors.append("lib/ai/openai/realtime.mli: raw decoder is not nominal")
+for sibling in ["Conversation", "Transcription", "Translation"]:
+    if realtime.count(f"module {sibling} : sig") != 1:
+        errors.append(f"lib/ai/openai/realtime.mli: missing unique {sibling} sibling")
+for forbidden in [
+    "Raw_client_event",
+    "Raw_server_event",
+    "type session = Conversation.session",
+    "type client_event = Conversation.client_event",
+    "type server_event = Conversation.server_event",
+]:
+    if forbidden in realtime:
+        errors.append(f"lib/ai/openai/realtime.mli: forbidden compatibility surface {forbidden}")
+decoder = r"val decode_server_event : Eta_ai\.raw_json -> \(server_event, codec_error\) result"
+if len(re.findall(decoder, realtime)) != 3:
+    errors.append("lib/ai/openai/realtime.mli: all three raw decoders must use their nominal codec_error")
 
 eio = texts[root / "lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.mli"]
-if not re.search(r"type realtime_error = \[ Eta_http_eio\.Ws\.Client\.ws_error \| `Openai_error of Eta_ai_openai\.Error\.t \]", eio):
-    errors.append("lib/ai/openai_realtime_eio.mli: realtime_error does not structurally retain OpenAI Error.t")
-for signature in [
-    r"val read_event : t -> \(Eta_ai_openai\.Audio\.Realtime\.server_event option, realtime_error\) Eta\.Effect\.t",
-    r"val events : t -> \(Eta_ai_openai\.Audio\.Realtime\.server_event, realtime_error\) Eta_stream\.Stream\.t",
-]:
-    if not re.search(signature, eio):
-        errors.append(f"lib/ai/openai_realtime_eio.mli: missing nominal signature matching {signature}")
+for sibling in ["Conversation", "Transcription", "Translation"]:
+    if eio.count(f"module {sibling} : sig") != 1:
+        errors.append(f"lib/ai/openai_realtime_eio.mli: missing unique {sibling} connection module")
+if len(re.findall(r"\btype t\b", eio)) != 3:
+    errors.append("lib/ai/openai_realtime_eio.mli: connection types are not three distinct abstracts")
+error_shape = r"type error = \| Websocket of Eta_http_eio\.Ws\.Client\.ws_error \| Openai_error of Eta_ai_openai\.Error\.t \| Concurrent_read \| Already_finished \| Finished \| Aborted \| Timeout"
+if len(re.findall(error_shape, eio)) != 3:
+    errors.append("lib/ai/openai_realtime_eio.mli: all three transport errors must be distinct regular nominal types retaining OpenAI Error.t")
+if "type error = [" in eio:
+    errors.append("lib/ai/openai_realtime_eio.mli: structural polymorphic transport errors are forbidden")
+for protocol in ["Conversation", "Transcription", "Translation"]:
+    event = rf"Eta_ai_openai\.Audio\.Realtime\.{protocol}\.server_event"
+    for signature in [
+        rf"val read_event : t -> \({event} option, error\) Eta\.Effect\.t",
+        rf"val events : t -> \({event}, error\) Eta_stream\.Stream\.t",
+    ]:
+        if not re.search(signature, eio):
+            errors.append(f"lib/ai/openai_realtime_eio.mli: missing nominal signature matching {signature}")
+
+eio_impl = texts[root / "lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml"]
+if 'let path = "/v1/realtime/translations"' not in eio_impl:
+    errors.append("lib/ai/openai_realtime_eio.ml: translation endpoint path is not dedicated")
+if 'path ^ "?model=" ^ percent_encode model' not in eio_impl:
+    errors.append("lib/ai/openai_realtime_eio.ml: realtime model is not selected in the WebSocket query")
 
 if errors:
     print("\n".join(errors), file=sys.stderr)

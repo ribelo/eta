@@ -33,6 +33,7 @@ val default_incoming_capacity : int
 val connect_on_flow :
   ?key:string ->
   ?max_frame_size:int ->
+  ?incoming_capacity:int ->
   ?headers:Header.t ->
   ?protocols:string list ->
   ?max_consecutive_pings:int ->
@@ -46,6 +47,7 @@ val connect :
   ?ca_file:string ->
   ?key:string ->
   ?max_frame_size:int ->
+  ?incoming_capacity:int ->
   ?headers:Header.t ->
   ?protocols:string list ->
   ?max_consecutive_pings:int ->

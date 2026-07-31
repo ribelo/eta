@@ -4,4 +4,4 @@ module Suite =
 
 let () =
   Alcotest.run "eta-ai-openai-eio-shared"
-    (Suite.tests @ Openai_realtime_eio_tests.tests)
+    (Suite.tests @ Openai_realtime_protocol_tests.tests @ Openai_realtime_eio_tests.tests)

@@ -1167,21 +1167,27 @@ let test_openai_image_content_wire_shape () =
 
 let test_realtime_session_json () =
   let session =
-    O.Audio.Realtime.session ~model:"gpt-realtime-2" ~instructions:"stay brief"
-      ~input_audio_format:A.Pcm16 ~output_audio_format:A.G711_ulaw ~voice:"verse"
-      ~max_output_tokens:128 ()
+    O.Audio.Realtime.Conversation.session ~model:"gpt-realtime-2" ~instructions:"stay brief"
+      ~input_audio_format:O.Audio.Realtime.Conversation.Pcm16_24khz
+      ~output_audio_format:O.Audio.Realtime.Conversation.G711_ulaw
+      ~voice:(O.Audio.Realtime.Conversation.Named "verse")
+      ~max_output_tokens:(O.Audio.Realtime.Conversation.Tokens 128) ()
+    |> expect_ok "realtime session"
   in
-  let raw = O.Audio.Realtime.session_to_string session in
+  let raw = O.Audio.Realtime.Conversation.session_to_string session in
   require_contains "realtime type" ~needle:"\"type\":\"realtime\"" raw;
-  require_contains "modalities" ~needle:"\"output_modalities\":[\"text\",\"audio\"]" raw;
+  require_contains "modalities" ~needle:"\"output_modalities\":[\"audio\"]" raw;
   require_contains "pcm format" ~needle:"\"type\":\"audio/pcm\"" raw;
   require_contains "ulaw format" ~needle:"\"type\":\"audio/pcmu\"" raw;
   require_contains "voice" ~needle:"\"voice\":\"verse\"" raw
 
 let test_realtime_client_secret_request () =
-  let session = O.Audio.Realtime.session ~model:"gpt-realtime-2" () in
+  let session =
+    O.Audio.Realtime.Conversation.session ~model:"gpt-realtime-2" ()
+    |> expect_ok "realtime session"
+  in
   let request =
-    O.Audio.Realtime.client_secret_request ~base_url:"https://api.openai.test"
+    O.Audio.Realtime.Conversation.client_secret_request ~base_url:"https://api.openai.test"
       ~api_key:(A.api_key "sk-test") session
   in
   Alcotest.(check string)
@@ -1198,39 +1204,43 @@ let test_realtime_client_event_audio_append () =
     | _ -> Alcotest.fail "expected audio"
   in
   let raw =
-    O.Audio.Realtime.client_event_to_string (O.Audio.Realtime.Input_audio_buffer_append audio)
+    O.Audio.Realtime.Conversation.client_event_to_string
+      (O.Audio.Realtime.Conversation.Input_audio_buffer_append
+         { audio; event_id = None })
   in
   require_contains "append type" ~needle:"\"type\":\"input_audio_buffer.append\"" raw;
   require_contains "audio data" ~needle:"\"audio\":\"AAECAw==\"" raw
 
 let test_realtime_decode_server_events () =
   (match
-     O.Audio.Realtime.decode_server_event
+     O.Audio.Realtime.Conversation.decode_server_event
        "{\"type\":\"response.output_audio.delta\",\"delta\":\"abc\"}"
    with
-  | Stdlib.Ok (O.Audio.Realtime.Response_audio_delta "abc") -> ()
+  | Stdlib.Ok (O.Audio.Realtime.Conversation.Response_audio_delta { delta = "abc"; _ }) -> ()
   | _ -> Alcotest.fail "expected audio delta");
   (match
-     O.Audio.Realtime.decode_server_event
-       "{\"type\":\"error\",\"error\":{\"code\":\"bad_request\",\"message\":\"nope\"}}"
+     O.Audio.Realtime.Conversation.decode_server_event
+       "{\"type\":\"error\",\"event_id\":\"ev-err\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"bad_request\",\"message\":\"nope\"}}"
    with
   | Stdlib.Ok
-      (O.Audio.Realtime.Server_error
+      (O.Audio.Realtime.Conversation.Error
          { code = Some "bad_request"; message = "nope"; _ }) ->
       ()
   | _ -> Alcotest.fail "expected realtime error event");
-  match O.Audio.Realtime.decode_server_event "{not-json" with
-  | Stdlib.Error (O.Error.Decode { raw_body = Some "{not-json"; _ }) -> ()
-  | Stdlib.Error (O.Error.Decode _) -> ()
+  match O.Audio.Realtime.Conversation.decode_server_event "{not-json" with
+  | Stdlib.Error (O.Audio.Realtime.Conversation.Decode { raw_body = Some "{not-json"; _ }) -> ()
+  | Stdlib.Error (O.Audio.Realtime.Conversation.Decode _) -> ()
   | Stdlib.Ok _ -> Alcotest.fail "malformed frame must not succeed"
-  | Stdlib.Error _ -> Alcotest.fail "expected Decode for malformed frame"
 
 let test_airealtime_shared_codec_contract () =
   (* airealtime-02ky/5xcr/xem8/6gv2: the shared codec shape keeps OpenAI's
      session and event types and admits binary messages without adding them to
      OpenAI's lossless event algebra. *)
-  let session = O.Audio.Realtime.session ~model:"gpt-realtime-2" () in
-  (match O.Audio.Realtime.Codec.encode_session session with
+  let session =
+    O.Audio.Realtime.Conversation.session ~model:"gpt-realtime-2" ()
+    |> expect_ok "realtime session"
+  in
+  (match O.Audio.Realtime.Conversation.Codec.encode_session session with
   | A.Realtime.Text raw ->
       require_contains "session update frame"
         ~needle:"\"type\":\"session.update\"" raw;
@@ -1238,12 +1248,11 @@ let test_airealtime_shared_codec_contract () =
         raw
   | A.Realtime.Binary _ -> Alcotest.fail "OpenAI session must encode as text");
   match
-    O.Audio.Realtime.Codec.decode_server_event
+    O.Audio.Realtime.Conversation.Codec.decode_server_event
       (A.Realtime.Binary (Bytes.of_string "\000\001"))
   with
-  | Stdlib.Error (O.Error.Decode { message; _ }) ->
+  | Stdlib.Error (O.Audio.Realtime.Conversation.Decode { message; _ }) ->
       require_contains "provider binary policy" ~needle:"binary" message
-  | Stdlib.Error _ -> Alcotest.fail "expected Decode for binary"
   | Stdlib.Ok _ -> Alcotest.fail "expected OpenAI binary policy error"
 
 let test_airealtime_nfad_transport_lifecycle () =
