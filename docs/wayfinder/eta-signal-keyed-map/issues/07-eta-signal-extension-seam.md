@@ -1,6 +1,7 @@
 # Eta Signal extension seam
 
 Type: prototype
+Status: claimed
 Blocked by: 05, 06
 
 ## Question
