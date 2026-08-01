@@ -1,6 +1,7 @@
 # Map kernel prototype
 
 Type: prototype
+Status: claimed
 Blocked by: 04
 
 ## Question
