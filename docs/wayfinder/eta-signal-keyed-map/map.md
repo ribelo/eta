@@ -37,6 +37,7 @@ verification through the Nix flake.
 - [Balancing algorithm evidence](issues/04-balancing-algorithm-evidence.md) — Use a clean-room weight-balanced tree and treat Base as a behavioral oracle.
 - [Map kernel prototype](issues/05-map-kernel-prototype.md) — Use a persistent weight-balanced tree with physical-subtree skipping and ordered fallback cursors.
 - [Public map API and key discipline](issues/06-public-map-api-and-key-discipline.md) — Publish a small `Map.Make` interface with duplicate rejection and physical-only symmetric diff.
+- [Eta Signal extension seam](issues/07-eta-signal-extension-seam.md) — Use a package-private signal kernel and a closed `Eta_signal_map` graph factory.
 
 ## Not yet specified
 
