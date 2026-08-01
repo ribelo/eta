@@ -35,6 +35,7 @@ verification through the Nix flake.
 - [Current Eta map consumers](issues/02-current-eta-map-consumers.md) — No current package has a material diffable-map use beyond the planned keyed signal layer.
 - [Diffable map product boundary](issues/03-diffable-map-product-boundary.md) — Publish an Eta-owned `Eta_signal_map.Map`, use it directly, and limit V1 to one keyed operator.
 - [Balancing algorithm evidence](issues/04-balancing-algorithm-evidence.md) — Use a clean-room weight-balanced tree and treat Base as a behavioral oracle.
+- [Map kernel prototype](issues/05-map-kernel-prototype.md) — Use a persistent weight-balanced tree with physical-subtree skipping and ordered fallback cursors.
 
 ## Not yet specified
 
