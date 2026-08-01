@@ -1,7 +1,7 @@
 # Keyed assoc and stable child identity
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 03
 
 ## Question
