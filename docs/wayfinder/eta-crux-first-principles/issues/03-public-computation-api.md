@@ -127,6 +127,28 @@ An explicit graph or scope argument exposes private engine machinery. It also
 adds an argument to every structural constructor. The description interpreter
 already owns this information.
 
+### Bonsai functor history
+
+Bonsai v0.13 exposed `Bonsai.Make (Incr) (Event)`. The functor let a host select
+an Incremental instance and an event type. Bonsai removed this public functor in
+June 2020 and bound the package to fixed UI Incremental and event modules.
+
+This removal was not the Proc-to-Cont migration. Proc appeared in 2020. Cont
+appeared in 2024 and is now the default. Current Cont uses one `'a t` and an
+explicit `local_ graph` construction argument. Incremental itself still uses a
+generative `Incremental.Make ()`.
+
+The public sources do not state why Jane Street removed `Bonsai.Make`. Therefore,
+Eta Crux does not use that removal as proof for either design. Engine
+generativity and the public computation interface are separate decisions.
+
+The Eta Crux decision remains unchanged. `Root.create` privately creates an
+`eta_signal` graph for a graph-neutral description. This design permits isolated
+roots without a public functor or graph capability.
+
+The full source review records the timeline and the tradeoffs:
+[bonsai-functor-history.md](../../../../.scratch/research/eta-crux/bonsai-functor-history.md).
+
 ### Prototype evidence
 
 The selected prototype is on branch

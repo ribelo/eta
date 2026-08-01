@@ -9,8 +9,8 @@ question for implementation.
 
 ## Notes
 
-This is a hobby project. Elegance, depth, and what we want to learn have more
-authority than market demand or compatibility with another framework.
+This is a hobby project. Elegance, taste, depth, and what we want to learn have
+more authority than market demand or compatibility with another framework.
 
 The package name `eta_crux` is fixed. Its design is not fixed. Use **Rust Crux**
 for the Rust framework and **Eta Crux** for this project. Rust Crux, Elm,
@@ -23,10 +23,12 @@ The existing material is provisional input, not settled direction:
 - `docs/prds/0002-eta-signal-frp.md`
 - `docs/design/eta_signal-kernel-contract.md`
 - `/home/ribelo/projects/ribelo/sliml/docs/`
+- `/home/ribelo/projects/ribelo/taumel/`
 
-Sliml is the first concrete adapter and a useful falsifier. It is one host, not
-the architecture. A host adapter owns rendering. Eta Crux ends at compositional
-computation and typed output.
+Sliml is the first adapter experiment and remains useful prior evidence. Taumel
+is the first active consumer and the near-term testing ground. Neither project
+defines the architecture. A host adapter owns rendering. Eta Crux ends at
+compositional computation and typed output.
 
 Verify reference claims in source. Relevant local checkouts are
 `/home/ribelo/projects/github/bonsai`,
@@ -43,7 +45,7 @@ deliverable. Implementation is not part of this map.
 
 - [Eta Crux first-principles direction](issues/01-eta-crux-direction.md) — Build a Bonsai-like layer over private `eta_signal`, with Eta effects, deterministic advancement, typed output, and host-owned rendering.
 - [Reference semantics worth keeping](issues/02-reference-semantics.md) — Keep Bonsai computation laws and Incremental engine laws. Keep only the managed-effects idea from Elm and Rust Crux. Reject copied capability ports, Cmd/Sub, and fragment trees ([report](../../../.scratch/research/eta-crux/reference-semantics.md)).
-- [Graph-neutral computation descriptions](issues/03-public-computation-api.md) — Use one identity-bearing, root-neutral `'a t`. Each root creates isolated live state, and no root can enter description composition.
+- [Graph-neutral computation descriptions](issues/03-public-computation-api.md) — Use one identity-bearing, root-neutral `'a t`. Each root creates isolated live state, and no root can enter description composition ([Bonsai history](../../../.scratch/research/eta-crux/bonsai-functor-history.md)).
 
 ## Not yet specified
 
@@ -53,8 +55,8 @@ deliverable. Implementation is not part of this map.
   computation API, keyed composition, and output-delivery design.
 - **Requirement and ADR replacement.** The old bundle must be reconciled or
   replaced after the design decisions reveal the final document structure.
-- **Additional hosts.** Sliml validates one retained foreign-loop host. The next
-  useful host type is unclear until the generic adapter contract exists.
+- **Additional hosts.** Taumel is the active testing ground. The next distinct
+  host type is unclear until the generic adapter contract exists.
 
 ## Out of scope
 
@@ -62,6 +64,6 @@ deliverable. Implementation is not part of this map.
 - A renderer, widget library, form library, or routing framework inside Eta
   Crux.
 - Compatibility with Rust Crux, Elm, or Bonsai APIs.
-- Sliml implementation details beyond the contract that an Eta Crux adapter
-  consumes.
+- Sliml and Taumel implementation details beyond the Eta Crux contracts that
+  they use.
 - Eta Crux implementation as a deliverable of this map.
