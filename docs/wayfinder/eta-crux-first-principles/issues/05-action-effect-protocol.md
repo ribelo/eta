@@ -1,7 +1,7 @@
 # Action injection and staged Eta effects
 
 Type: grilling
-Status: open
+Status: claimed
 Blocked by: 02
 
 ## Question
