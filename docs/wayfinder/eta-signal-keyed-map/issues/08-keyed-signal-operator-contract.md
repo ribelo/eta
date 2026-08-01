@@ -1,6 +1,7 @@
 # Keyed signal operator contract
 
 Type: prototype
+Status: claimed
 Blocked by: 06, 07
 
 ## Question
