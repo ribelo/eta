@@ -11,6 +11,10 @@ Specify one property or registered test for each law-bearing public claim. Cover
 ordering, uniqueness, lookup after edits, persistence, ancestry preservation,
 diff ordering, diff completeness, and forward and reverse reconstruction.
 
+Also cover duplicate rejection, stable key representatives, physical no-op
+identity, extensional equality without physical shortcuts, physical-only
+`Changed`, and conditional ancestry retention through `map` and `filter_mapi`.
+
 Separate semantic laws from performance observations. A semantic law must hold
 for independently built maps. An ancestry-performance claim uses the benchmark
 ticket instead.

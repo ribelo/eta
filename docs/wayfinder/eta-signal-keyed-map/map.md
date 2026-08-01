@@ -36,6 +36,7 @@ verification through the Nix flake.
 - [Diffable map product boundary](issues/03-diffable-map-product-boundary.md) — Publish an Eta-owned `Eta_signal_map.Map`, use it directly, and limit V1 to one keyed operator.
 - [Balancing algorithm evidence](issues/04-balancing-algorithm-evidence.md) — Use a clean-room weight-balanced tree and treat Base as a behavioral oracle.
 - [Map kernel prototype](issues/05-map-kernel-prototype.md) — Use a persistent weight-balanced tree with physical-subtree skipping and ordered fallback cursors.
+- [Public map API and key discipline](issues/06-public-map-api-and-key-discipline.md) — Publish a small `Map.Make` interface with duplicate rejection and physical-only symmetric diff.
 
 ## Not yet specified
 

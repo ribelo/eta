@@ -26,6 +26,12 @@ owns effect cancellation and lifecycle-hook values.
 Decide how map diff equality and per-key publication equality interact. The map
 must report every structural change that the operator needs for correctness.
 
+For each physical `Changed`, compare the new map data with the currently
+published child data. Do not compare only two consecutive raw map snapshots.
+Cover a non-transitive cutoff where `A` equals `B`, `B` equals `C`, and `A` does
+not equal `C`. In-place mutation of one physical data object remains
+unobservable under the Eta Signal immutable-payload contract.
+
 Compare the final shape with `Incr_map.mapi'`. Do not add another public keyed
 operator during this ticket.
 
