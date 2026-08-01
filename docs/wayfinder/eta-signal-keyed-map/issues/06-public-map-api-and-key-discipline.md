@@ -1,6 +1,7 @@
 # Public map API and key discipline
 
 Type: prototype
+Status: claimed
 Blocked by: 05
 
 ## Question
