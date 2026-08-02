@@ -3238,6 +3238,9 @@ let string_of_supervisor_terminal = function
   | Supervisor_clean_interruption -> "clean_interruption"
   | Supervisor_cleanup_failure -> "cleanup_failure"
 
+let supervisor_terminal_event terminal =
+  "request-cancel-finalizer:" ^ string_of_supervisor_terminal terminal
+
 let resolve_ok promise value =
   Eta.Promise.resolve promise (Eta.Exit.Ok value) |> E.discard
 
@@ -3252,11 +3255,20 @@ let supervisor_request_program terminal request_count finalizer_count =
   let module S = Eta.Supervisor in
   match terminal with
   | Supervisor_completed ->
+      let release () =
+        E.sync (fun () -> incr finalizer_count)
+        |> E.bind (fun () ->
+               Eta_observability.log_info
+                 (supervisor_terminal_event terminal))
+      in
+      let child =
+        E.acquire_release ~acquire:E.unit ~release |> E.map (fun () -> 7)
+      in
       S.scoped {
         run =
           fun supervisor ->
             let open S.Scope in
-            let* child = start supervisor (pure 7) in
+            let* child = start supervisor (lift child) in
             let* value = await child in
             let* () = request_cancel_n child request_count in
             let* () = cancel child in
@@ -3264,11 +3276,21 @@ let supervisor_request_program terminal request_count finalizer_count =
       }
       |> E.map (fun value -> (value, !finalizer_count))
   | Supervisor_typed_failure ->
+      let release () =
+        E.sync (fun () -> incr finalizer_count)
+        |> E.bind (fun () ->
+               Eta_observability.log_info
+                 (supervisor_terminal_event terminal))
+      in
+      let child =
+        E.acquire_release ~acquire:E.unit ~release
+        |> E.bind (fun () -> E.fail 17)
+      in
       S.scoped {
         run =
           fun supervisor ->
             let open S.Scope in
-            let* child = start supervisor (fail 17) in
+            let* child = start supervisor (lift child) in
             let rec wait_for_failure attempts =
               let* observed = failures supervisor in
               if observed <> [] then pure ()
@@ -3287,6 +3309,9 @@ let supervisor_request_program terminal request_count finalizer_count =
       let cleanup_fails = terminal = Supervisor_cleanup_failure in
       let release () =
         E.sync (fun () -> incr finalizer_count)
+        |> E.bind (fun () ->
+               Eta_observability.log_info
+                 (supervisor_terminal_event terminal))
         |> E.bind (fun () -> if cleanup_fails then E.fail 23 else E.unit)
       in
       let child =
@@ -3301,10 +3326,7 @@ let supervisor_request_program terminal request_count finalizer_count =
             let* child = start supervisor (lift child) in
             let* () = lift (Eta.Promise.await ready) in
             let* () = request_cancel_n child request_count in
-            if cleanup_fails then
-              let* () = cancel child in
-              pure 0
-            else pure 0;
+            await child;
       }
       |> E.map (fun value -> (value, !finalizer_count))
 
@@ -3317,16 +3339,19 @@ let run_supervisor_request terminal request_count =
 
 let supervisor_terminal_matches terminal outcome finalizer_count =
   match (terminal, outcome.Run.exit) with
-  | Supervisor_completed, Eta.Exit.Ok (7, 0) -> finalizer_count = 0
+  | Supervisor_completed, Eta.Exit.Ok (7, 1) -> finalizer_count = 1
   | Supervisor_typed_failure, Eta.Exit.Error (Eta.Cause.Fail 17) ->
-      finalizer_count = 0
-  | Supervisor_clean_interruption, Eta.Exit.Ok (0, 1) -> finalizer_count = 1
+      finalizer_count = 1
+  | Supervisor_clean_interruption, Eta.Exit.Error (Eta.Cause.Interrupt None) ->
+      finalizer_count = 1
   | ( Supervisor_cleanup_failure,
       Eta.Exit.Error
         (Eta.Cause.Suppressed
           {
-            primary = Eta.Cause.Interrupt _;
-            finalizer = Eta.Cause.Finalizer.Fail { error = _; rendered = _ };
+            primary = Eta.Cause.Interrupt None;
+            finalizer =
+              Eta.Cause.Finalizer.Fail
+                { error = _; rendered = "<typed failure>" };
           }) ) ->
       finalizer_count = 1
   | _ -> false
@@ -3346,6 +3371,8 @@ let check_supervisor_request_idempotence terminal request_count =
     same_observation
     && supervisor_terminal_matches terminal one one_finalizers
     && supervisor_terminal_matches terminal repeated repeated_finalizers
+    && log_bodies one = [ supervisor_terminal_event terminal ]
+    && log_bodies repeated = [ supervisor_terminal_event terminal ]
     && no_pending one && no_pending repeated
   then true
   else

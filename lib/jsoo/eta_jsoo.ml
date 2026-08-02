@@ -366,8 +366,8 @@ let protect_impl ~check_after f =
           restore ();
           raise exn
 
-let protect_without_check f = protect_impl ~check_after:false f
 let protect f = protect_impl ~check_after:true f
+let protect_without_check f = protect_impl ~check_after:false f
 
 let restore_cancellation f =
   let fiber = current () in

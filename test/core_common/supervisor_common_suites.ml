@@ -716,12 +716,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       B.yield ();
       wait_until ~attempts:(attempts - 1) label pred)
 
+  exception Request_cancel_defect
+
   (* supcan-stst supcan-f3ww supcan-3sp7 supcan-kptd supcan-0uj5 supcan-vb4t *)
   let test_supervisor_request_cancel_returns_before_settlement () =
     B.with_runtime @@ fun ctx rt ->
     let ready, mark_ready = B.create_promise () in
     let cleanup_started, mark_cleanup_started = B.create_promise () in
     let release_cleanup, release = B.create_promise () in
+    let allow_fence, allow = B.create_promise () in
     let request_returned, mark_request_returned = B.create_promise () in
     let child =
       E.acquire_release
@@ -742,24 +745,36 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             let* () = lift (B.await_effect ready) in
             let* () = request_cancel child in
             let* () = lift (E.sync (fun () -> B.resolve mark_request_returned ())) in
+            let* () = lift (B.await_effect allow_fence) in
             cancel child;
       }
     in
     let result = B.fork_run ctx rt program in
-    wait_until "request return" (fun () -> B.is_resolved request_returned);
-    wait_until "cleanup start" (fun () -> B.is_resolved cleanup_started);
-    Alcotest.(check bool) "settlement remains pending" false (B.is_resolved result);
-    B.resolve release ();
-    match B.await result with
-    | Exit.Ok () -> ()
-    | Exit.Error cause ->
-        Alcotest.failf "unexpected request cancellation failure: %a"
-          (Cause.pp pp_hidden) cause
+    Fun.protect
+      ~finally:(fun () ->
+        B.try_resolve allow ();
+        B.try_resolve release ())
+      (fun () ->
+        wait_until "request return" (fun () -> B.is_resolved request_returned);
+        wait_until "cleanup start" (fun () -> B.is_resolved cleanup_started);
+        Alcotest.(check bool)
+          "settlement remains pending" false (B.is_resolved result);
+        B.resolve allow ();
+        B.yield ();
+        Alcotest.(check bool)
+          "settlement remains held after fence" false (B.is_resolved result);
+        B.resolve release ();
+        match B.await result with
+        | Exit.Ok () -> ()
+        | Exit.Error cause ->
+            Alcotest.failf "unexpected request cancellation failure: %a"
+              (Cause.pp pp_hidden) cause)
 
   (* supcan-stst supcan-zqzf supcan-glb2 *)
   let test_supervisor_request_cancel_latches_before_child_start () =
-    B.with_runtime @@ fun _ctx rt ->
-    let start_gate, _release_start = B.create_promise () in
+    B.with_runtime @@ fun ctx rt ->
+    let start_gate, release_start = B.create_promise () in
+    let request_returned, mark_request_returned = B.create_promise () in
     let body_started = ref false in
     let child =
       B.await_effect start_gate
@@ -772,43 +787,41 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             let open Supervisor.Scope in
             let* child = start sup (lift child) in
             let* () = request_cancel child in
-            let* () = cancel child in
-            pure !body_started;
+            let* () =
+              lift (E.sync (fun () -> B.resolve mark_request_returned ()))
+            in
+            await child;
       }
     in
-    match B.run rt program with
-    | Exit.Ok false -> ()
-    | Exit.Ok true -> Alcotest.fail "child body started after a latched request"
-    | Exit.Error cause ->
-        Alcotest.failf "unexpected pre-start cancellation failure: %a"
-          (Cause.pp pp_hidden) cause
+    let result = B.fork_run ctx rt program in
+    Fun.protect ~finally:(fun () -> B.try_resolve release_start ()) (fun () ->
+        wait_until "pre-start request return" (fun () ->
+            B.is_resolved request_returned);
+        wait_until "pre-start child settlement" (fun () -> B.is_resolved result);
+        Alcotest.(check bool) "child body did not start" false !body_started;
+        match B.await result with
+        | Exit.Error (Cause.Interrupt None) -> ()
+        | Exit.Error cause ->
+            Alcotest.failf "unexpected pre-start cancellation failure: %a"
+              (Cause.pp pp_hidden) cause
+        | Exit.Ok () -> Alcotest.fail "latched request did not interrupt child")
 
   (* supcan-3os1 supcan-glb2 supcan-tg7n *)
   let test_supervisor_request_cancel_preserves_terminal_winners () =
-    let completion =
-      B.with_runtime @@ fun _ctx rt ->
-      let program =
-        Supervisor.scoped {
-          run =
-            fun sup ->
-              let open Supervisor.Scope in
-              let* child = start sup (pure 42) in
-              let* value = await child in
-              let* () = request_cancel child in
-              let* () = cancel child in
-              pure value;
-        }
-      in
-      B.run rt program
+    let error_pp fmt = function
+      | `Boom -> Format.pp_print_string fmt "Boom"
+      | `Cleanup_failed -> Format.pp_print_string fmt "Cleanup_failed"
+      | `Failure_not_observed ->
+          Format.pp_print_string fmt "Failure_not_observed"
     in
-    let failure =
+    let late_failure child =
       B.with_runtime @@ fun _ctx rt ->
       let program =
         Supervisor.scoped {
           run =
             fun sup ->
               let open Supervisor.Scope in
-              let* child = start sup (fail `Boom) in
+              let* child = start sup (lift child) in
               let rec wait_for_failure attempts =
                 let* observed = failures sup in
                 if observed <> [] then pure ()
@@ -821,8 +834,33 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
               let* () = request_cancel child in
               await child;
         }
+        |> Eta_observability.with_error_pp error_pp
       in
       B.run rt program
+    in
+    let completion =
+      B.with_runtime @@ fun _ctx rt ->
+      let program =
+        Supervisor.scoped {
+          run =
+            fun sup ->
+              let open Supervisor.Scope in
+              let* child = start sup (pure 42) in
+              let* _ = await child in
+              let* () = request_cancel child in
+              await child;
+        }
+      in
+      B.run rt program
+    in
+    let typed_failure = late_failure (E.fail `Boom) in
+    let defect =
+      late_failure (E.sync (fun () -> raise Request_cancel_defect))
+    in
+    let finalizer_failure =
+      late_failure
+        (E.acquire_release ~acquire:E.unit
+           ~release:(fun () -> E.fail `Cleanup_failed))
     in
     (match completion with
     | Exit.Ok 42 -> ()
@@ -831,69 +869,219 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Error cause ->
         Alcotest.failf "late request changed completion to %a"
           (Cause.pp pp_hidden) cause);
-    match failure with
+    (match typed_failure with
     | Exit.Error (Cause.Fail `Boom) -> ()
     | Exit.Error cause ->
         Alcotest.failf "late request changed typed failure to %a"
           (Cause.pp pp_hidden) cause
-    | Exit.Ok () -> Alcotest.fail "late request changed typed failure to Ok"
+    | Exit.Ok () -> Alcotest.fail "late request changed typed failure to Ok");
+    (match defect with
+    | Exit.Error (Cause.Die { exn; _ }) when exn == Request_cancel_defect -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "late request changed defect to %a" (Cause.pp pp_hidden)
+          cause
+    | Exit.Ok () -> Alcotest.fail "late request changed defect to Ok");
+    match finalizer_failure with
+    | Exit.Error
+        (Cause.Finalizer
+          (Cause.Finalizer.Fail
+            { error = _; rendered = "Cleanup_failed" })) ->
+        ()
+    | Exit.Error cause ->
+        Alcotest.failf "late request changed finalizer failure to %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok () -> Alcotest.fail "late request changed finalizer failure to Ok"
 
   (* supcan-3sp7 supcan-dyvd supcan-nnq7 *)
   let test_supervisor_cancel_after_request_preserves_settlement_diagnostics () =
-    B.with_runtime @@ fun _ctx rt ->
-    let ready, mark_ready = B.create_promise () in
-    let child =
-      E.acquire_release
-        ~acquire:E.unit
-        ~release:(fun () -> E.fail `Cleanup_failed)
-      |> E.bind (fun () ->
-             E.sync (fun () -> B.resolve mark_ready ())
-             |> E.bind (fun () -> E.never))
+    let late_cancel child =
+      B.with_runtime @@ fun _ctx rt ->
+      let program =
+        Supervisor.scoped {
+          run =
+            fun sup ->
+              let open Supervisor.Scope in
+              let* child = start sup (lift child) in
+              let rec wait_for_failure attempts =
+                let* observed = failures sup in
+                if observed <> [] then pure ()
+                else if attempts = 0 then fail `Failure_not_observed
+                else
+                  let* () = yield in
+                  wait_for_failure (attempts - 1)
+              in
+              let* () = wait_for_failure 20 in
+              let* () = request_cancel child in
+              cancel child;
+        }
+      in
+      B.run rt program
     in
-    let program =
-      Supervisor.scoped {
-        run =
-          fun sup ->
-            let open Supervisor.Scope in
-            let* child = start sup (lift child) in
-            let* () = lift (B.await_effect ready) in
-            let* () = request_cancel child in
-            cancel child;
-      }
-      |> Eta_observability.with_error_pp (fun fmt -> function
-           | `Cleanup_failed -> Format.pp_print_string fmt "Cleanup_failed")
+    let run_requested_cleanup ~fails =
+      B.with_runtime @@ fun _ctx rt ->
+      let ready, mark_ready = B.create_promise () in
+      let finalizer_count = ref 0 in
+      let release () =
+        E.sync (fun () -> incr finalizer_count)
+        |> E.bind (fun () -> if fails then E.fail `Cleanup_failed else E.unit)
+      in
+      let child =
+        E.acquire_release ~acquire:E.unit ~release
+        |> E.bind (fun () ->
+               E.sync (fun () -> B.resolve mark_ready ())
+               |> E.bind (fun () -> E.never))
+      in
+      let program =
+        Supervisor.scoped {
+          run =
+            fun sup ->
+              let open Supervisor.Scope in
+              let* child = start sup (lift child) in
+              let* () = lift (B.await_effect ready) in
+              let* () = request_cancel child in
+              cancel child;
+        }
+        |> Eta_observability.with_error_pp (fun fmt -> function
+             | `Cleanup_failed -> Format.pp_print_string fmt "Cleanup_failed")
+      in
+      let exit = B.run rt program in
+      (exit, !finalizer_count)
     in
-    match B.run rt program with
+    let clean, clean_finalizers = run_requested_cleanup ~fails:false in
+    let cleanup_failure, failed_finalizers =
+      run_requested_cleanup ~fails:true
+    in
+    let typed_failure = late_cancel (E.fail `Boom) in
+    let defect = late_cancel (E.sync (fun () -> raise Request_cancel_defect)) in
+    (match clean with
+    | Exit.Ok () ->
+        Alcotest.(check int) "clean finalizer count" 1 clean_finalizers
+    | Exit.Error cause ->
+        Alcotest.failf "clean request/cancel failed: %a" (Cause.pp pp_hidden)
+          cause);
+    (match cleanup_failure with
     | Exit.Error
         (Cause.Suppressed
-          { primary = Cause.Interrupt None; finalizer })
-      when finalizer_contains "Cleanup_failed" finalizer ->
-        ()
+          {
+            primary = Cause.Interrupt None;
+            finalizer =
+              Cause.Finalizer.Fail
+                { error = _; rendered = "Cleanup_failed" };
+          }) ->
+        Alcotest.(check int) "failing finalizer count" 1 failed_finalizers
     | Exit.Error cause ->
         Alcotest.failf "request/cancel changed cleanup diagnostics: %a"
           (Cause.pp pp_hidden) cause
-    | Exit.Ok () -> Alcotest.fail "request/cancel hid cleanup diagnostics"
+    | Exit.Ok () -> Alcotest.fail "request/cancel hid cleanup diagnostics");
+    (match typed_failure with
+    | Exit.Error (Cause.Fail `Boom) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "request/cancel changed typed failure: %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok () -> Alcotest.fail "request/cancel hid typed failure");
+    match defect with
+    | Exit.Error (Cause.Die { exn; _ }) when exn == Request_cancel_defect -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "request/cancel changed defect: %a" (Cause.pp pp_hidden)
+          cause
+    | Exit.Ok () -> Alcotest.fail "request/cancel hid defect"
 
   (* supcan-eg0p *)
   let test_supervisor_await_after_request_reports_interruption () =
-    B.with_runtime @@ fun _ctx rt ->
-    let ready, mark_ready = B.create_promise () in
-    let child =
-      E.sync (fun () -> B.resolve mark_ready ())
-      |> E.bind (fun () -> E.never)
+    let late_await child =
+      B.with_runtime @@ fun _ctx rt ->
+      let program =
+        Supervisor.scoped {
+          run =
+            fun sup ->
+              let open Supervisor.Scope in
+              let* child = start sup (lift child) in
+              let rec wait_for_failure attempts =
+                let* observed = failures sup in
+                if observed <> [] then pure ()
+                else if attempts = 0 then fail `Failure_not_observed
+                else
+                  let* () = yield in
+                  wait_for_failure (attempts - 1)
+              in
+              let* () = wait_for_failure 20 in
+              let* () = request_cancel child in
+              await child;
+        }
+        |> Eta_observability.with_error_pp (fun fmt -> function
+             | `Boom -> Format.pp_print_string fmt "Boom"
+             | `Cleanup_failed -> Format.pp_print_string fmt "Cleanup_failed"
+             | `Failure_not_observed ->
+                 Format.pp_print_string fmt "Failure_not_observed")
+      in
+      B.run rt program
     in
-    let program =
-      Supervisor.scoped {
-        run =
-          fun sup ->
-            let open Supervisor.Scope in
-            let* child = start sup (lift child) in
-            let* () = lift (B.await_effect ready) in
-            let* () = request_cancel child in
-            await child;
-      }
+    let completion =
+      B.with_runtime @@ fun _ctx rt ->
+      B.run rt
+        (Supervisor.scoped {
+           run =
+             fun sup ->
+               let open Supervisor.Scope in
+               let* child = start sup (pure 42) in
+               let* _ = await child in
+               let* () = request_cancel child in
+               await child;
+         })
     in
-    match B.run rt program with
+    let typed_failure = late_await (E.fail `Boom) in
+    let defect = late_await (E.sync (fun () -> raise Request_cancel_defect)) in
+    let finalizer_failure =
+      late_await
+        (E.acquire_release ~acquire:E.unit
+           ~release:(fun () -> E.fail `Cleanup_failed))
+    in
+    let interruption =
+      B.with_runtime @@ fun _ctx rt ->
+      let ready, mark_ready = B.create_promise () in
+      let child =
+        E.sync (fun () -> B.resolve mark_ready ())
+        |> E.bind (fun () -> E.never)
+      in
+      B.run rt
+        (Supervisor.scoped {
+           run =
+             fun sup ->
+               let open Supervisor.Scope in
+               let* child = start sup (lift child) in
+               let* () = lift (B.await_effect ready) in
+               let* () = request_cancel child in
+               await child;
+         })
+    in
+    (match completion with
+    | Exit.Ok 42 -> ()
+    | Exit.Ok value -> Alcotest.failf "await changed completion to %d" value
+    | Exit.Error cause ->
+        Alcotest.failf "await changed completion to %a" (Cause.pp pp_hidden)
+          cause);
+    (match typed_failure with
+    | Exit.Error (Cause.Fail `Boom) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "await changed typed failure to %a" (Cause.pp pp_hidden)
+          cause
+    | Exit.Ok () -> Alcotest.fail "await hid typed failure");
+    (match defect with
+    | Exit.Error (Cause.Die { exn; _ }) when exn == Request_cancel_defect -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "await changed defect to %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok () -> Alcotest.fail "await hid defect");
+    (match finalizer_failure with
+    | Exit.Error
+        (Cause.Finalizer
+          (Cause.Finalizer.Fail
+            { error = _; rendered = "Cleanup_failed" })) ->
+        ()
+    | Exit.Error cause ->
+        Alcotest.failf "await changed finalizer failure to %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok () -> Alcotest.fail "await hid finalizer failure");
+    match interruption with
     | Exit.Error (Cause.Interrupt None) -> ()
     | Exit.Error cause ->
         Alcotest.failf "await after request returned %a" (Cause.pp pp_hidden)
@@ -977,6 +1165,41 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       }
     in
     let events = run_ok rt program in
+    let expected_events =
+      [
+        "first:ready";
+        "second:ready";
+        "request:first-call";
+        "request:first-return";
+        "request:second-call";
+        "request:second-return";
+        "first:cleanup-start";
+        "second:cleanup-start";
+        "replacement:start";
+        "second:cleanup-end";
+        "first:cleanup-end";
+      ]
+    in
+    Alcotest.(check int)
+      "exact event count" (List.length expected_events) (List.length events);
+    List.iter
+      (fun expected ->
+        Alcotest.(check int)
+          ("one " ^ expected) 1
+          (List.length (List.filter (String.equal expected) events)))
+      expected_events;
+    let request_events =
+      List.filter (String.starts_with ~prefix:"request:") events
+    in
+    Alcotest.(check (list string))
+      "exact request event sequence"
+      [
+        "request:first-call";
+        "request:first-return";
+        "request:second-call";
+        "request:second-return";
+      ]
+      request_events;
     let position name =
       match List.find_index (String.equal name) events with
       | Some index -> index
@@ -1015,5 +1238,178 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         ] );
     ]
 
-  let tests = tests @ request_cancel_tests
+  let cancellation_matches contract expected exn =
+    match contract.Runtime_contract.cancellation_reason exn with
+    | Some actual -> actual == expected
+    | None -> exn == expected
+
+  let rec contract_wait_until contract attempts predicate =
+    if predicate () then true
+    else if attempts = 0 then false
+    else (
+      contract.Runtime_contract.yield ();
+      contract_wait_until contract (attempts - 1) predicate)
+
+  (* supcan-kptd *)
+  let test_runtime_cancel_records_request_and_returns_before_settlement () =
+    B.with_runtime_contract @@ fun _ctx contract ->
+    let reason = Failure "runtime cancel probe" in
+    let cleanup_started = ref false in
+    let cleanup_finished = ref false in
+    let finalizer_count = ref 0 in
+    let reason_observed = ref false in
+    let cancel_ready, publish_cancel = contract.Runtime_contract.create_promise () in
+    let release_cleanup, release = contract.Runtime_contract.create_promise () in
+    let returned_before_settlement, cleanup_was_pending =
+      contract.Runtime_contract.run_scope @@ fun sw ->
+      contract.Runtime_contract.fork sw (fun () ->
+          try
+            contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
+            contract.Runtime_contract.resolve_promise publish_cancel
+              cancel_context;
+            Fun.protect
+              ~finally:(fun () ->
+                try
+                  contract.Runtime_contract.protect @@ fun () ->
+                  cleanup_started := true;
+                  incr finalizer_count;
+                  contract.Runtime_contract.await_promise release_cleanup;
+                  cleanup_finished := true
+                with exn ->
+                  if not (cancellation_matches contract reason exn) then
+                    raise exn)
+              (fun () -> contract.Runtime_contract.await_cancel ())
+          with exn ->
+            if cancellation_matches contract reason exn then
+              reason_observed := true
+            else raise exn);
+      let cancel_context =
+        contract.Runtime_contract.await_promise cancel_ready
+      in
+      contract.Runtime_contract.cancel cancel_context reason;
+      let returned_before_settlement = not !cleanup_finished in
+      let cleanup_started_before_fallback =
+        contract_wait_until contract 200 (fun () -> !cleanup_started)
+      in
+      if not cleanup_started_before_fallback then (
+        contract.Runtime_contract.resolve_promise release ();
+        Alcotest.fail "Runtime_contract.cancel did not record cancellation");
+      let cleanup_was_pending = not !cleanup_finished in
+      contract.Runtime_contract.resolve_promise release ();
+      (returned_before_settlement, cleanup_was_pending)
+    in
+    Alcotest.(check bool)
+      "cancel returned before settlement" true returned_before_settlement;
+    Alcotest.(check bool)
+      "cleanup remained pending after cancel" true cleanup_was_pending;
+    Alcotest.(check bool) "cancel reason observed" true !reason_observed;
+    Alcotest.(check bool) "cleanup finished" true !cleanup_finished;
+    Alcotest.(check int) "one finalizer" 1 !finalizer_count
+
+  (* supcan-0uj5 *)
+  let test_runtime_fail_scope_records_failure_and_returns_before_settlement () =
+    B.with_runtime_contract @@ fun _ctx contract ->
+    let reason = Failure "runtime fail_scope probe" in
+    let fallback = Failure "runtime fail_scope fallback" in
+    let cleanup_started = ref false in
+    let cleanup_finished = ref false in
+    let finalizer_count = ref 0 in
+    let reason_observed = ref false in
+    let target_ready, publish_target = contract.Runtime_contract.create_promise () in
+    let child_ready, publish_child = contract.Runtime_contract.create_promise () in
+    let target_done, publish_target_done =
+      contract.Runtime_contract.create_promise ()
+    in
+    let release_cleanup, release = contract.Runtime_contract.create_promise () in
+    let release_body, release_target_body =
+      contract.Runtime_contract.create_promise ()
+    in
+    let returned_before_settlement, cleanup_was_pending, cleanup_started_in_time,
+        failure_recorded =
+      contract.Runtime_contract.run_scope @@ fun outer_sw ->
+      contract.Runtime_contract.fork outer_sw (fun () ->
+          let recorded =
+            try
+              contract.Runtime_contract.run_scope @@ fun target_sw ->
+              contract.Runtime_contract.resolve_promise publish_target target_sw;
+              contract.Runtime_contract.fork target_sw (fun () ->
+                  try
+                    contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
+                    contract.Runtime_contract.resolve_promise publish_child
+                      cancel_context;
+                    Fun.protect
+                      ~finally:(fun () ->
+                        try
+                          contract.Runtime_contract.protect @@ fun () ->
+                          cleanup_started := true;
+                          incr finalizer_count;
+                          contract.Runtime_contract.await_promise release_cleanup;
+                          cleanup_finished := true
+                        with exn ->
+                          if
+                            not
+                              (cancellation_matches contract reason exn
+                              || cancellation_matches contract fallback exn)
+                          then raise exn)
+                      (fun () -> contract.Runtime_contract.await_cancel ())
+                  with exn ->
+                    if cancellation_matches contract reason exn then
+                      reason_observed := true
+                    else if not (cancellation_matches contract fallback exn) then
+                      raise exn);
+              contract.Runtime_contract.await_promise release_body;
+              false
+            with exn when exn == reason -> true
+          in
+          contract.Runtime_contract.resolve_promise publish_target_done recorded);
+      let target_scope =
+        contract.Runtime_contract.await_promise target_ready
+      in
+      let child_context =
+        contract.Runtime_contract.await_promise child_ready
+      in
+      contract.Runtime_contract.fail_scope target_scope reason;
+      let returned_before_settlement = not !cleanup_finished in
+      let cleanup_started_in_time =
+        contract_wait_until contract 200 (fun () -> !cleanup_started)
+      in
+      let cleanup_was_pending = not !cleanup_finished in
+      contract.Runtime_contract.resolve_promise release ();
+      if not cleanup_started_in_time then (
+        contract.Runtime_contract.cancel child_context fallback;
+        contract.Runtime_contract.resolve_promise release_target_body ());
+      let failure_recorded =
+        contract.Runtime_contract.await_promise target_done
+      in
+      ( returned_before_settlement,
+        cleanup_was_pending,
+        cleanup_started_in_time,
+        failure_recorded )
+    in
+    Alcotest.(check bool)
+      "fail_scope returned before settlement" true returned_before_settlement;
+    Alcotest.(check bool)
+      "cleanup remained pending after fail_scope" true cleanup_was_pending;
+    Alcotest.(check bool)
+      "fail_scope requested cancellation" true cleanup_started_in_time;
+    Alcotest.(check bool) "scope failure recorded" true failure_recorded;
+    Alcotest.(check bool) "scope reason observed" true !reason_observed;
+    Alcotest.(check bool) "cleanup finished" true !cleanup_finished;
+    Alcotest.(check int) "one finalizer" 1 !finalizer_count
+
+  let runtime_contract_request_tests =
+    [
+      ( "Runtime contract request operations",
+        [
+          Alcotest.test_case
+            "runtime cancel records request and returns before settlement" `Quick
+            test_runtime_cancel_records_request_and_returns_before_settlement;
+          Alcotest.test_case
+            "runtime fail_scope records failure and returns before settlement"
+            `Quick
+            test_runtime_fail_scope_records_failure_and_returns_before_settlement;
+        ] );
+    ]
+
+  let tests = tests @ request_cancel_tests @ runtime_contract_request_tests
 end

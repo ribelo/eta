@@ -1184,13 +1184,16 @@ let test_supervisor_request_cancel_returns_before_settlement done_ =
   let ready = Eta.Promise.create () in
   let cleanup_started = Eta.Promise.create () in
   let release_cleanup = Eta.Promise.create () in
-  let request_returned = ref false in
+  let allow_fence = Eta.Promise.create () in
+  let request_returned = Eta.Promise.create () in
+  let cleanup_started_flag = ref false in
   let result_resolved = ref false in
   let cleanup_finished = ref false in
   let child =
     Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
       ~release:(fun () ->
-        resolve_ok cleanup_started ()
+        Eta.Effect.sync (fun () -> cleanup_started_flag := true)
+        |> Eta.Effect.bind (fun () -> resolve_ok cleanup_started ())
         |> Eta.Effect.bind (fun () -> Eta.Promise.await release_cleanup)
         |> Eta.Effect.map (fun () -> cleanup_finished := true))
     |> Eta.Effect.bind (fun () ->
@@ -1205,7 +1208,8 @@ let test_supervisor_request_cancel_returns_before_settlement done_ =
           let* child = start supervisor (lift child) in
           let* () = lift (Eta.Promise.await ready) in
           let* () = request_cancel child in
-          let* () = lift (Eta.Effect.sync (fun () -> request_returned := true)) in
+          let* () = lift (resolve_ok request_returned ()) in
+          let* () = lift (Eta.Promise.await allow_fence) in
           cancel child;
     }
   in
@@ -1223,14 +1227,22 @@ let test_supervisor_request_cancel_returns_before_settlement done_ =
                    (Eta.Cause.pp pp_err) cause))
         exit);
   let controller =
-    Eta.Promise.await cleanup_started
+    Eta.Promise.await request_returned
+    |> Eta.Effect.bind (fun () -> Eta.Effect.yield)
     |> Eta.Effect.bind (fun () ->
            Eta.Effect.sync (fun () ->
-               if not !request_returned then
-                 fail "cleanup started before request returned";
-               if !result_resolved then
-                 fail "request waited for held cleanup"))
-    |> Eta.Effect.bind (fun () -> resolve_ok release_cleanup ())
+               (!cleanup_started_flag, not !result_resolved)))
+    |> Eta.Effect.bind (fun observation ->
+           resolve_ok allow_fence ()
+           |> Eta.Effect.bind (fun () -> resolve_ok release_cleanup ())
+           |> Eta.Effect.bind (fun () ->
+                  Eta.Effect.sync (fun () ->
+                      match observation with
+                      | true, true -> ()
+                      | false, _ ->
+                          fail "request_cancel did not start cleanup before fence"
+                      | _, false ->
+                          fail "request_cancel waited for held cleanup")))
   in
   Eta_jsoo.Runtime.run runtime controller ~on_result:(function
     | Eta.Exit.Ok () -> ()
@@ -1242,8 +1254,11 @@ let test_supervisor_request_cancel_returns_before_settlement done_ =
 
 (* supcan-stst supcan-zqzf supcan-glb2 *)
 let test_supervisor_request_cancel_latches_before_child_start done_ =
+  let runtime = Eta_jsoo.Runtime.create () in
   let start_gate = Eta.Promise.create () in
+  let request_returned = Eta.Promise.create () in
   let body_started = ref false in
+  let result_resolved = ref false in
   let child =
     Eta.Promise.await start_gate
     |> Eta.Effect.bind (fun () ->
@@ -1256,40 +1271,62 @@ let test_supervisor_request_cancel_latches_before_child_start done_ =
           let open Eta.Supervisor.Scope in
           let* child = start supervisor (lift child) in
           let* () = request_cancel child in
-          let* () = cancel child in
-          pure !body_started;
+          let* () = lift (resolve_ok request_returned ()) in
+          await child;
     }
   in
-  run program
-    ~on_result:
-      (finish done_ (function
-        | Eta.Exit.Ok false -> ()
-        | Eta.Exit.Ok true -> fail "child body started after a latched request"
+  Eta_jsoo.Runtime.run runtime program
+    ~on_result:(fun exit ->
+      result_resolved := true;
+      finish done_ (function
+        | Eta.Exit.Error (Eta.Cause.Interrupt None) when not !body_started -> ()
         | Eta.Exit.Error cause ->
             fail
               (Format.asprintf "pre-start request failed: %a"
-                 (Eta.Cause.pp pp_err) cause)))
+                 (Eta.Cause.pp pp_err) cause)
+        | Eta.Exit.Ok () -> fail "latched request did not interrupt child")
+        exit);
+  let rec wait_for_result remaining =
+    if !result_resolved || !body_started || remaining = 0 then Eta.Effect.unit
+    else
+      Eta.Effect.yield
+      |> Eta.Effect.bind (fun () -> wait_for_result (remaining - 1))
+  in
+  let controller =
+    Eta.Promise.await request_returned
+    |> Eta.Effect.bind (fun () -> wait_for_result 20)
+    |> Eta.Effect.bind (fun () ->
+           let latched = !result_resolved && not !body_started in
+           (if latched then Eta.Effect.unit else resolve_ok start_gate ())
+           |> Eta.Effect.bind (fun () ->
+                  Eta.Effect.sync (fun () ->
+                      if not latched then
+                        fail "pre-start request did not settle the child")))
+  in
+  Eta_jsoo.Runtime.run runtime controller ~on_result:(function
+    | Eta.Exit.Ok () -> ()
+    | Eta.Exit.Error cause ->
+        set_exit_code 1;
+        log
+          (Format.asprintf "eta_jsoo pre-start controller failed: %a"
+             (Eta.Cause.pp pp_err) cause))
+
+exception Request_cancel_defect
 
 (* supcan-3os1 supcan-glb2 supcan-tg7n *)
 let test_supervisor_request_cancel_preserves_terminal_winners done_ =
-  let completion_case =
-    Eta.Supervisor.scoped {
-      run =
-        fun supervisor ->
-          let open Eta.Supervisor.Scope in
-          let* child = start supervisor (pure 42) in
-          let* value = await child in
-          let* () = request_cancel child in
-          let* () = cancel child in
-          pure value;
-    }
+  let error_pp fmt = function
+    | `Boom -> Format.pp_print_string fmt "Boom"
+    | `Cleanup_failed -> Format.pp_print_string fmt "Cleanup_failed"
+    | `Failure_not_observed ->
+        Format.pp_print_string fmt "Failure_not_observed"
   in
-  let failure_case =
+  let late_failure child =
     Eta.Supervisor.scoped {
       run =
         fun supervisor ->
           let open Eta.Supervisor.Scope in
-          let* child = start supervisor (fail `Boom) in
+          let* child = start supervisor (lift child) in
           let rec wait_for_failure attempts =
             let* observed = failures supervisor in
             if observed <> [] then pure ()
@@ -1302,18 +1339,55 @@ let test_supervisor_request_cancel_preserves_terminal_winners done_ =
           let* () = request_cancel child in
           await child;
     }
+    |> Eta_observability.with_error_pp error_pp
+  in
+  let completion =
+    Eta.Supervisor.scoped {
+      run =
+        fun supervisor ->
+          let open Eta.Supervisor.Scope in
+          let* child = start supervisor (pure 42) in
+          let* _ = await child in
+          let* () = request_cancel child in
+          await child;
+    }
+  in
+  let typed_failure = late_failure (Eta.Effect.fail `Boom) in
+  let defect =
+    late_failure
+      (Eta.Effect.sync (fun () -> raise Request_cancel_defect))
+  in
+  let finalizer_failure =
+    late_failure
+      (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+         ~release:(fun () -> Eta.Effect.fail `Cleanup_failed))
   in
   let program =
-    Eta.Effect.to_exit completion_case
+    Eta.Effect.to_exit completion
     |> Eta.Effect.bind (fun completion ->
-           Eta.Effect.to_exit failure_case
-           |> Eta.Effect.map (fun failure -> (completion, failure)))
+           Eta.Effect.to_exit typed_failure
+           |> Eta.Effect.bind (fun typed_failure ->
+                  Eta.Effect.to_exit defect
+                  |> Eta.Effect.bind (fun defect ->
+                         Eta.Effect.to_exit finalizer_failure
+                         |> Eta.Effect.map (fun finalizer_failure ->
+                                ( completion,
+                                  typed_failure,
+                                  defect,
+                                  finalizer_failure )))))
   in
   run program
     ~on_result:
       (finish done_ (function
         | Eta.Exit.Ok
-            (Eta.Exit.Ok 42, Eta.Exit.Error (Eta.Cause.Fail `Boom)) ->
+            ( Eta.Exit.Ok 42,
+              Eta.Exit.Error (Eta.Cause.Fail `Boom),
+              Eta.Exit.Error (Eta.Cause.Die { exn; _ }),
+              Eta.Exit.Error
+                (Eta.Cause.Finalizer
+                  (Eta.Cause.Finalizer.Fail
+                    { error = _; rendered = "Cleanup_failed" })) )
+          when exn == Request_cancel_defect ->
             ()
         | Eta.Exit.Ok _ -> fail "late request changed a terminal winner"
         | Eta.Exit.Error cause ->
@@ -1323,18 +1397,39 @@ let test_supervisor_request_cancel_preserves_terminal_winners done_ =
 
 (* supcan-3sp7 supcan-dyvd supcan-nnq7 *)
 let test_supervisor_cancel_after_request_preserves_settlement_diagnostics done_ =
-  let ready = Eta.Promise.create () in
-  let cleanup_ran = ref false in
-  let child =
-    Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
-      ~release:(fun () ->
-        Eta.Effect.sync (fun () -> cleanup_ran := true)
-        |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Cleanup_failed))
-    |> Eta.Effect.bind (fun () ->
-           resolve_ok ready ()
-           |> Eta.Effect.bind (fun () -> Eta.Effect.never))
+  let late_cancel child =
+    Eta.Supervisor.scoped {
+      run =
+        fun supervisor ->
+          let open Eta.Supervisor.Scope in
+          let* child = start supervisor (lift child) in
+          let rec wait_for_failure attempts =
+            let* observed = failures supervisor in
+            if observed <> [] then pure ()
+            else if attempts = 0 then fail `Failure_not_observed
+            else
+              let* () = yield in
+              wait_for_failure (attempts - 1)
+          in
+          let* () = wait_for_failure 20 in
+          let* () = request_cancel child in
+          cancel child;
+    }
   in
-  let program =
+  let requested_cleanup ~fails finalizer_count =
+    let ready = Eta.Promise.create () in
+    let release () =
+      Eta.Effect.sync (fun () -> incr finalizer_count)
+      |> Eta.Effect.bind (fun () ->
+             if fails then Eta.Effect.fail `Cleanup_failed
+             else Eta.Effect.unit)
+    in
+    let child =
+      Eta.Effect.acquire_release ~acquire:Eta.Effect.unit ~release
+      |> Eta.Effect.bind (fun () ->
+             resolve_ok ready ()
+             |> Eta.Effect.bind (fun () -> Eta.Effect.never))
+    in
     Eta.Supervisor.scoped {
       run =
         fun supervisor ->
@@ -1344,51 +1439,156 @@ let test_supervisor_cancel_after_request_preserves_settlement_diagnostics done_ 
           let* () = request_cancel child in
           cancel child;
     }
+    |> Eta_observability.with_error_pp (fun fmt -> function
+         | `Cleanup_failed -> Format.pp_print_string fmt "Cleanup_failed")
+  in
+  let clean_finalizers = ref 0 in
+  let failed_finalizers = ref 0 in
+  let clean = requested_cleanup ~fails:false clean_finalizers in
+  let cleanup_failure = requested_cleanup ~fails:true failed_finalizers in
+  let typed_failure = late_cancel (Eta.Effect.fail `Boom) in
+  let defect =
+    late_cancel (Eta.Effect.sync (fun () -> raise Request_cancel_defect))
+  in
+  let program =
+    Eta.Effect.to_exit clean
+    |> Eta.Effect.bind (fun clean ->
+           Eta.Effect.to_exit cleanup_failure
+           |> Eta.Effect.bind (fun cleanup_failure ->
+                  Eta.Effect.to_exit typed_failure
+                  |> Eta.Effect.bind (fun typed_failure ->
+                         Eta.Effect.to_exit defect
+                         |> Eta.Effect.map (fun defect ->
+                                ( clean,
+                                  cleanup_failure,
+                                  typed_failure,
+                                  defect,
+                                  !clean_finalizers,
+                                  !failed_finalizers )))))
   in
   run program
     ~on_result:
       (finish done_ (function
-        | Eta.Exit.Error
-            (Eta.Cause.Suppressed
-              { primary = Eta.Cause.Interrupt None; finalizer })
-          when finalizer_has_typed_failure finalizer ->
+        | Eta.Exit.Ok
+            ( Eta.Exit.Ok (),
+              Eta.Exit.Error
+                (Eta.Cause.Suppressed
+                  {
+                    primary = Eta.Cause.Interrupt None;
+                    finalizer =
+                      Eta.Cause.Finalizer.Fail
+                        { error = _; rendered = "Cleanup_failed" };
+                  }),
+              Eta.Exit.Error (Eta.Cause.Fail `Boom),
+              Eta.Exit.Error (Eta.Cause.Die { exn; _ }),
+              1,
+              1 )
+          when exn == Request_cancel_defect ->
             ()
+        | Eta.Exit.Ok _ -> fail "request/cancel changed settlement diagnostics"
         | Eta.Exit.Error cause ->
             fail
-              (Format.asprintf "request/cancel changed diagnostics: %a"
-                 (Eta.Cause.pp pp_err) cause)
-        | Eta.Exit.Ok () ->
-            fail
-              (Printf.sprintf "request/cancel hid cleanup diagnostics (ran=%b)"
-                 !cleanup_ran)))
+              (Format.asprintf "request/cancel matrix failed: %a"
+                 (Eta.Cause.pp pp_err) cause)))
 
 (* supcan-eg0p *)
 let test_supervisor_await_after_request_reports_interruption done_ =
-  let ready = Eta.Promise.create () in
-  let child =
-    resolve_ok ready ()
-    |> Eta.Effect.bind (fun () -> Eta.Effect.never)
-  in
-  let program =
+  let late_await child =
     Eta.Supervisor.scoped {
       run =
         fun supervisor ->
           let open Eta.Supervisor.Scope in
           let* child = start supervisor (lift child) in
+          let rec wait_for_failure attempts =
+            let* observed = failures supervisor in
+            if observed <> [] then pure ()
+            else if attempts = 0 then fail `Failure_not_observed
+            else
+              let* () = yield in
+              wait_for_failure (attempts - 1)
+          in
+          let* () = wait_for_failure 20 in
+          let* () = request_cancel child in
+          await child;
+    }
+    |> Eta_observability.with_error_pp (fun fmt -> function
+         | `Boom -> Format.pp_print_string fmt "Boom"
+         | `Cleanup_failed -> Format.pp_print_string fmt "Cleanup_failed"
+         | `Failure_not_observed ->
+             Format.pp_print_string fmt "Failure_not_observed")
+  in
+  let completion =
+    Eta.Supervisor.scoped {
+      run =
+        fun supervisor ->
+          let open Eta.Supervisor.Scope in
+          let* child = start supervisor (pure 42) in
+          let* _ = await child in
+          let* () = request_cancel child in
+          await child;
+    }
+  in
+  let typed_failure = late_await (Eta.Effect.fail `Boom) in
+  let defect =
+    late_await (Eta.Effect.sync (fun () -> raise Request_cancel_defect))
+  in
+  let finalizer_failure =
+    late_await
+      (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+         ~release:(fun () -> Eta.Effect.fail `Cleanup_failed))
+  in
+  let ready = Eta.Promise.create () in
+  let interruption_child =
+    resolve_ok ready ()
+    |> Eta.Effect.bind (fun () -> Eta.Effect.never)
+  in
+  let interruption =
+    Eta.Supervisor.scoped {
+      run =
+        fun supervisor ->
+          let open Eta.Supervisor.Scope in
+          let* child = start supervisor (lift interruption_child) in
           let* () = lift (Eta.Promise.await ready) in
           let* () = request_cancel child in
           await child;
     }
   in
+  let program =
+    Eta.Effect.to_exit completion
+    |> Eta.Effect.bind (fun completion ->
+           Eta.Effect.to_exit typed_failure
+           |> Eta.Effect.bind (fun typed_failure ->
+                  Eta.Effect.to_exit defect
+                  |> Eta.Effect.bind (fun defect ->
+                         Eta.Effect.to_exit finalizer_failure
+                         |> Eta.Effect.bind (fun finalizer_failure ->
+                                Eta.Effect.to_exit interruption
+                                |> Eta.Effect.map (fun interruption ->
+                                       ( completion,
+                                         typed_failure,
+                                         defect,
+                                         finalizer_failure,
+                                         interruption ))))))
+  in
   run program
     ~on_result:
       (finish done_ (function
-        | Eta.Exit.Error (Eta.Cause.Interrupt None) -> ()
+        | Eta.Exit.Ok
+            ( Eta.Exit.Ok 42,
+              Eta.Exit.Error (Eta.Cause.Fail `Boom),
+              Eta.Exit.Error (Eta.Cause.Die { exn; _ }),
+              Eta.Exit.Error
+                (Eta.Cause.Finalizer
+                  (Eta.Cause.Finalizer.Fail
+                    { error = _; rendered = "Cleanup_failed" })),
+              Eta.Exit.Error (Eta.Cause.Interrupt None) )
+          when exn == Request_cancel_defect ->
+            ()
+        | Eta.Exit.Ok _ -> fail "await after request changed an ordinary outcome"
         | Eta.Exit.Error cause ->
             fail
-              (Format.asprintf "await after request returned %a"
-                 (Eta.Cause.pp pp_err) cause)
-        | Eta.Exit.Ok () -> fail "await after request hid interruption"))
+              (Format.asprintf "await-after-request matrix failed: %a"
+                 (Eta.Cause.pp pp_err) cause)))
 
 (* supcan-6zw9 supcan-urkv supcan-vb4t *)
 let test_supervisor_request_cancel_calls_follow_scope_program_order done_ =
@@ -1467,6 +1667,41 @@ let test_supervisor_request_cancel_calls_follow_scope_program_order done_ =
               (Format.asprintf "request ordering failed: %a"
                  (Eta.Cause.pp pp_err) cause)
         | Eta.Exit.Ok events ->
+            let expected_events =
+              [
+                "first:ready";
+                "second:ready";
+                "request:first-call";
+                "request:first-return";
+                "request:second-call";
+                "request:second-return";
+                "first:cleanup-start";
+                "second:cleanup-start";
+                "replacement:start";
+                "second:cleanup-end";
+                "first:cleanup-end";
+              ]
+            in
+            if List.length events <> List.length expected_events then
+              fail "request ordering emitted the wrong event count";
+            List.iter
+              (fun expected ->
+                if
+                  List.length (List.filter (String.equal expected) events) <> 1
+                then fail ("request ordering duplicated or lost " ^ expected))
+              expected_events;
+            let request_events =
+              List.filter (String.starts_with ~prefix:"request:") events
+            in
+            if
+              request_events
+              <> [
+                   "request:first-call";
+                   "request:first-return";
+                   "request:second-call";
+                   "request:second-return";
+                 ]
+            then fail "request call and return events were not exact";
             let position name =
               match List.find_index (String.equal name) events with
               | Some index -> index
@@ -1499,7 +1734,209 @@ let request_cancel_tests =
       test_supervisor_request_cancel_calls_follow_scope_program_order );
   ]
 
-let tests = tests @ request_cancel_tests
+let cancellation_matches contract expected exn =
+  match contract.Runtime_contract.cancellation_reason exn with
+  | Some actual -> actual == expected
+  | None -> exn == expected
+
+let rec contract_wait_until contract attempts predicate =
+  if predicate () then true
+  else if attempts = 0 then false
+  else (
+    contract.Runtime_contract.yield ();
+    contract_wait_until contract (attempts - 1) predicate)
+
+let runtime_cancel_request_probe =
+  Eta.Spi.Expert.make @@ fun context ->
+  let contract = Eta.Spi.Expert.contract context in
+  let reason = Failure "runtime cancel probe" in
+  let cleanup_started = ref false in
+  let cleanup_finished = ref false in
+  let finalizer_count = ref 0 in
+  let reason_observed = ref false in
+  try
+    let cancel_ready, publish_cancel =
+      contract.Runtime_contract.create_promise ()
+    in
+    let release_cleanup, release =
+      contract.Runtime_contract.create_promise ()
+    in
+    let returned_before_settlement, cleanup_was_pending =
+      contract.Runtime_contract.run_scope @@ fun sw ->
+      contract.Runtime_contract.fork sw (fun () ->
+          try
+            contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
+            contract.Runtime_contract.resolve_promise publish_cancel
+              cancel_context;
+            Fun.protect
+              ~finally:(fun () ->
+                try
+                  contract.Runtime_contract.protect @@ fun () ->
+                  cleanup_started := true;
+                  incr finalizer_count;
+                  contract.Runtime_contract.await_promise release_cleanup;
+                  cleanup_finished := true
+                with exn ->
+                  if not (cancellation_matches contract reason exn) then
+                    raise exn)
+              (fun () -> contract.Runtime_contract.await_cancel ())
+          with exn ->
+            if cancellation_matches contract reason exn then
+              reason_observed := true
+            else raise exn);
+      let cancel_context =
+        contract.Runtime_contract.await_promise cancel_ready
+      in
+      contract.Runtime_contract.cancel cancel_context reason;
+      let returned_before_settlement = not !cleanup_finished in
+      let cleanup_started_before_fallback =
+        contract_wait_until contract 200 (fun () -> !cleanup_started)
+      in
+      if not cleanup_started_before_fallback then (
+        contract.Runtime_contract.resolve_promise release ();
+        fail "Runtime_contract.cancel did not record cancellation");
+      let cleanup_was_pending = not !cleanup_finished in
+      contract.Runtime_contract.resolve_promise release ();
+      (returned_before_settlement, cleanup_was_pending)
+    in
+    Eta.Exit.Ok
+      ( returned_before_settlement,
+        cleanup_was_pending,
+        !reason_observed,
+        !cleanup_finished,
+        !finalizer_count )
+  with exn -> Eta.Spi.Expert.exit_of_exn context exn
+
+let runtime_fail_scope_request_probe =
+  Eta.Spi.Expert.make @@ fun context ->
+  let contract = Eta.Spi.Expert.contract context in
+  let reason = Failure "runtime fail_scope probe" in
+  let fallback = Failure "runtime fail_scope fallback" in
+  let cleanup_started = ref false in
+  let cleanup_finished = ref false in
+  let finalizer_count = ref 0 in
+  let reason_observed = ref false in
+  try
+    let target_ready, publish_target =
+      contract.Runtime_contract.create_promise ()
+    in
+    let child_ready, publish_child =
+      contract.Runtime_contract.create_promise ()
+    in
+    let target_done, publish_target_done =
+      contract.Runtime_contract.create_promise ()
+    in
+    let release_cleanup, release =
+      contract.Runtime_contract.create_promise ()
+    in
+    let release_body, release_target_body =
+      contract.Runtime_contract.create_promise ()
+    in
+    let returned_before_settlement, cleanup_was_pending, cleanup_started_in_time,
+        failure_recorded =
+      contract.Runtime_contract.run_scope @@ fun outer_sw ->
+      contract.Runtime_contract.fork outer_sw (fun () ->
+          let recorded =
+            try
+              contract.Runtime_contract.run_scope @@ fun target_sw ->
+              contract.Runtime_contract.resolve_promise publish_target target_sw;
+              contract.Runtime_contract.fork target_sw (fun () ->
+                  try
+                    contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
+                    contract.Runtime_contract.resolve_promise publish_child
+                      cancel_context;
+                    Fun.protect
+                      ~finally:(fun () ->
+                        try
+                          contract.Runtime_contract.protect @@ fun () ->
+                          cleanup_started := true;
+                          incr finalizer_count;
+                          contract.Runtime_contract.await_promise release_cleanup;
+                          cleanup_finished := true
+                        with exn ->
+                          if
+                            not
+                              (cancellation_matches contract reason exn
+                              || cancellation_matches contract fallback exn)
+                          then raise exn)
+                      (fun () -> contract.Runtime_contract.await_cancel ())
+                  with exn ->
+                    if cancellation_matches contract reason exn then
+                      reason_observed := true
+                    else if not (cancellation_matches contract fallback exn) then
+                      raise exn);
+              contract.Runtime_contract.await_promise release_body;
+              false
+            with exn when exn == reason -> true
+          in
+          contract.Runtime_contract.resolve_promise publish_target_done recorded);
+      let target_scope =
+        contract.Runtime_contract.await_promise target_ready
+      in
+      let child_context =
+        contract.Runtime_contract.await_promise child_ready
+      in
+      contract.Runtime_contract.fail_scope target_scope reason;
+      let returned_before_settlement = not !cleanup_finished in
+      let cleanup_started_in_time =
+        contract_wait_until contract 200 (fun () -> !cleanup_started)
+      in
+      let cleanup_was_pending = not !cleanup_finished in
+      contract.Runtime_contract.resolve_promise release ();
+      if not cleanup_started_in_time then (
+        contract.Runtime_contract.cancel child_context fallback;
+        contract.Runtime_contract.resolve_promise release_target_body ());
+      let failure_recorded =
+        contract.Runtime_contract.await_promise target_done
+      in
+      ( returned_before_settlement,
+        cleanup_was_pending,
+        cleanup_started_in_time,
+        failure_recorded )
+    in
+    Eta.Exit.Ok
+      ( returned_before_settlement,
+        cleanup_was_pending,
+        cleanup_started_in_time,
+        failure_recorded,
+        !reason_observed,
+        !cleanup_finished,
+        !finalizer_count )
+  with exn -> Eta.Spi.Expert.exit_of_exn context exn
+
+(* supcan-kptd *)
+let test_runtime_cancel_records_request_and_returns_before_settlement done_ =
+  run runtime_cancel_request_probe
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Ok (true, true, true, true, 1) -> ()
+        | Eta.Exit.Ok _ -> fail "runtime cancel request probe was incomplete"
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "runtime cancel request probe failed: %a"
+                 (Eta.Cause.pp pp_err) cause)))
+
+(* supcan-0uj5 *)
+let test_runtime_fail_scope_records_failure_and_returns_before_settlement done_ =
+  run runtime_fail_scope_request_probe
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Ok (true, true, true, true, true, true, 1) -> ()
+        | Eta.Exit.Ok _ -> fail "runtime fail_scope request probe was incomplete"
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "runtime fail_scope request probe failed: %a"
+                 (Eta.Cause.pp pp_err) cause)))
+
+let runtime_contract_request_tests =
+  [
+    ( "runtime cancel records request and returns before settlement",
+      test_runtime_cancel_records_request_and_returns_before_settlement );
+    ( "runtime fail_scope records failure and returns before settlement",
+      test_runtime_fail_scope_records_failure_and_returns_before_settlement );
+  ]
+
+let tests = tests @ request_cancel_tests @ runtime_contract_request_tests
 
 let rec run_tests = function
   | [] ->
