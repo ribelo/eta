@@ -1,7 +1,7 @@
 # Current public composition verdict
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by:
 
 ## Question
