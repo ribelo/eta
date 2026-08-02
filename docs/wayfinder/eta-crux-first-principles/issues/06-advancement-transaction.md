@@ -137,17 +137,26 @@ Every commit returns a batch, including a commit with no lifecycle or transition
 work. Starting an empty batch acknowledges output delivery.
 
 The driver first delivers the committed output to its adapter. It then starts
-the batch. Batch start is at most once and admits work in this order:
+the batch. Batch start is at most once.
 
-1. cancellation of removed scope subtrees.
-2. activation lifecycle programs.
-3. the transition effect.
+Admission is cancellation-protected and atomic. It registers every eligible
+activation program and transition effect behind closed release gates. No new
+work body starts during registration.
 
-Each group is fully admitted before the next group. Work bodies can overlap
-after admission. Admission is cancellation-protected and atomic. No body starts
-until every group is registered. The runtime then releases the groups in order.
-Effects from earlier advancements can remain active while the driver processes
-later messages.
+After registration, batch start follows this order:
+
+1. Request cancellation of removed scope subtrees.
+2. Release activation lifecycle programs.
+3. Release the transition effect.
+
+Each removed subtree uses `Supervisor.Scope.request_cancel`. The next phase
+starts only after every request operation returns. It does not wait for removed
+subtree settlement.
+
+Work bodies can overlap after release. Effects from earlier advancements can
+remain active while the driver processes later messages. The
+[Eta supervised work substrate](19-eta-supervised-work-substrate.md) owns the
+request and settlement split.
 
 A transition effect whose source scope was disposed by the same commit is not
 admitted. Cancellation of an ordinary removed scope does not delay activation
