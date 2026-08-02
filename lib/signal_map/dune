@@ -1,0 +1,4 @@
+(library
+ (name eta_signal_map)
+ (public_name eta_signal_map)
+ (libraries eta_signal eta_signal_map_kernel))

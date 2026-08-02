@@ -1,5 +1,6 @@
 (test
  (name law_properties)
+ (modules law_properties)
  (libraries eta eta_observability eta_test eta_test_backend_eio alcotest qcheck qcheck-core.runner)
  (action
   (setenv EIO_BACKEND posix
@@ -7,6 +8,7 @@
 
 (test
  (name http_law_properties)
+ (modules http_law_properties)
  (libraries
   eta
   eta_http
@@ -17,3 +19,13 @@
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
+
+(test
+ (name map_semantic_properties)
+ (modules map_semantic_properties)
+ (libraries eta_signal_map qcheck qcheck-core.runner))
+
+(test
+ (name map_representation_properties)
+ (modules map_representation_properties)
+ (libraries eta_signal_map_kernel qcheck qcheck-core.runner))

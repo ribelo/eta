@@ -151,6 +151,74 @@ separately below and are not silently counted as qcheck coverage.
 | MMP10 | A delimiter collision fails before the body emits bytes completing the delimiter. | `lib/http/multipart.mli:59-60` | `multipart generated delimiter collisions split at every offset fail before full delimiter and leave empty census` |
 | MMP11 | A pull source fails when emitted bytes differ from its declared length. | `lib/http/multipart.mli:60-61` | `multipart generated declared source lengths enforce undershoot exact overshoot zero and multiple sources with empty census` |
 
+## Eta Signal Map mli-stated laws
+
+The public observation boundary is `Eta_signal_map.Map.S`, plus whole-map
+physical identity. Private rows name their package-private observation boundary.
+
+| ID | Claim | Exact normative span | Named executable evidence |
+| --- | --- | --- | --- |
+| SM01 | A zero comparator result defines key identity. | `lib/signal_map/eta_signal_map.mli:8-10` | `map_keys_are_unique_by_compare` |
+| SM02 | The key comparison defines a stable total order. | `lib/signal_map/eta_signal_map.mli:8-10` | `map_kernel_invariants_survive_edits`; generated keys use one immutable integer-rank total order |
+| SM03 | A stored key does not mutate its order. | `lib/signal_map/eta_signal_map.mli:8-10` | `map_set_retains_key_representative`; generated key ranks are immutable |
+| SM04 | `Left` identifies first-map-only data. | `lib/signal_map/eta_signal_map.mli:13-15` | `map_diff_left_only` |
+| SM05 | `Right` identifies second-map-only data. | `lib/signal_map/eta_signal_map.mli:16-17` | `map_diff_right_only` |
+| SM06 | `Changed` carries physically different aligned data from both maps. | `lib/signal_map/eta_signal_map.mli:18-19` | `map_diff_physical_changed`; `map_diff_reports_physical_changes_only` |
+| SM07 | Persistent edits preserve earlier snapshots. | `lib/signal_map/eta_signal_map.mli:23-25` | `map_edits_are_persistent` |
+| SM08 | Persistent edits retain unchanged subtrees. | `lib/signal_map/eta_signal_map.mli:23-25` | `map_edits_retain_unchanged_subtrees` — package-private node-identity inventory |
+| SM09 | `empty` contains no binding. | `lib/signal_map/eta_signal_map.mli:27-28` | `map_empty_is_empty` |
+| SM10 | `empty` contains no tree ancestry. | `lib/signal_map/eta_signal_map.mli:27-28` | `map_kernel_invariants_survive_edits` — package-private node count |
+| SM11 | `singleton` creates exactly one supplied binding. | `lib/signal_map/eta_signal_map.mli:30-31` | `map_singleton_contains_binding` |
+| SM12 | Separate singleton calls create fresh tree nodes. | `lib/signal_map/eta_signal_map.mli:30-31` | `map_singleton_starts_fresh_ancestry` — package-private node-identity inventory |
+| SM13 | `of_list` rejects the first duplicate in input order. | `lib/signal_map/eta_signal_map.mli:33-38` | `map_of_list_rejects_first_duplicate` |
+| SM14 | The duplicate error contains the exact duplicate occurrence key. | `lib/signal_map/eta_signal_map.mli:33-38` | `map_of_list_rejects_first_duplicate` |
+| SM15 | Duplicate rejection returns no partial map. | `lib/signal_map/eta_signal_map.mli:33-38` | `map_of_list_rejects_first_duplicate` |
+| SM16 | Successful nonempty `of_list` creates fresh ancestry. | `lib/signal_map/eta_signal_map.mli:33-38` | `map_of_list_severs_ancestry` — package-private node-identity inventory |
+| SM17 | `is_empty`, `cardinal`, `mem`, and `find_opt` match current bindings. | `lib/signal_map/eta_signal_map.mli:40-43` | `map_lookup_matches_edit_trace`; `map_empty_is_empty` |
+| SM18 | `set` retains the stored comparator-equal key representative. | `lib/signal_map/eta_signal_map.mli:45-48` | `map_set_retains_key_representative` |
+| SM19 | A physical-data `set` no-op preserves the map root. | `lib/signal_map/eta_signal_map.mli:45-48` | `map_physical_noop_preserves_root` |
+| SM20 | Removing an absent key preserves the map root. | `lib/signal_map/eta_signal_map.mli:50-53` | `map_physical_noop_preserves_root` |
+| SM21 | Reinsert after removal uses the new key representative. | `lib/signal_map/eta_signal_map.mli:50-53` | `map_reinsert_uses_new_key_representative` |
+| SM22 | `update` implements insertion, replacement, removal, and absence. | `lib/signal_map/eta_signal_map.mli:55-58` | `map_lookup_matches_edit_trace` |
+| SM23 | A physical `update` no-op preserves the map root. | `lib/signal_map/eta_signal_map.mli:55-58` | `map_physical_noop_preserves_root` |
+| SM24 | `fold` visits each binding once. | `lib/signal_map/eta_signal_map.mli:60-61` | `map_ordered_observations_match_oracle` |
+| SM25 | `fold` uses increasing key order. | `lib/signal_map/eta_signal_map.mli:60-61` | `map_ordered_observations_match_oracle` |
+| SM26 | `to_list` returns each binding once in increasing key order. | `lib/signal_map/eta_signal_map.mli:63-65` | `map_ordered_observations_match_oracle` |
+| SM27 | Rebuilding `to_list` with `of_list` starts fresh ancestry. | `lib/signal_map/eta_signal_map.mli:63-65` | `map_of_list_severs_ancestry` — package-private node-identity inventory |
+| SM28 | `map` preserves keys and calls its function once per data value. | `lib/signal_map/eta_signal_map.mli:67-71` | `map_map_matches_oracle` |
+| SM29 | `map` retains each node whose data and children remain physical. | `lib/signal_map/eta_signal_map.mli:67-71` | `map_map_retains_unchanged_nodes` — package-private node-identity inventory |
+| SM30 | A complete physical `map` no-op preserves the root. | `lib/signal_map/eta_signal_map.mli:67-71` | `map_map_preserves_noop_root` |
+| SM31 | `filter_mapi` calls its function once per binding and keeps returned values. | `lib/signal_map/eta_signal_map.mli:73-77` | `map_filter_mapi_matches_oracle` |
+| SM32 | `filter_mapi` retains each node whose key, data, and children remain physical. | `lib/signal_map/eta_signal_map.mli:73-77` | `map_filter_mapi_retains_unchanged_nodes` — package-private node-identity inventory |
+| SM33 | A complete physical `filter_mapi` no-op preserves the root. | `lib/signal_map/eta_signal_map.mli:73-77` | `map_filter_mapi_preserves_noop_root` |
+| SM34 | `equal` is extensional modulo key identity and its data predicate. | `lib/signal_map/eta_signal_map.mli:79-83` | `map_equal_is_extensional` |
+| SM35 | An accepting `equal` predicate runs once for every aligned pair, including shared subtrees. | `lib/signal_map/eta_signal_map.mli:79-83` | `map_equal_checks_all_aligned_data` |
+| SM36 | `equal` does not constrain accepting predicate order. | `lib/signal_map/eta_signal_map.mli:79-83` | `map_equal_checks_all_aligned_data`; observation compares the complete call set, not order |
+| SM37 | `equal` makes no data call after rejection. | `lib/signal_map/eta_signal_map.mli:79-83` | `map_equal_stops_after_rejection` |
+| SM38 | Symmetric diff emits at most one event per changed key in increasing order. | `lib/signal_map/eta_signal_map.mli:85-103` | `map_diff_events_are_ordered_unique` |
+| SM39 | `Left` and `Changed` use first-map keys, while `Right` uses second-map keys. | `lib/signal_map/eta_signal_map.mli:91-93` | `map_diff_uses_map_representatives` |
+| SM40 | Shared physical aligned data emits no event. | `lib/signal_map/eta_signal_map.mli:95-99` | `map_diff_physical_same`; `map_diff_reports_physical_changes_only` |
+| SM41 | Distinct aligned data emits `Changed`, including structurally equal data. | `lib/signal_map/eta_signal_map.mli:95-99` | `map_diff_physical_changed`; `map_diff_reports_physical_changes_only` |
+| SM42 | Symmetric diff has no caller data-equality gate. | `lib/signal_map/eta_signal_map.mli:95-99` | `map_diff_reports_physical_changes_only`; public typecheck of `fold_symmetric_diff` |
+| SM43 | Symmetric diff reports every addition, removal, and physical data change. | `lib/signal_map/eta_signal_map.mli:91-99` | `map_diff_handles_independent_maps`; fixed six-case diff suite |
+| SM44 | Forward event application reconstructs the second map. | `lib/signal_map/eta_signal_map.mli:101-103` | `map_diff_reconstructs_forward` |
+| SM45 | Reverse event application reconstructs the first map. | `lib/signal_map/eta_signal_map.mli:101-103` | `map_diff_reconstructs_reverse` |
+| SM46 | Same-path `Map.Make` applications have compatible map types. | `lib/signal_map/eta_signal_map.mli:106-109` | `map_same_order_applications_unify_positive` |
+| SM47 | Different-path `Map.Make` applications have incompatible map types. | `lib/signal_map/eta_signal_map.mli:106-109` | `map_different_order_applications_reject_negative` |
+
+### Eta Signal Map private representation requirements
+
+| ID | Claim | Exact normative source | Named qcheck property and observation boundary |
+| --- | --- | --- | --- |
+| SMR01 | Ordering, uniqueness, cached sizes, and `(5/2, 3/2)` balance survive edits. | `docs/requirements/eta-signal-map/keyed-map.md:20-21` | `map_kernel_invariants_survive_edits` — package-private invariant checker |
+| SMR02 | Persistent edits retain unchanged sibling subtrees. | `docs/requirements/eta-signal-map/keyed-map.md:42-46` | `map_edits_retain_unchanged_subtrees` — package-private node-identity inventory |
+| SMR03 | A physical `map` no-op preserves the root. | `docs/requirements/eta-signal-map/keyed-map.md:44-45` | `map_map_preserves_noop_root` — package-private root identity |
+| SMR04 | Partial `map` transforms retain qualifying unchanged nodes. | `docs/requirements/eta-signal-map/keyed-map.md:44-45` | `map_map_retains_unchanged_nodes` — package-private node-identity inventory |
+| SMR05 | A physical `filter_mapi` no-op preserves the root. | `docs/requirements/eta-signal-map/keyed-map.md:44-45` | `map_filter_mapi_preserves_noop_root` — package-private root identity |
+| SMR06 | Partial `filter_mapi` transforms retain qualifying unchanged nodes. | `docs/requirements/eta-signal-map/keyed-map.md:44-45` | `map_filter_mapi_retains_unchanged_nodes` — package-private node-identity inventory |
+| SMR07 | Each singleton starts fresh ancestry. | `docs/requirements/eta-signal-map/keyed-map.md:25,65` | `map_singleton_starts_fresh_ancestry` — package-private node-identity inventory |
+| SMR08 | Nonempty `of_list` severs ancestry. | `docs/requirements/eta-signal-map/keyed-map.md:26-28,65` | `map_of_list_severs_ancestry` — package-private node-identity inventory |
+
 ## Registered external named suites
 
 These claims are part of the complete `effect.mli`/`queue.mli` inventory, but

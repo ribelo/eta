@@ -1,0 +1,11 @@
+(test
+ (name test_eta_signal_map)
+ (libraries eta_signal_map alcotest))
+
+(rule
+ (alias runtest)
+ (deps
+  (source_tree negative)
+  (:eta_signal_map_cma ../../lib/signal_map/eta_signal_map.cma))
+ (action
+  (run bash negative/run.sh %{eta_signal_map_cma})))

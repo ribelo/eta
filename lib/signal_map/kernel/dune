@@ -1,0 +1,3 @@
+(library
+ (name eta_signal_map_kernel)
+ (package eta_signal_map))

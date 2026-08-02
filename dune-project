@@ -48,6 +48,18 @@
   eta_stream))
 
 (package
+ (name eta_signal_map)
+ (synopsis "Keyed incremental maps for Eta Signal")
+ (description
+  "eta_signal_map provides a persistent diffable map and keyed reactive collections for eta_signal.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  (eta_signal (= :version))
+  (alcotest :with-test)
+  (qcheck :with-test)))
+
+(package
  (name eta_js)
  (allow_empty)
  (synopsis "Js_of_ocaml Eta facade")
