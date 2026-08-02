@@ -39,9 +39,17 @@ The public description algebra has this semantic core:
 
 ```ocaml
 type 'a t
-type ('action, 'delivery) transition
-type ('action, 'delivery) injector
+type never = |
 type lifecycle
+
+module Endpoint : sig
+  type 'message t
+
+  val send : 'message t -> 'message -> (unit, never) Eta.Effect.t
+
+  val contramap :
+    'target t -> f:('source -> 'target) -> 'source t
+end
 
 val return : 'a -> 'a t
 val map : 'a t -> f:('a -> 'b) -> 'b t
@@ -52,10 +60,14 @@ val bind : 'a t -> f:('a -> 'b t) -> 'b t
 val state_machine :
   ?equal:('model -> 'model -> bool) ->
   default_model:'model ->
+  input:'input t ->
   apply_action:
-    (('action, 'delivery) transition -> 'model -> 'action -> 'model) ->
-  unit ->
-  ('model * ('action, 'delivery) injector) t
+    (self:'action Endpoint.t ->
+     input:'input ->
+     model:'model ->
+     action:'action ->
+     'model * (unit, never) Eta.Effect.t) ->
+  ('model * 'action Endpoint.t) t
 
 val lifecycle : lifecycle -> unit t
 
@@ -67,9 +79,12 @@ module Root : sig
 end
 ```
 
-Ticket 05 defines transition and injector delivery. Ticket 06 adds root
-advancement and root observation. Ticket 07 defines lifecycle values and their
-ownership rules. Ticket 14 decides derived helpers and syntax.
+[Action injection and staged Eta effects](05-action-effect-protocol.md) defines
+endpoint delivery. [Deterministic advancement transaction](06-advancement-transaction.md)
+defines root advancement and observation.
+[Dynamic lifetime and work ownership](07-dynamic-lifetime-ownership.md) defines
+lifecycle values and ownership. [OCaml API syntax and ergonomics](14-ocaml-api-ergonomics.md)
+decides derived helpers and syntax.
 
 Children are ordinary functions that return descriptions. Eta Crux does not
 provide a pass-through `child` combinator.

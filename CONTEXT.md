@@ -52,3 +52,13 @@ work, and returns messages to the application core.
 
 The means by which the application core and shell exchange information. A
 transport does not change application semantics.
+
+## Advancement
+
+One atomic attempt to process a single queued message and produce a committed
+application output.
+
+## Post-commit batch
+
+Opaque work that belongs to one committed advancement. Starting it acknowledges
+output delivery and admits lifecycle and transition effects.

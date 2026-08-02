@@ -51,7 +51,8 @@ deliverable. Implementation is not part of this map.
 - [Reference semantics worth keeping](issues/02-reference-semantics.md) — Keep Bonsai computation laws and Incremental engine laws. Keep only the managed-effects idea from Elm and Rust Crux. Reject copied capability ports, Cmd/Sub, and fragment trees ([report](../../../.scratch/research/eta-crux/reference-semantics.md)).
 - [Graph-neutral computation descriptions](issues/03-public-computation-api.md) — Use one identity-bearing, root-neutral `'a t`. Each root creates isolated live state, and no root can enter description composition ([Bonsai history](../../../.scratch/research/eta-crux/bonsai-functor-history.md)).
 - [Keyed assoc and stable child identity](issues/04-keyed-assoc-contract.md) — Use `Assoc(Map.S)` and one private transactional keyed-map node. Continuous presence keeps state. Committed removal makes re-entry fresh.
-- [Action injection and staged Eta effects](issues/05-action-effect-protocol.md) — State machines return immutable models plus infallible Eta effects. Typed endpoints enqueue actions, while explicit exports add boundary codecs.
+- [Action injection and staged Eta effects](issues/05-action-effect-protocol.md) — State machines return immutable models plus typed-infallible Eta effects. Typed endpoints enqueue actions, while explicit exports add boundary codecs.
+- [Deterministic advancement transaction](issues/06-advancement-transaction.md) — Process one message atomically, return output plus mandatory post-commit work, then drain until idle.
 
 ## Not yet specified
 

@@ -49,10 +49,14 @@ An endpoint accepts repeated messages while its target incarnation remains
 live. One-shot host responses use a separate request-resolution contract.
 Rank-2 scope brands can prevent escape, but they cannot enforce one call.
 
-`Endpoint.send endpoint message` builds an Eta effect. Interpreting that effect
-appends the message to the runtime queue and then succeeds. It does not run the
-target transition. A rejected delivery appears as `Stale_endpoint` in the next
-advancement result. The effect returns no state-machine response.
+`Endpoint.send endpoint message` builds an Eta effect. While the target root
+accepts ingress, interpreting that effect appends the message and then succeeds.
+It does not run the target transition. A rejected delivery appears as
+`Stale_endpoint` in the next advancement result. The effect returns no
+state-machine response.
+
+[Failure, defect, and crash boundary](11-failure-boundary.md) defines how a
+send observes a root that has closed ingress or completed shutdown.
 
 `Endpoint.contramap target ~f` creates a narrower endpoint. It shares the
 target's identity, incarnation, and lifetime. It creates no state machine or
@@ -106,12 +110,13 @@ The runtime records each returned effect with its source machine incarnation.
 No effect becomes eligible before the complete advancement commits. A failed
 advancement starts none of its effects.
 
-The runtime admits every eligible effect in transition order before any effect
-body starts. It then runs the bodies concurrently. Completion order is
-unconstrained. Each Eta effect defines its own internal sequencing and
-concurrency.
-[Deterministic advancement transaction](06-advancement-transaction.md) places
-startup relative to output publication.
+A committed advancement returns the effect inside an opaque post-commit batch.
+The driver delivers committed output before starting that batch. Effects from
+different advancements can run concurrently. Completion order is unconstrained.
+Each Eta effect defines its own internal sequencing and concurrency.
+
+[Deterministic advancement transaction](06-advancement-transaction.md) defines
+post-commit admission and prevents another advancement before batch start.
 
 [Dynamic lifetime and work ownership](07-dynamic-lifetime-ownership.md) defines
 cancellation after source disposal. [Failure, defect, and crash boundary](11-failure-boundary.md)
