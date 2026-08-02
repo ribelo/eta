@@ -37,6 +37,8 @@ becomes an integration pointer to the authoritative Eta decision.
 
 ## Decisions so far
 
+- [Current public composition verdict](issues/01-current-public-composition.md) — Public composition covers ownership, admission, causes, and shutdown, but it has no request-only cancellation point before settlement.
+
 ## Not yet specified
 
 - **Production contract.** The exact laws, backend obligations, negative type
