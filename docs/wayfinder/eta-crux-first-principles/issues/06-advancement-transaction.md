@@ -1,7 +1,7 @@
 # Deterministic advancement transaction
 
 Type: grilling
-Status: open
+Status: claimed
 Blocked by: 05
 
 ## Question
