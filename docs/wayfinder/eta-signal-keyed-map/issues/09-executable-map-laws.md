@@ -1,6 +1,7 @@
 # Executable map laws
 
 Type: grilling
+Status: claimed
 Blocked by: 05, 06
 
 ## Question
