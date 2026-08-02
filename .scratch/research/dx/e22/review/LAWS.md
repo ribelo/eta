@@ -271,6 +271,26 @@ scope validity, dependency attachment, structural events, and pending-plan state
 | STX16 | A captured old-scope signal stays invalid after same-key re-entry. | `docs/requirements/eta-signal-map/keyed-map.md:112` | `keyed_mapi_reentry_creates_fresh_incarnation`; `keyed_mapi_removal_invalidates_incarnation` |
 | STX17 | Child dirtiness participates through the keyed owner dependency. | `docs/requirements/eta-signal-map/keyed-map.md:113` | `keyed_mapi_child_only_change_patches_one_binding`; `test_affected_child_notification_avoids_scan` |
 
+### Eta Signal keyed diagnostics laws
+
+| ID | Claim | Exact normative source | Named executable evidence |
+| --- | --- | --- | --- |
+| SD01 | Statistics contain the ten declared keyed fields. | `lib/signal/eta_signal.mli:174-205,207-224` | `test_keyed_stats_zero_without_keyed_nodes` projects every field |
+| SD02 | Graphs without keyed nodes report zero in every keyed field. | `lib/signal/eta_signal.mli:200-205` | `test_keyed_stats_zero_without_keyed_nodes` |
+| SD03 | Cumulative keyed counters saturate without changing graph behavior. | `lib/signal/eta_signal.mli:200-205` | `test_keyed_stats_saturation_does_not_change_transaction` |
+| SD04 | Keyed node and child gauges count current valid live state. | `lib/signal/eta_signal.mli:188-205` | `test_keyed_stats_live_gauges_follow_committed_state` |
+| SD05 | Reconciliation attempts are counted cumulatively. | `lib/signal/eta_signal.mli:188-205` | `test_keyed_stats_count_failed_attempt_and_rollback` |
+| SD06 | Input comparisons and diff events are separate counts. | `lib/signal/eta_signal.mli:188-205` | `test_keyed_stats_report_shared_and_independent_diff_work` |
+| SD07 | Child visits count selected output evaluations. | `lib/signal/eta_signal.mli:188-205` | `test_keyed_stats_report_affected_child_visits` |
+| SD08 | Provisional additions include failed attempts. | `lib/signal/eta_signal.mli:188-205` | `test_keyed_stats_count_failed_attempt_and_rollback` |
+| SD09 | Committed structural counts change only at commit. | `lib/signal/eta_signal.mli:188-205` | `test_keyed_stats_commit_transitions_only_after_commit`; `test_keyed_stats_live_gauges_follow_committed_state` |
+| SD10 | Completed keyed-plan rollbacks are counted. | `lib/signal/eta_signal.mli:188-205` | `test_keyed_stats_count_failed_attempt_and_rollback` |
+| SD11 | Saturated keyed counters produce `Counter_overflow`. | `lib/signal/eta_signal.mli:200-205,239-241`; `docs/requirements/eta-signal-map/keyed-map.md:126` | `test_keyed_stats_saturation_does_not_change_transaction` |
+| SD12 | DOT scope selection applies to keyed owners and children. | `lib/signal/eta_signal.mli:569-587`; `docs/requirements/eta-signal-map/keyed-map.md:127` | `test_keyed_dot_scope_selection_shows_keyed_nodes` |
+| SD13 | DOT state identifies keyed owners and committed-child scope metadata. | `lib/signal/eta_signal.mli:569-587`; `docs/requirements/eta-signal-map/keyed-map.md:128` | `test_keyed_dot_dynamic_scopes_show_committed_children` |
+| SD14 | Invalid keyed DOT state stays bounded and value-free. | `lib/signal/eta_signal.mli:569-587`; `docs/requirements/eta-signal-map/keyed-map.md:129` | `test_keyed_dot_invalid_tombstones_are_bounded_and_value_free` |
+| SD15 | Diagnostic reads do not alter keyed semantics or ownership. | `lib/signal/eta_signal.mli:569-587`; `docs/requirements/eta-signal-map/keyed-map.md:130` | `test_keyed_diagnostics_are_read_only` |
+
 ### Eta Signal Map private representation requirements
 
 | ID | Claim | Exact normative source | Named qcheck property and observation boundary |

@@ -58,6 +58,7 @@ type signal_label_snapshot = {
   signal_tombstone : bool;
   signal_state : signal_state_snapshot option;
   signal_scope : signal_scope_snapshot option;
+  signal_extra_fields : string list;
   signal_timer_fields : string list;
 }
 

@@ -247,6 +247,19 @@ module Make (Observer_error : Observer_error) () = struct
         new_value : 'a;
       }
 
+  type keyed_stats = {
+    node_count : int;
+    committed_child_count : int;
+    reconciliation_count : int;
+    input_key_comparison_count : int;
+    input_diff_event_count : int;
+    child_visit_count : int;
+    provisional_addition_count : int;
+    committed_addition_count : int;
+    committed_removal_count : int;
+    reconciliation_rollback_count : int;
+  }
+
   type stats = {
     pure_snapshot_commit_count : int;
     callback_delivery_count : int;
@@ -263,6 +276,7 @@ module Make (Observer_error : Observer_error) () = struct
     stream_bridge_drop_count : int;
     lane_waiter_count : int;
     lane_cancelled_waiter_count : int;
+    keyed : keyed_stats;
   }
 
   type dot_scope = [ `Necessary | `All_valid | `All_including_invalid ]
@@ -296,6 +310,71 @@ module Make (Observer_error : Observer_error) () = struct
 
   let saturating_succ value =
     if value = max_int then max_int else value + 1
+
+  let saturating_add left right =
+    if right >= max_int - left then max_int else left + right
+
+  type keyed_counter =
+    | Reconciliation_count
+    | Input_key_comparison_count
+    | Input_diff_event_count
+    | Child_visit_count
+    | Provisional_addition_count
+    | Committed_addition_count
+    | Committed_removal_count
+    | Reconciliation_rollback_count
+
+  type keyed_counter_state = {
+    mutable reconciliation_count : int;
+    mutable input_key_comparison_count : int;
+    mutable input_diff_event_count : int;
+    mutable child_visit_count : int;
+    mutable provisional_addition_count : int;
+    mutable committed_addition_count : int;
+    mutable committed_removal_count : int;
+    mutable reconciliation_rollback_count : int;
+  }
+
+  let keyed_counters =
+    {
+      reconciliation_count = 0;
+      input_key_comparison_count = 0;
+      input_diff_event_count = 0;
+      child_visit_count = 0;
+      provisional_addition_count = 0;
+      committed_addition_count = 0;
+      committed_removal_count = 0;
+      reconciliation_rollback_count = 0;
+    }
+
+  let keyed_counter_value = function
+    | Reconciliation_count -> keyed_counters.reconciliation_count
+    | Input_key_comparison_count -> keyed_counters.input_key_comparison_count
+    | Input_diff_event_count -> keyed_counters.input_diff_event_count
+    | Child_visit_count -> keyed_counters.child_visit_count
+    | Provisional_addition_count -> keyed_counters.provisional_addition_count
+    | Committed_addition_count -> keyed_counters.committed_addition_count
+    | Committed_removal_count -> keyed_counters.committed_removal_count
+    | Reconciliation_rollback_count ->
+        keyed_counters.reconciliation_rollback_count
+
+  let set_keyed_counter counter value =
+    match counter with
+    | Reconciliation_count -> keyed_counters.reconciliation_count <- value
+    | Input_key_comparison_count ->
+        keyed_counters.input_key_comparison_count <- value
+    | Input_diff_event_count -> keyed_counters.input_diff_event_count <- value
+    | Child_visit_count -> keyed_counters.child_visit_count <- value
+    | Provisional_addition_count ->
+        keyed_counters.provisional_addition_count <- value
+    | Committed_addition_count ->
+        keyed_counters.committed_addition_count <- value
+    | Committed_removal_count -> keyed_counters.committed_removal_count <- value
+    | Reconciliation_rollback_count ->
+        keyed_counters.reconciliation_rollback_count <- value
+
+  let bump_keyed_counter counter =
+    set_keyed_counter counter (saturating_succ (keyed_counter_value counter))
 
   let counter_overflow name = raise (Graph_error (`Counter_overflow name))
 
@@ -354,6 +433,7 @@ module Make (Observer_error : Observer_error) () = struct
       'acc.
       'map ->
       'map ->
+      on_compare:(unit -> unit) ->
       init:'acc ->
       f:('acc -> 'key -> 'value keyed_change -> 'acc) ->
       'acc;
@@ -564,6 +644,7 @@ module Make (Observer_error : Observer_error) () = struct
     dead_scope_parent : scope_id option;
     dead_scope_valid : bool option;
     dead_timer : Timer_policy.debug_snapshot option;
+    dead_keyed_child_count : int option;
   }
 
   and 'a source_timer_update = {
@@ -1159,6 +1240,17 @@ module Make (Observer_error : Observer_error) () = struct
             Some (Scope.valid scope) )
     in
     let snapshot = signal_current_snapshot signal in
+    let dead_keyed_child_count =
+      match signal.kind with
+      | Keyed keyed ->
+          Some
+            (keyed.keyed_child_ops.keyed_fold
+               (fun _ _ count -> saturating_succ count)
+               (Transaction.current keyed.keyed_children) 0)
+      | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+      | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Bind _ ->
+          None
+    in
     {
       dead_id = signal.id;
       dead_kind = kind_name signal.kind;
@@ -1174,6 +1266,7 @@ module Make (Observer_error : Observer_error) () = struct
       dead_scope_parent;
       dead_scope_valid;
       dead_timer = Option.map timer_tombstone signal.timer;
+      dead_keyed_child_count;
     }
 
   let node_invalidation lane =
@@ -1379,6 +1472,7 @@ module Make (Observer_error : Observer_error) () = struct
     match keyed.keyed_pending with
     | None -> []
     | Some plan ->
+        bump_keyed_counter Reconciliation_rollback_count;
         keyed.keyed_pending <- None;
         List.concat_map
           (invalidate_scope lane ~prune:false)
@@ -1450,6 +1544,9 @@ module Make (Observer_error : Observer_error) () = struct
             | Error `Invalid_scope -> raise (Graph_error `Invalid_scope))
           plan.keyed_plan_additions
 
+  let record_keyed_event keyed event =
+    try keyed.keyed_record_event event with _ -> ()
+
   let commit_keyed_removals lane staging (Packed_keyed (owner, keyed)) =
     match keyed.keyed_pending with
     | None -> ()
@@ -1457,15 +1554,15 @@ module Make (Observer_error : Observer_error) () = struct
         let hooks = ref [] in
         List.rev plan.keyed_plan_removals
         |> List.iter (fun child ->
-               keyed.keyed_record_event
-                 (Keyed_detached child.keyed_child_scope);
+               bump_keyed_counter Committed_removal_count;
+               record_keyed_event keyed (Keyed_detached child.keyed_child_scope);
                remove_dirty_listener child.keyed_child_output
                  child.keyed_child_listener;
                detach_dependency lane owner child.keyed_child_output;
                hooks :=
                  !hooks
                  @ invalidate_scope lane ~prune:false child.keyed_child_scope;
-               keyed.keyed_record_event
+               record_keyed_event keyed
                  (Keyed_invalidated child.keyed_child_scope));
         Graph.remember_pure_disposal_hooks graph lane staging !hooks
 
@@ -1475,11 +1572,11 @@ module Make (Observer_error : Observer_error) () = struct
     | Some plan ->
         List.rev plan.keyed_plan_additions
         |> List.iter (fun child ->
+               bump_keyed_counter Committed_addition_count;
                attach_dependency lane owner child.keyed_child_output;
                add_dirty_listener child.keyed_child_output
                  child.keyed_child_listener;
-               keyed.keyed_record_event
-                 (Keyed_attached child.keyed_child_scope))
+               record_keyed_event keyed (Keyed_attached child.keyed_child_scope))
 
   let finish_keyed_commit (Packed_keyed (_owner, keyed)) =
     match keyed.keyed_pending with
@@ -1879,6 +1976,7 @@ module Make (Observer_error : Observer_error) () = struct
       (key, data, output, data_map, output_map, child_map) keyed ->
       output_map * bool =
    fun lane staging signal keyed ->
+    bump_keyed_counter Reconciliation_count;
     let child_ops = keyed.keyed_child_ops in
     let output_ops = keyed.keyed_output_ops in
     let input, _input_changed = compute lane staging keyed.keyed_input in
@@ -1909,6 +2007,7 @@ module Make (Observer_error : Observer_error) () = struct
       | None -> raise (Graph_error `Invalid_scope)
     in
     let compute_child child =
+      bump_keyed_counter Child_visit_count;
       let value, changed = compute lane staging child.keyed_child_output in
       if changed then
         plan.keyed_plan_output <-
@@ -1921,6 +2020,7 @@ module Make (Observer_error : Observer_error) () = struct
       let scope = new_scope signal in
       plan.keyed_plan_provisional_scopes <-
         scope :: plan.keyed_plan_provisional_scopes;
+      bump_keyed_counter Provisional_addition_count;
       let source, data_signal, output_signal =
         Graph.with_current_scope graph scope_ops scope (fun () ->
             let source = new_var candidate in
@@ -1974,11 +2074,16 @@ module Make (Observer_error : Observer_error) () = struct
       plan.keyed_plan_output <-
         output_ops.keyed_remove child.keyed_child_key plan.keyed_plan_output
     in
-    keyed.keyed_data_ops.keyed_fold_diff current_input input ~init:()
+    keyed.keyed_data_ops.keyed_fold_diff current_input input
+      ~on_compare:(fun () -> bump_keyed_counter Input_key_comparison_count)
+      ~init:()
       ~f:(fun () key -> function
-        | Keyed_left _ -> remove_child key
-        | Keyed_right candidate -> add_child key candidate
-        | Keyed_changed (_, candidate) -> update_child key candidate);
+        | change ->
+            bump_keyed_counter Input_diff_event_count;
+            match change with
+            | Keyed_left _ -> remove_child key
+            | Keyed_right candidate -> add_child key candidate
+            | Keyed_changed (_, candidate) -> update_child key candidate);
     plan.keyed_plan_processed <- keyed.keyed_affected;
     child_ops.keyed_fold
       (fun key affected () ->
@@ -2737,6 +2842,25 @@ module Make (Observer_error : Observer_error) () = struct
         if signal.valid && signal.dirty then saturating_succ count else count)
       0 all_nodes
 
+  let keyed_gauges all_nodes =
+    List.fold_left
+      (fun (node_count, child_count) (P signal) ->
+        if signal.valid then
+          match signal.kind with
+          | Keyed keyed ->
+              let committed_children =
+                keyed.keyed_child_ops.keyed_fold
+                  (fun _ _ count -> saturating_succ count)
+                  (Transaction.current keyed.keyed_children) 0
+              in
+              ( saturating_succ node_count,
+                saturating_add child_count committed_children )
+          | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+          | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Bind _ ->
+              (node_count, child_count)
+        else (node_count, child_count))
+      (0, 0) all_nodes
+
   let stats_counter name value =
     match Debug.stats_counter ~name value with
     | Ok value -> value
@@ -2747,6 +2871,7 @@ module Make (Observer_error : Observer_error) () = struct
         try
           let all_nodes = all_nodes_unlocked lane in
           let observer_counts = observer_counts lane in
+          let keyed_node_count, keyed_child_count = keyed_gauges all_nodes in
           Ok
             {
               pure_snapshot_commit_count =
@@ -2792,6 +2917,38 @@ module Make (Observer_error : Observer_error) () = struct
               lane_cancelled_waiter_count =
                 stats_counter "stats lane_cancelled_waiter_count"
                   (Graph.lane_cancelled_count graph lane);
+              keyed =
+                {
+                  node_count =
+                    stats_counter "stats keyed.node_count" keyed_node_count;
+                  committed_child_count =
+                    stats_counter "stats keyed.committed_child_count"
+                      keyed_child_count;
+                  reconciliation_count =
+                    stats_counter "stats keyed.reconciliation_count"
+                      keyed_counters.reconciliation_count;
+                  input_key_comparison_count =
+                    stats_counter "stats keyed.input_key_comparison_count"
+                      keyed_counters.input_key_comparison_count;
+                  input_diff_event_count =
+                    stats_counter "stats keyed.input_diff_event_count"
+                      keyed_counters.input_diff_event_count;
+                  child_visit_count =
+                    stats_counter "stats keyed.child_visit_count"
+                      keyed_counters.child_visit_count;
+                  provisional_addition_count =
+                    stats_counter "stats keyed.provisional_addition_count"
+                      keyed_counters.provisional_addition_count;
+                  committed_addition_count =
+                    stats_counter "stats keyed.committed_addition_count"
+                      keyed_counters.committed_addition_count;
+                  committed_removal_count =
+                    stats_counter "stats keyed.committed_removal_count"
+                      keyed_counters.committed_removal_count;
+                  reconciliation_rollback_count =
+                    stats_counter "stats keyed.reconciliation_rollback_count"
+                      keyed_counters.reconciliation_rollback_count;
+                };
             }
         with Graph_error err -> Error err)
     |> Effect.flatten_result
@@ -2907,6 +3064,30 @@ module Make (Observer_error : Observer_error) () = struct
 
   let signal_label : type a. dot_options -> a signal -> string =
    fun options signal ->
+    let requested_scope =
+      match options.dot_scope with
+      | `Necessary -> "necessary"
+      | `All_valid -> "all_valid"
+      | `All_including_invalid -> "all_including_invalid"
+    in
+    let signal_extra_fields =
+      if options.dot_state then
+        match signal.kind with
+        | Keyed keyed ->
+            let child_count =
+              keyed.keyed_child_ops.keyed_fold
+                (fun _ _ count -> saturating_succ count)
+                (Transaction.current keyed.keyed_children) 0
+            in
+            [
+              "committed_children=" ^ string_of_int child_count;
+              "requested_scope=" ^ requested_scope;
+            ]
+        | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+        | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Bind _ ->
+            []
+      else []
+    in
     Debug.signal_label
       {
         Debug.signal_kind_label = kind_name signal.kind;
@@ -2919,11 +3100,29 @@ module Make (Observer_error : Observer_error) () = struct
           (if options.dot_dynamic_scopes then
              Some (signal_scope_snapshot signal)
            else None);
+        signal_extra_fields;
         signal_timer_fields =
           (if options.dot_timers then signal_timer_fields signal else []);
       }
 
   let dead_signal_label options dead =
+    let signal_extra_fields =
+      if options.dot_state then
+        match dead.dead_keyed_child_count with
+        | None -> []
+        | Some child_count ->
+            let requested_scope =
+              match options.dot_scope with
+              | `Necessary -> "necessary"
+              | `All_valid -> "all_valid"
+              | `All_including_invalid -> "all_including_invalid"
+            in
+            [
+              "committed_children=" ^ string_of_int child_count;
+              "requested_scope=" ^ requested_scope;
+            ]
+      else []
+    in
     Debug.signal_label
       {
         Debug.signal_kind_label = dead.dead_kind;
@@ -2936,6 +3135,7 @@ module Make (Observer_error : Observer_error) () = struct
           (if options.dot_dynamic_scopes then
              Some (dead_signal_scope_snapshot dead)
            else None);
+        signal_extra_fields;
         signal_timer_fields =
           (if options.dot_timers then dead_timer_fields dead.dead_timer else []);
       }
@@ -3392,6 +3592,16 @@ module Make (Observer_error : Observer_error) () = struct
       | Invalidated of token
       | Attached of token
 
+    type nonrec keyed_counter = keyed_counter =
+      | Reconciliation_count
+      | Input_key_comparison_count
+      | Input_diff_event_count
+      | Child_visit_count
+      | Provisional_addition_count
+      | Committed_addition_count
+      | Committed_removal_count
+      | Reconciliation_rollback_count
+
     type preflight_plan =
       | Preflight_plan : packed_signal * (unit -> unit) -> preflight_plan
 
@@ -3470,6 +3680,8 @@ module Make (Observer_error : Observer_error) () = struct
       | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
       | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Bind _ ->
           invalid_arg "Eta_signal_kernel.Extension: not a keyed signal"
+
+    let set_keyed_counter = set_keyed_counter
 
     let keyed_mapi
         ?(data_cutoff = fun ~published ~candidate -> default_equal published candidate)

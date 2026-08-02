@@ -171,6 +171,39 @@ module Make (Observer_error : Observer_error) () : sig
         new_value : 'a;
       }
 
+  type keyed_stats = {
+    node_count : int;
+    committed_child_count : int;
+    reconciliation_count : int;
+    input_key_comparison_count : int;
+    input_diff_event_count : int;
+    child_visit_count : int;
+    provisional_addition_count : int;
+    committed_addition_count : int;
+    committed_removal_count : int;
+    reconciliation_rollback_count : int;
+  }
+  (** Keyed-map gauges and cumulative work counters:
+
+      - [node_count] counts current valid keyed nodes.
+      - [committed_child_count] counts their current committed children.
+      - [reconciliation_count] increments when a keyed plan starts.
+      - [input_key_comparison_count] counts input-key comparisons.
+      - [input_diff_event_count] counts input-diff events.
+      - [child_visit_count] counts children that output evaluation selects.
+      - [provisional_addition_count] increments when planning registers a scope.
+      - [committed_addition_count] increments when pure commit adds a child.
+      - [committed_removal_count] increments when pure commit removes a child.
+      - [reconciliation_rollback_count] increments when a keyed plan completes
+        rollback.
+
+      A graph without keyed nodes reports zero in every field. Invalid
+      tombstones do not contribute to the gauges. The cumulative counters
+      saturate at [max_int] without changing graph behavior. {!stats} then fails
+      with [`Counter_overflow]. [smdiag-y97e] [smdiag-xfpv] [smdiag-19k7]
+      [smdiag-z8s2] [smdiag-o22x] [smdiag-709x] [smdiag-l4ra]
+      [smdiag-yqlu] [smdiag-98i1] [smdiag-ss8z] *)
+
   type stats = {
     pure_snapshot_commit_count : int;
     callback_delivery_count : int;
@@ -187,6 +220,7 @@ module Make (Observer_error : Observer_error) () : sig
     stream_bridge_drop_count : int;
     lane_waiter_count : int;
     lane_cancelled_waiter_count : int;
+    keyed : keyed_stats;
   }
   (** Read-only graph counters for diagnostics.
 
@@ -542,7 +576,15 @@ module Make (Observer_error : Observer_error) () : sig
       labels, and dynamic-scope state to the dump. If an invalid observer's
       signal tombstone has been evicted from the bounded diagnostic index, the
       observer label includes [missing_observed_signal_id] with the original
-      signal id. *)
+      signal id.
+
+      The scope selection includes keyed owners and children. Keyed owner labels
+      use [keyed_mapi]. State metadata includes the committed-child count and the
+      requested scope. Invalid keyed tombstones stay bounded. The dump does not
+      contain keys, data, child outputs, user closures, logs, journals, or action
+      history. The read does not change graph behavior, identities, counters, or
+      pending work. [smdiag-lb9n] [smdiag-1pr6] [smdiag-oqvr]
+      [smdiag-3hlp] *)
 
   module Time : sig
     (** Time nodes are demand-owned source-updating effects. They never call

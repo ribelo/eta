@@ -36,6 +36,14 @@ module Make (Order : Ordered_type) : sig
     f:('acc -> key -> 'a change -> 'acc) ->
     'acc
 
+  val fold_symmetric_diff_counted :
+    'a t ->
+    'a t ->
+    on_compare:(unit -> unit) ->
+    init:'acc ->
+    f:('acc -> key -> 'a change -> 'acc) ->
+    'acc
+
   val check_invariants : 'a t -> (unit, string) result
   val node_count : 'a t -> int
   val node_tokens : 'a t -> Obj.t list

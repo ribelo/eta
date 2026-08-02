@@ -109,6 +109,7 @@ type signal_label_snapshot = {
   signal_tombstone : bool;
   signal_state : signal_state_snapshot option;
   signal_scope : signal_scope_snapshot option;
+  signal_extra_fields : string list;
   signal_timer_fields : string list;
 }
 
@@ -129,7 +130,8 @@ let signal_label signal =
     | None -> fields
     | Some scope -> fields @ signal_scope_fields scope
   in
-  String.concat " " (fields @ signal.signal_timer_fields)
+  String.concat " "
+    (fields @ signal.signal_extra_fields @ signal.signal_timer_fields)
 
 type observer_snapshot = {
   observer_id_label : string;

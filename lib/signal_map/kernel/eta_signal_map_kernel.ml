@@ -253,7 +253,7 @@ module Make (Order : Ordered_type) = struct
     | Item (key, data) :: tail -> Some (key, data, tail)
     | Tree tree :: tail -> next_item (expand tree tail)
 
-  let cursor_diff left right ~init ~f =
+  let cursor_diff compare left right ~init ~f =
     let rec loop left right acc =
       let left, right = drop_shared left right in
       match (next_item left, next_item right) with
@@ -264,7 +264,7 @@ module Make (Order : Ordered_type) = struct
           loop [] right (f acc key (Right data))
       | ( Some (left_key, left_data, left_tail),
           Some (right_key, right_data, right_tail) ) ->
-          let order = Order.compare left_key right_key in
+          let order = compare left_key right_key in
           if order = 0 then
             let acc =
               if left_data == right_data then acc
@@ -277,7 +277,7 @@ module Make (Order : Ordered_type) = struct
     in
     loop [ Tree left ] [ Tree right ] init
 
-  let fold_symmetric_diff left right ~init ~f =
+  let fold_symmetric_diff_with compare left right ~init ~f =
     let add_all map change acc =
       fold (fun key data acc -> f acc key (change data)) map acc
     in
@@ -288,7 +288,7 @@ module Make (Order : Ordered_type) = struct
         | Empty, right -> add_all right (fun data -> Right data) acc
         | left, Empty -> add_all left (fun data -> Left data) acc
         | Node left_node, Node right_node ->
-            let order = Order.compare left_node.key right_node.key in
+            let order = compare left_node.key right_node.key in
             if order = 0 then
               let acc = loop left_node.left right_node.left acc in
               let acc =
@@ -298,9 +298,19 @@ module Make (Order : Ordered_type) = struct
                     (Changed (left_node.data, right_node.data))
               in
               loop left_node.right right_node.right acc
-            else cursor_diff left right ~init:acc ~f
+            else cursor_diff compare left right ~init:acc ~f
     in
     loop left right init
+
+  let fold_symmetric_diff left right ~init ~f =
+    fold_symmetric_diff_with Order.compare left right ~init ~f
+
+  let fold_symmetric_diff_counted left right ~on_compare ~init ~f =
+    let compare left right =
+      on_compare ();
+      Order.compare left right
+    in
+    fold_symmetric_diff_with compare left right ~init ~f
 
   let check_invariants map =
     let fail path message = Error (Printf.sprintf "%s: %s" path message) in

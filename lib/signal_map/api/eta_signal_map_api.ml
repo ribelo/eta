@@ -43,6 +43,7 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
 
   module Keyed (Order : Map.Ordered_type) = struct
     module M = Map.Make (Order)
+    module Kernel_map = Eta_signal_map_kernel.Make (Order)
 
     let map_ops () : (_, _, _) Signal.Extension.keyed_map_ops =
       {
@@ -59,8 +60,8 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
         {
           Signal.keyed_map = data_map;
           keyed_fold_diff =
-            (fun left right ~init ~f ->
-            M.fold_symmetric_diff left right ~init
+            (fun left right ~on_compare ~init ~f ->
+            Kernel_map.fold_symmetric_diff_counted left right ~on_compare ~init
               ~f:(fun acc key -> function
                 | Map.Left value ->
                     f acc key (Signal.Extension.Keyed_left value)
@@ -83,11 +84,22 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
         | Invalidated of token
         | Attached of token
 
+      type counter = Signal.Extension.keyed_counter =
+        | Reconciliation_count
+        | Input_key_comparison_count
+        | Input_diff_event_count
+        | Child_visit_count
+        | Provisional_addition_count
+        | Committed_addition_count
+        | Committed_removal_count
+        | Reconciliation_rollback_count
+
       let entry_identity = Signal.Extension.keyed_entry_identity
       let scope_valid = Signal.Extension.keyed_scope_valid
       let pending = Signal.Extension.keyed_pending
       let set_preflight = Signal.Extension.set_keyed_preflight
       let set_event_recorder = Signal.Extension.set_keyed_event_recorder
+      let set_counter = Signal.Extension.set_keyed_counter
     end
   end
 end
