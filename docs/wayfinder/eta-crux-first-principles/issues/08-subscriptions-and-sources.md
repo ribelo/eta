@@ -1,7 +1,7 @@
 # Long-lived sources and subscriptions
 
 Type: grilling
-Status: open
+Status: claimed
 Blocked by: 05, 07
 
 ## Question
