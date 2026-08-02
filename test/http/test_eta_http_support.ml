@@ -118,9 +118,9 @@ let nested_server_handler_failure ~protocol
 
 let server_span ~path tracer =
   match
-    Eta.Tracer.dump tracer
+    Eta_observability.Tracer.dump tracer
     |> List.filter (fun span ->
-           span.Eta.Tracer.kind = Eta.Tracer.Server
+           span.Eta_observability.Tracer.kind = Eta_observability.Tracer.Server
            && List.assoc_opt "url.path" span.attrs = Some path)
   with
   | [ span ] -> span
@@ -129,7 +129,7 @@ let server_span ~path tracer =
         (List.length spans)
 
 let check_server_span ~path tracer =
-  ignore (server_span ~path tracer : Eta.Tracer.span)
+  ignore (server_span ~path tracer : Eta_observability.Tracer.span)
 
 let check_server_error_span ~path tracer =
   let span = server_span ~path tracer in
@@ -142,6 +142,6 @@ let check_server_error_span ~path tracer =
   Alcotest.(check (option string)) "server span error layer" (Some "handler")
     (List.assoc_opt "eta_http.error.layer" span.attrs);
   match span.status with
-  | Eta.Tracer.Error _ -> ()
+  | Eta_observability.Tracer.Error _ -> ()
   | Ok -> Alcotest.fail "expected errored HTTP server span, got Ok"
   | Cancelled -> Alcotest.fail "expected errored HTTP server span, got Cancelled"

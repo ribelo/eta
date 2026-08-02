@@ -1005,7 +1005,7 @@ let test_upgrade_errors_and_capabilities () =
 
 let test_observability_attrs_and_exclusions () =
   Eio_main.run @@ fun env ->
-  let tracer = Eta.Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
   let port =
@@ -1023,7 +1023,7 @@ let test_observability_attrs_and_exclusions () =
   let cert, _ = Lazy.force tls_files in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
-      ~tracer:(Eta.Tracer.as_capability tracer) ()
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ()
   in
   let connection =
     run rt
@@ -1041,14 +1041,14 @@ let test_observability_attrs_and_exclusions () =
   run rt (T.Audio.Realtime.close connection);
   Eio.Fiber.yield ();
   let session_spans =
-    Eta.Tracer.dump tracer
-    |> List.filter (fun span -> span.Eta.Tracer.name = "realtime xai")
+    Eta_observability.Tracer.dump tracer
+    |> List.filter (fun span -> span.Eta_observability.Tracer.name = "realtime xai")
   in
   Alcotest.(check int) "xaiobs-84gq exactly one WebSocket session span" 1
     (List.length session_spans);
   let span =
     session_spans
-    |> List.find (fun span -> span.Eta.Tracer.name = "realtime xai")
+    |> List.find (fun span -> span.Eta_observability.Tracer.name = "realtime xai")
   in
   let attrs = span.attrs in
   Alcotest.(check (option string)) "provider" (Some "xai")

@@ -1531,8 +1531,8 @@ let test_collections_results_and_timestamps () =
         && match_.fields <> [] && match_.page_number = Some 7)
   | _ -> Alcotest.fail "search match fixture");
   let rendered_attrs =
-    Eta.Tracer.dump tracer
-    |> List.concat_map (fun (span : Eta.Tracer.span) -> List.map snd span.attrs)
+    Eta_observability.Tracer.dump tracer
+    |> List.concat_map (fun (span : Eta_observability.Tracer.span) -> List.map snd span.attrs)
     |> String.concat " "
   in
   Alcotest.(check bool) "xaisec-khar management key excluded from telemetry"
@@ -1689,8 +1689,8 @@ let test_sse_release_and_terminal_fence () =
     (Option.is_none
        (run_ok rt "SSE after DONE" (X.Responses.read_stream_event stream)));
   let stream_span =
-    Eta.Tracer.dump tracer
-    |> List.find (fun (span : Eta.Tracer.span) ->
+    Eta_observability.Tracer.dump tracer
+    |> List.find (fun (span : Eta_observability.Tracer.span) ->
            List.assoc_opt "gen_ai.request.stream" span.attrs = Some "true")
   in
   Alcotest.(check (option string)) "xaiobs-67fn streaming request attr"
@@ -1762,7 +1762,8 @@ let test_role_typed_endpoints_and_port_attrs () =
     H.Client.make_custom ~protocol:H.Client.H1
       ~request:(fun request ->
         captured := Some request;
-        E.named ~kind:Eta.Capabilities.Client transport_span_name
+        Eta_observability.named ~kind:Eta.Capabilities.Client
+          transport_span_name
           (E.pure
              (H.Response.make
                 ~status:200
@@ -1778,14 +1779,14 @@ let test_role_typed_endpoints_and_port_attrs () =
        (X.Responses.create ~endpoint:inference
           nested_transport_client
           ~api_key:(A.api_key "key") (base_responses_request [])));
-  let spans = Eta.Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   Alcotest.(check bool) "xaiobs-e3sy nested transport span suppressed" false
     (List.exists
-       (fun (span : Eta.Tracer.span) -> span.name = transport_span_name)
+       (fun (span : Eta_observability.Tracer.span) -> span.name = transport_span_name)
        spans);
   let span =
     spans
-    |> List.find_opt (fun (span : Eta.Tracer.span) -> span.name = "chat xai")
+    |> List.find_opt (fun (span : Eta_observability.Tracer.span) -> span.name = "chat xai")
     |> Option.get
   in
   Alcotest.(check (option string)) "xaiobs-veq9 explicit server port" (Some "8443")
@@ -1840,14 +1841,14 @@ let test_xai_http_fixture_runners_and_spans () =
     (contains ~needle:"https://api.x.ai/" request.uri
     && H.Core.Header.get "authorization" request.headers
        = Some "Bearer fixture-secret");
-  let spans = Eta.Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   Alcotest.(check int) "xaiobs-98ld exactly one REST GenAI span" 1
     (List.length
-       (List.filter (fun (span : Eta.Tracer.span) -> span.name = "chat xai") spans));
+       (List.filter (fun (span : Eta_observability.Tracer.span) -> span.name = "chat xai") spans));
   let span =
     match
       List.find_opt
-        (fun (span : Eta.Tracer.span) -> span.name = "chat xai")
+        (fun (span : Eta_observability.Tracer.span) -> span.name = "chat xai")
         spans
     with
     | Some span -> span
@@ -1902,8 +1903,8 @@ let test_xai_http_fixture_runners_and_spans () =
         && model.image_price = Some 40L)
   | _ -> Alcotest.fail "model fixture");
   let model_spans =
-    Eta.Tracer.dump tracer
-    |> List.filter (fun (span : Eta.Tracer.span) ->
+    Eta_observability.Tracer.dump tracer
+    |> List.filter (fun (span : Eta_observability.Tracer.span) ->
            span.name = "list_models xai")
   in
   Alcotest.(check int) "xaiobs-hchu one ordinary provider client span" 1

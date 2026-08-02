@@ -1294,7 +1294,7 @@ let stream ?endpoint:custom client ~api_key (request : request) =
                           | Ok events ->
                               stream.pending <- events;
                               E.pure stream
-                              |> E.annotate_all
+                              |> Eta_observability.annotate_all
                                    [
                                      ( "gen_ai.response.time_to_first_chunk",
                                        Printf.sprintf "%.3f"

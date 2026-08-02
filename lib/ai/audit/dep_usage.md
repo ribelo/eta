@@ -433,13 +433,13 @@ Search:
 - lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:172:    match Eta_http.Core.Url.parse raw_url with
 - lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:175:        ("server.address", Eta_http.Core.Url.host url)
 - lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:176:        :: (match Eta_http.Core.Url.port url with
-- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:206:           |> E.named ~kind:Eta.Capabilities.Client
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:206:           |> Eta_observability.named ~kind:Eta.Capabilities.Client
 - lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:210:    let terminal, terminal_resolver = Eio.Promise.create () in
 - lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:211:    let telemetry, telemetry_resolver = Eio.Promise.create () in
 - lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:213:      { ws; send_mutex = Eio.Mutex.create (); read_active = Atomic.make false;
 - lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:219:    Eio.Switch.on_release sw (fun () ->
 - lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:224:      (E.sync (fun () -> Eio.Promise.await telemetry)
-- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:236:       |> E.named ~kind:Eta.Capabilities.Client
+- lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:236:       |> Eta_observability.named ~kind:Eta.Capabilities.Client
 - lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:262:            ~raw_url:(Eta_http.Core.Url.to_string url))
 - lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:264:         ~raw_url:(Eta_http.Core.Url.to_string url))
 - lib/ai/openai_realtime_eio/eta_ai_openai_realtime_eio.ml:267:    E.sync (fun () -> Eio.Mutex.lock t.send_mutex)
@@ -646,8 +646,8 @@ Search:
 - lib/ai/xai/collections.mli:315:  (search_response, Xai_error.t) Eta.Effect.t
 - lib/ai/xai/common.ml:2:module E = Eta.Effect
 - lib/ai/xai/common.ml:130:      ("Authorization", "Bearer " ^ Eta_redacted.value key);
-- lib/ai/xai/common.ml:215:  |> E.named ~error_pp:Error.pp ~kind:Eta.Capabilities.Client
-- lib/ai/xai/common.ml:253:    (label ^ " " ^ Eta_http.Multipart.error_message error)
+- lib/ai/xai/common.ml:216:  |> Eta_observability.named ~error_pp:Error.pp ~kind:Eta.Capabilities.Client
+- lib/ai/xai/common.ml:255:    (label ^ " " ^ Eta_http.Multipart.error_message error)
 - lib/ai/xai/endpoint.ml:1:module Url = Eta_http.Core.Url
 - lib/ai/xai/files.ml:2:module E = Eta.Effect
 - lib/ai/xai/files.ml:155:          Eta_http.Multipart.Text
@@ -792,16 +792,16 @@ Search:
 - lib/ai/xai_eio/common.ml:82:      attrs_mutex = Eio.Mutex.create ();
 - lib/ai/xai_eio/common.ml:88:  Eio.Switch.on_release sw (fun () -> finish t);
 - lib/ai/xai_eio/common.ml:90:    (E.sync (fun () -> Eio.Promise.await t.closed)
-- lib/ai/xai_eio/common.ml:92:    |> E.named ~kind:Eta.Capabilities.Client (operation ^ " xai"))
-- lib/ai/xai_eio/common.ml:126:    ~(headers : Eta_http.Core.Header.t) raw_url =
-- lib/ai/xai_eio/common.ml:133:    ~(headers : Eta_http.Core.Header.t) url =
-- lib/ai/xai_eio/common.ml:139:          ~raw_url:(Eta_http.Core.Url.to_string url))
-- lib/ai/xai_eio/common.ml:145:      Eio.Mutex.use_rw ~protect:false t.attrs_mutex (fun () -> t.attrs)
-- lib/ai/xai_eio/common.ml:147:    Eio.Promise.resolve t.close_resolver attrs;
-- lib/ai/xai_eio/common.ml:153:      Eio.Mutex.lock t.send_mutex;
-- lib/ai/xai_eio/common.ml:155:        Eio.Mutex.unlock t.send_mutex;
-- lib/ai/xai_eio/common.ml:164:                    E.sync (fun () -> Eio.Mutex.unlock t.send_mutex)
-- lib/ai/xai_eio/common.ml:188:    (Ws.incoming t.ws |> Eta_stream.Stream.take 1 |> Eta_stream.run_collect
+- lib/ai/xai_eio/common.ml:92:    |> Eta_observability.named ~kind:Eta.Capabilities.Client
+- lib/ai/xai_eio/common.ml:127:    ~(headers : Eta_http.Core.Header.t) raw_url =
+- lib/ai/xai_eio/common.ml:134:    ~(headers : Eta_http.Core.Header.t) url =
+- lib/ai/xai_eio/common.ml:140:          ~raw_url:(Eta_http.Core.Url.to_string url))
+- lib/ai/xai_eio/common.ml:146:      Eio.Mutex.use_rw ~protect:false t.attrs_mutex (fun () -> t.attrs)
+- lib/ai/xai_eio/common.ml:148:    Eio.Promise.resolve t.close_resolver attrs;
+- lib/ai/xai_eio/common.ml:154:      Eio.Mutex.lock t.send_mutex;
+- lib/ai/xai_eio/common.ml:156:        Eio.Mutex.unlock t.send_mutex;
+- lib/ai/xai_eio/common.ml:165:                    E.sync (fun () -> Eio.Mutex.unlock t.send_mutex)
+- lib/ai/xai_eio/common.ml:189:    (Ws.incoming t.ws |> Eta_stream.Stream.take 1 |> Eta_stream.run_collect
 - lib/ai/xai_eio/common.mli:2:  [ Eta_http_eio.Ws.Client.ws_error
 - lib/ai/xai_eio/common.mli:11:val headers : Eta_ai.api_key -> Eta_http.Core.Header.t
 - lib/ai/xai_eio/common.mli:13:  Eta_ai_xai.Audio.Realtime.client_secret -> Eta_http.Core.Header.t

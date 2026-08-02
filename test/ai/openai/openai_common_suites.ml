@@ -2050,12 +2050,12 @@ let test_oaobs_speech_safe_attributes () =
     (B.run rt
        (O.Audio.Text_to_speech.create ~provider failure_client ~api_key
           (speech_request "input-text-sentinel")));
-  let spans = Eta.Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   let span =
     spans
-    |> List.find (fun (span : Eta.Tracer.span) ->
+    |> List.find (fun (span : Eta_observability.Tracer.span) ->
            String.equal span.name "speech.create openai"
-           && span.status = Eta.Tracer.Ok)
+           && span.status = Eta_observability.Tracer.Ok)
   in
   check_attr "speech operation" "speech.create" span.attrs
     "eta_ai.operation.name";
@@ -2065,42 +2065,42 @@ let test_oaobs_speech_safe_attributes () =
   check_attr "speech authority" "api.openai.test" span.attrs "server.address";
   let find_span name status =
     List.find
-      (fun (span : Eta.Tracer.span) ->
+      (fun (span : Eta_observability.Tracer.span) ->
         String.equal span.name name && span.status = status)
       spans
   in
   let stream_span =
-    find_span "speech.stream_audio openai" Eta.Tracer.Ok
+    find_span "speech.stream_audio openai" Eta_observability.Tracer.Ok
   in
   check_attr "stream mode" "audio" stream_span.attrs
     "eta_ai.request.stream_format";
-  ignore (find_span "speech.stream_events openai" Eta.Tracer.Ok);
-  ignore (find_span "speech.close_audio openai" Eta.Tracer.Ok);
-  ignore (find_span "speech.close_events openai" Eta.Tracer.Ok);
-  ignore (find_span "speech.collect_audio openai" Eta.Tracer.Ok);
+  ignore (find_span "speech.stream_events openai" Eta_observability.Tracer.Ok);
+  ignore (find_span "speech.close_audio openai" Eta_observability.Tracer.Ok);
+  ignore (find_span "speech.close_events openai" Eta_observability.Tracer.Ok);
+  ignore (find_span "speech.collect_audio openai" Eta_observability.Tracer.Ok);
   ignore
     (find_span "speech.collect_audio openai"
-       (Eta.Tracer.Error "limit_exceeded"));
+       (Eta_observability.Tracer.Error "limit_exceeded"));
   ignore
-    (find_span "speech.read_audio openai" (Eta.Tracer.Error "http_error"));
+    (find_span "speech.read_audio openai" (Eta_observability.Tracer.Error "http_error"));
   ignore
     (find_span "speech.read_event openai"
-       (Eta.Tracer.Error "decode_error"));
+       (Eta_observability.Tracer.Error "decode_error"));
   ignore
     (find_span "speech.close_audio openai"
-       (Eta.Tracer.Error "concurrent_use"));
-  ignore (find_span "speech.read_audio openai" Eta.Tracer.Cancelled);
+       (Eta_observability.Tracer.Error "concurrent_use"));
+  ignore (find_span "speech.read_audio openai" Eta_observability.Tracer.Cancelled);
   let failure_span =
-    find_span "speech.create openai" (Eta.Tracer.Error "bad_speech")
+    find_span "speech.create openai" (Eta_observability.Tracer.Error "bad_speech")
   in
   check_attr "speech error classification" "bad_speech" failure_span.attrs
     "error.type";
   let rendered =
     spans
-    |> List.map (fun (span : Eta.Tracer.span) ->
+    |> List.map (fun (span : Eta_observability.Tracer.span) ->
            let status =
              match span.status with
-             | Eta.Tracer.Ok -> "ok"
+             | Eta_observability.Tracer.Ok -> "ok"
              | Cancelled -> "cancelled"
              | Error message -> "error:" ^ message
            in
@@ -2129,7 +2129,7 @@ let test_oaobs_speech_safe_attributes () =
     ];
   Alcotest.(check bool) "nested HTTP span suppressed" false
     (List.exists
-       (fun (span : Eta.Tracer.span) -> String.equal span.name "HTTP POST")
+       (fun (span : Eta_observability.Tracer.span) -> String.equal span.name "HTTP POST")
        spans)
 
 let transcription_file ?(content_type = "audio/wav") data =
@@ -3202,22 +3202,22 @@ let test_transcription_translation_safe_telemetry () =
     (B.run rt
        (O.Audio.Speech_to_text.create ~provider failure_client ~api_key:key
           transcription));
-  let spans = Eta.Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   let find_span name status =
     List.find
-      (fun (span : Eta.Tracer.span) ->
+      (fun (span : Eta_observability.Tracer.span) ->
         String.equal span.name name && span.status = status)
       spans
   in
   let transcription_span =
-    find_span "transcription.create openai" Eta.Tracer.Ok
+    find_span "transcription.create openai" Eta_observability.Tracer.Ok
   in
   check_attr "transcription operation" "transcription.create"
     transcription_span.attrs "eta_ai.operation.name";
   check_attr "transcription format" "json" transcription_span.attrs
     "eta_ai.request.response_format";
   let translation_span =
-    find_span "translation.create openai" Eta.Tracer.Ok
+    find_span "translation.create openai" Eta_observability.Tracer.Ok
   in
   check_attr "translation operation" "translation.create"
     translation_span.attrs "eta_ai.operation.name";
@@ -3225,10 +3225,10 @@ let test_transcription_translation_safe_telemetry () =
     "gen_ai.request.model";
   ignore
     (find_span "transcription.create openai"
-       (Eta.Tracer.Error "audio_bad"));
+       (Eta_observability.Tracer.Error "audio_bad"));
   let rendered =
     spans
-    |> List.map (fun (span : Eta.Tracer.span) ->
+    |> List.map (fun (span : Eta_observability.Tracer.span) ->
            span.name ^ "\n"
            ^ String.concat "\n"
                (List.map
@@ -3252,7 +3252,7 @@ let test_transcription_translation_safe_telemetry () =
     ];
   Alcotest.(check bool) "wrapper nested HTTP spans suppressed" false
     (List.exists
-       (fun (span : Eta.Tracer.span) -> String.equal span.name "HTTP POST")
+       (fun (span : Eta_observability.Tracer.span) -> String.equal span.name "HTTP POST")
        spans)
 
 let test_oabridge_openai_neutral_conversion_and_projection () =
@@ -4145,10 +4145,10 @@ let test_aierr_openai_telemetry_attrs_preserved () =
     (B.run rt
        (O.responses ~provider error_client ~api_key:(A.api_key "sk-test")
           (responses_request ())));
-  let spans = Eta.Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   let chat =
     List.find
-      (fun (span : Eta.Tracer.span) -> String.equal span.name "chat gpt-4o-mini")
+      (fun (span : Eta_observability.Tracer.span) -> String.equal span.name "chat gpt-4o-mini")
       spans
   in
   let attrs = chat.attrs in
@@ -4165,14 +4165,14 @@ let test_aierr_openai_telemetry_attrs_preserved () =
   check_attr "output tokens" "7" attrs "gen_ai.usage.output_tokens";
   let stream_span =
     List.find
-      (fun (span : Eta.Tracer.span) ->
+      (fun (span : Eta_observability.Tracer.span) ->
         List.assoc_opt "gen_ai.request.stream" span.attrs = Some "true")
       spans
   in
   check_attr "stream flag" "true" stream_span.attrs "gen_ai.request.stream";
   let embedding_span =
     List.find
-      (fun (span : Eta.Tracer.span) ->
+      (fun (span : Eta_observability.Tracer.span) ->
         String.equal span.name "embeddings text-embedding-3-small")
       spans
   in
@@ -4188,14 +4188,14 @@ let test_aierr_openai_telemetry_attrs_preserved () =
     "gen_ai.usage.total_tokens";
   let error_span =
     List.find
-      (fun (span : Eta.Tracer.span) ->
+      (fun (span : Eta_observability.Tracer.span) ->
         List.assoc_opt "error.type" span.attrs = Some "rate_limit_exceeded")
       spans
   in
   check_attr "error type" "rate_limit_exceeded" error_span.attrs "error.type";
   Alcotest.(check bool) "nested http span suppressed" false
     (List.exists
-       (fun (span : Eta.Tracer.span) -> String.equal span.name "HTTP POST")
+       (fun (span : Eta_observability.Tracer.span) -> String.equal span.name "HTTP POST")
        spans)
 
 let test_aierr_openai_no_parallel_ai_error_public_path () =
@@ -5424,20 +5424,20 @@ let test_oachat_runner_preflight_replay_concurrency_and_telemetry () =
   ignore (B.await_cancelable blocked);
   Alcotest.(check int) "cancelled Chat body release" 1
     (Atomic.get cancelled_releases);
-  let spans = Eta.Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   let chat_spans =
     List.filter
-      (fun (span : Eta.Tracer.span) -> String.equal span.name "chat openai")
+      (fun (span : Eta_observability.Tracer.span) -> String.equal span.name "chat openai")
       spans
   in
   Alcotest.(check int) "successful Chat telemetry spans" 4
     (List.length
        (List.filter
-          (fun (span : Eta.Tracer.span) -> span.status = Eta.Tracer.Ok)
+          (fun (span : Eta_observability.Tracer.span) -> span.status = Eta_observability.Tracer.Ok)
           chat_spans));
   let successful_spans =
     List.filter
-      (fun (span : Eta.Tracer.span) -> span.status = Eta.Tracer.Ok)
+      (fun (span : Eta_observability.Tracer.span) -> span.status = Eta_observability.Tracer.Ok)
       chat_spans
   in
   let returned = first :: second :: concurrent in
@@ -5486,7 +5486,7 @@ let test_oachat_runner_preflight_replay_concurrency_and_telemetry () =
   in
   let actual =
     successful_spans
-    |> List.map (fun (span : Eta.Tracer.span) -> List.sort compare span.attrs)
+    |> List.map (fun (span : Eta_observability.Tracer.span) -> List.sort compare span.attrs)
     |> List.sort (fun left right ->
            String.compare (sort_by_id left) (sort_by_id right))
   in
@@ -5495,7 +5495,7 @@ let test_oachat_runner_preflight_replay_concurrency_and_telemetry () =
     expected actual;
   let rendered =
     chat_spans
-    |> List.concat_map (fun (span : Eta.Tracer.span) ->
+    |> List.concat_map (fun (span : Eta_observability.Tracer.span) ->
            span.attrs |> List.map (fun (name, value) -> name ^ "=" ^ value))
     |> String.concat "\n"
   in
@@ -5621,15 +5621,15 @@ let test_oachat_gen_ai_error_attrs_all_nominal_classes () =
           Alcotest.fail "nominal telemetry error did not remain primary")
     effects;
   let spans =
-    Eta.Tracer.dump tracer
-    |> List.filter (fun (span : Eta.Tracer.span) ->
+    Eta_observability.Tracer.dump tracer
+    |> List.filter (fun (span : Eta_observability.Tracer.span) ->
            String.equal span.name "chat custom-provider")
   in
   Alcotest.(check int) "one span per reachable nominal failure class"
     (List.length effects) (List.length spans);
   let actual_error_types =
     spans
-    |> List.filter_map (fun (span : Eta.Tracer.span) ->
+    |> List.filter_map (fun (span : Eta_observability.Tracer.span) ->
            let error_type = List.assoc_opt "error.type" span.attrs in
            let expected_base =
              [
@@ -5655,7 +5655,7 @@ let test_oachat_gen_ai_error_attrs_all_nominal_classes () =
     actual_error_types;
   let rendered =
     spans
-    |> List.concat_map (fun (span : Eta.Tracer.span) ->
+    |> List.concat_map (fun (span : Eta_observability.Tracer.span) ->
            List.map (fun (name, value) -> name ^ "=" ^ value) span.attrs)
     |> String.concat "\n"
   in

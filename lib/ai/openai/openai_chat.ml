@@ -1063,7 +1063,8 @@ let run ?structured_output ?provider:custom_provider client ~api_key
     (fun http_request ->
       Common.perform_decoded provider client http_request decode
       |> E.bind (fun response ->
-             E.pure response |> E.annotate_all (response_attrs response)))
+             E.pure response
+             |> Eta_observability.annotate_all (response_attrs response)))
   |> Common.with_gen_ai_span provider ~operation:"chat"
        ~model:chat_request.common.model
 

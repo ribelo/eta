@@ -210,9 +210,10 @@ let with_span ?(telemetry = `Gen_ai) ~base_url ~operation ?model ?(attrs = [])
   in
   eff
   |> E.bind_error (fun error ->
-         E.fail error |> E.annotate_all [ ("error.type", error_type error) ])
-  |> E.annotate_all attrs
-  |> E.named ~error_pp:Error.pp ~kind:Eta.Capabilities.Client
+         E.fail error
+         |> Eta_observability.annotate_all [ ("error.type", error_type error) ])
+  |> Eta_observability.annotate_all attrs
+  |> Eta_observability.named ~error_pp:Error.pp ~kind:Eta.Capabilities.Client
        (operation ^ " xai")
 
 let read_body ?max_bytes body =
@@ -244,7 +245,8 @@ let perform_json ?max_bytes ?(telemetry = `Gen_ai) ~base_url ~operation ?model
   perform_response_unspanned ?max_bytes client request
   |> E.bind (fun (body, _) ->
          match decode (Bytes.to_string body) with
-         | Ok value -> E.pure value |> E.annotate_all (result_attrs value)
+         | Ok value ->
+             E.pure value |> Eta_observability.annotate_all (result_attrs value)
          | Error error -> E.fail error)
   |> with_span ~telemetry ~base_url ~operation ?model ~attrs
 

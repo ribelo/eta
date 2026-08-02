@@ -5,6 +5,7 @@
  (private_modules common)
  (libraries
   eta
+  eta_observability
   eta_ai
   eta_redacted
   eta_http

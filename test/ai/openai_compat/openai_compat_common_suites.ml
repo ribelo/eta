@@ -895,8 +895,8 @@ let test_aierr_compat_telemetry_exact () =
        (C.chat_completions ~provider success ~api_key:(A.api_key "k")
           (chat_request ~model:"meta-llama/Llama-3.3-70B-Instruct-Turbo" ())));
   let span =
-    Eta.Tracer.dump tracer
-    |> List.find (fun (span : Eta.Tracer.span) ->
+    Eta_observability.Tracer.dump tracer
+    |> List.find (fun (span : Eta_observability.Tracer.span) ->
            String.equal span.name
              "chat meta-llama/Llama-3.3-70B-Instruct-Turbo")
   in
@@ -927,8 +927,8 @@ let test_aierr_compat_telemetry_exact () =
           ~api_key:(A.api_key "k") (chat_request ())
        |> E.bind C.read_stream_events));
   let stream_span =
-    Eta.Tracer.dump tracer
-    |> List.find (fun (span : Eta.Tracer.span) ->
+    Eta_observability.Tracer.dump tracer
+    |> List.find (fun (span : Eta_observability.Tracer.span) ->
            List.assoc_opt "gen_ai.request.stream" span.attrs = Some "true")
   in
   check_attr "stream flag" "true" stream_span.attrs "gen_ai.request.stream";
@@ -944,15 +944,15 @@ let test_aierr_compat_telemetry_exact () =
        (C.chat_completions ~provider error_client ~api_key:(A.api_key "k")
           (chat_request ())));
   let error_span =
-    Eta.Tracer.dump tracer
-    |> List.find (fun (span : Eta.Tracer.span) ->
+    Eta_observability.Tracer.dump tracer
+    |> List.find (fun (span : Eta_observability.Tracer.span) ->
            List.assoc_opt "error.type" span.attrs = Some "model_not_found")
   in
   check_attr "error type" "model_not_found" error_span.attrs "error.type";
   Alcotest.(check bool) "nested transport suppressed" false
     (List.exists
-       (fun (span : Eta.Tracer.span) -> String.equal span.name "HTTP POST")
-       (Eta.Tracer.dump tracer))
+       (fun (span : Eta_observability.Tracer.span) -> String.equal span.name "HTTP POST")
+       (Eta_observability.Tracer.dump tracer))
 
 let tests =
   [

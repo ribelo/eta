@@ -1643,12 +1643,12 @@ let test_h1_server_connection_emits_meter_metrics () =
 
 let test_h1_server_handler_exception_returns_500 () =
   (* httpsrv-77jk *)
-  let tracer = Eta.Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let handler (request : Eta_http.Server.Request.t) =
     if request.path = "/boom" then failwith "handler boom"
     else Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
   in
-  with_h1_connection ~tracer:(Eta.Tracer.as_capability tracer) handler
+  with_h1_connection ~tracer:(Eta_observability.Tracer.as_capability tracer) handler
     (fun clock flow _closed_stats ->
       Eio.Flow.copy_string
         "GET /boom HTTP/1.1\r\nHost: example.test\r\n\r\nGET /ok \
@@ -1692,11 +1692,11 @@ let test_h1_server_common_nested_failure_fallback () =
 
 let test_h1_server_common_handler_observability () =
   (* httpsrv-77jk *)
-  let tracer = Eta.Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let handler _request =
     Eta.Effect.pure (Eta_http.Server.Response.text "observed\n")
   in
-  with_h1_connection ~tracer:(Eta.Tracer.as_capability tracer) handler
+  with_h1_connection ~tracer:(Eta_observability.Tracer.as_capability tracer) handler
   @@ fun clock flow closed_stats ->
   Eio.Flow.copy_string
     ("GET /observed-handler HTTP/1.1\r\nHost: example.test\r\n"

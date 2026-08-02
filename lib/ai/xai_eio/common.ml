@@ -88,8 +88,9 @@ let make ~operation ~attrs ~sw ~raw_url ws =
   Eio.Switch.on_release sw (fun () -> finish t);
   Eta.Spi.daemon
     (E.sync (fun () -> Eio.Promise.await t.closed)
-    |> E.bind (fun attrs -> E.unit |> E.annotate_all attrs)
-    |> E.named ~kind:Eta.Capabilities.Client (operation ^ " xai"))
+    |> E.bind (fun attrs -> E.unit |> Eta_observability.annotate_all attrs)
+    |> Eta_observability.named ~kind:Eta.Capabilities.Client
+         (operation ^ " xai"))
   |> E.map (fun () -> t))
 
 let widen eff =

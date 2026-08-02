@@ -200,10 +200,10 @@ module Engine = struct
              | _ -> "connect_error"
            in
            E.unit
-           |> E.annotate_all
+           |> Eta_observability.annotate_all
                 (span_attrs ~protocol ~raw_url ~error_type ()
                  @ [ ("eta.realtime.lifecycle", "connect_failure") ])
-           |> E.named ~kind:Eta.Capabilities.Client
+           |> Eta_observability.named ~kind:Eta.Capabilities.Client
                 ("realtime openai " ^ protocol))
 
   let make ~sw ~protocol ~raw_url ws =
@@ -223,7 +223,7 @@ module Engine = struct
     Eta.Spi.daemon
       (E.sync (fun () -> Eio.Promise.await telemetry)
        |> E.bind (fun ending ->
-              E.unit |> E.annotate_all
+              E.unit |> Eta_observability.annotate_all
                 ([ ("gen_ai.provider.name", "openai");
                    ("gen_ai.operation.name", "realtime");
                    ("eta.realtime.protocol", protocol);
@@ -233,7 +233,7 @@ module Engine = struct
                      ~some:(fun value -> [ ("error.type", value) ])
                      ending.error_type
                  @ authority))
-       |> E.named ~kind:Eta.Capabilities.Client
+       |> Eta_observability.named ~kind:Eta.Capabilities.Client
             ("realtime openai " ^ protocol))
     |> E.map (fun () -> t)
 

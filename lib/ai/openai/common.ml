@@ -434,11 +434,11 @@ let with_classified_span ~name ~attrs eff =
            match primary_error cause with
            | Some error ->
                E.unit
-               |> E.annotate_all
+               |> Eta_observability.annotate_all
                     [ ("error.type", Error.classification error) ]
            | None -> E.unit))
-  |> E.annotate_all attrs
-  |> E.named
+  |> Eta_observability.annotate_all attrs
+  |> Eta_observability.named
        ~error_pp:(fun fmt error ->
          Format.pp_print_string fmt (Error.classification error))
        ~kind:Eta.Capabilities.Client

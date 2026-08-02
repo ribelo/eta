@@ -5290,10 +5290,10 @@ let test_h2c_server_handler_exception_returns_500 () =
     if request.path = "/boom" then failwith "handler boom"
     else Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
   in
-  let tracer = Eta.Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let runtime_factory ~sw ~connection:_ () =
     Eta_eio.Runtime.create ~sw ~clock
-      ~tracer:(Eta.Tracer.as_capability tracer) ()
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ()
   in
   let stop, resolve_stop = Eio.Promise.create () in
   Eio.Fiber.fork ~sw (fun () ->
@@ -5396,10 +5396,10 @@ let test_h2c_server_common_handler_observability () =
       (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
   in
   let port = tcp_port (Eio.Net.listening_addr socket) in
-  let tracer = Eta.Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let runtime_factory ~sw ~connection:_ () =
     Eta_eio.Runtime.create ~sw ~clock
-      ~tracer:(Eta.Tracer.as_capability tracer) ()
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ()
   in
   let handler _request =
     Eta.Effect.pure (Eta_http.Server.Response.text "observed\n")

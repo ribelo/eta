@@ -473,6 +473,7 @@
  (depends
   (ocaml (>= 5.2.0))
   eta
+  eta_observability
   eta_ai
   eta_ai_openai
   eta_http
@@ -489,6 +490,7 @@
  (depends
   (ocaml (>= 5.2.0))
   eta
+  eta_observability
   eta_ai
   eta_redacted
   eta_http
@@ -503,6 +505,7 @@
  (depends
   (ocaml (>= 5.2.0))
   eta
+  eta_observability
   eta_ai
   eta_ai_xai
   eta_http

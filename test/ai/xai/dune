@@ -3,6 +3,7 @@
  (modules run_eio)
  (libraries
   eta
+  eta_observability
   eta_ai
   eta_ai_xai
   eta_ai_test_support

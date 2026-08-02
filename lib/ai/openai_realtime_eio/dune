@@ -4,6 +4,7 @@
  (synopsis "Eio WebSocket transport for OpenAI Realtime")
  (libraries
   eta
+  eta_observability
   eta_ai
   eta_ai_openai
   eta_http

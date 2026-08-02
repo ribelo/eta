@@ -23,6 +23,7 @@
   eta_http_tls_openssl
   eta_eio
   eta
+  eta_observability
   eta_ai
   eta_http
   eta_http_eio

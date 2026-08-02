@@ -2,6 +2,7 @@
  (name run)
  (libraries
   eta
+  eta_observability
   eta_ai
   eta_ai_xai
   eta_ai_xai_eio

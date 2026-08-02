@@ -103,16 +103,16 @@ No debt escapes yet.
 - lib/ai/xai_eio/common.ml:82:      attrs_mutex = Eio.Mutex.create ();
 - lib/ai/xai_eio/common.ml:85:      first_event = Atomic.make false;
 - lib/ai/xai_eio/common.ml:90:    (E.sync (fun () -> Eio.Promise.await t.closed)
-- lib/ai/xai_eio/common.ml:143:  if Atomic.compare_and_set t.closing false true then (
-- lib/ai/xai_eio/common.ml:145:      Eio.Mutex.use_rw ~protect:false t.attrs_mutex (fun () -> t.attrs)
-- lib/ai/xai_eio/common.ml:147:    Eio.Promise.resolve t.close_resolver attrs;
-- lib/ai/xai_eio/common.ml:153:      Eio.Mutex.lock t.send_mutex;
-- lib/ai/xai_eio/common.ml:154:      if Atomic.get t.closing then (
-- lib/ai/xai_eio/common.ml:155:        Eio.Mutex.unlock t.send_mutex;
-- lib/ai/xai_eio/common.ml:164:                    E.sync (fun () -> Eio.Mutex.unlock t.send_mutex)
-- lib/ai/xai_eio/common.ml:185:  if not (Atomic.compare_and_set t.read_active false true) then
-- lib/ai/xai_eio/common.ml:198:             if Atomic.compare_and_set t.first_event false true then
-- lib/ai/xai_eio/common.ml:212:             E.sync (fun () -> Atomic.set t.read_active false)
+- lib/ai/xai_eio/common.ml:144:  if Atomic.compare_and_set t.closing false true then (
+- lib/ai/xai_eio/common.ml:146:      Eio.Mutex.use_rw ~protect:false t.attrs_mutex (fun () -> t.attrs)
+- lib/ai/xai_eio/common.ml:148:    Eio.Promise.resolve t.close_resolver attrs;
+- lib/ai/xai_eio/common.ml:154:      Eio.Mutex.lock t.send_mutex;
+- lib/ai/xai_eio/common.ml:155:      if Atomic.get t.closing then (
+- lib/ai/xai_eio/common.ml:156:        Eio.Mutex.unlock t.send_mutex;
+- lib/ai/xai_eio/common.ml:165:                    E.sync (fun () -> Eio.Mutex.unlock t.send_mutex)
+- lib/ai/xai_eio/common.ml:186:  if not (Atomic.compare_and_set t.read_active false true) then
+- lib/ai/xai_eio/common.ml:199:             if Atomic.compare_and_set t.first_event false true then
+- lib/ai/xai_eio/common.ml:213:             E.sync (fun () -> Atomic.set t.read_active false)
 - lib/ai/xai_eio/realtime.ml:8:  input_transport : R.audio_transport Atomic.t;
 - lib/ai/xai_eio/realtime.ml:9:  output_transport : R.audio_transport Atomic.t;
 - lib/ai/xai_eio/realtime.ml:50:        ( input_transport session (Atomic.get t.input_transport),

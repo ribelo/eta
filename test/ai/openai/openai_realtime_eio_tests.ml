@@ -150,10 +150,10 @@ let expect_runtime_drained env rt label =
 let with_traced_runtime f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  let tracer = Eta.Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
-      ~tracer:(Eta.Tracer.as_capability tracer) ()
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ()
   in
   f env sw rt tracer
 
@@ -800,8 +800,8 @@ let test_oaobs_realtime_lifecycle_without_content () =
   run_ok rt "translation abort" (T.Translation.abort connection);
   Eio.Fiber.yield ();
   let span =
-    Eta.Tracer.dump tracer
-    |> List.find (fun (span : Eta.Tracer.span) ->
+    Eta_observability.Tracer.dump tracer
+    |> List.find (fun (span : Eta_observability.Tracer.span) ->
            String.equal span.name "realtime openai translation")
   in
   let attr name = List.assoc_opt name span.attrs in
@@ -819,8 +819,8 @@ let test_oaobs_realtime_lifecycle_without_content () =
       "gen_ai.request.model"; "gen_ai.request.instructions" ]
 
 let find_named_span tracer name =
-  Eta.Tracer.dump tracer
-  |> List.find (fun (span : Eta.Tracer.span) -> String.equal span.name name)
+  Eta_observability.Tracer.dump tracer
+  |> List.find (fun (span : Eta_observability.Tracer.span) -> String.equal span.name name)
 
 let test_oaobs_49xl_decode_failure_classification () =
   with_traced_runtime @@ fun _ sw rt tracer ->
