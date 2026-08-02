@@ -40,5 +40,6 @@ evidence is at commit `f90f8232`. Both prototypes passed the OxCaml and upstream
 OCaml gates.
 
 Eta Crux adds no private scheduler, cancellation tree, runtime scope, or detach
-operation. Production implementation of the Eta contract remains an Eta
-prerequisite, not an Eta Crux design decision.
+operation. Eta implements the contract at commit `f745846d`, with final law
+spans at `c18fa277`. The archived production evidence is in
+[`docs/issues/archive/eta-supervised-work-substrate.md`](../../../issues/archive/eta-supervised-work-substrate.md).
