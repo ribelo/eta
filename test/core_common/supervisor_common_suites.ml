@@ -22,13 +22,6 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let wait_for_sleepers_effect clock expected =
     wait_until_effect (fun () -> B.sleeper_count clock >= expected)
 
-  let rec wait_until ?(attempts = 200) label pred =
-    if pred () then ()
-    else if attempts = 0 then Alcotest.failf "%s did not become true" label
-    else (
-      B.yield ();
-      wait_until ~attempts:(attempts - 1) label pred)
-
   let rec finalizer_contains expected = function
     | Cause.Finalizer.Fail { error = _; rendered } -> String.equal expected rendered
     | Cause.Finalizer.Die _ | Cause.Finalizer.Interrupt _ -> false
@@ -186,284 +179,6 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok false -> Alcotest.fail "expected cancel to wait for finalizer"
     | Exit.Error cause ->
         Alcotest.failf "unexpected cancel failure: %a" (Cause.pp pp_hidden) cause
-
-  (* supcan-stst supcan-f3ww supcan-3sp7 supcan-kptd supcan-0uj5 supcan-vb4t *)
-  let test_supervisor_request_cancel_returns_before_settlement () =
-    B.with_runtime @@ fun ctx rt ->
-    let ready, mark_ready = B.create_promise () in
-    let cleanup_started, mark_cleanup_started = B.create_promise () in
-    let release_cleanup, release = B.create_promise () in
-    let request_returned, mark_request_returned = B.create_promise () in
-    let child =
-      E.acquire_release
-        ~acquire:E.unit
-        ~release:(fun () ->
-          E.sync (fun () -> B.resolve mark_cleanup_started ())
-          |> E.bind (fun () -> B.await_effect release_cleanup))
-      |> E.bind (fun () ->
-             E.sync (fun () -> B.resolve mark_ready ())
-             |> E.bind (fun () -> E.never))
-    in
-    let program =
-      Supervisor.scoped {
-        run =
-          fun sup ->
-            let open Supervisor.Scope in
-            let* child = start sup (lift child) in
-            let* () = lift (B.await_effect ready) in
-            let* () = request_cancel child in
-            let* () = lift (E.sync (fun () -> B.resolve mark_request_returned ())) in
-            cancel child;
-      }
-    in
-    let result = B.fork_run ctx rt program in
-    wait_until "request return" (fun () -> B.is_resolved request_returned);
-    wait_until "cleanup start" (fun () -> B.is_resolved cleanup_started);
-    Alcotest.(check bool) "settlement remains pending" false (B.is_resolved result);
-    B.resolve release ();
-    match B.await result with
-    | Exit.Ok () -> ()
-    | Exit.Error cause ->
-        Alcotest.failf "unexpected request cancellation failure: %a"
-          (Cause.pp pp_hidden) cause
-
-  (* supcan-stst supcan-zqzf supcan-glb2 *)
-  let test_supervisor_request_cancel_latches_before_child_start () =
-    B.with_runtime @@ fun _ctx rt ->
-    let start_gate, _release_start = B.create_promise () in
-    let body_started = ref false in
-    let child =
-      B.await_effect start_gate
-      |> E.bind (fun () -> E.sync (fun () -> body_started := true))
-    in
-    let program =
-      Supervisor.scoped {
-        run =
-          fun sup ->
-            let open Supervisor.Scope in
-            let* child = start sup (lift child) in
-            let* () = request_cancel child in
-            let* () = cancel child in
-            pure !body_started;
-      }
-    in
-    match B.run rt program with
-    | Exit.Ok false -> ()
-    | Exit.Ok true -> Alcotest.fail "child body started after a latched request"
-    | Exit.Error cause ->
-        Alcotest.failf "unexpected pre-start cancellation failure: %a"
-          (Cause.pp pp_hidden) cause
-
-  (* supcan-3os1 supcan-glb2 supcan-tg7n *)
-  let test_supervisor_request_cancel_preserves_terminal_winners () =
-    let completion =
-      B.with_runtime @@ fun _ctx rt ->
-      let program =
-        Supervisor.scoped {
-          run =
-            fun sup ->
-              let open Supervisor.Scope in
-              let* child = start sup (pure 42) in
-              let* value = await child in
-              let* () = request_cancel child in
-              let* () = cancel child in
-              pure value;
-        }
-      in
-      B.run rt program
-    in
-    let failure =
-      B.with_runtime @@ fun _ctx rt ->
-      let program =
-        Supervisor.scoped {
-          run =
-            fun sup ->
-              let open Supervisor.Scope in
-              let* child = start sup (fail `Boom) in
-              let rec wait_for_failure attempts =
-                let* observed = failures sup in
-                if observed <> [] then pure ()
-                else if attempts = 0 then fail `Failure_not_observed
-                else
-                  let* () = yield in
-                  wait_for_failure (attempts - 1)
-              in
-              let* () = wait_for_failure 20 in
-              let* () = request_cancel child in
-              await child;
-        }
-      in
-      B.run rt program
-    in
-    (match completion with
-    | Exit.Ok 42 -> ()
-    | Exit.Ok value ->
-        Alcotest.failf "late request changed completion value to %d" value
-    | Exit.Error cause ->
-        Alcotest.failf "late request changed completion to %a"
-          (Cause.pp pp_hidden) cause);
-    match failure with
-    | Exit.Error (Cause.Fail `Boom) -> ()
-    | Exit.Error cause ->
-        Alcotest.failf "late request changed typed failure to %a"
-          (Cause.pp pp_hidden) cause
-    | Exit.Ok () -> Alcotest.fail "late request changed typed failure to Ok"
-
-  (* supcan-3sp7 supcan-dyvd supcan-nnq7 *)
-  let test_supervisor_cancel_after_request_preserves_settlement_diagnostics () =
-    B.with_runtime @@ fun _ctx rt ->
-    let ready, mark_ready = B.create_promise () in
-    let child =
-      E.acquire_release
-        ~acquire:E.unit
-        ~release:(fun () -> E.fail `Cleanup_failed)
-      |> E.bind (fun () ->
-             E.sync (fun () -> B.resolve mark_ready ())
-             |> E.bind (fun () -> E.never))
-    in
-    let program =
-      Supervisor.scoped {
-        run =
-          fun sup ->
-            let open Supervisor.Scope in
-            let* child = start sup (lift child) in
-            let* () = lift (B.await_effect ready) in
-            let* () = request_cancel child in
-            cancel child;
-      }
-      |> Eta_observability.with_error_pp (fun fmt -> function
-           | `Cleanup_failed -> Format.pp_print_string fmt "Cleanup_failed")
-    in
-    match B.run rt program with
-    | Exit.Error
-        (Cause.Suppressed
-          { primary = Cause.Interrupt None; finalizer })
-      when finalizer_contains "Cleanup_failed" finalizer ->
-        ()
-    | Exit.Error cause ->
-        Alcotest.failf "request/cancel changed cleanup diagnostics: %a"
-          (Cause.pp pp_hidden) cause
-    | Exit.Ok () -> Alcotest.fail "request/cancel hid cleanup diagnostics"
-
-  (* supcan-eg0p *)
-  let test_supervisor_await_after_request_reports_interruption () =
-    B.with_runtime @@ fun _ctx rt ->
-    let ready, mark_ready = B.create_promise () in
-    let child =
-      E.sync (fun () -> B.resolve mark_ready ())
-      |> E.bind (fun () -> E.never)
-    in
-    let program =
-      Supervisor.scoped {
-        run =
-          fun sup ->
-            let open Supervisor.Scope in
-            let* child = start sup (lift child) in
-            let* () = lift (B.await_effect ready) in
-            let* () = request_cancel child in
-            await child;
-      }
-    in
-    match B.run rt program with
-    | Exit.Error (Cause.Interrupt None) -> ()
-    | Exit.Error cause ->
-        Alcotest.failf "await after request returned %a" (Cause.pp pp_hidden)
-          cause
-    | Exit.Ok () -> Alcotest.fail "await after request hid interruption"
-
-  (* supcan-6zw9 supcan-urkv supcan-vb4t *)
-  let test_supervisor_request_cancel_calls_follow_scope_program_order () =
-    B.with_runtime @@ fun _ctx rt ->
-    let events = ref [] in
-    let mark name = E.sync (fun () -> events := name :: !events) in
-    let first_ready, mark_first_ready = B.create_promise () in
-    let second_ready, mark_second_ready = B.create_promise () in
-    let first_cleanup_started, mark_first_cleanup_started = B.create_promise () in
-    let second_cleanup_started, mark_second_cleanup_started = B.create_promise () in
-    let release_first_cleanup, release_first = B.create_promise () in
-    let release_second_cleanup, release_second = B.create_promise () in
-    let second_cleanup_finished, mark_second_cleanup_finished =
-      B.create_promise ()
-    in
-    let replacement_release, release_replacement = B.create_promise () in
-    let replacement_started, mark_replacement_started = B.create_promise () in
-    let child label ready cleanup_started release_cleanup cleanup_finished =
-      E.acquire_release
-        ~acquire:E.unit
-        ~release:(fun () ->
-          mark (label ^ ":cleanup-start")
-          |> E.bind (fun () -> E.sync (fun () -> B.resolve cleanup_started ()))
-          |> E.bind (fun () -> B.await_effect release_cleanup)
-          |> E.bind (fun () -> mark (label ^ ":cleanup-end"))
-          |> E.bind cleanup_finished)
-      |> E.bind (fun () ->
-             mark (label ^ ":ready")
-             |> E.bind (fun () -> E.sync (fun () -> B.resolve ready ()))
-             |> E.bind (fun () -> E.never))
-    in
-    let first =
-      child "first" mark_first_ready mark_first_cleanup_started
-        release_first_cleanup (fun () -> E.unit)
-    in
-    let second =
-      child "second" mark_second_ready mark_second_cleanup_started
-        release_second_cleanup (fun () ->
-          E.sync (fun () -> B.resolve mark_second_cleanup_finished ()))
-    in
-    let replacement =
-      B.await_effect replacement_release
-      |> E.bind (fun () -> mark "replacement:start")
-      |> E.bind (fun () ->
-             E.sync (fun () -> B.resolve mark_replacement_started ()))
-    in
-    let program =
-      Supervisor.scoped {
-        run =
-          fun sup ->
-            let open Supervisor.Scope in
-            let* first_child = start sup (lift first) in
-            let* second_child = start sup (lift second) in
-            let* replacement_child = start sup (lift replacement) in
-            let* () = lift (B.await_effect first_ready) in
-            let* () = lift (B.await_effect second_ready) in
-            let* () = lift (mark "request:first-call") in
-            let* () = request_cancel first_child in
-            let* () = lift (mark "request:first-return") in
-            let* () = lift (mark "request:second-call") in
-            let* () = request_cancel second_child in
-            let* () = lift (mark "request:second-return") in
-            let* () =
-              lift (E.sync (fun () -> B.resolve release_replacement ()))
-            in
-            let* () = lift (B.await_effect replacement_started) in
-            let* () = lift (B.await_effect first_cleanup_started) in
-            let* () = lift (B.await_effect second_cleanup_started) in
-            let* () = lift (E.sync (fun () -> B.resolve release_second ())) in
-            let* () = lift (B.await_effect second_cleanup_finished) in
-            let* () = lift (E.sync (fun () -> B.resolve release_first ())) in
-            let* () = cancel first_child in
-            let* () = cancel second_child in
-            let* () = await replacement_child in
-            pure (List.rev !events);
-      }
-    in
-    let events = run_ok rt program in
-    let position name =
-      match List.find_index (String.equal name) events with
-      | Some index -> index
-      | None -> Alcotest.failf "missing supervisor event %s" name
-    in
-    let before left right =
-      Alcotest.(check bool)
-        (left ^ " before " ^ right) true
-        (position left < position right)
-    in
-    before "request:first-call" "request:first-return";
-    before "request:first-return" "request:second-call";
-    before "request:second-call" "request:second-return";
-    before "request:second-return" "replacement:start";
-    before "replacement:start" "second:cleanup-end";
-    before "second:cleanup-end" "first:cleanup-end"
 
   let test_effect_with_supervised_background_cancels_child () =
     B.with_test_clock @@ fun _ctx clock rt ->
@@ -942,20 +657,6 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_supervisor_cancel_runs_finalizer;
           Alcotest.test_case "cancel waits for finalizer" `Quick
             test_supervisor_cancel_waits_for_finalizer;
-          Alcotest.test_case "request_cancel returns before settlement" `Quick
-            test_supervisor_request_cancel_returns_before_settlement;
-          Alcotest.test_case "request_cancel latches before child start" `Quick
-            test_supervisor_request_cancel_latches_before_child_start;
-          Alcotest.test_case "request_cancel preserves terminal winners" `Quick
-            test_supervisor_request_cancel_preserves_terminal_winners;
-          Alcotest.test_case
-            "cancel after request_cancel preserves settlement diagnostics" `Quick
-            test_supervisor_cancel_after_request_preserves_settlement_diagnostics;
-          Alcotest.test_case "await after request_cancel reports interruption"
-            `Quick test_supervisor_await_after_request_reports_interruption;
-          Alcotest.test_case
-            "request_cancel calls follow scope program order" `Quick
-            test_supervisor_request_cancel_calls_follow_scope_program_order;
           Alcotest.test_case "with_supervised_background cancels child" `Quick
             test_effect_with_supervised_background_cancels_child;
           Alcotest.test_case
@@ -1007,4 +708,312 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_supervisor_nested_scopes_compose;
         ] );
     ]
+
+  let rec wait_until ?(attempts = 200) label pred =
+    if pred () then ()
+    else if attempts = 0 then Alcotest.failf "%s did not become true" label
+    else (
+      B.yield ();
+      wait_until ~attempts:(attempts - 1) label pred)
+
+  (* supcan-stst supcan-f3ww supcan-3sp7 supcan-kptd supcan-0uj5 supcan-vb4t *)
+  let test_supervisor_request_cancel_returns_before_settlement () =
+    B.with_runtime @@ fun ctx rt ->
+    let ready, mark_ready = B.create_promise () in
+    let cleanup_started, mark_cleanup_started = B.create_promise () in
+    let release_cleanup, release = B.create_promise () in
+    let request_returned, mark_request_returned = B.create_promise () in
+    let child =
+      E.acquire_release
+        ~acquire:E.unit
+        ~release:(fun () ->
+          E.sync (fun () -> B.resolve mark_cleanup_started ())
+          |> E.bind (fun () -> B.await_effect release_cleanup))
+      |> E.bind (fun () ->
+             E.sync (fun () -> B.resolve mark_ready ())
+             |> E.bind (fun () -> E.never))
+    in
+    let program =
+      Supervisor.scoped {
+        run =
+          fun sup ->
+            let open Supervisor.Scope in
+            let* child = start sup (lift child) in
+            let* () = lift (B.await_effect ready) in
+            let* () = request_cancel child in
+            let* () = lift (E.sync (fun () -> B.resolve mark_request_returned ())) in
+            cancel child;
+      }
+    in
+    let result = B.fork_run ctx rt program in
+    wait_until "request return" (fun () -> B.is_resolved request_returned);
+    wait_until "cleanup start" (fun () -> B.is_resolved cleanup_started);
+    Alcotest.(check bool) "settlement remains pending" false (B.is_resolved result);
+    B.resolve release ();
+    match B.await result with
+    | Exit.Ok () -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "unexpected request cancellation failure: %a"
+          (Cause.pp pp_hidden) cause
+
+  (* supcan-stst supcan-zqzf supcan-glb2 *)
+  let test_supervisor_request_cancel_latches_before_child_start () =
+    B.with_runtime @@ fun _ctx rt ->
+    let start_gate, _release_start = B.create_promise () in
+    let body_started = ref false in
+    let child =
+      B.await_effect start_gate
+      |> E.bind (fun () -> E.sync (fun () -> body_started := true))
+    in
+    let program =
+      Supervisor.scoped {
+        run =
+          fun sup ->
+            let open Supervisor.Scope in
+            let* child = start sup (lift child) in
+            let* () = request_cancel child in
+            let* () = cancel child in
+            pure !body_started;
+      }
+    in
+    match B.run rt program with
+    | Exit.Ok false -> ()
+    | Exit.Ok true -> Alcotest.fail "child body started after a latched request"
+    | Exit.Error cause ->
+        Alcotest.failf "unexpected pre-start cancellation failure: %a"
+          (Cause.pp pp_hidden) cause
+
+  (* supcan-3os1 supcan-glb2 supcan-tg7n *)
+  let test_supervisor_request_cancel_preserves_terminal_winners () =
+    let completion =
+      B.with_runtime @@ fun _ctx rt ->
+      let program =
+        Supervisor.scoped {
+          run =
+            fun sup ->
+              let open Supervisor.Scope in
+              let* child = start sup (pure 42) in
+              let* value = await child in
+              let* () = request_cancel child in
+              let* () = cancel child in
+              pure value;
+        }
+      in
+      B.run rt program
+    in
+    let failure =
+      B.with_runtime @@ fun _ctx rt ->
+      let program =
+        Supervisor.scoped {
+          run =
+            fun sup ->
+              let open Supervisor.Scope in
+              let* child = start sup (fail `Boom) in
+              let rec wait_for_failure attempts =
+                let* observed = failures sup in
+                if observed <> [] then pure ()
+                else if attempts = 0 then fail `Failure_not_observed
+                else
+                  let* () = yield in
+                  wait_for_failure (attempts - 1)
+              in
+              let* () = wait_for_failure 20 in
+              let* () = request_cancel child in
+              await child;
+        }
+      in
+      B.run rt program
+    in
+    (match completion with
+    | Exit.Ok 42 -> ()
+    | Exit.Ok value ->
+        Alcotest.failf "late request changed completion value to %d" value
+    | Exit.Error cause ->
+        Alcotest.failf "late request changed completion to %a"
+          (Cause.pp pp_hidden) cause);
+    match failure with
+    | Exit.Error (Cause.Fail `Boom) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "late request changed typed failure to %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok () -> Alcotest.fail "late request changed typed failure to Ok"
+
+  (* supcan-3sp7 supcan-dyvd supcan-nnq7 *)
+  let test_supervisor_cancel_after_request_preserves_settlement_diagnostics () =
+    B.with_runtime @@ fun _ctx rt ->
+    let ready, mark_ready = B.create_promise () in
+    let child =
+      E.acquire_release
+        ~acquire:E.unit
+        ~release:(fun () -> E.fail `Cleanup_failed)
+      |> E.bind (fun () ->
+             E.sync (fun () -> B.resolve mark_ready ())
+             |> E.bind (fun () -> E.never))
+    in
+    let program =
+      Supervisor.scoped {
+        run =
+          fun sup ->
+            let open Supervisor.Scope in
+            let* child = start sup (lift child) in
+            let* () = lift (B.await_effect ready) in
+            let* () = request_cancel child in
+            cancel child;
+      }
+      |> Eta_observability.with_error_pp (fun fmt -> function
+           | `Cleanup_failed -> Format.pp_print_string fmt "Cleanup_failed")
+    in
+    match B.run rt program with
+    | Exit.Error
+        (Cause.Suppressed
+          { primary = Cause.Interrupt None; finalizer })
+      when finalizer_contains "Cleanup_failed" finalizer ->
+        ()
+    | Exit.Error cause ->
+        Alcotest.failf "request/cancel changed cleanup diagnostics: %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok () -> Alcotest.fail "request/cancel hid cleanup diagnostics"
+
+  (* supcan-eg0p *)
+  let test_supervisor_await_after_request_reports_interruption () =
+    B.with_runtime @@ fun _ctx rt ->
+    let ready, mark_ready = B.create_promise () in
+    let child =
+      E.sync (fun () -> B.resolve mark_ready ())
+      |> E.bind (fun () -> E.never)
+    in
+    let program =
+      Supervisor.scoped {
+        run =
+          fun sup ->
+            let open Supervisor.Scope in
+            let* child = start sup (lift child) in
+            let* () = lift (B.await_effect ready) in
+            let* () = request_cancel child in
+            await child;
+      }
+    in
+    match B.run rt program with
+    | Exit.Error (Cause.Interrupt None) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "await after request returned %a" (Cause.pp pp_hidden)
+          cause
+    | Exit.Ok () -> Alcotest.fail "await after request hid interruption"
+
+  (* supcan-6zw9 supcan-urkv supcan-vb4t *)
+  let test_supervisor_request_cancel_calls_follow_scope_program_order () =
+    B.with_runtime @@ fun _ctx rt ->
+    let events = ref [] in
+    let mark name = E.sync (fun () -> events := name :: !events) in
+    let first_ready, mark_first_ready = B.create_promise () in
+    let second_ready, mark_second_ready = B.create_promise () in
+    let first_cleanup_started, mark_first_cleanup_started = B.create_promise () in
+    let second_cleanup_started, mark_second_cleanup_started = B.create_promise () in
+    let release_first_cleanup, release_first = B.create_promise () in
+    let release_second_cleanup, release_second = B.create_promise () in
+    let second_cleanup_finished, mark_second_cleanup_finished =
+      B.create_promise ()
+    in
+    let replacement_release, release_replacement = B.create_promise () in
+    let replacement_started, mark_replacement_started = B.create_promise () in
+    let child label ready cleanup_started release_cleanup cleanup_finished =
+      E.acquire_release
+        ~acquire:E.unit
+        ~release:(fun () ->
+          mark (label ^ ":cleanup-start")
+          |> E.bind (fun () -> E.sync (fun () -> B.resolve cleanup_started ()))
+          |> E.bind (fun () -> B.await_effect release_cleanup)
+          |> E.bind (fun () -> mark (label ^ ":cleanup-end"))
+          |> E.bind cleanup_finished)
+      |> E.bind (fun () ->
+             mark (label ^ ":ready")
+             |> E.bind (fun () -> E.sync (fun () -> B.resolve ready ()))
+             |> E.bind (fun () -> E.never))
+    in
+    let first =
+      child "first" mark_first_ready mark_first_cleanup_started
+        release_first_cleanup (fun () -> E.unit)
+    in
+    let second =
+      child "second" mark_second_ready mark_second_cleanup_started
+        release_second_cleanup (fun () ->
+          E.sync (fun () -> B.resolve mark_second_cleanup_finished ()))
+    in
+    let replacement =
+      B.await_effect replacement_release
+      |> E.bind (fun () -> mark "replacement:start")
+      |> E.bind (fun () ->
+             E.sync (fun () -> B.resolve mark_replacement_started ()))
+    in
+    let program =
+      Supervisor.scoped {
+        run =
+          fun sup ->
+            let open Supervisor.Scope in
+            let* first_child = start sup (lift first) in
+            let* second_child = start sup (lift second) in
+            let* replacement_child = start sup (lift replacement) in
+            let* () = lift (B.await_effect first_ready) in
+            let* () = lift (B.await_effect second_ready) in
+            let* () = lift (mark "request:first-call") in
+            let* () = request_cancel first_child in
+            let* () = lift (mark "request:first-return") in
+            let* () = lift (mark "request:second-call") in
+            let* () = request_cancel second_child in
+            let* () = lift (mark "request:second-return") in
+            let* () =
+              lift (E.sync (fun () -> B.resolve release_replacement ()))
+            in
+            let* () = lift (B.await_effect replacement_started) in
+            let* () = lift (B.await_effect first_cleanup_started) in
+            let* () = lift (B.await_effect second_cleanup_started) in
+            let* () = lift (E.sync (fun () -> B.resolve release_second ())) in
+            let* () = lift (B.await_effect second_cleanup_finished) in
+            let* () = lift (E.sync (fun () -> B.resolve release_first ())) in
+            let* () = cancel first_child in
+            let* () = cancel second_child in
+            let* () = await replacement_child in
+            pure (List.rev !events);
+      }
+    in
+    let events = run_ok rt program in
+    let position name =
+      match List.find_index (String.equal name) events with
+      | Some index -> index
+      | None -> Alcotest.failf "missing supervisor event %s" name
+    in
+    let before left right =
+      Alcotest.(check bool)
+        (left ^ " before " ^ right) true
+        (position left < position right)
+    in
+    before "request:first-call" "request:first-return";
+    before "request:first-return" "request:second-call";
+    before "request:second-call" "request:second-return";
+    before "request:second-return" "replacement:start";
+    before "replacement:start" "second:cleanup-end";
+    before "second:cleanup-end" "first:cleanup-end"
+
+  let request_cancel_tests =
+    [
+      ( "Supervisor request cancellation",
+        [
+          Alcotest.test_case "request_cancel returns before settlement" `Quick
+            test_supervisor_request_cancel_returns_before_settlement;
+          Alcotest.test_case "request_cancel latches before child start" `Quick
+            test_supervisor_request_cancel_latches_before_child_start;
+          Alcotest.test_case "request_cancel preserves terminal winners" `Quick
+            test_supervisor_request_cancel_preserves_terminal_winners;
+          Alcotest.test_case
+            "cancel after request_cancel preserves settlement diagnostics" `Quick
+            test_supervisor_cancel_after_request_preserves_settlement_diagnostics;
+          Alcotest.test_case "await after request_cancel reports interruption"
+            `Quick test_supervisor_await_after_request_reports_interruption;
+          Alcotest.test_case
+            "request_cancel calls follow scope program order" `Quick
+            test_supervisor_request_cancel_calls_follow_scope_program_order;
+        ] );
+    ]
+
+  let tests = tests @ request_cancel_tests
 end

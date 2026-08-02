@@ -40,9 +40,6 @@ let run eff ~on_result =
   let runtime = Eta_jsoo.Runtime.create () in
   Eta_jsoo.Runtime.run runtime eff ~on_result
 
-let resolve_ok promise value =
-  Eta.Promise.resolve promise (Eta.Exit.Ok value) |> Eta.Effect.discard
-
 let expect_ok_int expected = function
   | Eta.Exit.Ok actual when actual = expected -> ()
   | Eta.Exit.Ok actual ->
@@ -919,6 +916,267 @@ let test_raising_finally_error_pp_becomes_die done_ =
    configuration-dependent, not intrinsic: a non-CPS jsoo build or a future
    bounded-stack substrate reopens the question. *)
 
+let test_stack_safety_dynamic_bind done_ =
+  let depth = 1_000_000 in
+  let rec next remaining value =
+    if remaining = 0 then Eta.Effect.pure value
+    else
+      Eta.Effect.bind
+        (fun value -> next (remaining - 1) (value + 1))
+        (Eta.Effect.pure value)
+  in
+  run (next depth 0) ~on_result:(finish done_ (expect_ok_int depth))
+
+let test_stack_safety_static_map done_ =
+  let depth = 1_000_000 in
+  let rec build remaining acc =
+    if remaining = 0 then acc
+    else build (remaining - 1) (Eta.Effect.map (fun value -> value + 1) acc)
+  in
+  run (build depth (Eta.Effect.pure 0))
+    ~on_result:(finish done_ (expect_ok_int depth))
+
+let test_stack_safety_concat done_ =
+  let depth = 1_000_000 in
+  let executed = ref 0 in
+  let rec build remaining acc =
+    if remaining = 0 then acc
+    else
+      build (remaining - 1)
+        (Eta.Effect.sync (fun () -> incr executed) :: acc)
+  in
+  run (Eta.Effect.concat (build depth []))
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Ok () ->
+            if !executed <> depth then
+              fail
+                (Printf.sprintf "expected %d concat executions, got %d" depth
+                   !executed)
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "deep concat failed: %a" (Eta.Cause.pp pp_err)
+                 cause)))
+
+let test_stack_safety_bind_error done_ =
+  let depth = 1_000_000 in
+  let handled = ref 0 in
+  let recover (_ : string) =
+    incr handled;
+    Eta.Effect.fail "boom"
+  in
+  let rec build remaining acc =
+    if remaining = 0 then acc
+    else build (remaining - 1) (Eta.Effect.bind_error recover acc)
+  in
+  run (build depth (Eta.Effect.fail "boom"))
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Error (Eta.Cause.Fail "boom") ->
+            if !handled <> depth then
+              fail
+                (Printf.sprintf "expected %d recovery runs, got %d" depth
+                   !handled)
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "unexpected cause: %a" (Eta.Cause.pp pp_err)
+                 cause)
+        | Eta.Exit.Ok _ -> fail "recovery chain lost the typed failure"))
+
+let test_stack_safety_deep_cause_trees done_ =
+  finish done_
+    (fun () ->
+      let depth = 1_000_000 in
+      let check combine =
+        let cause = ref (Eta.Cause.fail 0) in
+        for value = 1 to depth do
+          cause := combine [ !cause; Eta.Cause.fail value ]
+        done;
+        let rec check_leaf index = function
+          | [] ->
+              if index <> depth + 1 then
+                fail
+                  (Printf.sprintf "expected %d leaves, got %d" (depth + 1)
+                     index)
+          | leaf :: rest ->
+              if leaf <> index then
+                fail
+                  (Printf.sprintf "leaf at index %d: expected %d, got %d"
+                     index index leaf);
+              check_leaf (index + 1) rest
+        in
+        check_leaf 0 (Eta.Cause.failures !cause)
+      in
+      check Eta.Cause.sequential;
+      check Eta.Cause.concurrent)
+    ()
+
+let tests =
+  [
+    ("stack safety: 1M dynamic binds", test_stack_safety_dynamic_bind);
+    ("stack safety: 1M static map nesting", test_stack_safety_static_map);
+    ("stack safety: 1M concat", test_stack_safety_concat);
+    ("stack safety: 1M bind_error recovery", test_stack_safety_bind_error);
+    ("stack safety: 1M deep cause trees", test_stack_safety_deep_cause_trees);
+    ("delay", test_delay);
+    ("fresh runtime-local counter", test_fresh_uses_runtime_local_mutable_counter);
+    ("timeout releases resource", test_timeout_releases_resource);
+    ( "acquire_all_par success transfer order",
+      test_acquire_all_par_success_transfer_order );
+    ( "acquire_all_par sibling failure rollback",
+      test_acquire_all_par_sibling_failure_rollback );
+    ( "acquire_all_par parent interruption",
+      test_acquire_all_par_parent_interruption );
+    ( "raising release error_pp becomes die at conversion",
+      test_raising_release_error_pp_becomes_die );
+    ( "raising finally error_pp becomes die at conversion",
+      test_raising_finally_error_pp_becomes_die );
+    ( "await cancellation removes promise subscription",
+      test_await_cancellation_removes_promise_subscription );
+    ( "throwing await cancel hook does not strand fiber",
+      test_throwing_await_cancel_hook_does_not_strand_fiber );
+    ("runtime locals cross fork", test_runtime_locals_cross_fork);
+    ( "runtime local inheritance kinds",
+      test_runtime_local_inheritance_kinds );
+    ("runtime stream fifo", test_runtime_stream_fifo);
+    ("runtime resolve wakes live waiter", test_runtime_resolve_wakes_live_waiter);
+    ( "runtime resolve after waiter cancellation",
+      test_runtime_resolve_after_waiter_cancellation );
+    ( "runtime canceled waiter does not strand live waiter",
+      test_runtime_canceled_waiter_does_not_strand_live_waiter );
+    ("daemon drain", test_daemon_drain);
+    ("scoped clock and logger parity", test_scoped_clock_and_logger_parity);
+    ("intercept_log parity", test_intercept_log_parity);
+    ( "expert clock observes scoped override",
+      test_expert_clock_observes_scoped_override );
+    ( "with_background typed failure cancels use",
+      test_background_typed_failure_cancels_use );
+    ( "with_background loser publishes after cancellation before assembly",
+      test_background_loser_publishes_after_cancellation );
+    ( "with_background defect cancels use",
+      test_background_defect_cancels_use );
+    ( "with_background body exits cancel child",
+      test_background_body_exits_cancel_child );
+    ( "with_background body interruption matches par",
+      test_background_body_interruption_matches_par );
+    ( "with_supervised_background does not cancel use",
+      test_supervised_background_does_not_cancel_use );
+    ( "with_background same-release exits choose one winner",
+      test_background_same_release_has_one_winner );
+    ( "runtime local binding contract",
+      fun done_ ->
+        let local = Runtime_contract.create_local () in
+        let eff =
+          Eta.Spi.Expert.make @@ fun context ->
+          let contract = Eta.Spi.Expert.contract context in
+          let require label expected =
+            if contract.Runtime_contract.local_get local <> expected then
+              failwith label
+          in
+          require "initially absent" None;
+          contract.Runtime_contract.local_with_binding local 1 (fun () ->
+              require "outer installed" (Some 1);
+              contract.Runtime_contract.local_with_binding local 2 (fun () ->
+                  require "inner installed" (Some 2));
+              require "outer restored after inner" (Some 1));
+          require "absent after normal return" None;
+          let raised = Failure "binding exception" in
+          (try
+             contract.Runtime_contract.local_with_binding local 3 (fun () ->
+                 raise raised)
+           with exn when exn == raised -> ());
+          require "absent after exception" None;
+          let cancelled = Failure "binding cancellation" in
+          contract.Runtime_contract.cancel_sub (fun cancel_context ->
+              try
+                contract.Runtime_contract.local_with_binding local 4 @@ fun () ->
+                contract.Runtime_contract.cancel cancel_context cancelled;
+                contract.Runtime_contract.check ();
+                failwith "expected cancellation"
+              with exn ->
+                match contract.Runtime_contract.cancellation_reason exn with
+                | Some reason when reason == cancelled -> ()
+                | _ -> raise exn);
+          require "absent after cancellation" None;
+          let child, parent =
+            contract.Runtime_contract.local_with_binding local 5 (fun () ->
+                let child =
+                  contract.Runtime_contract.run_scope @@ fun sw ->
+                  let started, started_resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  let observe, observe_resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  let bound, bound_resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  let release, release_resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  let result, result_resolver =
+                    contract.Runtime_contract.create_promise ()
+                  in
+                  contract.Runtime_contract.fork sw (fun () ->
+                      contract.Runtime_contract.resolve_promise started_resolver
+                        ();
+                      contract.Runtime_contract.await_promise observe;
+                      let before = contract.Runtime_contract.local_get local in
+                      let inner =
+                        contract.Runtime_contract.local_with_binding local 6
+                          (fun () ->
+                            contract.Runtime_contract.resolve_promise
+                              bound_resolver ();
+                            contract.Runtime_contract.await_promise release;
+                            contract.Runtime_contract.local_get local)
+                      in
+                      let after = contract.Runtime_contract.local_get local in
+                      contract.Runtime_contract.resolve_promise result_resolver
+                        (before, inner, after));
+                  contract.Runtime_contract.await_promise started;
+                  let parent_during_child_binding =
+                    contract.Runtime_contract.local_with_binding local 7
+                      (fun () ->
+                        contract.Runtime_contract.resolve_promise observe_resolver
+                          ();
+                        contract.Runtime_contract.await_promise bound;
+                        let observed =
+                          contract.Runtime_contract.local_get local
+                        in
+                        contract.Runtime_contract.resolve_promise release_resolver
+                          ();
+                        observed)
+                  in
+                  ( contract.Runtime_contract.await_promise result,
+                    parent_during_child_binding )
+                in
+                (child, contract.Runtime_contract.local_get local))
+          in
+          let child_observations, parent_during_child_binding = child in
+          if child_observations <> (Some 5, Some 6, Some 5) then
+            failwith "child fork snapshot or LIFO restoration diverged";
+          if parent_during_child_binding <> Some 7 then
+            failwith "child binding leaked into parent";
+          if parent <> Some 5 then failwith "child binding joined into parent";
+          require "absent after fork scope" None;
+          Eta.Exit.Ok ()
+        in
+        run eff
+          ~on_result:
+            (finish done_ (function
+              | Eta.Exit.Ok () -> ()
+              | Eta.Exit.Error cause ->
+                  fail
+                    (Format.asprintf "local binding contract failed: %a"
+                       (Eta.Cause.pp pp_err) cause))) );
+  ]
+  @ Async_shared.tests
+  @ Interruptible_shared.tests
+  @ Promise_shared.tests
+
+let resolve_ok promise value =
+  Eta.Promise.resolve promise (Eta.Exit.Ok value) |> Eta.Effect.discard
+
 (* supcan-stst supcan-f3ww supcan-3sp7 supcan-kptd supcan-0uj5 supcan-yncg
    supcan-vb4t *)
 let test_supervisor_request_cancel_returns_before_settlement done_ =
@@ -1225,153 +1483,8 @@ let test_supervisor_request_cancel_calls_follow_scope_program_order done_ =
             before "replacement:start" "second:cleanup-end";
             before "second:cleanup-end" "first:cleanup-end"))
 
-let test_stack_safety_dynamic_bind done_ =
-  let depth = 1_000_000 in
-  let rec next remaining value =
-    if remaining = 0 then Eta.Effect.pure value
-    else
-      Eta.Effect.bind
-        (fun value -> next (remaining - 1) (value + 1))
-        (Eta.Effect.pure value)
-  in
-  run (next depth 0) ~on_result:(finish done_ (expect_ok_int depth))
-
-let test_stack_safety_static_map done_ =
-  let depth = 1_000_000 in
-  let rec build remaining acc =
-    if remaining = 0 then acc
-    else build (remaining - 1) (Eta.Effect.map (fun value -> value + 1) acc)
-  in
-  run (build depth (Eta.Effect.pure 0))
-    ~on_result:(finish done_ (expect_ok_int depth))
-
-let test_stack_safety_concat done_ =
-  let depth = 1_000_000 in
-  let executed = ref 0 in
-  let rec build remaining acc =
-    if remaining = 0 then acc
-    else
-      build (remaining - 1)
-        (Eta.Effect.sync (fun () -> incr executed) :: acc)
-  in
-  run (Eta.Effect.concat (build depth []))
-    ~on_result:
-      (finish done_ (function
-        | Eta.Exit.Ok () ->
-            if !executed <> depth then
-              fail
-                (Printf.sprintf "expected %d concat executions, got %d" depth
-                   !executed)
-        | Eta.Exit.Error cause ->
-            fail
-              (Format.asprintf "deep concat failed: %a" (Eta.Cause.pp pp_err)
-                 cause)))
-
-let test_stack_safety_bind_error done_ =
-  let depth = 1_000_000 in
-  let handled = ref 0 in
-  let recover (_ : string) =
-    incr handled;
-    Eta.Effect.fail "boom"
-  in
-  let rec build remaining acc =
-    if remaining = 0 then acc
-    else build (remaining - 1) (Eta.Effect.bind_error recover acc)
-  in
-  run (build depth (Eta.Effect.fail "boom"))
-    ~on_result:
-      (finish done_ (function
-        | Eta.Exit.Error (Eta.Cause.Fail "boom") ->
-            if !handled <> depth then
-              fail
-                (Printf.sprintf "expected %d recovery runs, got %d" depth
-                   !handled)
-        | Eta.Exit.Error cause ->
-            fail
-              (Format.asprintf "unexpected cause: %a" (Eta.Cause.pp pp_err)
-                 cause)
-        | Eta.Exit.Ok _ -> fail "recovery chain lost the typed failure"))
-
-let test_stack_safety_deep_cause_trees done_ =
-  finish done_
-    (fun () ->
-      let depth = 1_000_000 in
-      let check combine =
-        let cause = ref (Eta.Cause.fail 0) in
-        for value = 1 to depth do
-          cause := combine [ !cause; Eta.Cause.fail value ]
-        done;
-        let rec check_leaf index = function
-          | [] ->
-              if index <> depth + 1 then
-                fail
-                  (Printf.sprintf "expected %d leaves, got %d" (depth + 1)
-                     index)
-          | leaf :: rest ->
-              if leaf <> index then
-                fail
-                  (Printf.sprintf "leaf at index %d: expected %d, got %d"
-                     index index leaf);
-              check_leaf (index + 1) rest
-        in
-        check_leaf 0 (Eta.Cause.failures !cause)
-      in
-      check Eta.Cause.sequential;
-      check Eta.Cause.concurrent)
-    ()
-
-let tests =
+let request_cancel_tests =
   [
-    ("stack safety: 1M dynamic binds", test_stack_safety_dynamic_bind);
-    ("stack safety: 1M static map nesting", test_stack_safety_static_map);
-    ("stack safety: 1M concat", test_stack_safety_concat);
-    ("stack safety: 1M bind_error recovery", test_stack_safety_bind_error);
-    ("stack safety: 1M deep cause trees", test_stack_safety_deep_cause_trees);
-    ("delay", test_delay);
-    ("fresh runtime-local counter", test_fresh_uses_runtime_local_mutable_counter);
-    ("timeout releases resource", test_timeout_releases_resource);
-    ( "acquire_all_par success transfer order",
-      test_acquire_all_par_success_transfer_order );
-    ( "acquire_all_par sibling failure rollback",
-      test_acquire_all_par_sibling_failure_rollback );
-    ( "acquire_all_par parent interruption",
-      test_acquire_all_par_parent_interruption );
-    ( "raising release error_pp becomes die at conversion",
-      test_raising_release_error_pp_becomes_die );
-    ( "raising finally error_pp becomes die at conversion",
-      test_raising_finally_error_pp_becomes_die );
-    ( "await cancellation removes promise subscription",
-      test_await_cancellation_removes_promise_subscription );
-    ( "throwing await cancel hook does not strand fiber",
-      test_throwing_await_cancel_hook_does_not_strand_fiber );
-    ("runtime locals cross fork", test_runtime_locals_cross_fork);
-    ( "runtime local inheritance kinds",
-      test_runtime_local_inheritance_kinds );
-    ("runtime stream fifo", test_runtime_stream_fifo);
-    ("runtime resolve wakes live waiter", test_runtime_resolve_wakes_live_waiter);
-    ( "runtime resolve after waiter cancellation",
-      test_runtime_resolve_after_waiter_cancellation );
-    ( "runtime canceled waiter does not strand live waiter",
-      test_runtime_canceled_waiter_does_not_strand_live_waiter );
-    ("daemon drain", test_daemon_drain);
-    ("scoped clock and logger parity", test_scoped_clock_and_logger_parity);
-    ("intercept_log parity", test_intercept_log_parity);
-    ( "expert clock observes scoped override",
-      test_expert_clock_observes_scoped_override );
-    ( "with_background typed failure cancels use",
-      test_background_typed_failure_cancels_use );
-    ( "with_background loser publishes after cancellation before assembly",
-      test_background_loser_publishes_after_cancellation );
-    ( "with_background defect cancels use",
-      test_background_defect_cancels_use );
-    ( "with_background body exits cancel child",
-      test_background_body_exits_cancel_child );
-    ( "with_background body interruption matches par",
-      test_background_body_interruption_matches_par );
-    ( "with_supervised_background does not cancel use",
-      test_supervised_background_does_not_cancel_use );
-    ( "with_background same-release exits choose one winner",
-      test_background_same_release_has_one_winner );
     ( "request_cancel returns before settlement",
       test_supervisor_request_cancel_returns_before_settlement );
     ( "request_cancel latches before child start",
@@ -1384,116 +1497,9 @@ let tests =
       test_supervisor_await_after_request_reports_interruption );
     ( "request_cancel calls follow scope program order",
       test_supervisor_request_cancel_calls_follow_scope_program_order );
-    ( "runtime local binding contract",
-      fun done_ ->
-        let local = Runtime_contract.create_local () in
-        let eff =
-          Eta.Spi.Expert.make @@ fun context ->
-          let contract = Eta.Spi.Expert.contract context in
-          let require label expected =
-            if contract.Runtime_contract.local_get local <> expected then
-              failwith label
-          in
-          require "initially absent" None;
-          contract.Runtime_contract.local_with_binding local 1 (fun () ->
-              require "outer installed" (Some 1);
-              contract.Runtime_contract.local_with_binding local 2 (fun () ->
-                  require "inner installed" (Some 2));
-              require "outer restored after inner" (Some 1));
-          require "absent after normal return" None;
-          let raised = Failure "binding exception" in
-          (try
-             contract.Runtime_contract.local_with_binding local 3 (fun () ->
-                 raise raised)
-           with exn when exn == raised -> ());
-          require "absent after exception" None;
-          let cancelled = Failure "binding cancellation" in
-          contract.Runtime_contract.cancel_sub (fun cancel_context ->
-              try
-                contract.Runtime_contract.local_with_binding local 4 @@ fun () ->
-                contract.Runtime_contract.cancel cancel_context cancelled;
-                contract.Runtime_contract.check ();
-                failwith "expected cancellation"
-              with exn ->
-                match contract.Runtime_contract.cancellation_reason exn with
-                | Some reason when reason == cancelled -> ()
-                | _ -> raise exn);
-          require "absent after cancellation" None;
-          let child, parent =
-            contract.Runtime_contract.local_with_binding local 5 (fun () ->
-                let child =
-                  contract.Runtime_contract.run_scope @@ fun sw ->
-                  let started, started_resolver =
-                    contract.Runtime_contract.create_promise ()
-                  in
-                  let observe, observe_resolver =
-                    contract.Runtime_contract.create_promise ()
-                  in
-                  let bound, bound_resolver =
-                    contract.Runtime_contract.create_promise ()
-                  in
-                  let release, release_resolver =
-                    contract.Runtime_contract.create_promise ()
-                  in
-                  let result, result_resolver =
-                    contract.Runtime_contract.create_promise ()
-                  in
-                  contract.Runtime_contract.fork sw (fun () ->
-                      contract.Runtime_contract.resolve_promise started_resolver
-                        ();
-                      contract.Runtime_contract.await_promise observe;
-                      let before = contract.Runtime_contract.local_get local in
-                      let inner =
-                        contract.Runtime_contract.local_with_binding local 6
-                          (fun () ->
-                            contract.Runtime_contract.resolve_promise
-                              bound_resolver ();
-                            contract.Runtime_contract.await_promise release;
-                            contract.Runtime_contract.local_get local)
-                      in
-                      let after = contract.Runtime_contract.local_get local in
-                      contract.Runtime_contract.resolve_promise result_resolver
-                        (before, inner, after));
-                  contract.Runtime_contract.await_promise started;
-                  let parent_during_child_binding =
-                    contract.Runtime_contract.local_with_binding local 7
-                      (fun () ->
-                        contract.Runtime_contract.resolve_promise observe_resolver
-                          ();
-                        contract.Runtime_contract.await_promise bound;
-                        let observed =
-                          contract.Runtime_contract.local_get local
-                        in
-                        contract.Runtime_contract.resolve_promise release_resolver
-                          ();
-                        observed)
-                  in
-                  ( contract.Runtime_contract.await_promise result,
-                    parent_during_child_binding )
-                in
-                (child, contract.Runtime_contract.local_get local))
-          in
-          let child_observations, parent_during_child_binding = child in
-          if child_observations <> (Some 5, Some 6, Some 5) then
-            failwith "child fork snapshot or LIFO restoration diverged";
-          if parent_during_child_binding <> Some 7 then
-            failwith "child binding leaked into parent";
-          if parent <> Some 5 then failwith "child binding joined into parent";
-          require "absent after fork scope" None;
-          Eta.Exit.Ok ()
-        in
-        run eff
-          ~on_result:
-            (finish done_ (function
-              | Eta.Exit.Ok () -> ()
-              | Eta.Exit.Error cause ->
-                  fail
-                    (Format.asprintf "local binding contract failed: %a"
-                       (Eta.Cause.pp pp_err) cause))) );
   ]
-  @ Async_shared.tests
-  @ Interruptible_shared.tests
-  @ Promise_shared.tests
+
+let tests = tests @ request_cancel_tests
 
 let rec run_tests = function
   | [] ->

@@ -56,6 +56,7 @@ separately below and are not silently counted as qcheck coverage.
 | M16 | `all_settled` captures every child failure as an `Error cause` value. | `lib/eta/effect.mli:235-236` | `all_settled captures every child cause and preserves input order` |
 | M17 | `all_settled` returns child outcomes in input order. | `lib/eta/effect.mli:235` | `all_settled captures every child cause and preserves input order` |
 | M126 | `all_settled` registers every child fiber before any child body starts. | `lib/eta/effect.mli:236` | `all_settled registers every generated child before synchronous first failure` |
+| M128 | Repeated `Supervisor.Scope.request_cancel` calls are idempotent. | `lib/eta/supervisor.mli:57` | `Supervisor request_cancel repeated requests equal one request across generated counts and terminal outcomes` |
 | M18 | `map_par` returns mapped values in input order despite completion order. | `lib/eta/effect.mli:238-244` | `map_par preserves input order across both observable completion directions` |
 | M19 | `map_par` cancels in-flight siblings after the first failure. | `lib/eta/effect.mli:243-244` | `map_par first failure cancels in-flight siblings and awaits scoped release` |
 | M20 | `map_par ~max_concurrent` never exceeds its configured child-fiber bound. | `lib/eta/effect.mli:246-248` | `map_par never exceeds max_concurrent and reaches the bound when inputs suffice` |
@@ -314,8 +315,8 @@ qcheck optics.
 | R107 | `interruptible` cannot restore cancellation from `finally` cleanup or a registered finalizer. | `lib/eta/effect.mli:282-283` | `interruptible is forbidden in finalizers`; `interruptible is forbidden in registered finalizers` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:352-438,652-655` |
 | R108 | Cancellation masks cover forked children, while restoration remains fiber-local and structured fail-fast still interrupts the child scope. | `lib/eta/effect.mli:282-283` | `cancellation mask covers forked children`; `forked interruptible child preserves fail-fast` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:440-474,539-550,656-659` |
 | R109 | Restoration and cleanup-forbidden state do not outlive their owning fiber through daemons. | `lib/eta/effect.mli:282-283` | `daemon drops restore binding after mask`; `daemon drops cleanup-forbidden binding` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:476-537,660-663` |
-| R110 | Default runtime locals cross forks, while `Fiber_local` bindings are absent in forked children and daemons. | `lib/eta/runtime_contract.mli:251-253` | `runtime contract local inheritance kinds` — native `test/runtime_common/runtime_common_suites.ml:878-917,1257-1258`; jsoo `test/js_jsoo/test_eta_jsoo.ml:532-572,1039-1040` |
-| R110b | `local_with_binding` restores the exact previous binding after normal return, exception, and cancellation; nesting is LIFO; inherited bindings are snapshotted at fork and child changes are not merged at join. | `lib/eta/runtime_contract.mli:75-80,219-224` | `runtime local binding contract` — native `test/runtime_common/runtime_common_suites.ml:1277-1363`; jsoo `test/js_jsoo/test_eta_jsoo.ml:1066-1171`; reference implementations `lib/eio/eta_eio.ml:238-270,307-315`, `lib/jsoo/eta_jsoo.ml:194-206,471-484,590-598` |
+| R110 | Default runtime locals cross forks, while `Fiber_local` bindings are absent in forked children and daemons. | `lib/eta/runtime_contract.mli:252-254` | `runtime contract local inheritance kinds` — native `test/runtime_common/runtime_common_suites.ml:878-917,1257-1258`, and jsoo `test/js_jsoo/test_eta_jsoo.ml:532-572,1039-1040` |
+| R110b | `local_with_binding` restores the exact previous binding after normal return, exception, and cancellation. Nesting is LIFO. Inherited bindings are snapshotted at fork, and child changes are not merged at join. | `lib/eta/runtime_contract.mli:75-80,220-225` | `runtime local binding contract` — native `test/runtime_common/runtime_common_suites.ml:1277-1363`, jsoo `test/js_jsoo/test_eta_jsoo.ml:1066-1171`, and reference implementations `lib/eio/eta_eio.ml:238-270,307-315`, `lib/jsoo/eta_jsoo.ml:194-206,471-484,590-598` |
 | R111 | Restoration listens to both the mask-entry parent and a same-fiber entry-time descendant cancellation context; the first cancellation call executed supplies the winning reason and delivery remains at most once. | `lib/eta/effect.mli:278-280` | `interruptible descendant cancellation wakes restored block`; `interruptible mask-parent cancellation crosses descendant context`; `interruptible signal-timer first cancellation call wins once` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:552-629,664-669` |
 | R112 | The `logf` formatter runs exactly once only after runtime admission; work inside it is deferred while prior work remains eager. | `lib/observability/eta_observability.mli:210-215` | `logf disabled does not invoke builtin user or thunk formatters`; `logf enabled invokes builtin user and thunk exactly once`; `logf disabled defers million-width builtin conversion`; `logf work inside formatter is deferred` — `test/core_common/observability_common_suites.ml:1498-1507,1514-1515` |
 | R113 | A `logf` blueprint retains values captured by its formatter for the blueprint's lifetime. | `lib/observability/eta_observability.mli:214-215` | `logf blueprint retains formatter captures` — `test/core_common/observability_common_suites.ml:1516-1517` |
@@ -375,6 +376,13 @@ qcheck optics.
 | R178 | No `Exit.Error` cause wins `race`; typed failure, defect, interruption, and finalizer causes are collected while `race` waits for success. | `lib/eta/effect.mli:166-169` | `race ignores every early error until success` — each documented error category loses to a successful sibling at `test/core_common/effect_common_suites.ml:3181-3199,4037-4038` |
 | R179 | If every `race` child fails, every cause is returned concurrently. | `lib/eta/effect.mli:168-169` | `race all failures returns concurrent causes` — exact ordered typed causes plus a four-branch mixed typed/defect/interruption/finalizer census at `test/core_common/effect_common_suites.ml:3218-3264,4044-4045` |
 | R180 | A cancelled loser's finalizer diagnostic replaces the selected race value with an error. | `lib/eta/effect.mli:162-164` | `race reports loser finalizer failure after winner` — the winner is selected only after the loser acquires, then cancellation runs the failing release and returns its diagnostic at `test/core_common/effect_common_suites.ml:3276-3302,4048-4050` |
+| R181 | `request_cancel` latches the request before returning and does not wait for child settlement or finalizers. | `lib/eta/supervisor.mli:54-55` | `request_cancel returns before settlement` and `request_cancel latches before child start` — native `test/core_common/supervisor_common_suites.ml:720-784,1001-1004`, jsoo `test/js_jsoo/test_eta_jsoo.ml:1182-1271,1488-1491` |
+| R182 | A cancellation request cannot replace a settled child's terminal outcome. | `lib/eta/supervisor.mli:57-58` | `request_cancel preserves terminal winners` — native `test/core_common/supervisor_common_suites.ml:787-839,1005-1006`, jsoo `test/js_jsoo/test_eta_jsoo.ml:1274-1322,1492-1493` |
+| R183 | A later `cancel child` waits for settlement and preserves child and finalizer failure diagnostics. | `lib/eta/supervisor.mli:60-61` | `cancel after request_cancel preserves settlement diagnostics` — native `test/core_common/supervisor_common_suites.ml:842-875,1007-1009`, jsoo `test/js_jsoo/test_eta_jsoo.ml:1325-1363,1494-1495` |
+| R184 | A later `await child` keeps the ordinary child outcome, including interruption when cancellation wins. | `lib/eta/supervisor.mli:61-62` | `await after request_cancel reports interruption` — native `test/core_common/supervisor_common_suites.ml:878-901,1010-1011`, jsoo `test/js_jsoo/test_eta_jsoo.ml:1366-1391,1496-1497` |
+| R185 | Scope sequencing orders request points but does not order when different children observe interruption or run finalizers. | `lib/eta/supervisor.mli:64-65` | `request_cancel calls follow scope program order` proves exact call and return order, starts replacement after both returns, and forces second-child cleanup to finish before first-child cleanup — native `test/core_common/supervisor_common_suites.ml:904-995,1012-1014`, jsoo `test/js_jsoo/test_eta_jsoo.ml:1394-1484,1498-1499` |
+| R186 | `Runtime_contract.cancel` records a cancellation request and returns without target settlement. | `lib/eta/runtime_contract.mli:217-218` | `request_cancel returns before settlement` exercises the child cancellation context through the public instruction while cleanup settlement is promise-held — native `test/core_common/supervisor_common_suites.ml:720-758,1001-1002`, jsoo `test/js_jsoo/test_eta_jsoo.ml:1182-1241,1488-1489` |
+| R187 | `Runtime_contract.fail_scope` records failure, requests cancellation, and returns without scope settlement. | `lib/eta/runtime_contract.mli:185-187` | `request_cancel returns before settlement` exercises the child switch through the public instruction while cleanup settlement is promise-held — native `test/core_common/supervisor_common_suites.ml:720-758,1001-1002`, jsoo `test/js_jsoo/test_eta_jsoo.ml:1182-1241,1488-1489` |
 
 ## Model laws (prose pending)
 
@@ -398,7 +406,8 @@ valid constructor domains; until then their provenance is explicit.
 | `lib/eta/channel.mli` | 12 | 0 | 0 | 12 |
 | `lib/eta/queue.mli` | 16 | 14 | 0 | 30 |
 | `lib/eta/semaphore.mli` | 17 | 0 | 0 | 17 |
-| `lib/eta/runtime_contract.mli` | 0 | 2 | 0 | 2 |
+| `lib/eta/supervisor.mli` | 1 | 5 | 0 | 6 |
+| `lib/eta/runtime_contract.mli` | 0 | 4 | 0 | 4 |
 | `lib/js/eta_js.mli` | 0 | 11 | 0 | 11 |
 | `lib/http/client/request.mli` | 0 | 13 | 0 | 13 |
 | `lib/http/body/source.mli` | 0 | 7 | 0 | 7 |
@@ -408,9 +417,9 @@ valid constructor domains; until then their provenance is explicit.
 | `lib/cache/refreshable.mli` | 0 | 10 | 0 | 10 |
 | `lib/eta/mutable_ref.mli` | 0 | 1 | 0 | 1 |
 | Durable report claims | 0 | 2 | 0 | 2 |
-| **Total covered** | **125** | **215** | **2** | **340** |
+| **Total covered** | **126** | **222** | **2** | **348** |
 
-The law executables contain 81 unique properties in total. Matrix properties cover
+The law executables contain 82 unique properties in total. Matrix properties cover
 multiple one-claim rows only where each claim has a direct discriminating
 assertion in that named property.
 

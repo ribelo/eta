@@ -183,10 +183,10 @@ module type RUNTIME = sig
       behavior and is required by Eta's timeout and race control paths. *)
 
   val fail_scope : ?bt:Printexc.raw_backtrace -> scope -> exn -> unit
-  (** Fail [scope] with [exn], requesting cancellation of work owned by that
-      scope. The first failure reason is the scope failure observed by
-      {!run_scope}; additional child failures may still be reported through
-      the backend's multiple-exception mechanism. *)
+  (** Fail [scope] with [exn], request cancellation of owned work, and return
+      without waiting for scope settlement.
+      The first failure reason is observed by {!run_scope}. Additional failures
+      can be reported through the backend's multiple-exception mechanism. *)
 
   val fork : scope -> (unit -> unit) -> unit
   val fork_daemon : scope -> (unit -> [ `Stop_daemon ]) -> unit
@@ -215,6 +215,7 @@ module type RUNTIME = sig
   val multiple_exceptions : exn -> (exn * Printexc.raw_backtrace) list option
   val cancel_sub : (cancel_context -> 'a) -> 'a
   val cancel : cancel_context -> exn -> unit
+  (** Record the cancellation request and return without target settlement. *)
   val local_get : 'a local -> 'a option
   val local_with_binding : 'a local -> 'a -> (unit -> 'b) -> 'b
   (** Run the callback with the supplied binding, then restore the exact previous

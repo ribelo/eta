@@ -51,6 +51,18 @@ module Scope : sig
 
   val request_cancel :
     ('s, 'err, 'a) child -> ('s, unit, 'outer_err) t
+  (** Request cancellation of [child] and return after the request is latched,
+      without waiting for child settlement or finalizers.
+
+      Repeated requests are idempotent. A settled child keeps its terminal
+      outcome.
+
+      A later [cancel child] remains the settlement fence and preserves failure
+      diagnostics. A later [await child] observes the ordinary child outcome,
+      including interruption when cancellation wins.
+
+      Scope sequencing orders request points. This order does not order when
+      different children observe interruption or run finalizers. *)
 
   val failures :
     ('s, 'err) supervisor -> ('s, 'err Cause.t list, 'outer_err) t

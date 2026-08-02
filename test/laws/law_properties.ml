@@ -3218,6 +3218,162 @@ let property_interruptible_mask_stack =
       equivalent Alcotest.int Alcotest.int (run stacked)
         (run (E.uninterruptible program)))
 
+type supervisor_terminal_class =
+  | Supervisor_completed
+  | Supervisor_typed_failure
+  | Supervisor_clean_interruption
+  | Supervisor_cleanup_failure
+
+let supervisor_terminal_classes =
+  [
+    Supervisor_completed;
+    Supervisor_typed_failure;
+    Supervisor_clean_interruption;
+    Supervisor_cleanup_failure;
+  ]
+
+let string_of_supervisor_terminal = function
+  | Supervisor_completed -> "completed"
+  | Supervisor_typed_failure -> "typed_failure"
+  | Supervisor_clean_interruption -> "clean_interruption"
+  | Supervisor_cleanup_failure -> "cleanup_failure"
+
+let resolve_ok promise value =
+  Eta.Promise.resolve promise (Eta.Exit.Ok value) |> E.discard
+
+let rec request_cancel_n child remaining =
+  if remaining = 0 then Eta.Supervisor.Scope.pure ()
+  else
+    Eta.Supervisor.Scope.bind
+      (fun () -> request_cancel_n child (remaining - 1))
+      (Eta.Supervisor.Scope.request_cancel child)
+
+let supervisor_request_program terminal request_count finalizer_count =
+  let module S = Eta.Supervisor in
+  match terminal with
+  | Supervisor_completed ->
+      S.scoped {
+        run =
+          fun supervisor ->
+            let open S.Scope in
+            let* child = start supervisor (pure 7) in
+            let* value = await child in
+            let* () = request_cancel_n child request_count in
+            let* () = cancel child in
+            pure value;
+      }
+      |> E.map (fun value -> (value, !finalizer_count))
+  | Supervisor_typed_failure ->
+      S.scoped {
+        run =
+          fun supervisor ->
+            let open S.Scope in
+            let* child = start supervisor (fail 17) in
+            let rec wait_for_failure attempts =
+              let* observed = failures supervisor in
+              if observed <> [] then pure ()
+              else if attempts = 0 then fail 99
+              else
+                let* () = yield in
+                wait_for_failure (attempts - 1)
+            in
+            let* () = wait_for_failure 20 in
+            let* () = request_cancel_n child request_count in
+            await child;
+      }
+      |> E.map (fun value -> (value, !finalizer_count))
+  | Supervisor_clean_interruption | Supervisor_cleanup_failure ->
+      let ready = Eta.Promise.create () in
+      let cleanup_fails = terminal = Supervisor_cleanup_failure in
+      let release () =
+        E.sync (fun () -> incr finalizer_count)
+        |> E.bind (fun () -> if cleanup_fails then E.fail 23 else E.unit)
+      in
+      let child =
+        E.acquire_release ~acquire:E.unit ~release
+        |> E.bind (fun () ->
+               resolve_ok ready () |> E.bind (fun () -> E.never))
+      in
+      S.scoped {
+        run =
+          fun supervisor ->
+            let open S.Scope in
+            let* child = start supervisor (lift child) in
+            let* () = lift (Eta.Promise.await ready) in
+            let* () = request_cancel_n child request_count in
+            if cleanup_fails then
+              let* () = cancel child in
+              pure 0
+            else pure 0;
+      }
+      |> E.map (fun value -> (value, !finalizer_count))
+
+let run_supervisor_request terminal request_count =
+  let finalizer_count = ref 0 in
+  let outcome =
+    run (supervisor_request_program terminal request_count finalizer_count)
+  in
+  (outcome, !finalizer_count)
+
+let supervisor_terminal_matches terminal outcome finalizer_count =
+  match (terminal, outcome.Run.exit) with
+  | Supervisor_completed, Eta.Exit.Ok (7, 0) -> finalizer_count = 0
+  | Supervisor_typed_failure, Eta.Exit.Error (Eta.Cause.Fail 17) ->
+      finalizer_count = 0
+  | Supervisor_clean_interruption, Eta.Exit.Ok (0, 1) -> finalizer_count = 1
+  | ( Supervisor_cleanup_failure,
+      Eta.Exit.Error
+        (Eta.Cause.Suppressed
+          {
+            primary = Eta.Cause.Interrupt _;
+            finalizer = Eta.Cause.Finalizer.Fail { error = _; rendered = _ };
+          }) ) ->
+      finalizer_count = 1
+  | _ -> false
+
+let pp_int_pair ppf (left, right) = Format.fprintf ppf "(%d,%d)" left right
+
+let check_supervisor_request_idempotence terminal request_count =
+  let one, one_finalizers = run_supervisor_request terminal 1 in
+  let repeated, repeated_finalizers =
+    run_supervisor_request terminal request_count
+  in
+  let testable = Run.testable Alcotest.(pair int int) Alcotest.int in
+  let same_observation =
+    Alcotest.equal testable (sealed one) (sealed repeated)
+  in
+  if
+    same_observation
+    && supervisor_terminal_matches terminal one one_finalizers
+    && supervisor_terminal_matches terminal repeated repeated_finalizers
+    && no_pending one && no_pending repeated
+  then true
+  else
+    QCheck.Test.fail_reportf
+      "request_count=%d terminal=%s@.one finalizers=%d:@.%a@.repeated finalizers=%d:@.%a"
+      request_count (string_of_supervisor_terminal terminal) one_finalizers
+      (Run.pp pp_int_pair Format.pp_print_int)
+      one repeated_finalizers
+      (Run.pp pp_int_pair Format.pp_print_int)
+      repeated
+
+(* Observation: exact Exit, finalizer count, ordered events, and available empty
+   fiber census. Generated class: every request count from one through eight in
+   a generated rotation. Every run executes completion, typed failure, clean
+   interruption, and failing-finalizer classes. supcan-l1iy supcan-3os1
+   supcan-glb2 supcan-5oxj *)
+let property_supervisor_request_cancel_idempotence =
+  QCheck.Test.make
+    ~name:
+      "Supervisor request_cancel repeated requests equal one request across generated counts and terminal outcomes"
+    ~count:8 (QCheck.int_range 0 7) (fun rotation ->
+      List.init 8 (fun offset -> ((rotation + offset) mod 8) + 1)
+      |> List.for_all (fun request_count ->
+             List.for_all
+               (fun terminal ->
+                 check_supervisor_request_idempotence terminal request_count)
+               supervisor_terminal_classes))
+
 let laws =
   [
     property_map_identity;
@@ -3297,6 +3453,7 @@ let laws =
     property_log_interceptor_drop;
     property_interruptible_outside_mask_identity;
     property_interruptible_mask_stack;
+    property_supervisor_request_cancel_idempotence;
   ]
 
 let () =
