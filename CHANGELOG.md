@@ -4,6 +4,9 @@
 
 ### Added
 
+- `eta_signal_map`, with a persistent diffable map and the
+  `Keyed(Order).mapi` signal operator. See the
+  [package guide](lib/signal_map/README.md).
 - `Effect.with_supervised_background`, preserving the former supervised
   `with_background` behavior for lexical child work whose failure must not
   interrupt the body.

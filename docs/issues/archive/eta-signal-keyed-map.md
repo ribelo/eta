@@ -165,3 +165,21 @@ The package requirements are in these notes:
 
 Archive this issue after every requirement has executable evidence and all
 required compiler gates pass.
+
+## Completion evidence
+
+Implemented on `feat/eta-signal-keyed-map` in these slices:
+
+- `a9551120` adds the persistent map and map law suites.
+- `7747feb9` adds the package-private Eta Signal extension protocol.
+- `5ba0aeb6` adds `Keyed(Order).mapi` and its generated laws.
+- `598871d8` adds keyed statistics and DOT diagnostics.
+- `f0cd61c5` adds the deterministic production complexity gate.
+
+The executable-law registry maps public and private claims to named tests in
+`.scratch/research/dx/e22/review/LAWS.md`. The package guide is
+`lib/signal_map/README.md`.
+
+The OxCaml and upstream OCaml gates pass for the map, keyed operator,
+diagnostics, and one-million-entry complexity workloads. Package integration
+and final repository gates are recorded in the final implementation commits.

@@ -159,6 +159,17 @@ depends only on `eta` (or on nothing, for the pure DSL/PPX packages).
 | `eta_schema` | `Eta_schema` | lightweight schemas and JSON codecs | — |
 | `eta_schema_test` | `Eta_schema_test` | Alcotest helpers for schema tests | `eta_schema`, `alcotest` |
 
+### Signals
+
+| opam package | OCaml module | what it adds | extra deps |
+| --- | --- | --- | --- |
+| `eta_signal` | `Eta_signal` | explicit-stabilization reactive graph | `eta_stream` |
+| `eta_signal_map` | `Eta_signal_map` | persistent diffable map and stable keyed signal children | `eta_signal` at the same version |
+
+Install `eta_signal_map` only for keyed reactive collections. See the
+[`eta_signal_map` package guide](../lib/signal_map/README.md) for a runnable
+example and the complexity gate.
+
 ### HTTP
 
 | opam package | OCaml module | what it adds | extra deps |
@@ -313,6 +324,17 @@ Adds: blocking worker pool plus Eio-backed runner installed by `eta_eio`.
 
 Adds: `cstruct` and Eio.
 
+### Keyed reactive maps
+
+```dune
+(executable
+ (name app)
+ (libraries eta eta_signal_map eta_eio eio_main))
+```
+
+`eta_signal_map` adds the persistent map and keyed operator. `eta_eio` supplies
+the native runtime for graph effects.
+
 ### HTTP client
 
 ```dune
@@ -371,6 +393,8 @@ may depend on Eta; Eta core libraries under `lib/` must never depend on them.
   installed, even if your program only reaches one OCaml module.
 - **`eta` alone does not run.** You must pair it with `eta_eio`, `eta_jsoo`,
   or another implementation of `Eta.Runtime_contract.RUNTIME`.
+- **`eta_signal_map` requires the same `eta_signal` release.** Install both from
+  one Eta release. The package manager enforces this private-kernel boundary.
 - **`eta_http` is backend-neutral, not dependency-free.** It has no Eio/socket
   ownership, but it currently carries protocol codec dependencies and OpenSSL
   C stubs for the shared TLS policy surface. Real network I/O needs

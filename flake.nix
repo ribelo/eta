@@ -115,6 +115,7 @@
             "eta_redacted"
             "eta_router"
             "eta_signal"
+            "eta_signal_map"
             "eta_sql"
             "eta_sql_driver"
             "eta_sql_dsl"
@@ -229,7 +230,7 @@
               eval "$(opam env --switch "$switch_name" --set-switch)"
 
               eta_url="git+file://$repo_root#master"
-              packages="''${ETA_OPAM_PACKAGES:-eta eta_ai eta_ai_openai_codec eta_ai_openrouter eta_ai_openai_codex eta_ai_moonshot eta_ai_kimi_coding eta_blocking eta_eio eta_exa eta_http eta_http_eio eta_http_h1 eta_http_h2 eta_http_service eta_http_service_eio eta_http_tls_openssl eta_http_ws eta_ladybug eta_linux_input eta_otel eta_redacted eta_router eta_signal eta_sql eta_sql_driver eta_sql_dsl eta_stream}"
+              packages="''${ETA_OPAM_PACKAGES:-eta eta_ai eta_ai_openai_codec eta_ai_openrouter eta_ai_openai_codex eta_ai_moonshot eta_ai_kimi_coding eta_blocking eta_eio eta_exa eta_http eta_http_eio eta_http_h1 eta_http_h2 eta_http_service eta_http_service_eio eta_http_tls_openssl eta_http_ws eta_ladybug eta_linux_input eta_otel eta_redacted eta_router eta_signal eta_signal_map eta_sql eta_sql_driver eta_sql_dsl eta_stream}"
               if [ "$#" -gt 0 ]; then
                 packages="$*"
               fi
@@ -349,6 +350,8 @@
                 lib/schema \
                 lib/schema_test \
                 drivers/eta_turso \
+                lib/signal \
+                lib/signal_map \
                 lib/stream \
                 lib/ppx \
                 test/redacted_eio \
@@ -366,6 +369,8 @@
                 test/otel \
                 test/schema_eio \
                 test/schema_test_eio \
+                test/signal \
+                test/signal_map \
                 test/stream \
                 test/ppx_eio
 
@@ -386,6 +391,8 @@
                 lib/schema \
                 lib/schema_test \
                 drivers/eta_turso \
+                lib/signal \
+                lib/signal_map \
                 lib/stream \
                 lib/ppx \
                 test/laws \
@@ -394,9 +401,13 @@
                 test/ai/kimi_coding \
                 test/schema_eio \
                 test/schema_test_eio \
+                test/signal \
+                test/signal_map \
                 test/ppx_eio \
                 test/connectors \
                 --force
+
+              dune build @signal-map-complexity
             '';
           };
           oxCamlHostPackages =
@@ -459,6 +470,7 @@
 
               dune build @install
               dune runtest --force
+              dune build @signal-map-complexity
               dune build @bench
             '';
           };

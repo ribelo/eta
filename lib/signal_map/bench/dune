@@ -1,5 +1,5 @@
 (executable
- (name signal_map_complexity)
+ (name bench_signal_map)
  (libraries eta eta_signal eta_signal_map eta_eio eta_test eio_main unix))
 
 (rule
@@ -7,7 +7,7 @@
  (action
   (setenv EIO_BACKEND posix
    (with-stdout-to %{targets}
-    (run %{exe:signal_map_complexity.exe} --gate --emit)))))
+    (run %{exe:bench_signal_map.exe} --gate --emit)))))
 
 (alias
  (name signal-map-complexity)

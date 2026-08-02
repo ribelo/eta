@@ -304,6 +304,21 @@ scope validity, dependency attachment, structural events, and pending-plan state
 | SP07 | The gate covers all declared workloads through one million entries. | `lib/signal_map/eta_signal_map.mli:180-185` | `dune build @signal-map-complexity`: sizes 31, 127, 1,023, 16,383, 262,143, and 1,000,000 with edit counts 1, 8, and 64 |
 | SP08 | The public complexity contract excludes the declared non-gated costs. | `lib/signal_map/eta_signal_map.mli:180-185` | Interface review; `dune build @signal-map-complexity` gates only key-comparison and selected-child-visit counts, while `@bench` emits wall time without a ceiling |
 
+
+### Eta Signal Map package requirements
+
+| ID | Claim | Exact normative source | Executable or package evidence |
+| --- | --- | --- | --- |
+| SMP01 | The release publishes matching `eta_signal_map` package, library, and module names. | `docs/requirements/eta-signal-map/README.md:21` | `dune build @install`; `dune-project:39-49`; `lib/signal_map/dune:1-5` |
+| SMP02 | The root `eta` package does not contain the diffable map or keyed operator. | `docs/requirements/eta-signal-map/README.md:22` | `dune-project:11-17`; public compile fixtures use only `Eta_signal_map` |
+| SMP03 | The root `eta` package does not depend on `eta_signal_map`. | `docs/requirements/eta-signal-map/README.md:23` | generated `eta.opam`; `dune build @install` |
+| SMP04 | `eta_signal` does not depend on `eta_signal_map`. | `docs/requirements/eta-signal-map/README.md:24` | generated `eta_signal.opam`; `lib/signal/dune` |
+| SMP05 | `eta_signal_map` requires the same `eta_signal` release. | `docs/requirements/eta-signal-map/README.md:25` | generated `eta_signal_map.opam:14`; isolated package build |
+| SMP06 | The runtime has no Base, Core, Incremental, or `Incr_map` dependency. | `docs/requirements/eta-signal-map/README.md:26` | `eta_signal_map.opam:11-18`; `lib/signal_map/**/dune` |
+| SMP07 | V1 exposes one map module and one keyed signal operator. | `docs/requirements/eta-signal-map/README.md:27` | `lib/signal_map/eta_signal_map.mli`; compiler-boundary fixtures in `test/signal_map/negative/` |
+| SMP08 | The package passes native OxCaml and upstream OCaml gates. | `docs/requirements/eta-signal-map/README.md:28` | `eta-oxcaml-test-shipped`; `eta-mainline-test-shipped` |
+| SMP09 | Generated package metadata keeps Alcotest and QCheck test-only. | `docs/requirements/eta-signal-map/README.md:29` | generated `eta_signal_map.opam:15-16`; isolated package test build |
+
 ### Eta Signal Map private representation requirements
 
 | ID | Claim | Exact normative source | Named qcheck property and observation boundary |
