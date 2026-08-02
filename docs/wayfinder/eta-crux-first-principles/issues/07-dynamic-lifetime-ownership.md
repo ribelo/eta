@@ -1,7 +1,7 @@
 # Dynamic lifetime and work ownership
 
 Type: grilling
-Status: open
+Status: claimed
 Blocked by: 03, 05
 
 ## Question
