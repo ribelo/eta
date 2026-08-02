@@ -1,0 +1,18 @@
+(executable
+ (name signal_map_complexity)
+ (libraries eta eta_signal eta_signal_map eta_eio eta_test eio_main unix))
+
+(rule
+ (targets signal_map_complexity.csv)
+ (action
+  (setenv EIO_BACKEND posix
+   (with-stdout-to %{targets}
+    (run %{exe:signal_map_complexity.exe} --gate --emit)))))
+
+(alias
+ (name signal-map-complexity)
+ (deps signal_map_complexity.csv))
+
+(alias
+ (name bench)
+ (deps signal_map_complexity.csv))

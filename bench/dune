@@ -8,6 +8,7 @@
   (alias ../bench/runtime_observability/bench)
   (alias ../bench/effect_construction/bench)
   (alias ../lib/signal/bench/bench)
+  (alias ../bench/signal_map/bench)
   (alias ../lib/stream/bench/bench)
   (alias ../lib/schema/bench/bench)
   (alias ../bench/router/ocaml/bench)

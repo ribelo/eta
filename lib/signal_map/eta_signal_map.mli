@@ -100,7 +100,13 @@ module Map : sig
 
         Applying the events to the first map reconstructs the second map.
         Reversing the events reconstructs the first map from the second map.
-        [smdiff-5d9x] [smdiff-4nzq] *)
+        [smdiff-5d9x] [smdiff-4nzq]
+
+        For snapshots with shared ancestry, [k] persistent edits use
+        [O(min(n, k log(n+1)))] key comparisons. Here, [n] is the larger map
+        size. Independently rebuilt snapshots remain correct and can use [O(n)]
+        key comparisons. Serialization and conversion do not preserve ancestry.
+        [smperf-ngt2] [smperf-g70n] *)
   end
 
   module Make (Order : Ordered_type) : S with type key = Order.t
@@ -160,6 +166,22 @@ module Make (Observer_error : Eta_signal.Observer_error) () : sig
 
         A successful transaction publishes one final output and one observer
         event. Completion leaves no pending keyed transaction work. [smtxn-oqx5]
-        [smtxn-lrob] [smtxn-34ol] *)
+        [smtxn-lrob] [smtxn-34ol]
+
+        For shared input ancestry, keyed reconciliation uses
+        [O(min(n, k log(n+1)) + (d+c) log(n+1))] key comparisons. Here, [n] is
+        the larger input-map size, and [k] is the persistent input-edit count.
+        The variables [d] and [c] count input-diff events and changed child
+        outputs. A child-only change visits only the selected changed children.
+        Downstream diff after [p] output patches uses
+        [O(min(n, p log(n+1)))] comparisons.
+        [smperf-siyo] [smperf-mc2c] [smperf-ssho]
+
+        The deterministic complexity gate covers insertions, removals, data
+        changes, mixed edits, child-only changes, and independent controls through
+        one million entries. It checks key comparisons and selected child visits.
+        It does not bound builder, cutoff, child computation, cleanup, callback,
+        allocation, memory, wall-time, or constant-factor costs. [smperf-3v0d]
+        [smperf-mnvd] [smperf-2vzo] *)
   end
 end

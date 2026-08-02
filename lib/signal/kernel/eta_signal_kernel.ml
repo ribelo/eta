@@ -891,6 +891,11 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.attach_dependency graph lane edge_ops ~parent:(P parent)
       ~child:(P child)
 
+  let attach_new_keyed_dependency parent child =
+    (* A provisional child is new and has no keyed-owner edge. *)
+    child.dependents <- P parent :: child.dependents;
+    parent.dependencies <- P child :: parent.dependencies
+
   let attach_initial_packed_dependency parent child =
     Initial_edges.attach_dependency ~parent:(P parent) ~child
 
@@ -1566,14 +1571,14 @@ module Make (Observer_error : Observer_error) () = struct
                  (Keyed_invalidated child.keyed_child_scope));
         Graph.remember_pure_disposal_hooks graph lane staging !hooks
 
-  let commit_keyed_additions lane (Packed_keyed (owner, keyed)) =
+  let commit_keyed_additions _lane (Packed_keyed (owner, keyed)) =
     match keyed.keyed_pending with
     | None -> ()
     | Some plan ->
         List.rev plan.keyed_plan_additions
         |> List.iter (fun child ->
                bump_keyed_counter Committed_addition_count;
-               attach_dependency lane owner child.keyed_child_output;
+               attach_new_keyed_dependency owner child.keyed_child_output;
                add_dirty_listener child.keyed_child_output
                  child.keyed_child_listener;
                record_keyed_event keyed (Keyed_attached child.keyed_child_scope))
