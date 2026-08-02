@@ -6,9 +6,8 @@ Blocked by: 05, 07, 10
 
 ## Question
 
-Does Eta Crux core need a typed capability-message or request-response protocol
-for host-owned work, or can applications express it with staged effects and
-adapter-specific services?
+What typed request-response contract lets returned Eta effects ask the shell to
+perform host-owned work through either local or serialized transport?
 
 Test the decision against dialogs, file pickers, clipboard access, window
 control, and one long-lived host source. Decide:
@@ -20,5 +19,5 @@ control, and one long-lived host source. Decide:
 - whether in-process typed calls differ from cross-process serialized calls.
 - which failures belong to Eta Crux, the application protocol, or the adapter.
 
-Do not copy Rust Crux request machinery merely because it exists. Do not leave
-every adapter to rebuild a protocol if Eta Crux owns a real invariant.
+One-shot resolution is separate from repeated state-machine endpoints. Do not
+copy Rust Crux request machinery merely because it exists.

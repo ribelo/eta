@@ -36,9 +36,9 @@ Any gap in `eta_signal` or Eta that blocks the correct design is in scope to
 fix. Eta Crux will not preserve an incomplete contract or add a workaround for
 such a gap.
 
-A state transition is synchronous. It receives a restricted context for staging
-ordinary Eta effects and injecting later actions. Eta Crux runs staged effects
-only after it commits the model.
+A state transition is synchronous. It receives its own typed endpoint and
+returns an immutable model plus one typed-infallible Eta effect. Eta Crux starts
+the effect only after the complete advancement commits.
 
 One deterministic advancement primitive defines runtime semantics. A hosted Eta
 loop and an explicit test or adapter driver both use that primitive.

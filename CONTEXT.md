@@ -27,3 +27,28 @@ size. This term applies only to snapshots with shared persistent ancestry.
 
 One continuous lifetime of a keyed child. Removal ends the incarnation, and a
 later entry of the same key starts a new incarnation.
+
+## Endpoint
+
+A typed local capability for enqueueing messages to one live state-machine
+incarnation.
+
+## Exported endpoint
+
+An endpoint deliberately exposed to a shell with a payload serialization
+contract.
+
+## Remote handle
+
+An opaque transport token that represents an exported endpoint across a
+serialized boundary.
+
+## Shell
+
+The imperative, host-specific side that presents output, performs external
+work, and returns messages to the application core.
+
+## Transport
+
+The means by which the application core and shell exchange information. A
+transport does not change application semantics.

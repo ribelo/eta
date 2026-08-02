@@ -12,7 +12,8 @@ Crux computation, driver, and adapter boundaries?
 Decide:
 
 - which failures are ordinary action or model values.
-- which Eta typed failures can be staged-effect results.
+- how action-routed expected failures remain distinct from effect defects and
+  interruption.
 - which framework operations have their own typed errors.
 - what a transition exception or `eta_signal` invariant failure does.
 - whether a defect stops one dynamic scope or the whole application.

@@ -30,6 +30,10 @@ is the first active consumer and the near-term testing ground. Neither project
 defines the architecture. A host adapter owns rendering. Eta Crux ends at
 compositional computation and typed output.
 
+Eta Crux keeps a functional core with an imperative shell and a generic core
+with specific shells. Shell placement is a transport choice. V1 includes both
+in-process typed delivery and serialized cross-process delivery.
+
 Verify reference claims in source. Relevant local checkouts are
 `/home/ribelo/projects/github/bonsai`,
 `/home/ribelo/projects/github/incremental`,
@@ -47,6 +51,7 @@ deliverable. Implementation is not part of this map.
 - [Reference semantics worth keeping](issues/02-reference-semantics.md) — Keep Bonsai computation laws and Incremental engine laws. Keep only the managed-effects idea from Elm and Rust Crux. Reject copied capability ports, Cmd/Sub, and fragment trees ([report](../../../.scratch/research/eta-crux/reference-semantics.md)).
 - [Graph-neutral computation descriptions](issues/03-public-computation-api.md) — Use one identity-bearing, root-neutral `'a t`. Each root creates isolated live state, and no root can enter description composition ([Bonsai history](../../../.scratch/research/eta-crux/bonsai-functor-history.md)).
 - [Keyed assoc and stable child identity](issues/04-keyed-assoc-contract.md) — Use `Assoc(Map.S)` and one private transactional keyed-map node. Continuous presence keeps state. Committed removal makes re-entry fresh.
+- [Action injection and staged Eta effects](issues/05-action-effect-protocol.md) — State machines return immutable models plus infallible Eta effects. Typed endpoints enqueue actions, while explicit exports add boundary codecs.
 
 ## Not yet specified
 
