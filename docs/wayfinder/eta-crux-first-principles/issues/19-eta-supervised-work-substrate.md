@@ -1,7 +1,7 @@
 # Eta supervised work substrate
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 06, 07
 
 ## Question
