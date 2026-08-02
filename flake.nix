@@ -523,6 +523,7 @@
             ocamlPackages.eio
             ocamlPackages.eio_main
             ocamlPackages.alcotest
+            ocamlPackages.qcheck
             ocamlPackages.angstrom
             ocamlPackages.base64
             ocamlPackages.bigstringaf
