@@ -42,6 +42,7 @@ verification through the Nix flake.
 - [Executable map laws](issues/09-executable-map-laws.md) — Use claim-specific public and private properties with an independent extensional oracle and physical-identity observations.
 - [Keyed operator structural laws](issues/10-keyed-operator-structural-laws.md) — Use 37 claim-specific properties and one independent model trace for identity, cutoff, output, and transaction behavior.
 - [Change-proportional benchmark](issues/11-change-proportional-benchmark.md) — Gate shared diff and keyed reconciliation by comparison counts, require affected-child notification, and retain a correct linear fallback for independent maps.
+- [Eta Crux integration boundary](issues/12-eta-crux-integration-boundary.md) — Keep `Assoc(Order).assoc`, rename its directed cutoff to `data_cutoff`, and map it privately to `Keyed(Order).mapi`.
 
 ## Not yet specified
 
