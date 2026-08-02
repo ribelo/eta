@@ -39,6 +39,7 @@ becomes an integration pointer to the authoritative Eta decision.
 
 - [Current public composition verdict](issues/01-current-public-composition.md) — Public composition covers ownership, admission, causes, and shutdown, but it has no request-only cancellation point before settlement.
 - [Minimal general supervised-work interface](issues/02-minimal-general-interface.md) — Add `Supervisor.Scope.request_cancel` and keep `cancel` as the settlement and failure fence.
+- [Production request-cancellation contract](issues/03-production-request-cancellation-contract.md) — A request latches before return without waiting for settlement. Existing `cancel`, `await`, cause, ownership, and backend boundaries remain intact.
 
 ## Not yet specified
 
