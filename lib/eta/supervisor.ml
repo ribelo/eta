@@ -13,6 +13,7 @@ module Scope = struct
   let start = Effect_erasure.supervisor_start
   let await = Effect_erasure.supervisor_await
   let cancel = Effect_erasure.supervisor_cancel
+  let request_cancel = Effect_erasure.supervisor_request_cancel
   let failures = Effect_erasure.supervisor_failures
   let check = Effect_erasure.supervisor_check
   let yield = Effect.supervisor_yield

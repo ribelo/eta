@@ -65,6 +65,11 @@ let supervisor_cancel child =
     (Effect_supervisor_scope.supervisor_cancel
        (supervisor_child_of_public child))
 
+let supervisor_request_cancel child =
+  supervisor_scope_to_public
+    (Effect_supervisor_scope.supervisor_request_cancel
+       (supervisor_child_of_public child))
+
 let supervisor_failures supervisor =
   supervisor_scope_to_public
     (Effect_supervisor_scope.supervisor_failures

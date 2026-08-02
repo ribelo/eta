@@ -26,6 +26,8 @@ type ('s, 'a, 'err) supervisor_scope =
       ('s, 'err, 'a) supervisor_child -> ('s, 'a, 'err) supervisor_scope
   | Supervisor_cancel :
       ('s, 'err, _) supervisor_child -> ('s, unit, 'err) supervisor_scope
+  | Supervisor_request_cancel :
+      ('s, _, _) supervisor_child -> ('s, unit, _) supervisor_scope
   | Supervisor_failures :
       ('s, 'err) supervisor -> ('s, 'err Cause.t list, _) supervisor_scope
   | Supervisor_check :
@@ -185,6 +187,7 @@ let rec interpret_supervisor_scope :
       | Ok _ -> ()
       | Error cause when Cause.is_interrupt_only cause -> ()
       | Error cause -> Runtime_core.raise_cause frame.fail_key cause)
+  | Supervisor_request_cancel child -> Runtime_supervisor.child_cancel child ()
   | Supervisor_failures supervisor -> List.rev (Runtime_supervisor.failures supervisor)
   | Supervisor_check supervisor -> (
       match Runtime_supervisor.max_failures supervisor with
@@ -342,6 +345,7 @@ let supervisor_bind k eff = Supervisor_bind (eff, k)
 let supervisor_start supervisor eff = Supervisor_start (supervisor, eff)
 let supervisor_await child = Supervisor_await child
 let supervisor_cancel child = Supervisor_cancel child
+let supervisor_request_cancel child = Supervisor_request_cancel child
 let supervisor_failures supervisor = Supervisor_failures supervisor
 let supervisor_check supervisor = Supervisor_check supervisor
 let supervisor_yield = Supervisor_yield

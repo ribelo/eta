@@ -49,6 +49,9 @@ module Scope : sig
       in the scope's typed failure channel. Awaiting the child afterwards
       returns interruption. *)
 
+  val request_cancel :
+    ('s, 'err, 'a) child -> ('s, unit, 'outer_err) t
+
   val failures :
     ('s, 'err) supervisor -> ('s, 'err Cause.t list, 'outer_err) t
   (** Return observed child failures in same-domain observation order.

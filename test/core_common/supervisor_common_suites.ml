@@ -22,6 +22,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let wait_for_sleepers_effect clock expected =
     wait_until_effect (fun () -> B.sleeper_count clock >= expected)
 
+  let rec wait_until ?(attempts = 200) label pred =
+    if pred () then ()
+    else if attempts = 0 then Alcotest.failf "%s did not become true" label
+    else (
+      B.yield ();
+      wait_until ~attempts:(attempts - 1) label pred)
+
   let rec finalizer_contains expected = function
     | Cause.Finalizer.Fail { error = _; rendered } -> String.equal expected rendered
     | Cause.Finalizer.Die _ | Cause.Finalizer.Interrupt _ -> false
@@ -179,6 +186,44 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok false -> Alcotest.fail "expected cancel to wait for finalizer"
     | Exit.Error cause ->
         Alcotest.failf "unexpected cancel failure: %a" (Cause.pp pp_hidden) cause
+
+  (* supcan-stst supcan-f3ww supcan-3sp7 supcan-kptd supcan-0uj5 supcan-vb4t *)
+  let test_supervisor_request_cancel_returns_before_settlement () =
+    B.with_runtime @@ fun ctx rt ->
+    let ready, mark_ready = B.create_promise () in
+    let cleanup_started, mark_cleanup_started = B.create_promise () in
+    let release_cleanup, release = B.create_promise () in
+    let request_returned, mark_request_returned = B.create_promise () in
+    let child =
+      E.acquire_release
+        ~acquire:(E.sync (fun () -> B.resolve mark_ready ()))
+        ~release:(fun () ->
+          E.sync (fun () -> B.resolve mark_cleanup_started ())
+          |> E.bind (fun () -> B.await_effect release_cleanup))
+      |> E.bind (fun () -> E.never)
+    in
+    let program =
+      Supervisor.scoped {
+        run =
+          fun sup ->
+            let open Supervisor.Scope in
+            let* child = start sup (lift child) in
+            let* () = lift (B.await_effect ready) in
+            let* () = request_cancel child in
+            let* () = lift (E.sync (fun () -> B.resolve mark_request_returned ())) in
+            cancel child;
+      }
+    in
+    let result = B.fork_run ctx rt program in
+    wait_until "request return" (fun () -> B.is_resolved request_returned);
+    wait_until "cleanup start" (fun () -> B.is_resolved cleanup_started);
+    Alcotest.(check bool) "settlement remains pending" false (B.is_resolved result);
+    B.resolve release ();
+    match B.await result with
+    | Exit.Ok () -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "unexpected request cancellation failure: %a"
+          (Cause.pp pp_hidden) cause
 
   let test_effect_with_supervised_background_cancels_child () =
     B.with_test_clock @@ fun _ctx clock rt ->
@@ -657,6 +702,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_supervisor_cancel_runs_finalizer;
           Alcotest.test_case "cancel waits for finalizer" `Quick
             test_supervisor_cancel_waits_for_finalizer;
+          Alcotest.test_case "request_cancel returns before settlement" `Quick
+            test_supervisor_request_cancel_returns_before_settlement;
           Alcotest.test_case "with_supervised_background cancels child" `Quick
             test_effect_with_supervised_background_cancels_child;
           Alcotest.test_case
