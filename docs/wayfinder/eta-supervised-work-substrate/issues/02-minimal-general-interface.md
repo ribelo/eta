@@ -1,7 +1,7 @@
 # Minimal general supervised-work interface
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 01
 
 ## Question
