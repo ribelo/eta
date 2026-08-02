@@ -29,7 +29,7 @@ V1 publishes only the per-key signal operator required by Eta Crux `Assoc`. It
 does not publish a broader incremental collection suite.
 
 A prototype decides the smallest practical `Map.S` subset. The prototype uses
-Taumel-shaped construction and update examples.
+application-shaped construction and update examples.
 
 The ported test scope covers these areas:
 

@@ -14,7 +14,7 @@ Prototype the strongest key-discipline candidates:
 - a `Map.Make`-style functor over an ordered key module
 - a first-class comparator witness carried by each map
 
-Use one Taumel-shaped producer and one downstream keyed-composition example.
+Use one application-shaped producer and one keyed-composition example.
 Compare inferred types, error messages, module plumbing, and output-map
 construction.
 
@@ -188,4 +188,4 @@ pass.
 
 The keyed-operator ticket owns the public operator type and logical cutoff. The
 executable-law ticket owns named production tests for this interface. The
-integration ticket owns Eta Crux and Taumel call-site changes.
+integration ticket owns the Eta Crux call-site changes.
