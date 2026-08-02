@@ -1,6 +1,7 @@
 # Package and documentation boundary
 
 Type: grilling
+Status: claimed
 Blocked by: 09, 10, 11, 12, 13
 
 ## Question
