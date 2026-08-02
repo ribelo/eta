@@ -1,6 +1,7 @@
 # Eta Crux and Taumel integration
 
 Type: prototype
+Status: claimed
 Blocked by: 06, 08
 
 ## Question
