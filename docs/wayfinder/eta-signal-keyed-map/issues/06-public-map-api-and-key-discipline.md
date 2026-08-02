@@ -104,9 +104,10 @@ compile-time type error.
 
 ### Bulk construction
 
-`of_list` rejects the first duplicate key in input order. It returns no partial
-map. V1 has no silent last-write constructor and no exception-based bulk
-constructor.
+`of_list` rejects the first duplicate key in input order. The error contains the
+exact key value from the duplicate occurrence that caused rejection. It returns
+no partial map. V1 has no silent last-write constructor and no exception-based
+bulk constructor.
 
 Empty input returns `empty`. A successful nonempty call shares no tree nodes
 with a map that supplied its bindings.
@@ -114,13 +115,18 @@ with a map that supplied its bindings.
 ### Equality and diff
 
 `equal` is extensional equality modulo key identity. Both maps must contain the
-same keys, and the equality function must accept each aligned data pair.
-`equal` can stop at the first mismatch. It never skips a physically identical
-root or subtree.
+same keys, and the equality function must accept each aligned data pair. The
+data-call order is unspecified. If all calls accept, `equal` calls the function
+once for every aligned pair. It does not skip a physically identical root or
+subtree. After the function rejects a pair, `equal` makes no more data calls.
 
 `fold_symmetric_diff` accepts no data-equality function. It reports `Changed`
 when aligned data values are not physically equal. A caller equality function
 cannot hide a map update.
+
+Physical identity is the complete data-change boundary. Mutating one data
+object between snapshots does not produce `Changed`. Two distinct objects
+produce `Changed`, even when their fields are equal.
 
 `Left` contains data present only in the first map. `Right` contains data
 present only in the second map. `Changed` contains first-map data and second-map
