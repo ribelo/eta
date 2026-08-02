@@ -1,0 +1,4 @@
+(library
+ (name eta_signal_kernel)
+ (package eta_signal)
+ (libraries eta eta_observability eta_stream eta_signal_support))

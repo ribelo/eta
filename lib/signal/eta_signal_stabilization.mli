@@ -33,7 +33,16 @@ val active_transaction :
   (_, 'error) t ->
   (Eta_signal_transaction.pure, 'error) Eta_signal_transaction.t
 
-val commit_transaction : (_, 'error) t -> (unit, 'error) result
+val preflight_transaction :
+  (_, 'error) t ->
+  (unit -> (unit, 'error) result) ->
+  (unit, 'error) result
+(** Runs structural preflight before the transaction enters its total commit
+    phase. [sigext-zlk8] *)
+
+val commit_transaction : (_, _) t -> unit
+(** Commits a successfully preflighted transaction without failure.
+    [sigext-ye7i] *)
 val rollback_transaction : (_, _) t -> unit
 
 val commit_to_committed :

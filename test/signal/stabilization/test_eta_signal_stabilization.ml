@@ -13,6 +13,12 @@ let expect_invalid_arg label f =
         (Printexc.to_string exn)
   | _ -> Alcotest.failf "%s: expected Invalid_argument" label
 
+let commit_transaction_or_fail state =
+  (match S.preflight_transaction state (fun () -> Ok ()) with
+   | Ok () -> ()
+   | Error () -> Alcotest.fail "preflight unexpectedly failed");
+  S.commit_transaction state
+
 let test_begin_commit_finish () =
   let state = S.create () in
   Alcotest.(check bool) "starts idle" true
@@ -26,9 +32,7 @@ let test_begin_commit_finish () =
         Alcotest.fail "expected idle begin to succeed"
   in
   Alcotest.(check bool) "pure" true (S.is_pure state);
-  (match S.commit_transaction state with
-   | Ok () -> ()
-   | Error () -> Alcotest.fail "commit unexpectedly failed");
+  commit_transaction_or_fail state;
   let committed =
     S.commit_to_committed state pure
   in
@@ -58,9 +62,7 @@ let test_reentrant_begin_rejected () =
   (match S.begin_pure state with
    | Error `Reentrant_stabilization -> ()
    | Ok _ -> Alcotest.fail "expected reentrant pure begin to fail");
-  (match S.commit_transaction state with
-   | Ok () -> ()
-   | Error () -> Alcotest.fail "commit unexpectedly failed");
+  commit_transaction_or_fail state;
   let committed = S.commit_to_committed state pure in
   (match S.begin_pure state with
    | Error `Reentrant_stabilization -> ()
@@ -78,9 +80,7 @@ let test_commit_to_delivering_combines_transitions () =
     | Error `Reentrant_stabilization ->
         Alcotest.fail "expected begin to succeed"
   in
-  (match S.commit_transaction state with
-   | Ok () -> ()
-   | Error () -> Alcotest.fail "commit unexpectedly failed");
+  commit_transaction_or_fail state;
   ignore (S.commit_to_delivering state pure : S.delivering token);
   Alcotest.(check bool) "delivering" true
     (match S.state state with
@@ -95,9 +95,7 @@ let test_finish_delivering_uses_token () =
     | Error `Reentrant_stabilization ->
         Alcotest.fail "expected begin to succeed"
   in
-  (match S.commit_transaction state with
-   | Ok () -> ()
-   | Error () -> Alcotest.fail "commit unexpectedly failed");
+  commit_transaction_or_fail state;
   let delivering = S.commit_to_delivering state pure in
   ignore (S.finish_delivering state delivering : S.idle token);
   Alcotest.(check bool) "finished idle" true
@@ -139,15 +137,11 @@ let test_tokens_are_bound_to_state () =
     | Error `Reentrant_stabilization ->
         Alcotest.fail "expected second begin to succeed"
   in
-  (match S.commit_transaction second with
-   | Ok () -> ()
-   | Error () -> Alcotest.fail "second commit unexpectedly failed");
+  commit_transaction_or_fail second;
   expect_invalid_arg "foreign pure token" (fun () ->
       ignore (S.commit_to_committed second first_pure : S.committed token));
   let second_committed = S.commit_to_committed second second_pure in
-  (match S.commit_transaction first with
-   | Ok () -> ()
-   | Error () -> Alcotest.fail "first commit unexpectedly failed");
+  commit_transaction_or_fail first;
   let first_committed = S.commit_to_committed first first_pure in
   expect_invalid_arg "foreign committed token" (fun () ->
       ignore
@@ -171,9 +165,7 @@ let test_begin_opens_transaction () =
   T.stage transaction staged 2;
   Alcotest.(check int) "staged read" 2 (T.read transaction staged);
   Alcotest.(check int) "current unchanged" 1 (T.current staged);
-  (match S.commit_transaction state with
-   | Ok () -> ()
-   | Error () -> Alcotest.fail "commit unexpectedly failed");
+  commit_transaction_or_fail state;
   Alcotest.(check int) "current committed" 2 (T.current staged);
   expect_invalid_arg "active transaction after commit" (fun () ->
       ignore (S.active_transaction state : (T.pure, unit) T.t));
@@ -201,11 +193,6 @@ let begin_or_fail state =
   | Ok pure -> pure
   | Error `Reentrant_stabilization ->
       Alcotest.fail "expected begin to succeed"
-
-let commit_transaction_or_fail state =
-  match S.commit_transaction state with
-  | Ok () -> ()
-  | Error () -> Alcotest.fail "commit unexpectedly failed"
 
 let test_commit_after_transaction_rollback_rejected () =
   let state = S.create () in

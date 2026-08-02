@@ -7,6 +7,7 @@
 type id
 
 type pure
+type preflighted
 type committed
 type observers
 
@@ -39,12 +40,16 @@ val stage : (pure, 'error) t -> 'a staged -> 'a -> unit
 val staged : (_, _) t -> 'a staged -> bool
 val discard : (pure, 'error) t -> 'a staged -> unit
 
-val on_preflight :
-  (pure, 'error) t -> (unit -> (unit, 'error) result) -> unit
+val preflight :
+  (pure, 'error) t ->
+  (unit -> (unit, 'error) result) ->
+  ((preflighted, 'error) t, 'error) result
+(** Runs the complete fallible preflight. Failure keeps the transaction open and
+    does not publish a staged cell. Success produces the only handle accepted by
+    {!commit}. [sigext-zlk8] *)
 
-val on_commit : (pure, 'error) t -> (unit -> unit) -> unit
-val on_rollback : (pure, 'error) t -> (unit -> unit) -> unit
+val commit : (preflighted, 'error) t -> (committed, 'error) t
+(** Publishes every staged cell without calling user code or returning a failure.
+    [sigext-ye7i] *)
 
-val preflight : (pure, 'error) t -> (unit, 'error) result
-val commit : (pure, 'error) t -> ((committed, 'error) t, 'error) result
 val rollback : (pure, 'error) t -> unit

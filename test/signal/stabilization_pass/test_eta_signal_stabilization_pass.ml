@@ -246,9 +246,10 @@ let ops ?(stage_pending = fun _ -> ())
         record events "commit_staging";
         maybe_fail fail_at failure_kind Commit_staging;
         let hooks = commit_staging staging in
-        (match S.commit_transaction state with
+        (match S.preflight_transaction state (fun () -> Ok ()) with
         | Ok () -> ()
-        | Error _ -> Alcotest.fail "unexpected transaction commit failure");
+        | Error _ -> Alcotest.fail "unexpected transaction preflight failure");
+        S.commit_transaction state;
         hooks)
       ~update_necessity:(fun context ->
         check_pure_context context;

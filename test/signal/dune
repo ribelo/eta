@@ -25,7 +25,7 @@
 
 (rule
  (target eta_signal_overflow_impl.ml)
- (deps ../../lib/signal/eta_signal.ml)
+ (deps ../../lib/signal/kernel/eta_signal_kernel.ml)
  (action
   (copy %{deps} %{target})))
 

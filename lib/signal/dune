@@ -1,8 +1,8 @@
 (library
- (name eta_signal)
- (public_name eta_signal)
- (synopsis "Incremental-style reactive signals for Eta")
- (private_modules
+ (name eta_signal_support)
+ (package eta_signal)
+ (wrapped false)
+ (modules
   eta_signal_bind
   eta_signal_cleanup
   eta_signal_debug
@@ -18,4 +18,11 @@
   eta_signal_timer_policy
   eta_signal_transaction
   eta_signal_stabilization)
- (libraries eta eta_observability eta_stream))
+ (libraries eta eta_stream))
+
+(library
+ (name eta_signal)
+ (public_name eta_signal)
+ (modules eta_signal)
+ (synopsis "Incremental-style reactive signals for Eta")
+ (libraries eta_signal_kernel))

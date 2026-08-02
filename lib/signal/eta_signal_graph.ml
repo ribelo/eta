@@ -1103,7 +1103,14 @@ let commit_staging t _lane staging context =
   let state_plan =
     State.commit_plan
       ~preflight:(fun () ->
-        run_staging_preflight staging context.staging_commit_preflight)
+        match
+          Eta_signal_stabilization.preflight_transaction t.stabilization
+            (fun () ->
+              run_staging_preflight staging context.staging_commit_preflight;
+              Ok ())
+        with
+        | Ok () -> ()
+        | Error err -> raise (Commit_error err))
       ~binds:
         (State.bind_commit_plan
            ~commit:(fun bind ->
@@ -1127,12 +1134,7 @@ let commit_staging t _lane staging context =
       ~snapshot:
         (State.snapshot_commit_plan
            ~commit_transaction:(fun () ->
-             match
-               Eta_signal_stabilization.commit_transaction
-                 t.stabilization
-             with
-             | Ok () -> ()
-             | Error err -> raise (Commit_error err))
+             Eta_signal_stabilization.commit_transaction t.stabilization)
            ~advance_snapshot:saturating_succ)
   in
   try Ok (State.commit_staging t.state staging state_plan)

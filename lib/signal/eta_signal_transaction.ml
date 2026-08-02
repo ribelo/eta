@@ -1,11 +1,13 @@
 type id = Id of int
 
 type pure
+type preflighted
 type committed
 type observers
 
 type state =
   | Open
+  | Preflighted
   | Committed
   | Rolled_back
 
@@ -25,9 +27,6 @@ type 'error core = {
   id : id;
   mutable state : state;
   mutable staged_cells : packed_staged list;
-  mutable preflight_hooks : (unit -> (unit, 'error) result) list;
-  mutable commit_hooks : (unit -> unit) list;
-  mutable rollback_hooks : (unit -> unit) list;
 }
 
 type (+'phase, 'error) t = { core : 'error core }
@@ -68,14 +67,12 @@ let begin_pure () =
         id = next_transaction_id ();
         state = Open;
         staged_cells = [];
-        preflight_hooks = [];
-        commit_hooks = [];
-        rollback_hooks = [];
       };
   }
 
 let state_label = function
   | Open -> "open"
+  | Preflighted -> "preflighted"
   | Committed -> "committed"
   | Rolled_back -> "rolled back"
 
@@ -124,28 +121,15 @@ let discard tx staged =
          transaction"
   | None -> ()
 
-let on_preflight tx hook =
-  require_open "on_preflight" tx;
-  tx.core.preflight_hooks <- hook :: tx.core.preflight_hooks
+let change_phase tx = { core = tx.core }
 
-let on_commit tx hook =
-  require_open "on_commit" tx;
-  tx.core.commit_hooks <- hook :: tx.core.commit_hooks
-
-let on_rollback tx hook =
-  require_open "on_rollback" tx;
-  tx.core.rollback_hooks <- hook :: tx.core.rollback_hooks
-
-let rec run_preflight_hooks = function
-  | [] -> Ok ()
-  | hook :: hooks -> (
-      match hook () with
-      | Ok () -> run_preflight_hooks hooks
-      | Error _ as error -> error)
-
-let preflight tx =
+let preflight tx run =
   require_open "preflight" tx;
-  run_preflight_hooks (List.rev tx.core.preflight_hooks)
+  match run () with
+  | Error _ as error -> error
+  | Ok () ->
+      tx.core.state <- Preflighted;
+      Ok (change_phase tx)
 
 let commit_staged_cell tx_id (Staged staged) =
   match staged.pending with
@@ -159,28 +143,19 @@ let rollback_staged_cell tx_id (Staged staged) =
   | Some pending when equal_id pending.tx_id tx_id -> staged.pending <- None
   | Some _ | None -> ()
 
-let change_phase tx = { core = tx.core }
-
 let commit tx =
-  require_open "commit" tx;
-  match preflight tx with
-  | Error _ as error -> error
-  | Ok () ->
-      List.iter (commit_staged_cell tx.core.id) (List.rev tx.core.staged_cells);
-      tx.core.staged_cells <- [];
-      tx.core.state <- Committed;
-      List.iter (fun hook -> hook ()) (List.rev tx.core.commit_hooks);
-      tx.core.commit_hooks <- [];
-      tx.core.rollback_hooks <- [];
-      tx.core.preflight_hooks <- [];
-      Ok (change_phase tx)
+  (match tx.core.state with
+  | Preflighted -> ()
+  | state ->
+      invalid_arg
+        ("Eta_signal_transaction.commit: transaction is " ^ state_label state));
+  List.iter (commit_staged_cell tx.core.id) (List.rev tx.core.staged_cells);
+  tx.core.staged_cells <- [];
+  tx.core.state <- Committed;
+  change_phase tx
 
 let rollback tx =
   require_open "rollback" tx;
   List.iter (rollback_staged_cell tx.core.id) (List.rev tx.core.staged_cells);
   tx.core.staged_cells <- [];
-  tx.core.state <- Rolled_back;
-  List.iter (fun hook -> hook ()) (List.rev tx.core.rollback_hooks);
-  tx.core.rollback_hooks <- [];
-  tx.core.commit_hooks <- [];
-  tx.core.preflight_hooks <- []
+  tx.core.state <- Rolled_back

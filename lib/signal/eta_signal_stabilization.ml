@@ -22,6 +22,8 @@ type ('owner, 'error) t = {
   mutable pure_transaction_status : pure_transaction_status option;
   mutable transaction :
     (Eta_signal_transaction.pure, 'error) Eta_signal_transaction.t option;
+  mutable preflighted_transaction :
+    (Eta_signal_transaction.preflighted, 'error) Eta_signal_transaction.t option;
 }
 
 let next_id = ref 0
@@ -39,6 +41,7 @@ let create () =
     state = Idle;
     pure_transaction_status = None;
     transaction = None;
+    preflighted_transaction = None;
   }
 
 let state t = t.state
@@ -72,9 +75,9 @@ let require_token name t (Token id) =
      ^ ": token belongs to another stabilization state")
 
 let require_no_transaction name t =
-  match t.transaction with
-  | None -> ()
-  | Some _ ->
+  match (t.transaction, t.preflighted_transaction) with
+  | None, None -> ()
+  | Some _, _ | _, Some _ ->
       invalid_arg
         ("Eta_signal_stabilization." ^ name
        ^ ": pure transaction is still active")
@@ -122,19 +125,39 @@ let active_transaction t =
       invalid_arg
         "Eta_signal_stabilization.active_transaction: no active transaction"
 
+let preflight_transaction t run =
+  require_state "preflight_transaction" Pure t;
+  match (t.transaction, t.preflighted_transaction) with
+  | Some transaction, None -> (
+      match Eta_signal_transaction.preflight transaction run with
+      | Error _ as error -> error
+      | Ok preflighted ->
+          t.preflighted_transaction <- Some preflighted;
+          Ok ())
+  | None, _ ->
+      invalid_arg
+        "Eta_signal_stabilization.preflight_transaction: no active transaction"
+  | Some _, Some _ ->
+      invalid_arg
+        "Eta_signal_stabilization.preflight_transaction: transaction is already preflighted"
+
 let commit_transaction t =
   require_state "commit_transaction" Pure t;
-  match t.transaction with
-  | None ->
+  match (t.transaction, t.preflighted_transaction) with
+  | None, _ ->
       invalid_arg
         "Eta_signal_stabilization.commit_transaction: no active transaction"
-  | Some transaction -> (
-      match Eta_signal_transaction.commit transaction with
-      | Error _ as error -> error
-      | Ok _ ->
-          t.transaction <- None;
-          t.pure_transaction_status <- Some Pure_transaction_committed;
-          Ok ())
+  | Some _, None ->
+      invalid_arg
+        "Eta_signal_stabilization.commit_transaction: transaction is not preflighted"
+  | Some _, Some transaction ->
+      ignore
+        (Eta_signal_transaction.commit transaction
+          : (Eta_signal_transaction.committed, 'error)
+            Eta_signal_transaction.t);
+      t.transaction <- None;
+      t.preflighted_transaction <- None;
+      t.pure_transaction_status <- Some Pure_transaction_committed
 
 let rollback_transaction t =
   require_state "rollback_transaction" Pure t;
@@ -145,7 +168,8 @@ let rollback_transaction t =
   | Some transaction ->
       Eta_signal_transaction.rollback transaction;
       t.pure_transaction_status <- Some Pure_transaction_rolled_back;
-      t.transaction <- None
+      t.transaction <- None;
+      t.preflighted_transaction <- None
 
 let commit_to_committed t token =
   require_token "commit_to_committed" t token;

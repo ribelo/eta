@@ -219,6 +219,22 @@ physical identity. Private rows name their package-private observation boundary.
 | SMR07 | Each singleton starts fresh ancestry. | `docs/requirements/eta-signal-map/keyed-map.md:25,65` | `map_singleton_starts_fresh_ancestry` — package-private node-identity inventory |
 | SMR08 | Nonempty `of_list` severs ancestry. | `docs/requirements/eta-signal-map/keyed-map.md:26-28,65` | `map_of_list_severs_ancestry` — package-private node-identity inventory |
 
+### Eta Signal private extension protocol
+
+The transaction tests observe staged and current cells. The kernel tests use the
+package-private extension module. The public negative fixture observes only the
+installed `Eta_signal` CMI path.
+
+| ID | Claim | Exact normative source | Named executable evidence |
+| --- | --- | --- | --- |
+| SX01 | A failed preflight leaves the transaction open and publishes no staged cell. | `lib/signal/eta_signal_transaction.mli:43-49` | `test_preflight_failure_leaves_current_values_unchanged` |
+| SX02 | Successful preflight produces the only phase accepted by commit. | `lib/signal/eta_signal_transaction.mli:43-49` | `test_commit_is_total_after_preflight`; compile-time `preflighted` argument to `commit` |
+| SX03 | Commit publishes every staged cell without a user callback or failure result. | `lib/signal/eta_signal_transaction.mli:51-53` | `test_commit_is_total_after_preflight` — two independently staged cells and direct total return |
+| SX04 | Stabilization runs structural preflight before entering total commit. | `lib/signal/eta_signal_stabilization.mli:36-41` | `test_begin_commit_finish`; compile-time `preflighted` transaction phase |
+| SX05 | Stabilization commit is total after successful preflight. | `lib/signal/eta_signal_stabilization.mli:43-45` | `test_commit_is_total_after_preflight`; `success callback order` |
+| SX06 | Structural preflight processes an owner before its descendant. | `docs/requirements/eta-signal/keyed-extension.md:29` | `test_preflight_orders_owner_before_descendant` — reversed input plans over root and dynamic child scopes |
+| SX07 | An affected child notifies its keyed extension path without visiting an unaffected child. | `docs/requirements/eta-signal/keyed-extension.md:34` | `test_affected_child_notification_avoids_scan` — two independent child frontiers, one source change |
+
 ## Registered external named suites
 
 These claims are part of the complete `effect.mli`/`queue.mli` inventory, but

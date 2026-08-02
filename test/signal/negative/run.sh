@@ -84,6 +84,9 @@ for src in "$fixture_dir"/*_negative.ml; do
     private_transaction_negative.ml)
       expected_substrings=('Unbound module "Eta_signal_transaction"')
       ;;
+    private_kernel_negative.ml)
+      expected_substrings=('Unbound module "Eta_signal_kernel"')
+      ;;
     public_scope_negative.ml)
       expected_substrings=('Unbound module "Signal.Scope"')
       ;;
