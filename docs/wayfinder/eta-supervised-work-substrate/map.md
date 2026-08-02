@@ -38,12 +38,9 @@ becomes an integration pointer to the authoritative Eta decision.
 ## Decisions so far
 
 - [Current public composition verdict](issues/01-current-public-composition.md) — Public composition covers ownership, admission, causes, and shutdown, but it has no request-only cancellation point before settlement.
+- [Minimal general supervised-work interface](issues/02-minimal-general-interface.md) — Add `Supervisor.Scope.request_cancel` and keep `cancel` as the settlement and failure fence.
 
 ## Not yet specified
-
-- **Production contract.** The exact laws, backend obligations, negative type
-  checks, executable tests, and package placement depend on the proven gap and
-  the selected interface.
 
 ## Out of scope
 
