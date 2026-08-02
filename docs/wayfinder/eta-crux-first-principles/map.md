@@ -59,6 +59,7 @@ deliverable. Implementation is not part of this map.
 - [Action injection and staged Eta effects](issues/05-action-effect-protocol.md) — State machines return immutable models plus typed-infallible Eta effects. Typed endpoints enqueue actions, while explicit exports add boundary codecs.
 - [Deterministic advancement transaction](issues/06-advancement-transaction.md) — Process one message atomically, return output plus mandatory post-commit work, then drain until idle.
 - [Dynamic lifetime and work ownership](issues/07-dynamic-lifetime-ownership.md) — Committed absence disposes fresh-incarnation child scopes. Scoped Eta programs and transition effects follow the structural ownership tree.
+- [Long-lived sources and subscriptions](issues/08-subscriptions-and-sources.md) — Use a thin `Source` computation with a two-phase Eta producer. Spec equality preserves producers, readiness gates same-commit effects, and terminal outcomes become actions.
 - [Eta supervised work substrate](issues/19-eta-supervised-work-substrate.md) — Eta adds request-only supervisor cancellation. Eta Crux registers gated work, requests removed-subtree cancellation, then releases new work without waiting for old cleanup.
 
 ## Not yet specified

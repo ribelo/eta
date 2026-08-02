@@ -2,7 +2,7 @@
 
 Type: grilling
 Status: open
-Blocked by: 05, 07
+Blocked by: 05, 07, 08
 
 ## Question
 
@@ -21,6 +21,10 @@ Decide:
 - how `Cause` and suppressed cleanup failures reach the hosted runner and
   explicit driver.
 - what diagnostic context is stable and safe to retain.
+
+Source opening and producer typed failures already become terminal actions.
+Source defects, finalizer failures, and sends after closed ingress still need
+the root and driver rules from this ticket.
 
 The design must fail loudly without one catch-all error type. It must preserve
 Eta's typed failure, defect, interruption, and resource-cleanup distinctions.

@@ -2,7 +2,7 @@
 
 Type: grilling
 Status: open
-Blocked by: 05, 07, 10
+Blocked by: 05, 07, 08, 10
 
 ## Question
 
@@ -21,3 +21,7 @@ control, and one long-lived host source. Decide:
 
 One-shot resolution is separate from repeated state-machine endpoints. Do not
 copy Rust Crux request machinery merely because it exists.
+
+Long-lived repeated host events use the generic producer from [Long-lived
+sources and subscriptions](08-subscriptions-and-sources.md). This ticket owns
+one-shot request resolution and does not add another streaming response path.

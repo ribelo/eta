@@ -2,7 +2,7 @@
 
 Type: prototype
 Status: open
-Blocked by: 06, 09, 16, 19
+Blocked by: 06, 08, 09, 16, 19
 
 ## Question
 
@@ -19,6 +19,11 @@ show:
 - admission and delivery failure reporting.
 - one same-domain host and one foreign-loop retained host.
 - a recording fake that verifies the adapter without its toolkit.
+
+Host-owned event systems expose the generic two-phase producer from
+[Long-lived sources and subscriptions](08-subscriptions-and-sources.md). The
+adapter reports readiness after it installs the host event path. Eta Crux still
+owns source identity, reconciliation, and cancellation.
 
 Determine which operations belong to Eta Crux, to a generic adapter helper, and
 to a concrete package such as `eta_crux_sliml`. The core must not acquire a

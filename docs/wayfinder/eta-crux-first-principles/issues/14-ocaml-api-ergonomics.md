@@ -2,7 +2,7 @@
 
 Type: prototype
 Status: open
-Blocked by: 03, 04, 05, 07
+Blocked by: 03, 04, 05, 07, 08
 
 ## Question
 
@@ -18,8 +18,14 @@ Build the same small dynamic application with the viable styles:
   diagnostics.
 
 Include local state, two independent child instances, a dynamic branch, keyed
-children, one staged effect, and typed root output. Compare inferred signatures,
-compiler errors, source locations, refactor behavior, and generated code.
+children, one staged effect, one source, and typed root output. Compare inferred
+signatures, compiler errors, source locations, refactor behavior, and generated
+code.
+
+Prototype a clear surface for the two-phase source producer, spec equality,
+changing mappers, terminal outcomes, and the target endpoint. Keep readiness in
+the type structure instead of an application callback. Compare the rank-2
+emitter record with any equally precise, simpler syntax.
 
 Use OCaml strengths rather than reproducing another language's syntax. Do not
 make a PPX part of V1 unless the prototype shows a concrete semantic or
