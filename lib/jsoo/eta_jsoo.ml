@@ -367,11 +367,7 @@ let protect_impl ~check_after f =
           raise exn
 
 let protect_without_check f = protect_impl ~check_after:false f
-
-(* Runtime cleanup protection matches [Eio.Cancel.protect]: it does not
-   redeliver an already observed cancellation after the callback. The public
-   cancellation mask below keeps its separate exit check. *)
-let protect = protect_without_check
+let protect f = protect_impl ~check_after:true f
 
 let restore_cancellation f =
   let fiber = current () in
@@ -386,7 +382,7 @@ let restore_cancellation f =
       value)
 
 let with_cancel_mask body =
-  protect_impl ~check_after:true (fun () ->
+  protect (fun () ->
       body
         {
           Runtime_contract.restore =

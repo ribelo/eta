@@ -293,7 +293,8 @@ let service runtime key =
   | None -> None
   | Some service -> Runtime_contract.Backend.service_value key service
 
-let run_finalizers ~runtime ~fail_key finalizers =
+let run_finalizers ?(cancellation_already_observed = false) ~runtime ~fail_key
+    finalizers =
   match !finalizers with
   | [] -> None
   | fs ->
@@ -301,19 +302,34 @@ let run_finalizers ~runtime ~fail_key finalizers =
          finalizers (the common path for pure effects), skip it entirely — this
          avoids the cancel-context [Hashtbl] iteration that [protect] performs on
          every call, which is a top hotspot under per-request effect dispatch. *)
-      with_restoration_forbidden runtime @@ fun () ->
-      runtime.contract.Runtime_contract.protect @@ fun () ->
-      finalizers := [];
-      fs
-      |> List.filter_map (fun f ->
-             try
-               f ();
-               None
-             with exn -> Some (cause_of_exn_runtime runtime fail_key exn))
-      |> (function
-           | [] -> None
-           | [ cause ] -> Some cause
-           | causes -> Some (Cause.sequential causes))
+      let completed = ref None in
+      let run () =
+        with_restoration_forbidden runtime @@ fun () ->
+        runtime.contract.Runtime_contract.protect @@ fun () ->
+        let result =
+          finalizers := [];
+          fs
+          |> List.filter_map (fun f ->
+                 try
+                   f ();
+                   None
+                 with exn -> Some (cause_of_exn_runtime runtime fail_key exn))
+          |> (function
+               | [] -> None
+               | [ cause ] -> Some cause
+               | causes -> Some (Cause.sequential causes))
+        in
+        completed := Some result;
+        result
+      in
+      (match run () with
+      | result -> result
+      | exception exn
+        when cancellation_already_observed
+             && is_cancellation runtime.contract exn -> (
+          match !completed with
+          | Some result -> result
+          | None -> raise exn))
 
 let capture_finalizer_cause ~error_renderer cause =
   Cause.finalizer_of_cause
@@ -337,7 +353,10 @@ let with_finalizers ?(interrupt_of_cancel = fun _ -> Cause.interrupt) ~runtime
         | Some reason -> reason
         | None -> assert false
       in
-      match run_finalizers ~runtime ~fail_key finalizers with
+      match
+        run_finalizers ~cancellation_already_observed:true ~runtime ~fail_key
+          finalizers
+      with
       | None -> raise exn
       | Some finalizer ->
           raise_cause fail_key
