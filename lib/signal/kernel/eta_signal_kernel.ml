@@ -330,6 +330,35 @@ module Make (Observer_error : Observer_error) () = struct
 
   and packed_signal = P : 'a signal -> packed_signal
 
+  and 'a keyed_change =
+    | Keyed_left of 'a
+    | Keyed_right of 'a
+    | Keyed_changed of 'a * 'a
+
+  and keyed_structural_event =
+    | Keyed_detached of scope
+    | Keyed_invalidated of scope
+    | Keyed_attached of scope
+
+  and ('key, 'value, 'map) keyed_map_ops = {
+    keyed_empty : 'map;
+    keyed_find_opt : 'key -> 'map -> 'value option;
+    keyed_set : 'key -> 'value -> 'map -> 'map;
+    keyed_remove : 'key -> 'map -> 'map;
+    keyed_fold : 'acc. ('key -> 'value -> 'acc -> 'acc) -> 'map -> 'acc -> 'acc;
+  }
+
+  and ('key, 'value, 'map) keyed_diff_ops = {
+    keyed_map : ('key, 'value, 'map) keyed_map_ops;
+    keyed_fold_diff :
+      'acc.
+      'map ->
+      'map ->
+      init:'acc ->
+      f:('acc -> 'key -> 'value keyed_change -> 'acc) ->
+      'acc;
+  }
+
   and 'a signal = {
     id : signal_id;
     equal : 'a -> 'a -> bool;
@@ -415,12 +444,53 @@ module Make (Observer_error : Observer_error) () = struct
         -> 'j kind
     | All : 'a signal list -> 'a list kind
     | Bind : ('a, 'b) bind -> 'b kind
+    | Keyed :
+        ('key, 'data, 'output, 'data_map, 'output_map, 'child_map) keyed
+        -> 'output_map kind
 
   and ('a, 'b) bind = {
     source : 'a signal;
     selector : 'a -> 'b signal;
     mutable owner : 'b signal option;
     snapshot : ('a, 'b signal, scope) Bind.snapshot Transaction.staged;
+  }
+
+  and ('key, 'data, 'output) keyed_child = {
+    keyed_child_key : 'key;
+    keyed_child_scope : scope;
+    keyed_child_source : 'data var;
+    keyed_child_data : 'data signal;
+    keyed_child_output : 'output signal;
+    keyed_child_listener : unit -> unit;
+  }
+
+  and ('key, 'data, 'output, 'data_map, 'output_map, 'child_map) keyed_plan = {
+    keyed_plan_input : 'data_map;
+    mutable keyed_plan_children : 'child_map;
+    mutable keyed_plan_output : 'output_map;
+    mutable keyed_plan_removals : ('key, 'data, 'output) keyed_child list;
+    mutable keyed_plan_additions : ('key, 'data, 'output) keyed_child list;
+    mutable keyed_plan_updates : ('key, 'data, 'output) keyed_child list;
+    mutable keyed_plan_provisional_scopes : scope list;
+    mutable keyed_plan_processed : 'child_map;
+  }
+
+  and ('key, 'data, 'output, 'data_map, 'output_map, 'child_map) keyed = {
+    keyed_input : 'data_map signal;
+    keyed_data_cutoff : published:'data -> candidate:'data -> bool;
+    keyed_builder : key:'key -> data:'data signal -> 'output signal;
+    keyed_data_ops : ('key, 'data, 'data_map) keyed_diff_ops;
+    keyed_output_ops : ('key, 'output, 'output_map) keyed_map_ops;
+    keyed_child_ops :
+      ('key, ('key, 'data, 'output) keyed_child, 'child_map) keyed_map_ops;
+    keyed_raw_input : 'data_map Transaction.staged;
+    keyed_children : 'child_map Transaction.staged;
+    mutable keyed_affected : 'child_map;
+    mutable keyed_owner : 'output_map signal option;
+    mutable keyed_preflight : unit -> unit;
+    mutable keyed_record_event : keyed_structural_event -> unit;
+    mutable keyed_pending :
+      ('key, 'data, 'output, 'data_map, 'output_map, 'child_map) keyed_plan option;
   }
 
   and packed_bind = B : ('a, 'b) bind -> packed_bind
@@ -520,7 +590,7 @@ module Make (Observer_error : Observer_error) () = struct
       match signal.kind with
       | Bind _ -> []
       | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
-      | Map7 _ | Map8 _ | Map9 _ | All _ ->
+      | Map7 _ | Map8 _ | Map9 _ | All _ | Keyed _ ->
           signal.dependencies
   end)
 
@@ -681,6 +751,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Map9 _ -> "map9"
     | All _ -> "all"
     | Bind _ -> "bind"
+    | Keyed _ -> "keyed_mapi"
 
   let graph_context_error_message = Graph.context_error_message
 
@@ -1044,6 +1115,22 @@ module Make (Observer_error : Observer_error) () = struct
          (node_lifecycle ?equal ~dirty kind)
          ~dependencies)
 
+  let new_var ?(equal = default_equal) value =
+    {
+      var_id = next_var_id ();
+      var_equal = equal;
+      source_value = Transaction.create_staged value;
+      graph_value = Transaction.create_staged value;
+      queued = false;
+      updating = false;
+      watchers = [];
+    }
+
+  let watch_var source =
+    let signal = new_signal ~equal:source.var_equal (Var source) [] in
+    source.watchers <- weak_packed_signal (P signal) :: source.watchers;
+    signal
+
   let new_const ?equal value =
     let signal = new_signal ?equal ~dirty:false (Const value) [] in
     publish_initial_current signal.snapshot
@@ -1110,6 +1197,13 @@ module Make (Observer_error : Observer_error) () = struct
             match Bind.inner_scope (Transaction.current bind.snapshot) with
             | None -> []
             | Some scope -> invalidate_scope ~prune:false scope)
+        | Keyed keyed ->
+            keyed.keyed_child_ops.keyed_fold
+              (fun _ child hooks ->
+                remove_dirty_listener child.keyed_child_output
+                  child.keyed_child_listener;
+                invalidate_scope ~prune:false child.keyed_child_scope @ hooks)
+              (Transaction.current keyed.keyed_children) []
         | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
         | Map7 _ | Map8 _ | Map9 _ | All _ ->
             [])
@@ -1173,7 +1267,7 @@ module Make (Observer_error : Observer_error) () = struct
       match signal.kind with
       | Bind bind -> Bind.inner_scope (bind_current_snapshot bind)
       | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
-      | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
+      | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Keyed _ ->
           None
   end)
 
@@ -1255,6 +1349,158 @@ module Make (Observer_error : Observer_error) () = struct
     in
     { invalidated_ids; invalidated_nodes = !invalidated_nodes }
 
+  type packed_keyed =
+    | Packed_keyed :
+        'output_map signal
+        * ('key, 'data, 'output, 'data_map, 'output_map, 'child_map) keyed
+        -> packed_keyed
+
+  let packed_keyed_owner (Packed_keyed (owner, _)) = P owner
+
+  let compare_keyed_owner_scope_then_id left right =
+    let (P left) = packed_keyed_owner left in
+    let (P right) = packed_keyed_owner right in
+    match Int.compare (Scope.depth left.scope) (Scope.depth right.scope) with
+    | 0 -> Int.compare (signal_id_int left.id) (signal_id_int right.id)
+    | order -> order
+
+  let pending_keyed_nodes lane =
+    all_nodes_unlocked lane
+    |> List.filter_map (fun (P signal) ->
+           match signal.kind with
+           | Keyed keyed when Option.is_some keyed.keyed_pending ->
+               Some (Packed_keyed (signal, keyed))
+           | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+           | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Bind _ | Keyed _ ->
+               None)
+    |> List.sort compare_keyed_owner_scope_then_id
+
+  let rollback_keyed_plan lane (Packed_keyed (_owner, keyed)) =
+    match keyed.keyed_pending with
+    | None -> []
+    | Some plan ->
+        keyed.keyed_pending <- None;
+        List.concat_map
+          (invalidate_scope lane ~prune:false)
+          plan.keyed_plan_provisional_scopes
+
+  let rollback_pending_keyed lane plans =
+    let hooks = List.concat_map (rollback_keyed_plan lane) plans in
+    prune_invalid_nodes_unlocked lane;
+    hooks
+
+  let discard_keyed_plan lane staging
+      (Packed_keyed (owner, keyed) as packed) =
+    match keyed.keyed_pending with
+    | None -> []
+    | Some plan ->
+        Graph.discard_cell graph lane staging owner.snapshot;
+        Graph.discard_cell graph lane staging keyed.keyed_raw_input;
+        Graph.discard_cell graph lane staging keyed.keyed_children;
+        List.iter
+          (fun child ->
+            Graph.discard_cell graph lane staging
+              child.keyed_child_source.source_value;
+            Graph.discard_cell graph lane staging
+              child.keyed_child_source.graph_value)
+          plan.keyed_plan_updates;
+        rollback_keyed_plan lane packed
+
+  let extend_keyed_invalidations plans invalidations =
+    let invalidated_nodes = ref invalidations.invalidated_nodes in
+    List.iter
+      (fun (Packed_keyed (owner, keyed)) ->
+        if not (staged_bind_invalidates invalidations (P owner)) then
+          match keyed.keyed_pending with
+          | None -> ()
+          | Some plan ->
+              List.iter
+                (fun child ->
+                  collect_scope_invalidations_into
+                    ~exclude_signal_id:owner.id
+                    invalidations.invalidated_ids invalidated_nodes
+                    child.keyed_child_scope)
+                plan.keyed_plan_removals)
+      plans;
+    { invalidations with invalidated_nodes = !invalidated_nodes }
+
+  let partition_keyed_plans invalidations plans =
+    List.partition
+      (fun packed ->
+        not (staged_bind_invalidates invalidations (packed_keyed_owner packed)))
+      plans
+
+  let preflight_keyed_plan (Packed_keyed (owner, keyed)) =
+    match keyed.keyed_pending with
+    | None -> ()
+    | Some plan ->
+        keyed.keyed_preflight ();
+        if not owner.valid then raise (Graph_error `Invalid_scope);
+        List.iter
+          (fun child ->
+            if
+              (not (Scope.valid child.keyed_child_scope))
+              || not child.keyed_child_output.valid
+            then raise (Graph_error `Invalid_scope);
+            match
+              Scope_validation.validate_inner ~scope:child.keyed_child_scope
+                (P child.keyed_child_output)
+            with
+            | Ok () -> ()
+            | Error `Invalid_scope -> raise (Graph_error `Invalid_scope))
+          plan.keyed_plan_additions
+
+  let commit_keyed_removals lane staging (Packed_keyed (owner, keyed)) =
+    match keyed.keyed_pending with
+    | None -> ()
+    | Some plan ->
+        let hooks = ref [] in
+        List.rev plan.keyed_plan_removals
+        |> List.iter (fun child ->
+               keyed.keyed_record_event
+                 (Keyed_detached child.keyed_child_scope);
+               remove_dirty_listener child.keyed_child_output
+                 child.keyed_child_listener;
+               detach_dependency lane owner child.keyed_child_output;
+               hooks :=
+                 !hooks
+                 @ invalidate_scope lane ~prune:false child.keyed_child_scope;
+               keyed.keyed_record_event
+                 (Keyed_invalidated child.keyed_child_scope));
+        Graph.remember_pure_disposal_hooks graph lane staging !hooks
+
+  let commit_keyed_additions lane (Packed_keyed (owner, keyed)) =
+    match keyed.keyed_pending with
+    | None -> ()
+    | Some plan ->
+        List.rev plan.keyed_plan_additions
+        |> List.iter (fun child ->
+               attach_dependency lane owner child.keyed_child_output;
+               add_dirty_listener child.keyed_child_output
+                 child.keyed_child_listener;
+               keyed.keyed_record_event
+                 (Keyed_attached child.keyed_child_scope))
+
+  let finish_keyed_commit (Packed_keyed (_owner, keyed)) =
+    match keyed.keyed_pending with
+    | None -> ()
+    | Some plan ->
+        keyed.keyed_affected <-
+          keyed.keyed_child_ops.keyed_fold
+            (fun key processed affected ->
+              match keyed.keyed_child_ops.keyed_find_opt key affected with
+              | Some current when current == processed ->
+                  keyed.keyed_child_ops.keyed_remove key affected
+              | Some _ | None -> affected)
+            plan.keyed_plan_processed keyed.keyed_affected;
+        keyed.keyed_pending <- None
+
+  let commit_keyed_plans lane staging plans =
+    List.iter (commit_keyed_removals lane staging) plans;
+    List.iter (commit_keyed_additions lane) plans;
+    List.iter finish_keyed_commit plans;
+    prune_invalid_nodes_unlocked lane
+
   let signal_timer (P signal) =
     Option.map (fun timer -> (signal.id, timer)) signal.timer
 
@@ -1271,6 +1517,18 @@ module Make (Observer_error : Observer_error) () = struct
                 Bind.dependencies ~source:(P bind.source)
                   ~inner_dependency:(fun inner -> P inner)
                   (bind_effective_snapshot bind)
+            | Keyed keyed -> (
+                match keyed.keyed_pending with
+                | None -> signal.dependencies
+                | Some keyed_plan ->
+                    let children =
+                      keyed.keyed_child_ops.keyed_fold
+                        (fun _ child dependencies ->
+                          P child.keyed_child_output :: dependencies)
+                        keyed_plan.keyed_plan_children []
+                      |> List.rev
+                    in
+                    P keyed.keyed_input :: children)
             | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
             | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
                 signal.dependencies
@@ -1309,7 +1567,21 @@ module Make (Observer_error : Observer_error) () = struct
 
   let preflight_commit_staging lane staging =
     Graph.staged_preflight ~preflight:(fun () ->
-        let invalidations = collect_staged_bind_invalidations lane staging in
+        let keyed_plans = pending_keyed_nodes lane in
+        let invalidations =
+          collect_staged_bind_invalidations lane staging
+          |> extend_keyed_invalidations keyed_plans
+        in
+        let active_keyed, excluded_keyed =
+          partition_keyed_plans invalidations keyed_plans
+        in
+        let excluded_hooks =
+          List.concat_map (discard_keyed_plan lane staging) excluded_keyed
+        in
+        if excluded_hooks <> [] then
+          Graph.remember_pure_disposal_hooks graph lane staging excluded_hooks;
+        prune_invalid_nodes_unlocked lane;
+        List.iter preflight_keyed_plan active_keyed;
         let post_commit_necessary =
           collect_post_commit_necessary_timers lane invalidations
         in
@@ -1320,7 +1592,8 @@ module Make (Observer_error : Observer_error) () = struct
         preflight_post_commit_timer_stops lane post_commit_necessary;
         Graph.iter_computed graph lane staging
           ~f:(preflight_signal_commit lane staging invalidations);
-        preflight_post_commit_timer_starts post_commit_necessary)
+        preflight_post_commit_timer_starts post_commit_necessary;
+        commit_keyed_plans lane staging active_keyed)
 
   let remember_pure_disposal_hooks lane staging hooks =
     Graph.remember_pure_disposal_hooks graph lane staging hooks
@@ -1388,6 +1661,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let staging_reset_context lane _staging =
     Graph.staging_reset_context
+      ~rollback_extensions:(fun _staging ->
+        rollback_pending_keyed lane (pending_keyed_nodes lane))
       ~rollback_bind:(fun staging (B bind) ->
         Graph.staged_bind_rollback
           ~staged:(bind_staged_snapshot lane staging bind)
@@ -1593,6 +1868,148 @@ module Make (Observer_error : Observer_error) () = struct
         finish_static (Graph_algorithms.Static_eval.all children)
     | Bind bind ->
         compute_bind_dynamic lane staging signal bind
+    | Keyed keyed ->
+        compute_keyed lane staging signal keyed
+
+  and compute_keyed :
+      type key data output data_map output_map child_map.
+      graph_lane ->
+      Graph.staging ->
+      output_map signal ->
+      (key, data, output, data_map, output_map, child_map) keyed ->
+      output_map * bool =
+   fun lane staging signal keyed ->
+    let child_ops = keyed.keyed_child_ops in
+    let output_ops = keyed.keyed_output_ops in
+    let input, _input_changed = compute lane staging keyed.keyed_input in
+    let current_input = Transaction.current keyed.keyed_raw_input in
+    let current_children = Transaction.current keyed.keyed_children in
+    let current_output =
+      match Signal_snapshot.value (signal_effective_snapshot signal) with
+      | Some output -> output
+      | None -> output_ops.keyed_empty
+    in
+    let plan =
+      {
+        keyed_plan_input = input;
+        keyed_plan_children = current_children;
+        keyed_plan_output = current_output;
+        keyed_plan_removals = [];
+        keyed_plan_additions = [];
+        keyed_plan_updates = [];
+        keyed_plan_provisional_scopes = [];
+        keyed_plan_processed = child_ops.keyed_empty;
+      }
+    in
+    keyed.keyed_pending <- Some plan;
+    let visited = ref child_ops.keyed_empty in
+    let find_child key =
+      match child_ops.keyed_find_opt key current_children with
+      | Some child -> child
+      | None -> raise (Graph_error `Invalid_scope)
+    in
+    let compute_child child =
+      let value, changed = compute lane staging child.keyed_child_output in
+      if changed then
+        plan.keyed_plan_output <-
+          output_ops.keyed_set child.keyed_child_key value
+            plan.keyed_plan_output;
+      visited :=
+        child_ops.keyed_set child.keyed_child_key child !visited
+    in
+    let add_child key candidate =
+      let scope = new_scope signal in
+      plan.keyed_plan_provisional_scopes <-
+        scope :: plan.keyed_plan_provisional_scopes;
+      let source, data_signal, output_signal =
+        Graph.with_current_scope graph scope_ops scope (fun () ->
+            let source = new_var candidate in
+            let data_signal = watch_var source in
+            let output_signal =
+              keyed.keyed_builder ~key ~data:data_signal
+            in
+            (source, data_signal, output_signal))
+      in
+      (match Scope_validation.validate_inner ~scope (P output_signal) with
+      | Ok () -> ()
+      | Error `Invalid_scope -> raise (Graph_error `Invalid_scope));
+      let rec child =
+        {
+          keyed_child_key = key;
+          keyed_child_scope = scope;
+          keyed_child_source = source;
+          keyed_child_data = data_signal;
+          keyed_child_output = output_signal;
+          keyed_child_listener =
+            (fun () ->
+              keyed.keyed_affected <-
+                child_ops.keyed_set key child keyed.keyed_affected);
+        }
+      in
+      plan.keyed_plan_additions <- child :: plan.keyed_plan_additions;
+      plan.keyed_plan_children <-
+        child_ops.keyed_set key child plan.keyed_plan_children;
+      compute_child child
+    in
+    let update_child key candidate =
+      let child = find_child key in
+      let published = Transaction.current child.keyed_child_source.source_value in
+      if
+        not
+          (keyed.keyed_data_cutoff ~published ~candidate)
+      then (
+        plan.keyed_plan_updates <- child :: plan.keyed_plan_updates;
+        Graph.stage_cell graph lane staging
+          child.keyed_child_source.source_value candidate;
+        Graph.stage_cell graph lane staging
+          child.keyed_child_source.graph_value candidate;
+        mark_self_dirty lane (P child.keyed_child_data);
+        compute_child child)
+    in
+    let remove_child key =
+      let child = find_child key in
+      plan.keyed_plan_removals <- child :: plan.keyed_plan_removals;
+      plan.keyed_plan_children <-
+        child_ops.keyed_remove key plan.keyed_plan_children;
+      plan.keyed_plan_output <-
+        output_ops.keyed_remove child.keyed_child_key plan.keyed_plan_output
+    in
+    keyed.keyed_data_ops.keyed_fold_diff current_input input ~init:()
+      ~f:(fun () key -> function
+        | Keyed_left _ -> remove_child key
+        | Keyed_right candidate -> add_child key candidate
+        | Keyed_changed (_, candidate) -> update_child key candidate);
+    plan.keyed_plan_processed <- keyed.keyed_affected;
+    child_ops.keyed_fold
+      (fun key affected () ->
+        match child_ops.keyed_find_opt key plan.keyed_plan_children with
+        | Some child
+          when child == affected
+               && Option.is_none (child_ops.keyed_find_opt key !visited) ->
+            compute_child child
+        | Some _ | None -> ())
+      keyed.keyed_affected ();
+    Graph.stage_cell graph lane staging keyed.keyed_raw_input input;
+    Graph.stage_cell graph lane staging keyed.keyed_children
+      plan.keyed_plan_children;
+    let child_dependencies =
+      child_ops.keyed_fold
+        (fun _ child dependencies -> P child.keyed_child_output :: dependencies)
+        plan.keyed_plan_children []
+      |> List.rev
+    in
+    let dependencies = P keyed.keyed_input :: child_dependencies in
+    stage_dependency_versions lane staging signal dependencies;
+    Graph.bump_counter graph lane Graph.Recompute_count;
+    let snapshot = signal_effective_snapshot signal in
+    let changed =
+      Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
+        ~initialized:(Signal_snapshot.is_initialized snapshot)
+        ~current:(Signal_snapshot.value snapshot)
+        ~next:plan.keyed_plan_output
+    in
+    if changed then stage_signal lane staging signal plan.keyed_plan_output;
+    ((if changed then plan.keyed_plan_output else current_or_raise signal), changed)
 
   and compute_bind_dynamic :
       type source value.
@@ -1860,7 +2277,7 @@ module Make (Observer_error : Observer_error) () = struct
           ~inner_dependency:(fun inner -> P inner)
           (bind_effective_snapshot bind)
     | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
-    | Map7 _ | Map8 _ | Map9 _ | All _ ->
+    | Map7 _ | Map8 _ | Map9 _ | All _ | Keyed _ ->
         signal.dependencies
 
   let order_ops =
@@ -1884,7 +2301,7 @@ module Make (Observer_error : Observer_error) () = struct
           match signal.kind with
           | Bind _ -> Some packed
           | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
-          | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
+          | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Keyed _ ->
               None)
     in
     Graph.collect_reachable_bind_nodes graph lane reachable_ops
@@ -1912,7 +2329,7 @@ module Make (Observer_error : Observer_error) () = struct
             refresh_invalidations ();
             true
         | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
-        | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
+        | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Keyed _ ->
             false)
       else false
     in
@@ -2120,26 +2537,14 @@ module Make (Observer_error : Observer_error) () = struct
   module Var = struct
     type 'a t = 'a var
 
-    let create ?(equal = default_equal) value =
-      {
-        var_id = next_var_id ();
-        var_equal = equal;
-        source_value = Transaction.create_staged value;
-        graph_value = Transaction.create_staged value;
-        queued = false;
-        updating = false;
-        watchers = [];
-      }
+    let create ?equal value = new_var ?equal value
 
     let value (source : 'a t) =
       ensure_graph_context ();
       ignore (graph_result_or_raise (Graph.ensure_not_pure graph));
       Transaction.current source.source_value
 
-    let watch (source : 'a t) =
-      let signal = new_signal ~equal:source.var_equal (Var source) [] in
-      source.watchers <- weak_packed_signal (P signal) :: source.watchers;
-      signal
+    let watch (source : 'a t) = watch_var source
 
     let queue_var lane (source : 'a t) = queue_var_unlocked lane source
 
@@ -2412,7 +2817,7 @@ module Make (Observer_error : Observer_error) () = struct
               signal_var_updating = source.updating;
             }
       | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _ | Map7 _
-      | Map8 _ | Map9 _ | All _ | Bind _ ->
+      | Map8 _ | Map9 _ | All _ | Bind _ | Keyed _ ->
           None
     in
     {
@@ -2960,6 +3365,33 @@ module Make (Observer_error : Observer_error) () = struct
     type nonrec 'a signal = 'a signal
     type dirty_listener = unit -> unit
 
+    type nonrec 'a keyed_change = 'a keyed_change =
+      | Keyed_left of 'a
+      | Keyed_right of 'a
+      | Keyed_changed of 'a * 'a
+
+    type nonrec ('key, 'value, 'map) keyed_map_ops =
+      ('key, 'value, 'map) keyed_map_ops
+
+    type nonrec ('key, 'value, 'map) keyed_diff_ops =
+      ('key, 'value, 'map) keyed_diff_ops
+
+    type token = Obj.t
+
+    type keyed_entry_identity = {
+      keyed_key_token : token;
+      keyed_scope_token : token;
+      keyed_source_token : token;
+      keyed_data_signal_token : token;
+      keyed_child_signal_token : token;
+      keyed_edge_attached : bool;
+    }
+
+    type keyed_event =
+      | Detached of token
+      | Invalidated of token
+      | Attached of token
+
     type preflight_plan =
       | Preflight_plan : packed_signal * (unit -> unit) -> preflight_plan
 
@@ -2974,6 +3406,96 @@ module Make (Observer_error : Observer_error) () = struct
                          (Preflight_plan (right, _)) ->
              compare_signal_scope_then_id left right)
       |> List.iter (fun (Preflight_plan (_, run)) -> run ())
+
+    let keyed_entry_identity :
+        type output key.
+        output signal -> key -> keyed_entry_identity option =
+     fun owner key ->
+      match owner.kind with
+      | Keyed keyed -> (
+          let key = Obj.magic key in
+          match
+            keyed.keyed_child_ops.keyed_find_opt key
+              (Transaction.current keyed.keyed_children)
+          with
+          | None -> None
+          | Some child ->
+              Some
+                {
+                  keyed_key_token = Obj.repr child.keyed_child_key;
+                  keyed_scope_token = Obj.repr child.keyed_child_scope;
+                  keyed_source_token = Obj.repr child.keyed_child_source;
+                  keyed_data_signal_token = Obj.repr child.keyed_child_data;
+                  keyed_child_signal_token = Obj.repr child.keyed_child_output;
+                  keyed_edge_attached =
+                    List.exists
+                      (fun (P dependency) ->
+                        dependency.id = child.keyed_child_output.id)
+                      owner.dependencies;
+                })
+      | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+      | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Bind _ ->
+          invalid_arg "Eta_signal_kernel.Extension: not a keyed signal"
+
+    let keyed_scope_valid token =
+      Scope.valid (Obj.obj token)
+
+    let keyed_pending : type output. output signal -> bool =
+     fun owner ->
+      match owner.kind with
+      | Keyed keyed -> Option.is_some keyed.keyed_pending
+      | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+      | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Bind _ ->
+          invalid_arg "Eta_signal_kernel.Extension: not a keyed signal"
+
+    let set_keyed_preflight :
+        type output. output signal -> (unit -> unit) -> unit =
+     fun owner preflight ->
+      match owner.kind with
+      | Keyed keyed -> keyed.keyed_preflight <- preflight
+      | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+      | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Bind _ ->
+          invalid_arg "Eta_signal_kernel.Extension: not a keyed signal"
+
+    let set_keyed_event_recorder :
+        type output.
+        output signal -> (keyed_event -> unit) -> unit =
+     fun owner record ->
+      match owner.kind with
+      | Keyed keyed ->
+          keyed.keyed_record_event <- (function
+            | Keyed_detached scope -> record (Detached (Obj.repr scope))
+            | Keyed_invalidated scope -> record (Invalidated (Obj.repr scope))
+            | Keyed_attached scope -> record (Attached (Obj.repr scope)))
+      | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+      | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Bind _ ->
+          invalid_arg "Eta_signal_kernel.Extension: not a keyed signal"
+
+    let keyed_mapi
+        ?(data_cutoff = fun ~published ~candidate -> default_equal published candidate)
+        ~data_ops ~child_ops
+        ~output_ops input ~f =
+      let keyed =
+        {
+          keyed_input = input;
+          keyed_data_cutoff = data_cutoff;
+          keyed_builder = f;
+          keyed_data_ops = data_ops;
+          keyed_output_ops = output_ops;
+          keyed_child_ops = child_ops;
+          keyed_raw_input =
+            Transaction.create_staged data_ops.keyed_map.keyed_empty;
+          keyed_children = Transaction.create_staged child_ops.keyed_empty;
+          keyed_affected = child_ops.keyed_empty;
+          keyed_owner = None;
+          keyed_preflight = (fun () -> ());
+          keyed_record_event = (fun _event -> ());
+          keyed_pending = None;
+        }
+      in
+      let owner = new_signal (Keyed keyed) [ P input ] in
+      keyed.keyed_owner <- Some owner;
+      owner
   end
 end
 

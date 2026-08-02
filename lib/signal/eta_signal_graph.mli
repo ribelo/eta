@@ -384,6 +384,7 @@ val staged_timer_refresh_dirty_rollback :
 type ('bind, 'hook, 'timer, 'refresh) staging_reset_context
 
 val staging_reset_context :
+  rollback_extensions:(staging -> 'hook list) ->
   rollback_bind:(staging -> 'bind -> 'hook staged_bind_rollback) ->
   rollback_timer_refresh_dirty:
     (staging -> 'refresh -> staged_timer_refresh_dirty_rollback) ->
@@ -460,6 +461,13 @@ val stage_cell :
   staging ->
   'a Eta_signal_transaction.staged ->
   'a ->
+  unit
+
+val discard_cell :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
+  staging ->
+  'a Eta_signal_transaction.staged ->
   unit
 
 val update_cell :

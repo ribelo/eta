@@ -912,6 +912,7 @@ let saturating_succ value =
   if value = max_int then max_int else value + 1
 
 type ('bind, 'hook, 'timer, 'refresh) staging_reset_context = {
+  staging_reset_rollback_extensions : staging -> 'hook list;
   staging_reset_rollback_bind :
     staging -> 'bind -> 'hook staged_bind_rollback;
   staging_reset_rollback_timer_refresh_dirty :
@@ -950,9 +951,10 @@ let staged_timer_refresh_dirty_rollback ~rollback =
   Staged_timer_refresh_dirty_rollback
     { timer_refresh_dirty_rollback = rollback }
 
-let staging_reset_context ~rollback_bind ~rollback_timer_refresh_dirty
+let staging_reset_context ~rollback_extensions ~rollback_bind ~rollback_timer_refresh_dirty
     ~clear_timer_refresh_timer =
   {
+    staging_reset_rollback_extensions = rollback_extensions;
     staging_reset_rollback_bind = rollback_bind;
     staging_reset_rollback_timer_refresh_dirty = rollback_timer_refresh_dirty;
     staging_reset_clear_timer_refresh_timer = clear_timer_refresh_timer;
@@ -995,7 +997,8 @@ let reset_staging t _lane staging context =
       ~clear_timer_refresh_timer:(fun timer ->
         reset_staging_timer staging timer context)
   in
-  State.reset_staging t.state staging state_context
+  context.staging_reset_rollback_extensions staging
+  @ State.reset_staging t.state staging state_context
 
 type 'hook staged_bind_commit =
   | Staged_bind_commit : {
@@ -1103,14 +1106,7 @@ let commit_staging t _lane staging context =
   let state_plan =
     State.commit_plan
       ~preflight:(fun () ->
-        match
-          Eta_signal_stabilization.preflight_transaction t.stabilization
-            (fun () ->
-              run_staging_preflight staging context.staging_commit_preflight;
-              Ok ())
-        with
-        | Ok () -> ()
-        | Error err -> raise (Commit_error err))
+        run_staging_preflight staging context.staging_commit_preflight)
       ~binds:
         (State.bind_commit_plan
            ~commit:(fun bind ->
@@ -1134,6 +1130,12 @@ let commit_staging t _lane staging context =
       ~snapshot:
         (State.snapshot_commit_plan
            ~commit_transaction:(fun () ->
+             (match
+                Eta_signal_stabilization.preflight_transaction
+                  t.stabilization (fun () -> Ok ())
+              with
+             | Ok () -> ()
+             | Error err -> raise (Commit_error err));
              Eta_signal_stabilization.commit_transaction t.stabilization)
            ~advance_snapshot:saturating_succ)
   in
@@ -1156,6 +1158,9 @@ let read_effective t cell =
 
 let stage_cell t _lane _staging cell value =
   Eta_signal_transaction.stage (active_transaction t) cell value
+
+let discard_cell t _lane _staging cell =
+  Eta_signal_transaction.discard (active_transaction t) cell
 
 let update_cell t _lane _staging cell f =
   let transaction = active_transaction t in

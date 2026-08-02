@@ -108,3 +108,58 @@ module Map : sig
       types. Different module paths produce incompatible types. [smmap-e04b]
       [smmap-4d3u] *)
 end
+
+module Make (Observer_error : Eta_signal.Observer_error) () : sig
+  include module type of Eta_signal.Make (Observer_error) ()
+
+  module Keyed (Order : Map.Ordered_type) : sig
+    val mapi :
+      ?data_cutoff:(published:'data -> candidate:'data -> bool) ->
+      'data Map.Make(Order).t signal ->
+      f:(key:Order.t -> data:'data signal -> 'output signal) ->
+      'output Map.Make(Order).t signal
+    (** Creates one stable child for each present key. The builder receives the
+        stored key and one stable data signal. It runs only for provisional
+        additions. [smkey-9b8i] [smkey-445b]
+
+        Continuous presence preserves the key representative, keyed scope, data
+        source, data signal, child signal, dependency edge, and child state.
+        Accepted data is visible to the existing child in the same stabilization.
+        [smkey-69cw] [smkey-2vhe]
+
+        Removal invalidates that child incarnation. Later re-entry creates a
+        fresh incarnation. Writes before stabilization reconcile only their final
+        input snapshot. [smkey-d7oa] [smkey-vb62] [smkey-fu6q]
+
+        Each key gets a distinct child cell. Reuse inside one keyed scope shares
+        that scope's child cell. [smkey-l98z] [smkey-pqom]
+
+        The optional cutoff applies only to retained physical data changes. Its
+        default is physical identity. A [true] result keeps the published data.
+        A [false] result publishes the candidate through the existing source.
+        [smkey-c4jn] [smkey-xj6g] [smkey-jdgk] [smkey-4ddk]
+
+        Cutoff arguments are [~published] then [~candidate]. A suppressed update
+        keeps the published baseline for the next call. A raised exception rolls
+        back the plan and a later stabilization can retry it. [smkey-z4eu]
+        [smkey-8g9u] [smkey-b4zb]
+
+        Additions, removals, and changed child outputs patch the previous output
+        map. Each child signal supplies the only output cutoff. No output change
+        preserves the output-map root. [smkey-mm6e] [smkey-6vtj] [smkey-j9v0]
+        [smkey-bkjn] [smkey-gz8v]
+
+        Mutation of one retained physical data object is not observable.
+        [smkey-x2z7]
+
+        Planning and structural preflight finish before commit. Commit removes
+        and invalidates old children before it attaches additions. Failure keeps
+        committed identities, values, and output roots. [smtxn-j5oi]
+        [smtxn-b12v] [smtxn-78q6] [smtxn-7vp7] [smtxn-5rpo]
+        [smtxn-00no]
+
+        A successful transaction publishes one final output and one observer
+        event. Completion leaves no pending keyed transaction work. [smtxn-oqx5]
+        [smtxn-lrob] [smtxn-34ol] *)
+  end
+end

@@ -206,6 +206,71 @@ physical identity. Private rows name their package-private observation boundary.
 | SM46 | Same-path `Map.Make` applications have compatible map types. | `lib/signal_map/eta_signal_map.mli:106-109` | `map_same_order_applications_unify_positive` |
 | SM47 | Different-path `Map.Make` applications have incompatible map types. | `lib/signal_map/eta_signal_map.mli:106-109` | `map_different_order_applications_reject_negative` |
 
+### Eta Signal Map keyed-operator laws
+
+The public boundary observes builder and cutoff calls, signal values, map roots,
+and observer events. The package-private boundary adds opaque incarnation tokens,
+scope validity, dependency attachment, structural events, and pending-plan state.
+
+| ID | Claim | Exact normative span | Named executable evidence |
+| --- | --- | --- | --- |
+| SK01 | The factory publishes one operator named `Keyed(Order).mapi`. | `lib/signal_map/eta_signal_map.mli:112-120` | `keyed_direct_api_positive`; rejected alternate labels and nested aliases in `test/signal_map/negative/` |
+| SK02 | `mapi` takes the input before `~f` through the direct `Map.Make(Order).t` path. | `lib/signal_map/eta_signal_map.mli:116-120` | `keyed_direct_api_positive` |
+| SK03 | `Keyed(Order)` exposes no map alias, nested map, diff adapter, or aggregate output predicate. | `lib/signal_map/eta_signal_map.mli:115-120` | `keyed_nested_map_alias_negative`; `keyed_map_adapter_negative`; `keyed_aggregate_equal_negative`; `keyed_testing_negative` |
+| SK04 | One stable child is created for each present key. | `lib/signal_map/eta_signal_map.mli:121-123` | `keyed_mapi_addition_builds_one_incarnation`; `keyed_mapi_retained_key_preserves_incarnation` |
+| SK05 | The builder receives the stored key and a stable data signal. | `lib/signal_map/eta_signal_map.mli:121-123` | `keyed_mapi_continuous_key_preserves_representative`; `keyed_mapi_update_publishes_through_existing_source` |
+| SK06 | The builder runs only for provisional additions. | `lib/signal_map/eta_signal_map.mli:121-123` | `keyed_mapi_builder_runs_for_additions_only` |
+| SK07 | Continuous presence preserves the complete child incarnation. | `lib/signal_map/eta_signal_map.mli:125-128` | `keyed_mapi_retained_key_preserves_incarnation`; `keyed_mapi_retained_child_preserves_local_state` |
+| SK08 | Accepted data is visible to the retained child in the same stabilization. | `lib/signal_map/eta_signal_map.mli:125-128` | `keyed_mapi_child_reads_accepted_data_same_stabilization` |
+| SK09 | Removal invalidates the exact child incarnation. | `lib/signal_map/eta_signal_map.mli:130-132` | `keyed_mapi_removal_invalidates_incarnation` |
+| SK10 | Re-entry after committed removal creates a fresh incarnation. | `lib/signal_map/eta_signal_map.mli:130-132` | `keyed_mapi_reentry_creates_fresh_incarnation` |
+| SK11 | Writes before stabilization reconcile only the final input snapshot. | `lib/signal_map/eta_signal_map.mli:130-132` | `keyed_mapi_final_equal_data_preserves_child`; `keyed_mapi_final_unequal_data_updates_child`; `keyed_mapi_final_absence_removes_child` |
+| SK12 | Different keys get distinct child cells. | `lib/signal_map/eta_signal_map.mli:134-135` | `keyed_mapi_same_child_description_isolated_across_keys` |
+| SK13 | Reuse inside one keyed scope shares that scope's child cell. | `lib/signal_map/eta_signal_map.mli:134-135` | `keyed_mapi_reused_child_description_shares_within_key_scope` |
+| SK14 | `data_cutoff` runs only for retained physical data changes. | `lib/signal_map/eta_signal_map.mli:137-140` | `keyed_mapi_data_cutoff_runs_for_retained_physical_changes_only` |
+| SK15 | The default data cutoff is physical identity. | `lib/signal_map/eta_signal_map.mli:137-140` | `keyed_mapi_default_data_cutoff_uses_physical_identity` |
+| SK16 | A true data cutoff keeps published data. | `lib/signal_map/eta_signal_map.mli:137-140` | `keyed_mapi_suppressed_data_keeps_published_value` |
+| SK17 | A false data cutoff publishes through the existing source. | `lib/signal_map/eta_signal_map.mli:137-140` | `keyed_mapi_update_publishes_through_existing_source` |
+| SK18 | Cutoff arguments are published then candidate. | `lib/signal_map/eta_signal_map.mli:142-145` | `keyed_mapi_data_cutoff_receives_published_then_candidate` |
+| SK19 | A suppressed update keeps the published baseline for the next cutoff call. | `lib/signal_map/eta_signal_map.mli:142-145` | `keyed_mapi_nontransitive_data_cutoff_uses_published_baseline` |
+| SK20 | A cutoff exception rolls back and can be retried later. | `lib/signal_map/eta_signal_map.mli:142-145` | `keyed_mapi_data_cutoff_defect_rolls_back_and_retries` |
+| SK21 | Additions patch the previous output map. | `lib/signal_map/eta_signal_map.mli:147-150` | `keyed_mapi_addition_sets_output_binding`; `keyed_mapi_output_patch_retains_unaffected_ancestry` |
+| SK22 | Removals patch the previous output map. | `lib/signal_map/eta_signal_map.mli:147-150` | `keyed_mapi_removal_removes_output_binding` |
+| SK23 | Changed child outputs patch the previous output map. | `lib/signal_map/eta_signal_map.mli:147-150` | `keyed_mapi_child_only_change_patches_one_binding` |
+| SK24 | Each child signal supplies the only output cutoff. | `lib/signal_map/eta_signal_map.mli:147-150` | `keyed_mapi_child_noop_preserves_output_root`; `keyed_aggregate_equal_negative` |
+| SK25 | No output change preserves the output-map root. | `lib/signal_map/eta_signal_map.mli:147-150` | `keyed_mapi_suppressed_update_preserves_output_root`; `keyed_mapi_child_noop_preserves_output_root` |
+| SK26 | Mutation of a retained physical data object is not observable. | `lib/signal_map/eta_signal_map.mli:152-153` | `keyed_mapi_same_object_mutation_is_unobservable` |
+| SK27 | Planning and structural preflight finish before commit. | `lib/signal_map/eta_signal_map.mli:155-159` | `keyed_mapi_preflight_failure_preserves_committed_snapshot`; `test_commit_is_total_after_preflight` |
+| SK28 | Commit removes and invalidates old children before attaching additions. | `lib/signal_map/eta_signal_map.mli:155-159` | `keyed_mapi_commit_removes_before_additions` |
+| SK29 | Failure preserves committed identities. | `lib/signal_map/eta_signal_map.mli:155-159` | `keyed_mapi_preflight_failure_preserves_committed_snapshot`; `keyed_mapi_rollback_keeps_removal_candidates_live` |
+| SK30 | Failure preserves committed values. | `lib/signal_map/eta_signal_map.mli:155-159` | `keyed_mapi_preflight_failure_preserves_committed_snapshot` |
+| SK31 | Failure preserves the output-map root. | `lib/signal_map/eta_signal_map.mli:155-159` | `keyed_mapi_rollback_preserves_output_root` |
+| SK32 | A successful transaction publishes only its final output. | `lib/signal_map/eta_signal_map.mli:161-163` | `keyed_mapi_simultaneous_input_and_child_change_publishes_final_output` |
+| SK33 | A changed keyed root emits one final observer event. | `lib/signal_map/eta_signal_map.mli:161-163` | `keyed_mapi_output_observer_publishes_once_after_commit` |
+| SK34 | Completion leaves no pending keyed transaction work. | `lib/signal_map/eta_signal_map.mli:161-163` | `keyed_mapi_model_trace_matches_runtime`; every generated transition checks a completed stabilization, and failure-specific properties inspect pending state |
+
+### Eta Signal Map private transaction requirements
+
+| ID | Claim | Exact normative source | Named generated property or generic test |
+| --- | --- | --- | --- |
+| STX01 | Provisional scope registration precedes the builder. | `docs/requirements/eta-signal-map/keyed-map.md:97` | `keyed_mapi_builder_defect_rolls_back_provisional_addition` |
+| STX02 | Provisional children remain detached before commit. | `docs/requirements/eta-signal-map/keyed-map.md:98` | `keyed_mapi_builder_defect_rolls_back_provisional_addition`; package-private edge token absent until successful identity publication |
+| STX03 | The complete structural and output plan exists before preflight. | `docs/requirements/eta-signal-map/keyed-map.md:99` | `keyed_mapi_preflight_failure_preserves_committed_snapshot` — discriminating removal, update, addition, and output change |
+| STX04 | Nested preflight processes owners before descendants. | `docs/requirements/eta-signal-map/keyed-map.md:100` | `test_preflight_orders_owner_before_descendant`; `keyed_mapi_outer_removal_excludes_nested_plan` |
+| STX05 | Preflight completes fallible validation and reservation before commit. | `docs/requirements/eta-signal-map/keyed-map.md:101` | `test_commit_is_total_after_preflight`; `keyed_mapi_preflight_failure_preserves_committed_snapshot` |
+| STX06 | Pure commit removes before adding. | `docs/requirements/eta-signal-map/keyed-map.md:102` | `keyed_mapi_commit_removes_before_additions` |
+| STX07 | Pure commit calls no user code and has no failure result. | `docs/requirements/eta-signal-map/keyed-map.md:103` | `test_commit_is_total_after_preflight`; builder/cutoff properties place all user calls before preflight |
+| STX08 | Planning or preflight failure invalidates provisional additions. | `docs/requirements/eta-signal-map/keyed-map.md:104` | `keyed_mapi_builder_defect_rolls_back_provisional_addition`; `keyed_mapi_rollback_invalidates_provisional_additions` |
+| STX09 | Planning or preflight failure keeps removal candidates live. | `docs/requirements/eta-signal-map/keyed-map.md:105` | `keyed_mapi_rollback_keeps_removal_candidates_live` |
+| STX10 | Planning or preflight failure preserves data, identities, and output root. | `docs/requirements/eta-signal-map/keyed-map.md:106` | `keyed_mapi_preflight_failure_preserves_committed_snapshot`; `keyed_mapi_rollback_preserves_output_root` |
+| STX11 | Retry after rollback uses fresh provisional identity. | `docs/requirements/eta-signal-map/keyed-map.md:107` | `keyed_mapi_retry_after_rollback_uses_fresh_provisional_identity` |
+| STX12 | Outer removal excludes a nested plan and invalidates its provisional scopes. | `docs/requirements/eta-signal-map/keyed-map.md:108` | `keyed_mapi_outer_removal_excludes_nested_plan` |
+| STX13 | Simultaneous input and child changes publish one final output. | `docs/requirements/eta-signal-map/keyed-map.md:109` | `keyed_mapi_simultaneous_input_and_child_change_publishes_final_output` |
+| STX14 | A changed keyed root emits one post-commit observer event. | `docs/requirements/eta-signal-map/keyed-map.md:110` | `keyed_mapi_output_observer_publishes_once_after_commit` |
+| STX15 | Success and rollback leave no active keyed pending work. | `docs/requirements/eta-signal-map/keyed-map.md:111` | `keyed_mapi_model_trace_matches_runtime`; failure properties inspect package-private pending state |
+| STX16 | A captured old-scope signal stays invalid after same-key re-entry. | `docs/requirements/eta-signal-map/keyed-map.md:112` | `keyed_mapi_reentry_creates_fresh_incarnation`; `keyed_mapi_removal_invalidates_incarnation` |
+| STX17 | Child dirtiness participates through the keyed owner dependency. | `docs/requirements/eta-signal-map/keyed-map.md:113` | `keyed_mapi_child_only_change_patches_one_binding`; `test_affected_child_notification_avoids_scan` |
+
 ### Eta Signal Map private representation requirements
 
 | ID | Claim | Exact normative source | Named qcheck property and observation boundary |
