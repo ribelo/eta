@@ -133,21 +133,25 @@ An empty queue returns `Idle` without stabilization or output delivery.
 
 ### Post-commit batch
 
-Every commit returns a batch, including a commit with no hook or transition
-effects. Starting an empty batch acknowledges output delivery.
+Every commit returns a batch, including a commit with no lifecycle or transition
+work. Starting an empty batch acknowledges output delivery.
 
 The driver first delivers the committed output to its adapter. It then starts
-the batch. Batch start is at most once and admits effects in this order:
+the batch. Batch start is at most once and admits work in this order:
 
-1. deactivation hooks.
-2. activation hooks.
+1. cancellation of removed scope subtrees.
+2. activation lifecycle programs.
 3. the transition effect.
 
-Each group is fully admitted before the next group. Effect bodies can overlap
-after admission. Admission is cancellation-protected and atomic. No effect body
-starts until every group is registered. The runtime then releases the groups in
-order. Effects from earlier advancements can remain active while the driver
-processes later messages.
+Each group is fully admitted before the next group. Work bodies can overlap
+after admission. Admission is cancellation-protected and atomic. No body starts
+until every group is registered. The runtime then releases the groups in order.
+Effects from earlier advancements can remain active while the driver processes
+later messages.
+
+A transition effect whose source scope was disposed by the same commit is not
+admitted. Cancellation of an ordinary removed scope does not delay activation
+or transition work until cleanup completion. The closing scope remains tracked.
 
 The root returns to `Ready` only after complete batch admission. A second start
 returns `Already_started`. Exact cancellation and finalizer ordering belong to
@@ -167,10 +171,11 @@ model.
 A shutdown request closes message admission and discards queued application
 messages. It also replaces a pending `Start`, then places an internal `Stop` as
 the next message. The stop advancement atomically disposes the graph and returns
-`Stopped` with its final post-commit batch. Starting that batch moves the root to
-`Closed` instead of `Ready`.
+`Stopped` with its final post-commit batch. Starting that batch interrupts and
+awaits the complete root work tree. The root enters `Closed` only after all work
+and finalizers settle.
 
-Calls to `advance` after final batch admission return `Closed`.
+Calls to `advance` after final batch completion return `Closed`.
 
 ### Rejected alternatives
 

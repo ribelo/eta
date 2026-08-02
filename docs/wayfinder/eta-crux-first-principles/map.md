@@ -34,6 +34,11 @@ Eta Crux keeps a functional core with an imperative shell and a generic core
 with specific shells. Shell placement is a transport choice. V1 includes both
 in-process typed delivery and serialized cross-process delivery.
 
+Eta owns effects, scopes, cancellation, resources, supervision, and failure
+causes. Eta Crux owns computation structure, identity, advancement, and typed
+output. When Eta Crux needs general runtime machinery that Eta lacks, improve Eta
+instead of copying that machinery into Eta Crux.
+
 Verify reference claims in source. Relevant local checkouts are
 `/home/ribelo/projects/github/bonsai`,
 `/home/ribelo/projects/github/incremental`,
@@ -53,6 +58,7 @@ deliverable. Implementation is not part of this map.
 - [Keyed assoc and stable child identity](issues/04-keyed-assoc-contract.md) — Use `Assoc(Map.S)` and one private transactional keyed-map node. Continuous presence keeps state. Committed removal makes re-entry fresh.
 - [Action injection and staged Eta effects](issues/05-action-effect-protocol.md) — State machines return immutable models plus typed-infallible Eta effects. Typed endpoints enqueue actions, while explicit exports add boundary codecs.
 - [Deterministic advancement transaction](issues/06-advancement-transaction.md) — Process one message atomically, return output plus mandatory post-commit work, then drain until idle.
+- [Dynamic lifetime and work ownership](issues/07-dynamic-lifetime-ownership.md) — Committed absence disposes fresh-incarnation child scopes. Scoped Eta programs and transition effects follow the structural ownership tree.
 
 ## Not yet specified
 

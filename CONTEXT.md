@@ -62,3 +62,17 @@ application output.
 
 Opaque work that belongs to one committed advancement. Starting it acknowledges
 output delivery and admits lifecycle and transition effects.
+
+## Active child
+
+A child computation that is present in the current application structure.
+
+## Active interval
+
+One continuous period during which a child remains present in the application
+structure.
+
+## Disposed child
+
+A former child whose active interval ended. A later appearance creates a new
+child incarnation.

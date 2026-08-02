@@ -11,7 +11,7 @@ and streams already express every required long-lived source?
 
 Compare at least:
 
-- lifecycle hooks that start one scoped stream-consumer effect.
+- one lifecycle program that runs a scoped stream-consumer effect.
 - Elm-style desired subscriptions derived from committed computation state.
 - keyed source declarations reconciled by identity.
 - host-owned sources that start and stop through an adapter protocol.

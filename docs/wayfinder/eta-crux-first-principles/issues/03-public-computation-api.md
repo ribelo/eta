@@ -40,7 +40,6 @@ The public description algebra has this semantic core:
 ```ocaml
 type 'a t
 type never = |
-type lifecycle
 
 module Endpoint : sig
   type 'message t
@@ -69,7 +68,7 @@ val state_machine :
      'model * (unit, never) Eta.Effect.t) ->
   ('model * 'action Endpoint.t) t
 
-val lifecycle : lifecycle -> unit t
+val lifecycle : (unit, never) Eta.Effect.t t -> unit t
 
 module Root : sig
   type 'a description := 'a t
@@ -83,7 +82,7 @@ end
 endpoint delivery. [Deterministic advancement transaction](06-advancement-transaction.md)
 defines root advancement and observation.
 [Dynamic lifetime and work ownership](07-dynamic-lifetime-ownership.md) defines
-lifecycle values and ownership. [OCaml API syntax and ergonomics](14-ocaml-api-ergonomics.md)
+lifecycle programs and ownership. [OCaml API syntax and ergonomics](14-ocaml-api-ergonomics.md)
 decides derived helpers and syntax.
 
 Children are ordinary functions that return descriptions. Eta Crux does not

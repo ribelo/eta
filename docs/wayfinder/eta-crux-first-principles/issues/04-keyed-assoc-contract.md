@@ -116,8 +116,8 @@ result:
 
 One committed map transition deactivates all removed children before it
 activates any added child. Same-key updates have no `assoc` lifecycle edge.
-Failed provisional additions never activate. Ticket 07 defines hook values and
-work cancellation.
+Failed provisional additions never activate. Ticket 07 defines lifecycle
+programs and work cancellation.
 
 ### Private engine seam
 
