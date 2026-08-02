@@ -1,7 +1,7 @@
 # Failure, defect, and crash boundary
 
 Type: grilling
-Status: open
+Status: claimed
 Blocked by: 05, 07, 08
 
 ## Question
