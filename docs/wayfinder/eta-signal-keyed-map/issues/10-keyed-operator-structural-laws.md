@@ -1,6 +1,7 @@
 # Keyed operator structural laws
 
 Type: grilling
+Status: claimed
 Blocked by: 07, 08
 
 ## Question
