@@ -1,6 +1,7 @@
 # Keyed node observability
 
 Type: grilling
+Status: claimed
 Blocked by: 07, 08
 
 ## Question
