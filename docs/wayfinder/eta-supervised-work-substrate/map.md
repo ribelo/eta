@@ -32,16 +32,13 @@ upstream OCaml tracks. Preserve complete `Eta.Cause` values in failure evidence.
 Use `$prototype`, `$eio`, `$codebase-design`, `$oxcaml`, and `$simple-english`
 when they apply. Do not use a research subagent without explicit approval.
 
-After this map closes, **Eta supervised work substrate** in the Eta Crux map
-becomes an integration pointer to the authoritative Eta decision.
-
 The Eta decision frontier is clear. The three resolved tickets cover public
 composition, the minimum interface, and the complete production contract.
-The Eta Crux integration pointer is a downstream handoff, not an Eta design
-question. It is recorded at commit `878dcdca` on branch
-`docs/eta-crux-requirements`. That commit also binds **Deterministic advancement
-transaction** and **Dynamic lifetime and work ownership** to gated registration,
-`Supervisor.Scope.request_cancel`, and the later settlement fence.
+**Eta supervised work substrate** in the Eta Crux map now points to this
+authoritative decision. The integration is recorded at commit `878dcdca` on
+branch `docs/eta-crux-requirements`. That commit also binds **Deterministic
+advancement transaction** and **Dynamic lifetime and work ownership** to gated
+registration, `Supervisor.Scope.request_cancel`, and the later settlement fence.
 
 ## Decisions so far
 
@@ -50,6 +47,31 @@ transaction** and **Dynamic lifetime and work ownership** to gated registration,
 - [Production request-cancellation contract](issues/03-production-request-cancellation-contract.md) — A request latches before return without waiting for settlement. Existing `cancel`, `await`, cause, ownership, and backend boundaries remain intact.
 
 ## Not yet specified
+
+## Closure
+
+Status: closed
+
+The destination is complete. Current public composition proves one precise gap.
+The selected operation closes that gap without widening Eta ownership.
+
+The preserved prototype evidence is:
+
+- `prototype/eta-supervised-work-current-composition` at results commit
+  `33e6c918`, with code commit `ecd42b35`.
+- `prototype/eta-supervised-work-minimal-interface` at results commit
+  `f90f8232`, with candidate commit `25599df1`.
+
+Both result bundles record status `0` under OCaml `5.2.0+ox` and OCaml `5.4.1`.
+Their ticket answers record the exact Nix commands and visible results.
+
+The production contract records the public laws, backend duties, negative type
+checks, executable test names, registry rows, and production verification gates.
+Production implementation remains outside this map.
+
+All effort-owned changes are committed. The map and both prototype worktrees
+were clean at closure. The shared Crux worktree retained only an unrelated
+pre-existing modification outside this effort.
 
 ## Out of scope
 
