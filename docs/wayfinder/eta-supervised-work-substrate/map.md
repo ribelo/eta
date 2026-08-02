@@ -35,6 +35,11 @@ when they apply. Do not use a research subagent without explicit approval.
 After this map closes, **Eta supervised work substrate** in the Eta Crux map
 becomes an integration pointer to the authoritative Eta decision.
 
+The Eta decision frontier is clear. The three resolved tickets cover public
+composition, the minimum interface, and the complete production contract.
+The Eta Crux integration pointer is a downstream handoff, not an Eta design
+question.
+
 ## Decisions so far
 
 - [Current public composition verdict](issues/01-current-public-composition.md) — Public composition covers ownership, admission, causes, and shutdown, but it has no request-only cancellation point before settlement.
