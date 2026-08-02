@@ -19,6 +19,10 @@ addition, and remove-and-readd before commit.
 Each property must observe builder counts, scope incarnations, data-source
 identity, structural cleanup order, output bindings, and pending graph work.
 
+Include laws for the directed `data_cutoff` baseline, physical diff before the
+cutoff, child-only output changes, and persistent output-root identity. Include
+the non-transitive `A`, `B`, and `C` discriminator from ticket 08.
+
 Do not decide application action errors, effect cancellation, or lifecycle-hook
 payloads. The Eta Crux tickets named by the map own those decisions.
 

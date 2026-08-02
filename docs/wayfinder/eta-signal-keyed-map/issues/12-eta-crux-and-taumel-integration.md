@@ -15,6 +15,11 @@ The Eta Crux sketch must replace the provisional `Assoc (M : Stdlib.Map.S)`
 contract. It must keep the settled graph-neutral computation description and
 keyed-child laws.
 
+Use `Eta_signal_map.Make` and `Keyed(Order).mapi` in the private interpreter.
+Decide whether the Eta Crux wrapper keeps `Assoc(Order).assoc` or adopts the
+substrate name. Also decide whether its provisional `data_equal` argument becomes
+the directed `data_cutoff` name.
+
 The sketch must mark action delivery, effect cancellation, and lifecycle-hook
 payloads as dependencies on their named Eta Crux decisions. This ticket does
 not resolve those application protocols.

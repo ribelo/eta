@@ -58,19 +58,18 @@ module Make (Observer_error : Eta_signal.Observer_error) () : sig
   include module type of Eta_signal.Make (Observer_error) ()
 
   module Keyed (Order : Map.Ordered_type) : sig
-    module M : module type of Map.Make (Order)
-
-    val create :
-      ?data_equal:('data -> 'data -> bool) ->
-      'data M.t signal ->
-      f:(key:M.key -> data:'data signal -> 'out signal) ->
-      'out M.t signal
+    val mapi :
+      ?data_cutoff:
+        (published:'data -> candidate:'data -> bool) ->
+      'data Map.Make(Order).t signal ->
+      f:(key:Order.t -> data:'data signal -> 'out signal) ->
+      'out Map.Make(Order).t signal
   end
 end
 ```
 
-Ticket 08 owns the final operator and argument names. This ticket fixes the
-factory boundary and the type relationships.
+[Keyed signal operator contract](08-keyed-signal-operator-contract.md) fixes the
+operator details. This ticket fixes the factory boundary and type relationships.
 
 An existing `Eta_signal.Make` graph cannot gain keyed support. A caller that
 needs keyed signals creates the graph through `Eta_signal_map.Make`. Eta Crux
