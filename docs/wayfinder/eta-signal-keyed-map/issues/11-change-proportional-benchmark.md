@@ -1,6 +1,7 @@
 # Change-proportional benchmark
 
 Type: prototype
+Status: claimed
 Blocked by: 05, 08
 
 ## Question
