@@ -1,32 +1,44 @@
 # Eta supervised work substrate
 
 Type: prototype
-Status: claimed
+Status: resolved
 Blocked by: 06, 07
 
 ## Question
 
-Can current Eta primitives implement Eta Crux work ownership and post-commit
+Which Eta-owned substrate satisfies Eta Crux work ownership and post-commit
 admission without duplicating general runtime machinery?
 
-Prototype one root work manager with nested child groups. It must demonstrate:
+## Answer
 
-- a parent-owned group that accepts work across several advancements.
-- nested group creation, subtree cancellation, and complete settlement.
-- atomic registration before any admitted effect body starts.
-- ordered release for deactivation, activation, and transition groups.
-- concurrent sibling work after release.
-- first-terminal-outcome races and complete `Eta.Cause` preservation.
-- shutdown that returns with no owned work or resources.
-- the same semantic surface under OxCaml and upstream OCaml runtimes.
+The [authoritative Eta map](https://github.com/ribelo/eta/blob/0cb86d09/docs/wayfinder/eta-supervised-work-substrate/map.md)
+owns this decision. Its prototypes proved one gap in current public composition.
+Eta cannot mark a point after a child cancellation request and before child
+settlement.
 
-Compare `Eta.Supervisor.scoped`, `Supervisor.Scope`, `Effect.all`, and
-`Runtime.drain`. Keep Eta Crux graph identities and advancement state out of Eta.
+The selected addition is:
 
-If existing primitives cannot express the contract, propose the smallest
-general Eta addition. Test managed task groups and atomic supervisor admission
-before adding a Crux-private scheduler, scope handle, or cancellation tree.
+```ocaml
+val request_cancel :
+  ('s, 'err, 'a) child -> ('s, unit, 'outer_err) Scope.t
+```
 
-The result must remain backend-neutral and preserve structured ownership. It
-must not expose Eio switches, runtime-contract tokens, or an unscoped detach
-operation.
+The [production contract](https://github.com/ribelo/eta/blob/0cb86d09/docs/wayfinder/eta-supervised-work-substrate/issues/03-production-request-cancellation-contract.md)
+defines the request point, races, causes, backend duties, laws, and test gates.
+
+Eta Crux composes that operation with existing Eta primitives. Post-commit start
+registers gated activation and transition work before any new body starts. It
+then requests cancellation for every removed subtree. After every request
+returns, it releases activation work and then transition work.
+
+Old cleanup can overlap released work. A later `cancel`, `await`, or supervisor
+scope exit supplies settlement. Final root shutdown keeps the stronger complete
+settlement fence.
+
+The public-composition evidence is at commit `33e6c918`. The selected-interface
+evidence is at commit `f90f8232`. Both prototypes passed the OxCaml and upstream
+OCaml gates.
+
+Eta Crux adds no private scheduler, cancellation tree, runtime scope, or detach
+operation. Production implementation of the Eta contract remains an Eta
+prerequisite, not an Eta Crux design decision.

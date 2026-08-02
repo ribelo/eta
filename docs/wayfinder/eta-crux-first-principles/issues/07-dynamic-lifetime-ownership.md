@@ -97,10 +97,14 @@ Starting a committed deactivation group requests cancellation for each complete
 removed subtree. Nested children settle before parent finalizers. Sibling scopes
 settle concurrently, and each scope keeps Eta's resource-finalizer order.
 
-Cancellation requests for removed scopes occur before new lifecycle programs
-and the current transition effect start. Ordinary replacement does not wait for
-old cleanup to finish. Old cleanup and new work can overlap after their ordered
-start points.
+The post-commit batch calls `Supervisor.Scope.request_cancel` for each removed
+subtree root in committed structural order. Every request returns before new
+lifecycle programs and the current transition effect start.
+
+A returned request does not mean settlement. Ordinary replacement does not wait
+for old cleanup to finish. Old cleanup and new work can overlap after their
+ordered start points. The Eta scheduler determines interruption and finalizer
+order across different removed subtrees.
 
 The runtime tracks every closing scope until its work and finalizers settle.
 Pure disposal interruption is normal completion of ownership cleanup. A race
@@ -133,10 +137,10 @@ causes. Eta Crux owns computation structure, identity, advancement, and typed
 output. If Eta Crux starts rebuilding general runtime machinery, Eta gains the
 missing primitive instead.
 
-[Eta supervised work substrate](19-eta-supervised-work-substrate.md) tests
-whether current Eta supervisors express the required managed groups and atomic
-effect admission. It proposes the smallest general Eta addition when they do
-not.
+[Eta supervised work substrate](19-eta-supervised-work-substrate.md) points to
+the authoritative Eta verdict and production contract. Eta adds
+`Supervisor.Scope.request_cancel`. Eta Crux composes it with existing atomic
+effect registration, settlement, cause preservation, and scoped shutdown.
 
 ### Rejected alternatives
 
