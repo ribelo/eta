@@ -38,7 +38,10 @@ becomes an integration pointer to the authoritative Eta decision.
 The Eta decision frontier is clear. The three resolved tickets cover public
 composition, the minimum interface, and the complete production contract.
 The Eta Crux integration pointer is a downstream handoff, not an Eta design
-question.
+question. It is recorded at commit `878dcdca` on branch
+`docs/eta-crux-requirements`. That commit also binds **Deterministic advancement
+transaction** and **Dynamic lifetime and work ownership** to gated registration,
+`Supervisor.Scope.request_cancel`, and the later settlement fence.
 
 ## Decisions so far
 
