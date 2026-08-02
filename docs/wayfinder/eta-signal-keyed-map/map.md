@@ -40,6 +40,7 @@ verification through the Nix flake.
 - [Eta Signal extension seam](issues/07-eta-signal-extension-seam.md) — Use a package-private signal kernel and a closed `Eta_signal_map` graph factory.
 - [Keyed signal operator contract](issues/08-keyed-signal-operator-contract.md) — Publish `Keyed(Order).mapi` with a directed per-key data cutoff and persistent output-map patching.
 - [Executable map laws](issues/09-executable-map-laws.md) — Use claim-specific public and private properties with an independent extensional oracle and physical-identity observations.
+- [Keyed operator structural laws](issues/10-keyed-operator-structural-laws.md) — Use 37 claim-specific properties and one independent model trace for identity, cutoff, output, and transaction behavior.
 
 ## Not yet specified
 
