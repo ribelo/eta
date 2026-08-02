@@ -2,7 +2,7 @@
 
 Type: grilling
 Status: open
-Blocked by: 04, 10, 12, 14
+Blocked by: 04, 08, 10, 12, 14
 
 ## Question
 
@@ -16,6 +16,7 @@ Decide the package and dependency graph for:
 - keyed `assoc` support.
 - deterministic test harnesses.
 - generic adapter support.
+- the generic source producer and the optional Eta stream bridge.
 - Sliml and later host adapters.
 - optional PPX syntax, if retained.
 

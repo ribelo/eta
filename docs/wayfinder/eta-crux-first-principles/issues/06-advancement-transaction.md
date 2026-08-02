@@ -147,11 +147,24 @@ After registration, batch start follows this order:
 
 1. Request cancellation of removed scope subtrees.
 2. Release activation lifecycle programs.
-3. Release the transition effect.
+3. Wait for each new source opening barrier.
+4. Release the transition effect.
 
 Each removed subtree uses `Supervisor.Scope.request_cancel`. The next phase
 starts only after every request operation returns. It does not wait for removed
 subtree settlement.
+
+Ordinary lifecycle programs have no opening barrier. A source activation opens
+its item-admission path before it reports readiness. Its long-lived producer
+effect starts after successful opening.
+
+New source openings run concurrently. A typed opening failure first enqueues its
+terminal action and then resolves its barrier. The transition effect starts only
+after every opening reports readiness or a typed opening failure.
+
+The outer source-opening effect returns after it installs the admission path.
+Unbounded source work belongs in the returned producer effect. [Long-lived
+sources and subscriptions](08-subscriptions-and-sources.md) owns this protocol.
 
 Work bodies can overlap after release. Effects from earlier advancements can
 remain active while the driver processes later messages. The
