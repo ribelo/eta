@@ -1,7 +1,7 @@
 # Production request-cancellation contract
 
 Type: grilling
-Status: open
+Status: claimed
 Blocked by: 02
 
 ## Question
