@@ -74,15 +74,30 @@ part of this glossary.
 A typed local capability for enqueueing actions to one live state-machine
 incarnation.
 
+## Ingress queue
+
+The bounded root queue that accepts application actions from internal endpoints
+and exported endpoints. Internal control events do not use this queue.
+
 ## Exported endpoint
 
 An endpoint deliberately exposed to a shell with a payload serialization
 contract.
 
+## Export node
+
+A structural computation occurrence that gives an exported endpoint its own
+identity and active interval.
+
 ## Remote handle
 
-An opaque transport token that represents an exported endpoint across a
-serialized boundary.
+An opaque authenticated transport token that represents an exported endpoint
+during one serialized shell session.
+
+## Serialized shell session
+
+An explicit lifetime that binds one serialized driver to one shell and scopes
+all remote handles for that binding. One driver has at most one active session.
 
 ## Shell
 

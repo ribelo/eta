@@ -65,12 +65,15 @@ end
 later advancement processes the message. Shutdown can discard an accepted,
 queued message.
 
+`Endpoint.send` waits while the bounded ingress queue is full. Exported
+nonblocking invocation reports `Full` in a separate capacity result.
+
 Admission and ingress closure use atomic first-winner arbitration. Closure
 returns `Ingress_closed` without queueing the message. This expected error is
 not an interruption, defect, or root failure.
 
 The producer of a typed-infallible staged effect handles `Ingress_closed`
-explicitly. Nonblocking adapter admission has a separate capacity error.
+explicitly. Nonblocking exported admission has a separate capacity error.
 [Exported endpoint and handle contract](16-exported-endpoint-contract.md) owns
 that adapter-facing result.
 
@@ -95,6 +98,7 @@ module Failure : sig
     | Transition
     | Owned_work
     | Adapter_delivery
+    | Export_dispatch
     | Cleanup
     | Crash_handler
 
@@ -128,6 +132,10 @@ programs, and source work.
 `Adapter_delivery` covers committed output delivery. `Cleanup` covers failures
 from root teardown. `Crash_handler` covers the application crash handler and its
 diagnostic hooks.
+
+`Export_dispatch` covers defects from exported payload decoders and narrowed
+endpoint mappers. Synchronous invocation latches root crash, closes ingress, and
+then re-raises the defect.
 
 `packed_eta_cause` retains the original `Eta.Cause` tree and its hidden error
 type. Eta Crux does not flatten the tree or replace it with an exception string.
@@ -246,7 +254,14 @@ type phase =
   | Starting_commit_crash_requested of Failure.t * batch
   | Tearing_down_stop of batch
   | Tearing_down_crash of Failure.t * batch
+  | Replacing_session of session_replacement * terminal_request
+  | Awaiting_session_delivery of session_delivery * terminal_request
   | Closed of terminal
+
+and terminal_request =
+  | No_terminal_request
+  | Stop_requested
+  | Crash_requested of Failure.t
 
 and terminal =
   | Stopped
@@ -260,6 +275,16 @@ alias handles and failures arrive asynchronously.
 An internal GADT still needs runtime matching after existential state packaging.
 The closed variant keeps that matching direct. The separate atomic batch state
 enforces one start across shared aliases.
+
+Session replacement records stop or crash requests in `terminal_request`. A
+crash request replaces a stop request and preserves the first fatal record.
+
+A crash while replacement waits aborts the replacement after dispatch permits
+settle. Eta Crux closes the candidate registry and moves to `Crash_pending`.
+
+`Awaiting_session_delivery` represents the delivery fence for replacement
+output. [Generic host adapter contract](10-generic-host-adapter.md) owns its exact
+acknowledgment operation.
 
 ### Prototype evidence
 

@@ -53,9 +53,11 @@ An endpoint accepts repeated messages while its target incarnation remains
 live. One-shot host responses use a separate request-resolution contract.
 Rank-2 scope brands can prevent escape, but they cannot enforce one call.
 
-`Endpoint.send endpoint message` builds an Eta effect. If the target root accepts
-ingress, interpreting that effect appends the message and returns `Ok ()`. It
-does not run the target transition or promise later processing.
+`Endpoint.send endpoint message` builds an Eta effect. If the bounded root queue
+is full, interpreting that effect waits for capacity.
+
+If the target root accepts ingress, the effect appends the message and returns
+`Ok ()`. It does not run the target transition or promise later processing.
 
 If root closure wins the admission race, the effect returns
 `Error Ingress_closed` and appends nothing. This result is an expected framework
@@ -148,7 +150,7 @@ an opaque handle and retains the endpoint plus decoder in its core-side registry
 This keeps the application architecture independent of shell placement. It also
 avoids remote-handle allocation and encoding on the local path. The new
 [Exported endpoint and handle contract](16-exported-endpoint-contract.md) owns
-the exact export API and lifecycle.
+the exact export API, lifecycle, synchronous admission, and bounded root queue.
 
 ### Rejected alternatives
 

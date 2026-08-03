@@ -19,6 +19,8 @@ show:
 - typed `Ingress_closed` admission and adapter capacity reporting.
 - fatal output-delivery reporting before post-commit start.
 - immediate crash detection and final teardown settlement.
+- serialized-session replacement, current-output redelivery, and its advancement
+  fence.
 - one same-domain host and one foreign-loop retained host.
 - a recording fake that verifies the adapter without its toolkit.
 

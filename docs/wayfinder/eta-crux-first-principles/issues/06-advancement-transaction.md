@@ -30,7 +30,8 @@ typed as an error.
 
 ### Public semantic result
 
-One advancement processes at most one queued message. Its semantic result is:
+One advancement processes at most one application message or internal control
+event. Its semantic result is:
 
 ```ocaml
 module Post_commit : sig
@@ -81,23 +82,39 @@ policy does not change the transaction result.
 External values enter application state only through typed endpoint messages.
 Eta Crux exposes no separate mutable root-input path.
 
-Each advancement removes exactly one message. Hidden queue batching is not an
-optimization because it changes output and effect timing. Applications can use
-an explicit batch action when several domain changes form one transaction.
+The root application-ingress queue has an explicit positive capacity.
+`Endpoint.send` waits for capacity. Exported nonblocking invocation returns
+`Full` instead.
 
-Messages arriving during advancement append to the queue. They never join the
-active transaction. A transition from an empty queue to a nonempty queue emits
-one driver wake. Further messages need no additional wake while work remains.
+Start, stop, crash, and other internal control events use a separate control
+lane. They do not consume application-ingress capacity.
 
-`Root.create` creates the private runtime and queues one internal `Start`
-message. The first advancement instantiates, stabilizes, and commits the initial
-graph through the normal transaction.
+Each advancement removes exactly one application message or control event.
+Hidden queue batching is not an optimization because it changes timing.
+
+Applications can use an explicit batch action when several domain changes form
+one transaction. Synchronous advancement polls application ingress through
+`Eta.Queue.poll_now`.
+
+Advancement first checks the fatal latch. It then takes the oldest control event.
+It polls the oldest application action only when the control lane is empty.
+
+Messages admitted during advancement append to the application queue. They never
+join the active transaction. A transition from empty to nonempty emits one
+driver wake. Further messages need no wake while work remains.
+
+`Root.create ~ingress_capacity` rejects nonpositive capacity. It creates the
+private runtime and places one internal `Start` event in the control lane.
+
+The first advancement instantiates, stabilizes, and commits the initial graph
+through the normal transaction.
 
 ### Advancement phases
 
 An advancement from `Ready` follows this order:
 
-1. Set the root phase to `Advancing` and remove one message.
+1. Check the fatal latch, set the root phase to `Advancing`, and select one
+   control event or application message.
 2. For an application message, validate the target endpoint incarnation.
 3. Run its synchronous transition against committed input and model snapshots.
 4. Stage its returned model and source-owned Eta effect.
@@ -201,13 +218,16 @@ Timers and external sources wake the driver by sending endpoint messages. Tests
 use the same `advance` and batch-start operations without another transaction
 model.
 
-A shutdown request closes message admission and discards queued application
-messages. It also replaces a pending `Start`, then places an internal `Stop` as
-the next message. The stop advancement atomically disposes the graph and returns
-`Stopped` with its final post-commit batch. Starting that batch interrupts and
-awaits the complete root work tree. It returns `Stop_settled` unless cleanup
-changes the terminal result to `Crash_settled`. The root enters `Closed` only
-after all work and finalizers settle.
+A shutdown request immediately shuts down application ingress. It discards
+buffered actions and wakes waiting senders with `Ingress_closed`.
+
+The request also replaces a pending `Start`, then places an internal `Stop` as
+the next control event. The stop advancement atomically disposes the graph and
+returns `Stopped` with its final post-commit batch.
+
+Starting that batch interrupts and awaits the complete root work tree. It
+returns `Stop_settled` unless cleanup changes the terminal result to
+`Crash_settled`. The root enters `Closed` only after all work settles.
 
 Calls to `advance` after final batch completion return `Closed`.
 
