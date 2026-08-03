@@ -69,6 +69,7 @@ deliverable. Implementation is not part of this map.
 - [Generic host adapter contract](issues/10-generic-host-adapter.md) — Use a pull driver with one-shot delivery tokens, an optional resource-bracketed hosted loop, and adapter-owned scheduling and reconciliation.
 - [Host capabilities and request-response](issues/13-host-capabilities-and-requests.md) — Use explicit typed requesters and structural request exports with one-shot identity, scoped ownership, bounded capacity, and transport-equivalent driver handoff.
 - [Wire codec and protocol contract](issues/17-wire-codec-protocol.md) — Use one strict sequenced driver protocol with typed host-operation descriptors, closed frame outcomes, and exact JSON and S-expression encodings.
+- [Identity and serialized transport equivalence](issues/18-transport-equivalence.md) — Select one closed driver binding at root integration. Both variants preserve core semantics, while only the serialized variant owns wire state and session administration.
 
 ## Not yet specified
 
