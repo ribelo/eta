@@ -78,9 +78,12 @@ module Root : sig
   type 'a description := 'a t
   type 'a t
 
-  val create : 'a description -> 'a t
+  val create : ingress_capacity:int -> 'a description -> 'a t
 end
 ```
+
+`ingress_capacity` is positive and explicit. [Exported endpoint and handle
+contract](16-exported-endpoint-contract.md) owns the bounded queue contract.
 
 [Action injection and staged Eta effects](05-action-effect-protocol.md) defines
 endpoint delivery. [Deterministic advancement transaction](06-advancement-transaction.md)

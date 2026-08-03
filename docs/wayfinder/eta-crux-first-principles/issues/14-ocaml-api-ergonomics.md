@@ -290,6 +290,7 @@ type origin =
   | Transition
   | Owned_work
   | Adapter_delivery
+  | Export_dispatch
   | Cleanup
   | Crash_handler
 
@@ -300,6 +301,8 @@ type trigger_kind =
   | Lifecycle_program
   | Source_opening
   | Source_producer
+  | Local_export_invocation
+  | Serialized_export_invocation
   | Output_delivery
   | Stop_teardown
   | Crash_teardown
@@ -381,11 +384,14 @@ module Root : sig
         post_commit : Post_commit.t;
       }
 
-  val create : 'output description -> 'output t
+  val create : ingress_capacity:int -> 'output description -> 'output t
   val advance : 'output t -> ('output outcome, advance_error) result
   val request_stop : 'output t -> unit
 end
 ```
+
+`ingress_capacity` is mandatory and positive. `Root.create` raises
+`Invalid_argument` for zero or negative values.
 
 `Root.Failed` reports crash detection. `Post_commit.Crash_settled` reports final
 settlement after complete teardown.
