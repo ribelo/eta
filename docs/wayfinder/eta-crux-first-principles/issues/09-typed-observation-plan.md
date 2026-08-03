@@ -42,9 +42,9 @@ output.
 The driver gives the output to its adapter after the atomic snapshot commit.
 The adapter retains any previous output that its reconciliation needs.
 
-The adapter owns output projection, equality, diff, rendering, and host
-mutation. Eta Crux defines no change event, output path, observer cursor, or
-host callback for these operations.
+The adapter owns output projection, equality, diff, host interpretation, and
+host mutation. Eta Crux defines no change event, output path, observer cursor,
+or host callback for these operations.
 
 The driver delivers the output before it starts the mandatory post-commit
 batch. Ticket 11 defines root failure after an adapter-delivery failure.

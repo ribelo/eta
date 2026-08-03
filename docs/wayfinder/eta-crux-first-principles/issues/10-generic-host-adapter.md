@@ -7,7 +7,7 @@ Blocked by: 06, 08, 09, 11, 16, 19
 ## Question
 
 What is the smallest host-neutral contract between a running Eta Crux
-application and a renderer or other external host?
+application and an external host?
 
 Use Sliml as one falsifier, not as the interface template. The contract must
 show:
@@ -31,7 +31,7 @@ owns source identity, reconciliation, and cancellation.
 
 Determine which operations belong to Eta Crux, to a generic adapter helper, and
 to a concrete package such as `eta_crux_sliml`. The core must not acquire a
-renderer, serialization format, or Sliml value model.
+host value model, serialization format, or Sliml value model.
 
 [Failure, defect, and crash boundary](11-failure-boundary.md) fixes the semantic
 failure outcomes. This ticket owns their host-neutral callback and scheduling
@@ -74,6 +74,7 @@ module Driver : sig
 
   type 'output event =
     | Deliver of 'output Delivery.t
+    | Request of Request.Driver_event.t
     | Rejected of Root.delivery_error
     | Crash_detected of Failure.t
     | Closed of terminal
@@ -153,6 +154,10 @@ module Adapter : sig
       (('output, 'error) binding ->
        'output delivery ->
        (unit, 'error) Eta.Effect.t) ->
+    request_event:
+      (('output, 'error) binding ->
+       Request.Driver_event.t ->
+       (unit, 'error) Eta.Effect.t) ->
     crash_detected:
       (('output, 'error) binding ->
        Failure.t ->
@@ -161,11 +166,15 @@ module Adapter : sig
 end
 ```
 
-One adapter-specific error type covers all four operations. A concrete adapter
+One adapter-specific error type covers all five operations. A concrete adapter
 can use a precise variant when its operations have different failures.
 
 The delivery effect owns snapshot reconciliation. It also performs any required
 host-thread scheduling.
+
+The request-event effect accepts outbound dispatch, response handoff, and
+cancellation handoff events. [Host capabilities and request-response](13-host-capabilities-and-requests.md)
+defines its tokens, ordering, and failure rules.
 
 Eta Crux exposes no generic host scheduler. It receives no host handle, toolkit
 context, or host-thread capability.
@@ -311,10 +320,11 @@ failure, successful replacement, and replacement abort.
 ### Ownership
 
 Eta Crux core owns root advancement, root wake, delivery tokens, post-commit
-start, session fences, crash latching, and terminal settlement.
+start, request events, session fences, crash latching, and terminal settlement.
 
 The generic hosted helper owns the driver loop, adapter resource bracket, control
-queue, delivery-error conversion, and callback sequencing.
+queue, delivery-error conversion, request-event delivery, and callback
+sequencing.
 
 A concrete adapter owns binding state, snapshot reconciliation, host-thread
 scheduling, host event conversion, source buffers, and toolkit operations.
@@ -335,8 +345,8 @@ The prototype compiles in the OxCaml Nix shell.
 
 ### Rejected alternatives
 
-Eta Crux does not expose host handles, a renderer, a host value model, a generic
-event converter, or a generic host-thread scheduler.
+Eta Crux does not expose host handles, a host value model, a generic event
+converter, or a generic host-thread scheduler.
 
 It does not make each concrete adapter reproduce root advancement and terminal
 ordering. It also does not hide stale-endpoint advancement or committed output.
