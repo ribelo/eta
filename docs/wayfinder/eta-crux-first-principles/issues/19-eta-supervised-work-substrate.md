@@ -35,6 +35,10 @@ Old cleanup can overlap released work. A later `cancel`, `await`, or supervisor
 scope exit supplies settlement. Final root shutdown keeps the stronger complete
 settlement fence.
 
+Eta Crux observes supervised child exits at the root failure latch. An
+interruption-only exit remains normal ownership cleanup. Every other escaping
+cause follows [Failure, defect, and crash boundary](11-failure-boundary.md).
+
 The public-composition evidence is at commit `33e6c918`. The selected-interface
 evidence is at commit `f90f8232`. Both prototypes passed the OxCaml and upstream
 OCaml gates.

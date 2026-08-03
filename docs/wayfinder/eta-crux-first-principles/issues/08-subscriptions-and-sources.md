@@ -34,7 +34,9 @@ is:
 
 ```ocaml
 type 'item emitter = {
-  emit : 'error. 'item -> (unit, 'error) Eta.Effect.t;
+  emit :
+    'item ->
+    (unit, Endpoint.admission_error) Eta.Effect.t;
 }
 
 type ('item, 'error) producer =
@@ -42,9 +44,9 @@ type ('item, 'error) producer =
   ((unit, 'error) Eta.Effect.t, 'error) Eta.Effect.t
 ```
 
-Eta Crux supplies the emitter. It has no typed failure and instantiates to the
-producer error channel. This form keeps item emission composable inside the
-producer effect.
+Eta Crux supplies the emitter. Its admission error remains separate from the
+producer error channel. This form keeps item emission composable and makes root
+closure explicit to the producer or host adapter.
 
 The outer effect opens the source and installs its item-admission path. Success
 returns the long-lived producer effect. Eta Crux then runs that effect in the
@@ -98,6 +100,13 @@ to an action and sends that action through the declared target `Endpoint.t`.
 Each send appends one normal endpoint message. A message that arrives during an
 advancement waits for a later advancement. Sources do not mutate models or the
 graph directly.
+
+An emitter returns `Ingress_closed` if root closure wins its admission race. The
+producer or host adapter handles that result. Eta Crux does not reinterpret it as
+a source failure or terminal action.
+
+Terminal-action delivery uses the same admission rule. If closure wins, Eta Crux
+queues no terminal action because the root already owns terminal progress.
 
 The semantic terminal value is:
 

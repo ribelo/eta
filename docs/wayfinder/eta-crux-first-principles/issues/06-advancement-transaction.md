@@ -36,8 +36,12 @@ One advancement processes at most one queued message. Its semantic result is:
 module Post_commit : sig
   type t
   type start_error = Already_started
+  type start_result =
+    | Admitted
+    | Stop_settled
+    | Crash_settled of Failure.settlement
 
-  val start : t -> (unit, start_error) Eta.Effect.t
+  val start : t -> (start_result, start_error) Eta.Effect.t
 end
 
 type 'output outcome =
@@ -50,7 +54,10 @@ type 'output outcome =
   | Stopped of {
       post_commit : Post_commit.t;
     }
-  | Failed of Failure.t
+  | Failed of {
+      failure : Failure.t;
+      post_commit : Post_commit.t;
+    }
 
 type advance_error =
   | Already_advancing
@@ -120,10 +127,10 @@ No transition or stabilization runs, and the root returns to `Ready`.
 
 A transition exception, stabilization failure, or structural preflight failure
 rolls back every staged change. The message remains consumed. The advancement
-returns `Failed`, publishes no output, and creates no post-commit batch.
+publishes no output and returns `Failed` with a mandatory crash batch.
 
-Eta Crux never retries a failed message automatically. A caller can retry by
-sending another message after the failure policy permits further advancement.
+Eta Crux never retries a failed message automatically. A fatal failure closes
+ingress and permits no later application advancement.
 
 A call to `advance` during `Advancing` returns `Already_advancing`. A call while
 a committed batch remains unstarted returns `Awaiting_post_commit`. Neither call
@@ -135,6 +142,10 @@ An empty queue returns `Idle` without stabilization or output delivery.
 
 Every commit returns a batch, including a commit with no lifecycle or transition
 work. Starting an empty batch acknowledges output delivery.
+
+A normal start returns `Admitted` after complete atomic admission. A stop batch
+returns `Stop_settled` after complete root settlement. A crash batch returns
+`Crash_settled` with the final failure report.
 
 The driver first delivers the committed output to its adapter. It then starts
 the batch. Batch start is at most once.
@@ -179,7 +190,7 @@ The root returns to `Ready` only after complete batch admission. A second start
 returns `Already_started`. Exact cancellation and finalizer ordering belong to
 [Dynamic lifetime and work ownership](07-dynamic-lifetime-ownership.md).
 [Failure, defect, and crash boundary](11-failure-boundary.md) defines adapter
-delivery failure before batch start.
+delivery failure, terminal races, and crash observation.
 
 ### Hosted execution
 
@@ -194,8 +205,9 @@ A shutdown request closes message admission and discards queued application
 messages. It also replaces a pending `Start`, then places an internal `Stop` as
 the next message. The stop advancement atomically disposes the graph and returns
 `Stopped` with its final post-commit batch. Starting that batch interrupts and
-awaits the complete root work tree. The root enters `Closed` only after all work
-and finalizers settle.
+awaits the complete root work tree. It returns `Stop_settled` unless cleanup
+changes the terminal result to `Crash_settled`. The root enters `Closed` only
+after all work and finalizers settle.
 
 Calls to `advance` after final batch completion return `Closed`.
 

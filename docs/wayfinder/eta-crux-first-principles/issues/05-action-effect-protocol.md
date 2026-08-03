@@ -37,8 +37,12 @@ type never = |
 
 module Endpoint : sig
   type 'message t
+  type admission_error = Ingress_closed
 
-  val send : 'message t -> 'message -> (unit, never) Eta.Effect.t
+  val send :
+    'message t ->
+    'message ->
+    (unit, admission_error) Eta.Effect.t
 
   val contramap :
     'target t -> f:('source -> 'target) -> 'source t
@@ -49,14 +53,20 @@ An endpoint accepts repeated messages while its target incarnation remains
 live. One-shot host responses use a separate request-resolution contract.
 Rank-2 scope brands can prevent escape, but they cannot enforce one call.
 
-`Endpoint.send endpoint message` builds an Eta effect. While the target root
-accepts ingress, interpreting that effect appends the message and then succeeds.
-It does not run the target transition. A rejected delivery appears as
-`Stale_endpoint` in the next advancement result. The effect returns no
-state-machine response.
+`Endpoint.send endpoint message` builds an Eta effect. If the target root accepts
+ingress, interpreting that effect appends the message and returns `Ok ()`. It
+does not run the target transition or promise later processing.
 
-[Failure, defect, and crash boundary](11-failure-boundary.md) defines how a
-send observes a root that has closed ingress or completed shutdown.
+If root closure wins the admission race, the effect returns
+`Error Ingress_closed` and appends nothing. This result is an expected framework
+failure, not interruption or a defect.
+
+Endpoint incarnation validation happens during advancement. A stale message
+returns `Rejected Stale_endpoint` from the later advancement. The send effect
+returns no state-machine response.
+
+[Failure, defect, and crash boundary](11-failure-boundary.md) defines atomic
+closure arbitration and the complete root failure policy.
 
 `Endpoint.contramap target ~f` creates a narrower endpoint. It shares the
 target's identity, incarnation, and lifetime. It creates no state machine or
@@ -92,9 +102,13 @@ The returned effect can send through any endpoint received through explicit
 composition. Possession of an endpoint grants typed sending authority. Eta Crux
 provides no ambient endpoint lookup or global action bus.
 
-Expected operation success and failure become later actions before the returned
-effect finishes. The empty `never` error type enforces this rule. Eta defects,
-interruption, and cleanup diagnostics remain outside that typed channel.
+Expected application-operation success and failure become later actions before
+the returned effect finishes. The empty `never` error type enforces this rule.
+Eta defects, interruption, and cleanup diagnostics remain outside that channel.
+
+Endpoint admission is a framework operation. A returned effect handles
+`Ingress_closed` explicitly before it becomes the typed-infallible staged
+effect. This requirement prevents silent delivery loss across root lifetimes.
 
 If `apply_action` raises, Eta Crux commits no model from that action and starts
 no returned effect. The exception becomes a defect. This is stronger than
@@ -142,5 +156,5 @@ Eta Crux does not expose `'action -> unit Effect.t` as the destination type. It
 does not add `Command.t`, a mutable staging context, or a global message bus.
 
 State-machine endpoints have no one-shot cardinality parameter. A local endpoint
-never carries a codec. Extra delegation wrappers add no authority beyond
-possession of the endpoint itself.
+never carries a codec. It reports ingress admission but returns no application
+response. Extra delegation wrappers add no authority beyond endpoint possession.

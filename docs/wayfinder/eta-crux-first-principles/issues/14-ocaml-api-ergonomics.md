@@ -2,7 +2,7 @@
 
 Type: prototype
 Status: open
-Blocked by: 03, 04, 05, 07, 08
+Blocked by: 03, 04, 05, 07, 08, 11
 
 ## Question
 
@@ -26,6 +26,11 @@ Prototype a clear surface for the two-phase source producer, spec equality,
 changing mappers, terminal outcomes, and the target endpoint. Keep readiness in
 the type structure instead of an application callback. Compare the rank-2
 emitter record with any equally precise, simpler syntax.
+
+Also fix the exact surface for `Endpoint.admission_error`, explicit handling in
+typed-infallible staged effects, `Post_commit.start_result`, crash detection,
+and final settlement. Include packed causes, trigger kinds, diagnostic snapshots,
+and identity fields. The API must expose no public root typestate.
 
 Use OCaml strengths rather than reproducing another language's syntax. Do not
 make a PPX part of V1 unless the prototype shows a concrete semantic or
