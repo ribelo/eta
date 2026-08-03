@@ -68,6 +68,7 @@ deliverable. Implementation is not part of this map.
 - [Eta supervised work substrate](issues/19-eta-supervised-work-substrate.md) — Eta adds request-only supervisor cancellation. Eta Crux registers gated work, requests removed-subtree cancellation, then releases new work without waiting for old cleanup.
 - [Generic host adapter contract](issues/10-generic-host-adapter.md) — Use a pull driver with one-shot delivery tokens, an optional resource-bracketed hosted loop, and adapter-owned scheduling and reconciliation.
 - [Host capabilities and request-response](issues/13-host-capabilities-and-requests.md) — Use explicit typed requesters and structural request exports with one-shot identity, scoped ownership, bounded capacity, and transport-equivalent driver handoff.
+- [Wire codec and protocol contract](issues/17-wire-codec-protocol.md) — Use one strict sequenced driver protocol with typed host-operation descriptors, closed frame outcomes, and exact JSON and S-expression encodings.
 
 ## Not yet specified
 

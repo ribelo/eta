@@ -180,6 +180,12 @@ application builder as ordinary typed dependencies.
 A requester effect requires Eta Crux-owned work with a structural owner. Use in
 another execution context is invalid.
 
+## Host operation
+
+One named kind of shell-owned work with typed request and response contracts.
+An integration binds a host operation to a requester. Application computations
+receive the requester, not its transport metadata.
+
 ## Request event
 
 A driver event that asks the shell to dispatch one outbound request. It carries
