@@ -1,7 +1,7 @@
 # Identity and serialized transport equivalence
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 06, 10, 11, 13, 16, 17
 
 ## Question
@@ -26,3 +26,12 @@ Decide whether transport specialization belongs in a driver functor, a runtime
 value, or another root-owned seam. The application computation must not depend
 on that choice. The local driver must not allocate remote handles or encode
 payloads.
+
+## Prototype
+
+The comparison harness is on branch
+`prototype/eta-crux-transport-equivalence` at commit `8be825d7`:
+
+- [prototype](https://github.com/ribelo/eta/tree/8be825d7/.scratch/prototypes/eta-crux-transport-equivalence)
+- [results](https://github.com/ribelo/eta/blob/8be825d7/.scratch/prototypes/eta-crux-transport-equivalence/RESULTS.md)
+- [provisional seam](https://github.com/ribelo/eta/blob/8be825d7/.scratch/prototypes/eta-crux-transport-equivalence/SEAM.md)
