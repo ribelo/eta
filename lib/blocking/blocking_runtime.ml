@@ -1,19 +1,18 @@
 module Runtime_contract = Eta.Runtime_contract
 module Sync_lock = Eta.Sync_lock
 
-type queue_policy = Wait | Reject
 type shutdown_policy = Drain | Detach_started
 
 type config = {
   max_threads : int;
   max_queued : int;
-  queue_policy : queue_policy;
   shutdown_policy : shutdown_policy;
 }
 
 type stats = {
   active : int;
   queued : int;
+  waiting : int;
   completed : int;
   rejected : int;
   cancelled_before_start : int;
@@ -24,7 +23,7 @@ type outcome =
   | Blocking_ok
   | Blocking_error of string
   | Blocking_cancelled
-  | Blocking_rejected
+  | Blocking_saturated
   | Blocking_shutdown_rejected
   | Blocking_detached
 
@@ -45,6 +44,21 @@ type waiter = {
   mutable active : bool;
 }
 
+type stop_before_start =
+  | Cancelled of exn * Printexc.raw_backtrace
+  | Shutting_down
+
+(* The worker claim, cancellation, and Detach_started shutdown race on the
+   transition out of [Reserved]. Only the winner may start or stop the callback.
+   [released] provides the independent exactly-once slot fence. *)
+type start_state = Reserved | Claimed | Stopped of stop_before_start
+
+type active_job = {
+  start_state : start_state Atomic.t;
+  released : bool Atomic.t;
+  mutable notify_stop : (stop_before_start -> unit) option;
+}
+
 type t = {
   name : string;
   config : config;
@@ -53,27 +67,30 @@ type t = {
   mutable waiters : waiter list;
   mutable active : int;
   mutable queued : int;
+  mutable waiting : int;
   mutable completed : int;
   mutable rejected : int;
   mutable cancelled_before_start : int;
   mutable detached : int;
   mutable next_job_id : int;
-  active_jobs : (int, unit) Hashtbl.t;
+  active_jobs : (int, active_job) Hashtbl.t;
   detached_jobs : (int, unit) Hashtbl.t;
   mutable shutdown : bool;
 }
 
-type packed_result = Packed_ok of Obj.t | Packed_error of exn * Printexc.raw_backtrace
+type packed_result =
+  | Packed_ok of Obj.t
+  | Packed_error of exn * Printexc.raw_backtrace
+  | Packed_not_started of stop_before_start
 
-exception Pool_full of string
 exception Pool_shutting_down of string
+exception Callback_not_started of stop_before_start
 exception Blocking_worker_invariant_violation of string
 
 let default_config =
   {
     max_threads = 128;
     max_queued = 64;
-    queue_policy = Wait;
     shutdown_policy = Drain;
   }
 
@@ -82,6 +99,13 @@ let validate_config config =
     invalid_arg "Eta_blocking.Pool.create: max_threads must be > 0";
   if config.max_queued < 0 then
     invalid_arg "Eta_blocking.Pool.create: max_queued must be >= 0"
+
+let make_active_job () =
+  {
+    start_state = Atomic.make Reserved;
+    released = Atomic.make false;
+    notify_stop = None;
+  }
 
 let create ?runner ?(name = "blocking") config =
   validate_config config;
@@ -93,6 +117,7 @@ let create ?runner ?(name = "blocking") config =
     waiters = [];
     active = 0;
     queued = 0;
+    waiting = 0;
     completed = 0;
     rejected = 0;
     cancelled_before_start = 0;
@@ -162,6 +187,7 @@ let stats t =
   {
     active = t.active;
     queued = t.queued;
+    waiting = t.waiting;
     completed = t.completed;
     rejected = t.rejected;
     cancelled_before_start = t.cancelled_before_start;
@@ -189,10 +215,9 @@ let decr_queued_locked t =
   if t.queued <= 0 then invariant_violation "queued";
   t.queued <- t.queued - 1
 
-let raise_pool_full ~now_ms t name emit submitted_at =
-  let ts = now_ms () in
-  emit_event emit t name submitted_at ts ts Blocking_rejected;
-  raise (Pool_full t.name)
+let decr_waiting_locked t =
+  if t.waiting <= 0 then invariant_violation "waiting";
+  t.waiting <- t.waiting - 1
 
 let raise_pool_shutting_down ~now_ms t name emit submitted_at =
   let ts = now_ms () in
@@ -205,29 +230,52 @@ let rec reserve_slot ~now_ms contract t name emit submitted_at =
     if t.shutdown then `Shutdown
     else if t.active < t.config.max_threads then (
       let job_id = t.next_job_id in
+      let job = make_active_job () in
       t.next_job_id <- t.next_job_id + 1;
       t.active <- t.active + 1;
-      Hashtbl.replace t.active_jobs job_id ();
-      `Started job_id)
+      Hashtbl.replace t.active_jobs job_id job;
+      `Started (job_id, job))
     else if t.queued < t.config.max_queued then (
       t.queued <- t.queued + 1;
       `Queued)
     else
-      match t.config.queue_policy with
-      | Reject ->
-          t.rejected <- t.rejected + 1;
-          `Reject
-      | Wait ->
-          let promise, waiter = register_waiter_locked contract t in
-          `Wait_full (promise, waiter)
+      let promise, waiter = register_waiter_locked contract t in
+      t.waiting <- t.waiting + 1;
+      `Wait_full (promise, waiter)
   with
-  | `Started job_id -> `Started job_id
+  | `Started job -> `Started job
   | `Queued -> `Queued
   | `Shutdown -> raise_pool_shutting_down ~now_ms t name emit submitted_at
-  | `Reject -> raise_pool_full ~now_ms t name emit submitted_at
   | `Wait_full (promise, waiter) ->
-      await_waiter contract t promise waiter;
+      (match await_waiter contract t promise waiter with
+      | () -> Sync_lock.use t.mutex @@ fun () -> decr_waiting_locked t
+      | exception exn ->
+          let cancelled =
+            Option.is_some (contract.Runtime_contract.cancellation_reason exn)
+          in
+          Sync_lock.use t.mutex (fun () ->
+              decr_waiting_locked t;
+              if cancelled then
+                t.cancelled_before_start <- t.cancelled_before_start + 1);
+          if cancelled then
+            let ts = now_ms () in
+            emit_event emit t name submitted_at ts ts Blocking_cancelled;
+          raise exn);
       reserve_slot ~now_ms contract t name emit submitted_at
+
+let try_reserve_slot t =
+  Sync_lock.use t.mutex @@ fun () ->
+  if t.shutdown then `Shutting_down
+  else if t.active < t.config.max_threads then (
+    let job_id = t.next_job_id in
+    let job = make_active_job () in
+    t.next_job_id <- t.next_job_id + 1;
+    t.active <- t.active + 1;
+    Hashtbl.replace t.active_jobs job_id job;
+    `Started (job_id, job))
+  else (
+    t.rejected <- t.rejected + 1;
+    `Saturated)
 
 let wait_queued_slot ~now_ms contract t name emit submitted_at =
   try
@@ -242,18 +290,19 @@ let wait_queued_slot ~now_ms contract t name emit submitted_at =
           decr_queued_locked t;
           t.active <- t.active + 1;
           let job_id = t.next_job_id in
+          let job = make_active_job () in
           t.next_job_id <- t.next_job_id + 1;
-          Hashtbl.replace t.active_jobs job_id ();
+          Hashtbl.replace t.active_jobs job_id job;
           let waiters = wake_waiters_locked t in
-          `Started (job_id, waiters))
+          `Started (job_id, job, waiters))
         else
           let promise, waiter = register_waiter_locked contract t in
           `Wait (promise, waiter)
       in
       match state with
-      | `Started (job_id, waiters) ->
+      | `Started (job_id, job, waiters) ->
           resolve_waiters contract waiters;
-          job_id
+          (job_id, job)
       | `Shutdown waiters ->
           resolve_waiters contract waiters;
           raise_pool_shutting_down ~now_ms t name emit submitted_at
@@ -274,18 +323,21 @@ let wait_queued_slot ~now_ms contract t name emit submitted_at =
     emit_event emit t name submitted_at ts ts Blocking_cancelled;
     raise exn
 
-let release_started contract t job_id =
-  let waiters =
-    Sync_lock.use t.mutex @@ fun () ->
-    if not (Hashtbl.mem t.active_jobs job_id) then
-      invalid_arg "Eta.Blocking.Pool invariant violated: unknown active job";
-    decr_active_locked t;
-    t.completed <- t.completed + 1;
-    Hashtbl.remove t.active_jobs job_id;
-    Hashtbl.remove t.detached_jobs job_id;
-    wake_waiters_locked t
-  in
-  resolve_waiters contract waiters
+let release_job contract t job_id job ~completed ~cancelled_before_start =
+  if Atomic.compare_and_set job.released false true then (
+    let waiters =
+      Sync_lock.use t.mutex @@ fun () ->
+      if not (Hashtbl.mem t.active_jobs job_id) then
+        invalid_arg "Eta.Blocking.Pool invariant violated: unknown active job";
+      decr_active_locked t;
+      if completed then t.completed <- t.completed + 1;
+      if cancelled_before_start then
+        t.cancelled_before_start <- t.cancelled_before_start + 1;
+      Hashtbl.remove t.active_jobs job_id;
+      Hashtbl.remove t.detached_jobs job_id;
+      wake_waiters_locked t
+    in
+    resolve_waiters contract waiters)
 
 let mark_detached contract t job_id =
   let waiters =
@@ -304,10 +356,19 @@ let run_callback f =
   try Packed_ok (Obj.repr (f ())) with exn ->
     Packed_error (exn, Printexc.get_raw_backtrace ())
 
-let run_worker contract runner t name f =
+let run_worker contract runner t name start_state f =
   let runner = runner_for t runner in
   runner.run_worker ~label:name (fun () ->
-      contract.Runtime_contract.with_worker_context (fun () -> run_callback f))
+      contract.Runtime_contract.with_worker_context (fun () ->
+          if Atomic.compare_and_set start_state Reserved Claimed then
+            run_callback f
+          else
+            match Atomic.get start_state with
+            | Stopped reason -> Packed_not_started reason
+            | Claimed | Reserved ->
+                raise
+                  (Blocking_worker_invariant_violation
+                     "blocking callback claim has an invalid state")))
 
 let finish_result ~now_ms t release name emit submitted_at started_at outcome =
   let ended_at = now_ms () in
@@ -320,6 +381,7 @@ let finish_result ~now_ms t release name emit submitted_at started_at outcome =
       emit_event emit t name submitted_at started_at ended_at
         (Blocking_error (Printexc.to_string exn));
       Printexc.raise_with_backtrace exn bt
+  | Packed_not_started reason -> raise (Callback_not_started reason)
 
 let run_cancel_hook = function
   | None -> None
@@ -333,129 +395,226 @@ let maybe_raise_cancel_hook_error = function
   | None -> ()
   | Some (exn, bt) -> Printexc.raise_with_backtrace exn bt
 
-let run_worker_with_cancel_hook contract runner t name f on_cancel =
-  match on_cancel with
-  | None ->
-      contract.Runtime_contract.protect @@ fun () ->
-      run_worker contract runner t name f
-  | Some _ ->
-      let hook_error = Atomic.make None in
-      let running = Atomic.make true in
-      let set_hook_error error =
-        match error with
-        | None -> ()
-        | Some _ ->
-            let current = Atomic.get hook_error in
-            if Option.is_none current then Atomic.set hook_error error
-      in
-      let outcome =
-        contract.Runtime_contract.run_scope @@ fun sw ->
-        contract.Runtime_contract.fork_daemon sw (fun () ->
-            (try contract.Runtime_contract.await_cancel () with
-            | exn
-              when Option.is_some
-                     (contract.Runtime_contract.cancellation_reason exn) ->
-                if Atomic.get running then
-                  set_hook_error (run_cancel_hook on_cancel)
-            | exn -> set_hook_error (Some (exn, Printexc.get_raw_backtrace ())));
-            `Stop_daemon);
-        contract.Runtime_contract.protect @@ fun () ->
-        Fun.protect ~finally:(fun () -> Atomic.set running false) (fun () ->
-            run_worker contract runner t name f)
-      in
-      (match Atomic.get hook_error with
-      | None -> outcome
-      | Some (exn, bt) -> Packed_error (exn, bt))
-
-let submit ~scope ~contract ~runner ~emit t name ?on_cancel f =
-  check_not_worker ~in_worker:(contract.Runtime_contract.in_worker_context ())
-    "Eta_blocking.run";
-  let now_ms = contract.Runtime_contract.now_ms in
-  let submitted_at = now_ms () in
-  let job_id =
-    try
-      match reserve_slot ~now_ms contract t name emit submitted_at with
-      | `Started job_id -> job_id
-      | `Queued -> wait_queued_slot ~now_ms contract t name emit submitted_at
-    with Exit -> raise Exit
+let run_worker_with_cancel_hook contract runner t name start_state f on_cancel
+    cancel_before_start =
+  let hook_error = Atomic.make None in
+  let running = Atomic.make true in
+  let set_hook_error error =
+    match error with
+    | None -> ()
+    | Some _ ->
+        let current = Atomic.get hook_error in
+        if Option.is_none current then Atomic.set hook_error error
   in
-  let released = ref false in
-  let release_once () =
-    if not !released then (
-      released := true;
-      release_started contract t job_id)
+  let outcome =
+    contract.Runtime_contract.run_scope @@ fun sw ->
+    contract.Runtime_contract.fork_daemon sw (fun () ->
+        (try contract.Runtime_contract.await_cancel () with
+        | exn
+          when Option.is_some (contract.Runtime_contract.cancellation_reason exn)
+          ->
+            if
+              Atomic.get running
+              &&
+              not
+                (cancel_before_start exn (Printexc.get_raw_backtrace ()))
+              && Atomic.get start_state = Claimed
+            then set_hook_error (run_cancel_hook on_cancel)
+        | exn -> set_hook_error (Some (exn, Printexc.get_raw_backtrace ())));
+        `Stop_daemon);
+    contract.Runtime_contract.protect @@ fun () ->
+    Fun.protect ~finally:(fun () -> Atomic.set running false) (fun () ->
+        run_worker contract runner t name start_state f)
+  in
+  match Atomic.get hook_error with
+  | None -> outcome
+  | Some (exn, bt) -> Packed_error (exn, bt)
+
+let run_started ~scope ~contract ~runner ~emit ~now_ms ~submitted_at t name
+    ?on_cancel job_id job f =
+  let start_state = job.start_state in
+  let release_once ~completed ~cancelled_before_start () =
+    release_job contract t job_id job ~completed ~cancelled_before_start
+  in
+  let cancel_before_start exn bt =
+    if
+      Atomic.compare_and_set start_state Reserved
+        (Stopped (Cancelled (exn, bt)))
+    then (
+      release_once ~completed:false ~cancelled_before_start:true ();
+      let ts = now_ms () in
+      emit_event emit t name submitted_at ts ts Blocking_cancelled;
+      true)
+    else false
   in
   let protect_started f =
     try f () with exn ->
       let bt = Printexc.get_raw_backtrace () in
-      release_once ();
+      let cancelled =
+        Option.is_some (contract.Runtime_contract.cancellation_reason exn)
+      in
+      if not (cancelled && cancel_before_start exn bt) then (
+        let completed = Atomic.get start_state = Claimed in
+        release_once ~completed ~cancelled_before_start:false ());
       Printexc.raise_with_backtrace exn bt
   in
   let started_at = now_ms () in
   match t.config.shutdown_policy with
   | Drain ->
       protect_started @@ fun () ->
-      let outcome = run_worker_with_cancel_hook contract runner t name f on_cancel in
-      finish_result ~now_ms t release_once name emit submitted_at started_at outcome
+      let outcome =
+        run_worker_with_cancel_hook contract runner t name start_state f on_cancel
+          cancel_before_start
+      in
+      finish_result ~now_ms t
+        (release_once ~completed:true ~cancelled_before_start:false)
+        name emit submitted_at started_at outcome
   | Detach_started ->
       let promise =
         protect_started @@ fun () ->
         let promise, resolver = contract.Runtime_contract.create_promise () in
+        let resolved = Atomic.make false in
+        let resolve_once result =
+          if Atomic.compare_and_set resolved false true then
+            contract.Runtime_contract.resolve_promise resolver result
+        in
+        let notify_stop reason =
+          release_once ~completed:false ~cancelled_before_start:false ();
+          resolve_once
+            (Error
+               ( Callback_not_started reason,
+                 Printexc.get_callstack 16 ))
+        in
+        let stopped =
+          Sync_lock.use t.mutex @@ fun () ->
+          match Atomic.get start_state with
+          | Reserved ->
+              job.notify_stop <- Some notify_stop;
+              None
+          | Stopped reason -> Some reason
+          | Claimed -> None
+        in
+        Option.iter notify_stop stopped;
         contract.Runtime_contract.fork scope (fun () ->
             try
               let value =
                 protect_started @@ fun () ->
-                let outcome = run_worker contract runner t name f in
-                finish_result ~now_ms t release_once name emit submitted_at started_at
-                  outcome
+                let outcome = run_worker contract runner t name start_state f in
+                finish_result ~now_ms t
+                  (release_once ~completed:true ~cancelled_before_start:false)
+                  name emit submitted_at started_at outcome
               in
-              contract.Runtime_contract.resolve_promise resolver (Ok value)
+              resolve_once (Ok value)
             with exn ->
               let bt = Printexc.get_raw_backtrace () in
-              contract.Runtime_contract.resolve_promise resolver
-                (Error (exn, bt)));
+              resolve_once (Error (exn, bt)));
         promise
       in
       (try
          match contract.Runtime_contract.await_promise promise with
          | Ok value -> value
          | Error (exn, bt) ->
-             release_once ();
+             let completed = Atomic.get start_state = Claimed in
+             release_once ~completed ~cancelled_before_start:false ();
              Printexc.raise_with_backtrace exn bt
        with
       | exn
         when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
-          let hook_error = run_cancel_hook on_cancel in
-          mark_detached contract t job_id;
           let ts = now_ms () in
-          emit_event emit t name submitted_at started_at ts Blocking_detached;
-          maybe_raise_cancel_hook_error hook_error;
+          if not (cancel_before_start exn (Printexc.get_raw_backtrace ())) then (
+            let hook_error = run_cancel_hook on_cancel in
+            mark_detached contract t job_id;
+            emit_event emit t name submitted_at started_at ts Blocking_detached;
+            maybe_raise_cancel_hook_error hook_error);
           raise exn
       | exn ->
           let bt = Printexc.get_raw_backtrace () in
-          release_once ();
+          let completed = Atomic.get start_state = Claimed in
+          release_once ~completed ~cancelled_before_start:false ();
+          Printexc.raise_with_backtrace exn bt)
+
+let submit ~scope ~contract ~runner ~emit t name ?on_cancel f =
+  check_not_worker ~in_worker:(contract.Runtime_contract.in_worker_context ())
+    "Eta_blocking.run";
+  let now_ms = contract.Runtime_contract.now_ms in
+  let submitted_at = now_ms () in
+  let job_id, job =
+    try
+      match reserve_slot ~now_ms contract t name emit submitted_at with
+      | `Started job -> job
+      | `Queued -> wait_queued_slot ~now_ms contract t name emit submitted_at
+    with Exit -> raise Exit
+  in
+  (try
+     run_started ~scope ~contract ~runner ~emit ~now_ms ~submitted_at t name
+       ?on_cancel job_id job f
+   with
+  | Callback_not_started Shutting_down ->
+      raise_pool_shutting_down ~now_ms t name emit submitted_at
+  | Callback_not_started (Cancelled (exn, bt)) ->
+      Printexc.raise_with_backtrace exn bt)
+
+let try_submit ~scope ~contract ~runner ~emit t name ?on_cancel f =
+  check_not_worker ~in_worker:(contract.Runtime_contract.in_worker_context ())
+    "Eta_blocking.try_run";
+  let now_ms = contract.Runtime_contract.now_ms in
+  let submitted_at = now_ms () in
+  match try_reserve_slot t with
+  | `Saturated ->
+      let ts = now_ms () in
+      emit_event emit t name submitted_at ts ts Blocking_saturated;
+      `Not_run `Saturated
+  | `Shutting_down ->
+      let ts = now_ms () in
+      emit_event emit t name submitted_at ts ts Blocking_shutdown_rejected;
+      `Not_run `Shutting_down
+  | `Started (job_id, job) ->
+      (try
+         `Completed
+           (run_started ~scope ~contract ~runner ~emit ~now_ms ~submitted_at t
+              name ?on_cancel job_id job f)
+       with
+      | Callback_not_started Shutting_down ->
+          let ts = now_ms () in
+          emit_event emit t name submitted_at ts ts Blocking_shutdown_rejected;
+          `Not_run `Shutting_down
+      | Callback_not_started (Cancelled (exn, bt)) ->
           Printexc.raise_with_backtrace exn bt)
 
 let shutdown ~contract ~emit t =
-  let detached, waiters =
+  let detached, stopped, waiters =
     Sync_lock.use t.mutex @@ fun () ->
     t.shutdown <- true;
-    let detached =
+    let detached, stopped =
       match t.config.shutdown_policy with
-      | Drain -> 0
+      | Drain -> (0, [])
       | Detach_started ->
           let count = ref 0 in
+          let stopped = ref [] in
           Hashtbl.iter
-            (fun job_id () ->
-              if not (Hashtbl.mem t.detached_jobs job_id) then (
+            (fun job_id job ->
+              if
+                Atomic.compare_and_set job.start_state Reserved
+                  (Stopped Shutting_down)
+              then stopped := (job_id, job) :: !stopped
+              else if
+                Atomic.get job.start_state = Claimed
+                && not (Hashtbl.mem t.detached_jobs job_id)
+              then (
                 incr count;
                 Hashtbl.replace t.detached_jobs job_id ()))
             t.active_jobs;
-          !count
+          (!count, !stopped)
     in
     t.detached <- t.detached + detached;
-    (detached, wake_waiters_locked t)
+    (detached, stopped, wake_waiters_locked t)
   in
+  List.iter
+    (fun (job_id, job) ->
+      release_job contract t job_id job ~completed:false
+        ~cancelled_before_start:false;
+      Option.iter (fun notify -> notify Shutting_down) job.notify_stop)
+    stopped;
   resolve_waiters contract waiters;
   if detached > 0 then
     emit
@@ -486,19 +645,18 @@ let shutdown ~contract ~emit t =
 
 module Pool = struct
   type nonrec t = t
-  type nonrec queue_policy = queue_policy = Wait | Reject
   type nonrec shutdown_policy = shutdown_policy = Drain | Detach_started
 
   type nonrec config = config = {
     max_threads : int;
     max_queued : int;
-    queue_policy : queue_policy;
     shutdown_policy : shutdown_policy;
   }
 
   type nonrec stats = stats = {
     active : int;
     queued : int;
+    waiting : int;
     completed : int;
     rejected : int;
     cancelled_before_start : int;

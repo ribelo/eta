@@ -75,7 +75,6 @@ let program =
       {
         max_threads = 16;
         max_queued = 64;
-        queue_policy = Eta_blocking.Pool.Wait;
         shutdown_policy = Eta_blocking.Pool.Drain;
       }
   in

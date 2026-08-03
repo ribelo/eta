@@ -165,8 +165,22 @@ Eta_blocking.run_result ~name:"legacy_parse" (fun () ->
 ```ocaml
 let db_pool = Eta_blocking.Pool.create ~name:"db" {
   max_threads = 32; max_queued = 64;
-  queue_policy = Wait; shutdown_policy = Drain
+  shutdown_policy = Drain
 }
+```
+
+`run` waits when the worker slots and bounded queue are full. Use `try_run` when
+the callback must start only with an immediately available worker:
+
+```ocaml
+let* outcome =
+  Eta_blocking.try_run ~pool:db_pool ~name:"db.try_query" query
+in
+match outcome with
+| Eta_blocking.Completed value -> Effect.pure value
+| Eta_blocking.Not_run Eta_blocking.Saturated -> Effect.fail `Database_busy
+| Eta_blocking.Not_run Eta_blocking.Shutting_down ->
+    Effect.fail `Database_stopping
 ```
 
 ### "I need to do all three: read a file, parse it, then parallel-process the results"

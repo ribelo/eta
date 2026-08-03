@@ -34,7 +34,6 @@ let test_leased_blocking_rejects_detach_started_pool () =
       {
         max_threads = 1;
         max_queued = 0;
-        queue_policy = BP.Reject;
         shutdown_policy = BP.Detach_started;
       }
   in

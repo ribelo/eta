@@ -8,24 +8,30 @@
 module Pool : sig
   type t
 
-  type queue_policy = Wait | Reject
   type shutdown_policy = Drain | Detach_started
 
   type config = {
     max_threads : int;
     max_queued : int;
-    queue_policy : queue_policy;
     shutdown_policy : shutdown_policy;
   }
+  (** [max_threads] bounds reserved worker slots. [max_queued] bounds callbacks
+      admitted by [Eta_blocking.run] while all worker slots are occupied.
+      Further [Eta_blocking.run] callers wait outside the bounded queue. *)
 
   type stats = {
     active : int;
     queued : int;
+    waiting : int;
     completed : int;
     rejected : int;
     cancelled_before_start : int;
     detached : int;
   }
+  (** [active] includes every reserved slot until physical callback completion.
+      [queued] counts admitted bounded-queue entries, and [waiting] counts
+      ordinary blocking operations that have not been admitted. [rejected]
+      counts fail-fast saturation only. *)
 
   type runner = {
     run_worker : 'a. label:string -> (unit -> 'a) -> 'a;
@@ -50,12 +56,32 @@ val with_defaults :
   ('a, 'err) Eta.Effect.t
 (** Override the ambient blocking defaults for a subtree. *)
 
+type admission_failure = Saturated | Shutting_down
+type 'a try_run_outcome = Completed of 'a | Not_run of admission_failure
+
 val run :
   ?pool:Pool.t ->
   ?name:string ->
   ?on_cancel:(unit -> unit) ->
   (unit -> 'a) ->
   ('a, 'err) Eta.Effect.t
+(** Run a blocking callback, waiting for a worker or bounded-queue admission when
+    necessary. Pool shutdown before callback start interrupts the effect. *)
+
+val try_run :
+  ?pool:Pool.t ->
+  ?name:string ->
+  ?on_cancel:(unit -> unit) ->
+  (unit -> 'a) ->
+  ('a try_run_outcome, 'err) Eta.Effect.t
+(** Run a blocking callback only when a worker slot is immediately available.
+    This operation never enters the bounded queue. Saturation returns
+    [Not_run Saturated], and shutdown before worker claim returns
+    [Not_run Shutting_down], without running the callback.
+
+    Caller interruption before worker claim prevents the callback and does not
+    invoke [on_cancel]. After worker claim, [on_cancel] can run at most once and
+    the slot remains occupied until physical callback completion. *)
 
 val run_result :
   ?pool:Pool.t ->
@@ -68,6 +94,15 @@ val run_result :
     [Ok value] becomes success and [Error err] becomes a typed failure.
     Exceptions raised by the callback remain unchecked defects, exactly like
     {!run}. *)
+
+val try_run_result :
+  ?pool:Pool.t ->
+  ?name:string ->
+  ?on_cancel:(unit -> unit) ->
+  (unit -> ('a, 'err) result) ->
+  ('a try_run_outcome, 'err) Eta.Effect.t
+(** Like {!try_run}, but [Ok value] becomes [Completed value] and [Error err]
+    remains a typed Eta failure. *)
 
 val result :
   ?pool:Pool.t ->

@@ -16,7 +16,7 @@ When a test is inserted mid-file, every registry pointer into the shifted file
 must be refreshed in the same change, not only the row for the new test.
 
 Direct qcheck census: **126 mli-stated claims**, **2 prose-pending model claims**,
-**222 registered external claim clusters**, and **82 unique named qcheck properties** in
+**243 registered external claim clusters**, and **82 unique named qcheck properties** in
 `test/laws/`. Verified external named suites are registered
 separately below and are not silently counted as qcheck coverage.
 
@@ -359,6 +359,27 @@ qcheck optics.
 | ID | Claim | Exact normative span | Named executable test and source pointer |
 | --- | --- | --- | --- |
 | R01 | `async` accepts only the first resolution. | `lib/eta/effect.mli:89-92` | `async one-shot first resolution wins` — `test/core_common/effect_async_shared.ml:322` |
+| RBLOCK01 | `max_threads` bounds reserved blocking-worker slots. | `lib/blocking/eta_blocking.mli:18-20` | Blocking `wait caps active and queue` — `test/eta/test_eta_blocking.ml` |
+| RBLOCK02 | `max_queued` bounds callbacks admitted by `run` while all worker slots are occupied. | `lib/blocking/eta_blocking.mli:18-20` | Blocking `wait caps active and queue` — `test/eta/test_eta_blocking.ml` |
+| RBLOCK03 | Further `run` callers wait outside the bounded queue. | `lib/blocking/eta_blocking.mli:18-20` | Blocking `stats separate waiting from queue` — `test/blocking_common/blocking_common_suites.ml:130` |
+| RBLOCK04 | `active` includes each reserved slot until physical callback completion. | `lib/blocking/eta_blocking.mli:31-34` | Blocking `try_run cancellation before worker claim`, `try_run shutdown before worker claim`, and `detach started counts each job once` — `test/eta/test_eta_blocking.ml:136,179,440` |
+| RBLOCK05 | `queued` counts admitted bounded-queue entries. | `lib/blocking/eta_blocking.mli:31-34` | Blocking `stats separate waiting from queue` — `test/blocking_common/blocking_common_suites.ml:130` |
+| RBLOCK06 | `waiting` counts ordinary blocking operations that have not been admitted. | `lib/blocking/eta_blocking.mli:31-34` | Blocking `stats separate waiting from queue` — `test/blocking_common/blocking_common_suites.ml:130` |
+| RBLOCK07 | `rejected` counts fail-fast saturation only. | `lib/blocking/eta_blocking.mli:31-34` | Blocking `try_run reports saturation` and `try_run reports shutdown` — `test/blocking_common/blocking_common_suites.ml:87,374` |
+| RBLOCK08 | `run` waits for worker or bounded-queue admission when necessary. | `lib/blocking/eta_blocking.mli:68-69` | Blocking `stats separate waiting from queue` — `test/blocking_common/blocking_common_suites.ml:130` |
+| RBLOCK09 | Pool shutdown before an ordinary callback starts interrupts its effect. | `lib/blocking/eta_blocking.mli:68-69` | Blocking `shutdown interrupts new jobs`, `shutdown detach interrupts queued`, `shutdown drain interrupts admission waiter`, and `shutdown detach interrupts admission waiter` — `test/blocking_common/blocking_common_suites.ml` |
+| RBLOCK10 | `try_run` admits only an immediately available worker slot. | `lib/blocking/eta_blocking.mli:77-80` | Blocking `try_run completes` and `try_run reports saturation` — `test/blocking_common/blocking_common_suites.ml:76,87` |
+| RBLOCK11 | `try_run` never enters the bounded queue. | `lib/blocking/eta_blocking.mli:77-80` | Blocking `try_run reports saturation` — `test/blocking_common/blocking_common_suites.ml:87` |
+| RBLOCK12 | Saturation returns `Not_run Saturated`. | `lib/blocking/eta_blocking.mli:77-80` | Blocking `try_run reports saturation` — `test/blocking_common/blocking_common_suites.ml:87` |
+| RBLOCK13 | Shutdown before worker claim returns `Not_run Shutting_down`. | `lib/blocking/eta_blocking.mli:77-80` | Blocking `try_run reports shutdown` and `try_run shutdown before worker claim` — `test/blocking_common/blocking_common_suites.ml:374`; `test/eta/test_eta_blocking.ml:179` |
+| RBLOCK14 | Saturation does not run the callback. | `lib/blocking/eta_blocking.mli:77-80` | Blocking `try_run reports saturation` — `test/blocking_common/blocking_common_suites.ml:87` |
+| RBLOCK15 | Shutdown before worker claim does not run the callback. | `lib/blocking/eta_blocking.mli:77-80` | Blocking `try_run reports shutdown` and `try_run shutdown before worker claim` — `test/blocking_common/blocking_common_suites.ml:374`; `test/eta/test_eta_blocking.ml:179` |
+| RBLOCK16 | Caller interruption before worker claim prevents the callback. | `lib/blocking/eta_blocking.mli:82-84` | Blocking `try_run cancellation before worker claim` and `try_run drain cancellation before worker claim` — `test/eta/test_eta_blocking.ml:136,226` |
+| RBLOCK17 | Caller interruption before worker claim does not invoke `on_cancel`. | `lib/blocking/eta_blocking.mli:82-84` | Blocking `try_run cancellation before worker claim` and `try_run drain cancellation before worker claim` — `test/eta/test_eta_blocking.ml:136,226` |
+| RBLOCK18 | After worker claim, `on_cancel` runs at most once. | `lib/blocking/eta_blocking.mli:82-84` | Blocking `detach started counts each job once` — `test/eta/test_eta_blocking.ml:440` |
+| RBLOCK19 | A claimed callback keeps its slot until physical completion. | `lib/blocking/eta_blocking.mli:82-84` | Blocking `detach started counts each job once` and shared `result_timeout bounds caller wait` — `test/eta/test_eta_blocking.ml:440`; `test/blocking_common/blocking_common_suites.ml` |
+| RBLOCK20 | `try_run_result` maps callback `Ok value` to `Completed value`. | `lib/blocking/eta_blocking.mli:104-105` | Blocking `try_run_result completes Ok` — `test/blocking_common/blocking_common_suites.ml:193` |
+| RBLOCK21 | `try_run_result` preserves callback `Error err` as a typed Eta failure. | `lib/blocking/eta_blocking.mli:104-105` | Blocking `try_run_result preserves Error` — `test/blocking_common/blocking_common_suites.ml:203` |
 | RMP02 | Buffered multipart construction selects a deterministic content-derived boundary. | `lib/http/multipart.mli:48-49` | HTTP `buffered deterministic collision-free` — `test/http/run.ml`; `test/http/test_eta_http_multipart.ml` |
 | RMP03 | A buffered multipart boundary is absent from every encoded static location and payload. | `lib/http/multipart.mli:48-49` | HTTP `buffered deterministic collision-free` forces the initial candidate separately into a text name/value, file name/filename/content type, and each payload in a multipart with multiple files, then asserts `Request.Fixed` and selected-boundary absence from every static value — `test/http/run.ml`; `test/http/test_eta_http_multipart.ml` |
 | RMP04 | Buffered multipart construction produces `Request.Fixed`. | `lib/http/multipart.mli:48-49` | HTTP `buffered deterministic collision-free` and `buffered exact bytes and order` explicitly inspect the body variant — `test/http/run.ml`; `test/http/test_eta_http_multipart.ml` |
@@ -612,9 +633,10 @@ valid constructor domains; until then their provenance is explicit.
 | `lib/http/multipart.mli` | 9 | 6 | 0 | 15 |
 | `lib/eta/cause.mli` | 0 | 13 | 0 | 13 |
 | `lib/cache/refreshable.mli` | 0 | 10 | 0 | 10 |
+| `lib/blocking/eta_blocking.mli` | 0 | 21 | 0 | 21 |
 | `lib/eta/mutable_ref.mli` | 0 | 1 | 0 | 1 |
 | Durable report claims | 0 | 2 | 0 | 2 |
-| **Total covered** | **126** | **222** | **2** | **348** |
+| **Total covered** | **126** | **243** | **2** | **369** |
 
 The law executables contain 82 unique properties in total. Matrix properties cover
 multiple one-claim rows only where each claim has a direct discriminating

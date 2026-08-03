@@ -5,7 +5,7 @@ let string_of_outcome = function
   | Blocking_runtime.Blocking_ok -> "ok"
   | Blocking_runtime.Blocking_error msg -> "error:" ^ msg
   | Blocking_runtime.Blocking_cancelled -> "cancelled"
-  | Blocking_runtime.Blocking_rejected -> "rejected"
+  | Blocking_runtime.Blocking_saturated -> "saturated"
   | Blocking_runtime.Blocking_shutdown_rejected -> "shutdown"
   | Blocking_runtime.Blocking_detached -> "detached"
 
@@ -128,10 +128,47 @@ let run ?pool ?(name = "blocking") ?on_cancel f =
       (if Expert.auto_instrument context then
          Expert.instrument_leaf context ~name body
        else body ())
+  with
+  | Blocking_runtime.Pool_shutting_down _ ->
+      Eta.Exit.Error Eta.Cause.interrupt
+  | exn -> Expert.exit_of_exn context exn
+
+type admission_failure = Saturated | Shutting_down
+type 'a try_run_outcome = Completed of 'a | Not_run of admission_failure
+
+let try_run ?pool ?name ?on_cancel f =
+  check_not_worker "Eta_blocking.try_run";
+  let name = Option.value ~default:"blocking" name in
+  Expert.make
+    @@ fun context ->
+  let contract = Expert.contract context in
+  let pool, runner = pool_and_runner context pool in
+  let body () =
+    match
+      Blocking_runtime.try_submit ~scope:(Expert.outer_scope context) ~contract
+        ~runner ~emit:(emit_blocking_event context) pool name ?on_cancel f
+    with
+    | `Completed value -> Completed value
+    | `Not_run `Saturated -> Not_run Saturated
+    | `Not_run `Shutting_down -> Not_run Shutting_down
+  in
+  try
+    Eta.Exit.Ok
+      (if Expert.auto_instrument context then
+         Expert.instrument_leaf context ~name body
+       else body ())
   with exn -> Expert.exit_of_exn context exn
 
 let run_result ?pool ?name ?on_cancel f =
   run ?pool ?name ?on_cancel f |> Eta.Effect.flatten_result
+
+let try_run_result ?pool ?name ?on_cancel f =
+  try_run ?pool ?name ?on_cancel f
+  |> Eta.Effect.map (function
+       | Completed (Ok value) -> Ok (Completed value)
+       | Completed (Error error) -> Error error
+       | Not_run reason -> Ok (Not_run reason))
+  |> Eta.Effect.flatten_result
 
 let result = run_result
 

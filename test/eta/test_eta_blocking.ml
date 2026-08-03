@@ -5,8 +5,8 @@ open Test_eta_support
 module BP = Eta_blocking.Pool
 
 let blocking_config ?(max_threads = 4) ?(max_queued = 64)
-    ?(queue_policy = BP.Wait) ?(shutdown_policy = BP.Drain) () : BP.config =
-  { max_threads; max_queued; queue_policy; shutdown_policy }
+    ?(shutdown_policy = BP.Drain) () : BP.config =
+  { max_threads; max_queued; shutdown_policy }
 
 let wait_until ?(attempts = 200) pred =
   let rec loop n =
@@ -14,6 +14,16 @@ let wait_until ?(attempts = 200) pred =
     else if n = 0 then Alcotest.fail "condition did not become true"
     else (
       Eio.Fiber.yield ();
+      loop (n - 1))
+  in
+  loop attempts
+
+let wait_until_systhread ?(attempts = 200) pred =
+  let rec loop n =
+    if pred () then ()
+    else if n = 0 then Alcotest.fail "system thread did not make progress"
+    else (
+      Eio_unix.sleep 0.001;
       loop (n - 1))
   in
   loop attempts
@@ -55,6 +65,18 @@ let elapsed_us f =
   let value = f () in
   (now_us () - started, value)
 
+let gated_blocking_runner ~entered ~release : BP.runner =
+  {
+    run_worker =
+      (fun ~label f ->
+        Eio_unix.run_in_systhread ~label (fun () ->
+            Atomic.set entered true;
+            while not (Atomic.get release) do
+              Unix.sleepf 0.001
+            done;
+            f ()))
+  }
+
 let rec cpu_burn_until deadline acc =
   if now_us () >= deadline then acc
   else
@@ -84,6 +106,7 @@ let test_blocking_pool_custom_runner () =
     (run_ok rt (Eta_blocking.run ~name:"custom.runner" (fun () -> 45)));
   Alcotest.(check int) "runner calls" 1 (Atomic.get calls)
 
+(* blockadm-02pb blockadm-609o *)
 let test_blocking_runner_cancellation_releases_started_slot () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -96,7 +119,7 @@ let test_blocking_runner_cancellation_releases_started_slot () =
   in
   let pool =
     BP.create ~name:"runner-cancel" ~runner
-      (blocking_config ~max_threads:1 ~max_queued:0 ~queue_policy:BP.Reject ())
+      (blocking_config ~max_threads:1 ~max_queued:0 ())
   in
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   (match
@@ -105,7 +128,193 @@ let test_blocking_runner_cancellation_releases_started_slot () =
    with
   | Exit.Ok _ -> Alcotest.fail "expected runner cancellation"
   | Exit.Error _ -> ());
-  Alcotest.(check int) "active slot released" 0 (BP.stats pool).active
+  let stats = BP.stats pool in
+  Alcotest.(check int) "active slot released" 0 stats.active;
+  Alcotest.(check int) "cancellation recorded" 1 stats.cancelled_before_start
+
+(* blockadm-vpz2 blockadm-ov29 blockadm-02pb blockadm-609o blockadm-t6uh *)
+let test_blocking_try_run_cancellation_before_worker_claim () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let runner_entered = Atomic.make false in
+  let release_runner = Atomic.make false in
+  let callback_ran = Atomic.make false in
+  let hook_calls = Atomic.make 0 in
+  let runner =
+    gated_blocking_runner ~entered:runner_entered ~release:release_runner
+  in
+  let pool =
+    BP.create ~name:"cancel-before-claim" ~runner
+      (blocking_config ~max_threads:1 ~max_queued:0
+         ~shutdown_policy:BP.Detach_started ())
+  in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let cancel_ctx = ref None in
+  let operation =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Runtime.run rt
+          (Eta_blocking.try_run ~pool
+             ~on_cancel:(fun () -> Atomic.incr hook_calls)
+             (fun () -> Atomic.set callback_ran true)))
+  in
+  wait_until_systhread (fun () -> Atomic.get runner_entered);
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx (Failure "cancel")) !cancel_ctx;
+  let exit = Eio.Promise.await_exn operation in
+  let active_before_release = (BP.stats pool).active in
+  Atomic.set release_runner true;
+  wait_until_systhread (fun () -> (BP.stats pool).active = 0);
+  (match exit with
+  | Exit.Error cause ->
+      Alcotest.(check bool) "interruption" true (Cause.is_interrupt_only cause)
+  | Exit.Ok _ -> Alcotest.fail "expected interruption");
+  Alcotest.(check int) "slot released before runner" 0 active_before_release;
+  Alcotest.(check bool) "callback did not run" false (Atomic.get callback_ran);
+  Alcotest.(check int) "hook not called" 0 (Atomic.get hook_calls);
+  Alcotest.(check int) "cancelled before start" 1
+    (BP.stats pool).cancelled_before_start
+
+(* blockadm-x2xx blockadm-z87i blockadm-ccmc blockadm-01e8 blockadm-680x *)
+let test_blocking_try_run_shutdown_before_worker_claim () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let runner_entered = Atomic.make false in
+  let release_runner = Atomic.make false in
+  let callback_ran = Atomic.make false in
+  let runner =
+    gated_blocking_runner ~entered:runner_entered ~release:release_runner
+  in
+  let pool =
+    BP.create ~name:"shutdown-before-claim" ~runner
+      (blocking_config ~max_threads:1 ~max_queued:0
+         ~shutdown_policy:BP.Detach_started ())
+  in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let operation =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Runtime.run rt
+          (Eta_blocking.try_run ~pool (fun () ->
+               Atomic.set callback_ran true)))
+  in
+  wait_until_systhread (fun () -> Atomic.get runner_entered);
+  run_ok rt (BP.shutdown pool);
+  for _ = 1 to 5 do
+    Eio.Fiber.yield ()
+  done;
+  let resolved_before_release = Eio.Promise.is_resolved operation in
+  let stats_before_release = BP.stats pool in
+  Atomic.set release_runner true;
+  let exit = Eio.Promise.await_exn operation in
+  wait_until_systhread (fun () -> (BP.stats pool).active = 0);
+  Alcotest.(check bool) "operation resolved at shutdown" true
+    resolved_before_release;
+  (match exit with
+  | Exit.Ok (Eta_blocking.Not_run Eta_blocking.Shutting_down) -> ()
+  | Exit.Ok _ -> Alcotest.fail "expected Not_run Shutting_down"
+  | Exit.Error cause ->
+      Alcotest.failf "expected shutdown outcome, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<blocking>"))
+        cause);
+  Alcotest.(check int) "slot released at shutdown" 0 stats_before_release.active;
+  Alcotest.(check bool) "callback did not run" false (Atomic.get callback_ran);
+  Alcotest.(check int) "shutdown not rejected" 0 stats_before_release.rejected;
+  Alcotest.(check int) "shutdown not cancelled" 0
+    stats_before_release.cancelled_before_start
+
+(* blockadm-vpz2 blockadm-ov29 blockadm-02pb blockadm-609o blockadm-t6uh *)
+let test_blocking_try_run_drain_cancellation_before_worker_claim () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let runner_entered = Atomic.make false in
+  let release_runner = Atomic.make false in
+  let callback_ran = Atomic.make false in
+  let hook_calls = Atomic.make 0 in
+  let runner =
+    gated_blocking_runner ~entered:runner_entered ~release:release_runner
+  in
+  let pool =
+    BP.create ~name:"drain-cancel-before-claim" ~runner
+      (blocking_config ~max_threads:1 ~max_queued:0
+         ~shutdown_policy:BP.Drain ())
+  in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let cancel_ctx = ref None in
+  let operation =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Runtime.run rt
+          (Eta_blocking.try_run ~pool
+             ~on_cancel:(fun () -> Atomic.incr hook_calls)
+             (fun () -> Atomic.set callback_ran true)))
+  in
+  wait_until_systhread (fun () -> Atomic.get runner_entered);
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx (Failure "cancel")) !cancel_ctx;
+  wait_until_systhread (fun () -> (BP.stats pool).active = 0);
+  Atomic.set release_runner true;
+  let exit = Eio.Promise.await_exn operation in
+  (match exit with
+  | Exit.Error cause ->
+      Alcotest.(check bool) "interruption" true (Cause.is_interrupt_only cause)
+  | Exit.Ok _ -> Alcotest.fail "expected interruption");
+  Alcotest.(check bool) "callback did not run" false (Atomic.get callback_ran);
+  Alcotest.(check int) "hook not called" 0 (Atomic.get hook_calls);
+  Alcotest.(check int) "cancelled before start" 1
+    (BP.stats pool).cancelled_before_start
+
+(* blockadm-lavc blockadm-p8m2 *)
+let test_blocking_try_run_drain_shutdown_before_worker_claim () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let runner_entered = Atomic.make false in
+  let release_runner = Atomic.make false in
+  let callback_ran = Atomic.make false in
+  let runner =
+    gated_blocking_runner ~entered:runner_entered ~release:release_runner
+  in
+  let pool =
+    BP.create ~name:"drain-shutdown-before-claim" ~runner
+      (blocking_config ~max_threads:1 ~max_queued:0
+         ~shutdown_policy:BP.Drain ())
+  in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let operation =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Runtime.run rt
+          (Eta_blocking.try_run ~pool (fun () ->
+               Atomic.set callback_ran true)))
+  in
+  wait_until_systhread (fun () -> Atomic.get runner_entered);
+  let shutdown =
+    Eio.Fiber.fork_promise ~sw (fun () -> Runtime.run rt (BP.shutdown pool))
+  in
+  let rec wait_for_shutdown attempts =
+    if attempts = 0 then Alcotest.fail "shutdown did not close admission"
+    else
+      match Runtime.run rt (Eta_blocking.try_run ~pool (fun () -> ())) with
+      | Exit.Ok (Eta_blocking.Not_run Eta_blocking.Shutting_down) -> ()
+      | Exit.Ok (Eta_blocking.Not_run Eta_blocking.Saturated) ->
+          Eio.Fiber.yield ();
+          wait_for_shutdown (attempts - 1)
+      | Exit.Ok (Eta_blocking.Completed ()) ->
+          Alcotest.fail "second callback unexpectedly ran"
+      | Exit.Error cause ->
+          Alcotest.failf "shutdown probe failed: %a"
+            (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<blocking>"))
+            cause
+  in
+  wait_for_shutdown 100;
+  Atomic.set release_runner true;
+  (match Eio.Promise.await_exn operation with
+  | Exit.Ok (Eta_blocking.Completed ()) -> ()
+  | Exit.Ok _ -> Alcotest.fail "expected admitted callback completion"
+  | Exit.Error cause ->
+      Alcotest.failf "admitted callback failed: %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<blocking>"))
+        cause);
+  check_exit_ok Alcotest.unit "shutdown" () (Eio.Promise.await_exn shutdown);
+  Alcotest.(check bool) "admitted callback ran" true (Atomic.get callback_ran)
 
 let test_blocking_direct_control_and_blocking_heartbeat () =
   run_eio @@ fun stdenv ->
@@ -125,7 +334,7 @@ let test_blocking_wait_policy_caps_active_and_queue () =
   Eio.Switch.run @@ fun sw ->
   let pool =
     BP.create ~name:"wait-cap"
-      (blocking_config ~max_threads:4 ~max_queued:8 ~queue_policy:BP.Wait ())
+      (blocking_config ~max_threads:4 ~max_queued:8 ())
   in
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let max_active = ref 0 in
@@ -162,7 +371,7 @@ let test_blocking_pending_cancellation_removes_queued_job () =
   Eio.Switch.run @@ fun sw ->
   let pool =
     BP.create ~name:"cancel-pending"
-      (blocking_config ~max_threads:1 ~max_queued:1 ~queue_policy:BP.Wait ())
+      (blocking_config ~max_threads:1 ~max_queued:1 ())
   in
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let blocker =
@@ -193,6 +402,7 @@ let test_blocking_shutdown_detach_started_returns_promptly () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let meter = Eta_observability.Meter.in_memory () in
+  let started = Atomic.make false in
   let pool =
     BP.create ~name:"detach"
       (blocking_config ~max_threads:1 ~shutdown_policy:BP.Detach_started ())
@@ -205,10 +415,11 @@ let test_blocking_shutdown_detach_started_returns_promptly () =
     Eio.Fiber.fork_promise ~sw (fun () ->
         Runtime.run rt
           (Eta_blocking.run ~pool ~name:"detach.job" (fun () ->
+               Atomic.set started true;
                Unix.sleepf 0.050;
                failwith "detached failure")))
   in
-  wait_until (fun () -> (BP.stats pool).active = 1);
+  wait_until (fun () -> Atomic.get started);
   let elapsed, () = elapsed_us (fun () -> run_ok rt (BP.shutdown pool)) in
   Alcotest.(check bool) "detach returned promptly" true (elapsed < 20_000);
   Alcotest.(check bool) "detached counter" true ((BP.stats pool).detached >= 1);
@@ -225,6 +436,7 @@ let test_blocking_shutdown_detach_started_returns_promptly () =
             && contains_substring v "error")
                  point.attrs))
 
+(* blockadm-djc2 blockadm-kytq blockadm-80hn blockadm-sqwe *)
 let test_blocking_detach_started_counts_each_job_once () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -233,33 +445,41 @@ let test_blocking_detach_started_counts_each_job_once () =
       (blocking_config ~max_threads:2 ~shutdown_policy:BP.Detach_started ())
   in
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let cancelled_started = Atomic.make false in
+  let shutdown_started = Atomic.make false in
+  let hook_calls = Atomic.make 0 in
   let cancel_ctx = ref None in
   let cancelled =
     Eio.Fiber.fork_promise ~sw (fun () ->
         Eio.Cancel.sub @@ fun ctx ->
         cancel_ctx := Some ctx;
         Runtime.run rt
-          (Eta_blocking.run ~pool ~name:"detach-once.cancelled" (fun () ->
+          (Eta_blocking.try_run ~pool ~name:"detach-once.cancelled"
+             ~on_cancel:(fun () -> Atomic.incr hook_calls) (fun () ->
+               Atomic.set cancelled_started true;
                Unix.sleepf 0.080)))
   in
-  wait_until (fun () -> (BP.stats pool).active = 1);
+  wait_until (fun () -> Atomic.get cancelled_started);
   Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
   wait_until (fun () -> (BP.stats pool).detached = 1);
   let shutdown_detached =
     Eio.Fiber.fork_promise ~sw (fun () ->
         Runtime.run rt
           (Eta_blocking.run ~pool ~name:"detach-once.shutdown" (fun () ->
+               Atomic.set shutdown_started true;
                Unix.sleepf 0.080)))
   in
-  wait_until (fun () -> (BP.stats pool).active = 2);
+  wait_until (fun () -> Atomic.get shutdown_started);
   run_ok rt (BP.shutdown pool);
   let stats = BP.stats pool in
   Alcotest.(check int) "detached once per submitted job" 2 stats.detached;
   Alcotest.(check bool) "detached does not exceed submitted" true
     (stats.detached <= 2);
-  ignore (Eio.Promise.await_exn cancelled : (unit, _) Exit.t);
+  Alcotest.(check int) "cancel hook once" 1 (Atomic.get hook_calls);
+  ignore (Eio.Promise.await_exn cancelled);
   ignore (Eio.Promise.await_exn shutdown_detached : (unit, _) Exit.t)
 
+(* blockadm-tjyz *)
 let test_blocking_named_pools_prevent_starvation () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -334,6 +554,51 @@ let test_blocking_observability_labels_and_timings () =
             | Eta_observability.Meter.Number (Eta_observability.Meter.Int ms) -> ms >= 15
             | Number (Float _) | Category _ -> false))
 
+(* blockadm-w3od blockadm-l13j *)
+let test_blocking_saturation_telemetry_uses_saturated () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let tracer = Eta_observability.Tracer.in_memory () in
+  let pool =
+    BP.create ~name:"saturation-telemetry"
+      (blocking_config ~max_threads:1 ~max_queued:0 ())
+  in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~tracer:(Eta_observability.Tracer.as_capability tracer)
+      ~auto_instrument:true ()
+  in
+  let first =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Runtime.run rt
+          (Eta_blocking.run ~pool ~name:"saturation.blocker" (fun () ->
+               Unix.sleepf 0.040)))
+  in
+  wait_until (fun () -> (BP.stats pool).active = 1);
+  (match
+     Runtime.run rt
+       (Eta_blocking.try_run ~pool ~name:"saturation.probe" (fun () -> ()))
+   with
+  | Exit.Ok (Eta_blocking.Not_run Eta_blocking.Saturated) -> ()
+  | Exit.Ok _ -> Alcotest.fail "expected saturation"
+  | Exit.Error cause ->
+      Alcotest.failf "saturation probe failed: %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<blocking>"))
+        cause);
+  let has_saturated =
+    Eta_observability.Tracer.dump tracer
+    |> List.exists (fun span ->
+           List.exists
+             (fun event ->
+               String.equal event.Eta_observability.Tracer.ev_name "eta.blocking"
+               && List.mem
+                    ("eta.blocking.outcome", "saturated")
+                    event.Eta_observability.Tracer.ev_attrs)
+             span.Eta_observability.Tracer.events)
+  in
+  Alcotest.(check bool) "saturated outcome" true has_saturated;
+  ignore (Eio.Promise.await_exn first : (unit, _) Exit.t)
+
 (* P0: Blocking_runtime must preserve native Eio cancellation identity without
    conflating it with ordinary OCaml exceptions. Shared user-exception coverage
    lives in test/blocking_common. *)
@@ -349,7 +614,7 @@ let test_blocking_eio_cancellation_preserves_cancelled_identity () =
   Eio.Switch.run @@ fun sw ->
   let pool =
     BP.create ~name:"cancel-identity"
-      (blocking_config ~max_threads:1 ~max_queued:1 ~queue_policy:BP.Wait ())
+      (blocking_config ~max_threads:1 ~max_queued:1 ())
   in
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   (* Fill the pool so the next job queues *)
@@ -426,8 +691,7 @@ let test_blocking_wait_policy_no_lost_wakeup_under_churn () =
   Eio.Switch.run @@ fun sw ->
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let config =
-    blocking_config ~max_threads:1 ~max_queued:0 ~queue_policy:BP.Wait
-      ~shutdown_policy:BP.Drain ()
+    blocking_config ~max_threads:1 ~max_queued:0 ~shutdown_policy:BP.Drain ()
   in
   for iter = 1 to 2_000 do
     let pool =
@@ -482,3 +746,46 @@ let test_blocking_wait_policy_no_lost_wakeup_under_churn () =
 
     ignore (Eio.Promise.await_exn first : (unit, _) Exit.t)
   done
+
+(* blockadm-65or blockadm-ov29 blockadm-02pb blockadm-609o blockadm-t6uh *)
+let test_blocking_try_run_composed_timeout_before_worker_claim () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let runner_entered = Atomic.make false in
+  let release_runner = Atomic.make false in
+  let callback_ran = Atomic.make false in
+  let hook_calls = Atomic.make 0 in
+  let runner =
+    gated_blocking_runner ~entered:runner_entered ~release:release_runner
+  in
+  let pool =
+    BP.create ~name:"timeout-before-claim" ~runner
+      (blocking_config ~max_threads:1 ~max_queued:0
+         ~shutdown_policy:BP.Detach_started ())
+  in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let operation =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Runtime.run rt
+          (Eta_blocking.try_run ~pool
+             ~on_cancel:(fun () -> Atomic.incr hook_calls)
+             (fun () -> Atomic.set callback_ran true)
+          |> Effect.timeout_as (Duration.ms 20) ~on_timeout:`Timeout))
+  in
+  wait_until_systhread (fun () -> Atomic.get runner_entered);
+  let exit = Eio.Promise.await_exn operation in
+  let active_before_release = (BP.stats pool).active in
+  Atomic.set release_runner true;
+  wait_until_systhread (fun () -> (BP.stats pool).active = 0);
+  (match exit with
+  | Exit.Error (Cause.Fail `Timeout) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected timeout, got %a"
+        (Cause.pp (fun fmt `Timeout -> Format.pp_print_string fmt "timeout"))
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected timeout");
+  Alcotest.(check int) "slot released before runner" 0 active_before_release;
+  Alcotest.(check bool) "callback did not run" false (Atomic.get callback_ran);
+  Alcotest.(check int) "hook not called" 0 (Atomic.get hook_calls);
+  Alcotest.(check int) "cancellation recorded" 1
+    (BP.stats pool).cancelled_before_start

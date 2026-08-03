@@ -4,9 +4,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   module BP = Eta_blocking.Pool
   module E = Effect
 
+  (* blockadm-5bnu *)
   let blocking_config ?(max_threads = 4) ?(max_queued = 64)
-      ?(queue_policy = BP.Wait) ?(shutdown_policy = BP.Drain) () : BP.config =
-    { max_threads; max_queued; queue_policy; shutdown_policy }
+      ?(shutdown_policy = BP.Drain) () : BP.config =
+    { max_threads; max_queued; shutdown_policy }
 
   let pp_hidden ppf _ = Format.pp_print_string ppf "<blocking>"
 
@@ -65,11 +66,54 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let value = f () in
     (now_us () - started, value)
 
+  (* blockadm-uazq *)
   let test_blocking_run_executes () =
     B.with_runtime @@ fun _ctx rt ->
     Alcotest.(check int) "result" 1
       (run_ok rt (Eta_blocking.run (fun () -> 1)))
 
+  (* blockadm-8w9l blockadm-dc1z blockadm-jazl blockadm-43yc blockadm-69e5 *)
+  let test_blocking_try_run_completes () =
+    B.with_runtime @@ fun _ctx rt ->
+    let pool = BP.create ~name:"try-completes" (blocking_config ()) in
+    match B.run rt (Eta_blocking.try_run ~pool (fun () -> 42)) with
+    | Exit.Ok (Eta_blocking.Completed value) ->
+        Alcotest.(check int) "completed value" 42 value
+    | Exit.Ok (Eta_blocking.Not_run _) -> Alcotest.fail "expected completion"
+    | Exit.Error cause ->
+        Alcotest.failf "expected completion, got %a" (Cause.pp pp_hidden) cause
+
+  (* blockadm-2r7p blockadm-ycfp blockadm-taew blockadm-l8jp *)
+  let test_blocking_try_run_reports_saturation_without_queueing () =
+    B.with_runtime @@ fun ctx rt ->
+    let pool =
+      BP.create ~name:"try-saturated"
+        (blocking_config ~max_threads:1 ~max_queued:1 ())
+    in
+    let first =
+      B.fork_run ctx rt
+        (Eta_blocking.run ~pool (fun () -> Unix.sleepf 0.060))
+    in
+    wait_until (fun () -> (BP.stats pool).active = 1);
+    let callback_ran = Atomic.make false in
+    (match
+       B.run rt
+         (Eta_blocking.try_run ~pool (fun () ->
+              Atomic.set callback_ran true))
+     with
+    | Exit.Ok (Eta_blocking.Not_run Eta_blocking.Saturated) -> ()
+    | Exit.Ok (Eta_blocking.Not_run Eta_blocking.Shutting_down) ->
+        Alcotest.fail "expected saturation"
+    | Exit.Ok (Eta_blocking.Completed ()) ->
+        Alcotest.fail "saturated callback completed"
+    | Exit.Error cause ->
+        Alcotest.failf "expected saturation, got %a" (Cause.pp pp_hidden) cause);
+    Alcotest.(check bool) "callback did not run" false (Atomic.get callback_ran);
+    Alcotest.(check int) "not queued" 0 (BP.stats pool).queued;
+    Alcotest.(check int) "rejected once" 1 (BP.stats pool).rejected;
+    check_exit_ok Alcotest.unit "first" () (B.await first)
+
+  (* blockadm-9t58 blockadm-86xw *)
   let test_blocking_run_and_stats () =
     B.with_runtime @@ fun _ctx rt ->
     let pool = BP.create ~name:"basic" (blocking_config ~max_threads:2 ()) in
@@ -82,6 +126,58 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "active" 0 stats.active;
     Alcotest.(check int) "queued" 0 stats.queued
 
+  (* blockadm-jqh0 blockadm-s15s blockadm-3yn4 *)
+  let test_blocking_stats_separate_waiting_from_queue () =
+    B.with_runtime @@ fun ctx rt ->
+    let pool =
+      BP.create ~name:"waiting-stats"
+        (blocking_config ~max_threads:1 ~max_queued:0 ())
+    in
+    let first =
+      B.fork_run ctx rt
+        (Eta_blocking.run ~pool (fun () -> Unix.sleepf 0.060))
+    in
+    wait_until (fun () -> (BP.stats pool).active = 1);
+    let second = B.fork_run ctx rt (Eta_blocking.run ~pool (fun () -> 2)) in
+    wait_until (fun () -> (BP.stats pool).waiting = 1);
+    let stats = BP.stats pool in
+    Alcotest.(check int) "one waiter" 1 stats.waiting;
+    Alcotest.(check int) "no queue entries" 0 stats.queued;
+    check_exit_ok Alcotest.unit "first" () (B.await first);
+    check_exit_ok Alcotest.int "second" 2 (B.await second);
+    Alcotest.(check int) "waiting cleared" 0 (BP.stats pool).waiting
+
+  (* blockadm-ov29 blockadm-609o blockadm-s15s *)
+  let test_blocking_cancelled_admission_waiter_records_evidence () =
+    B.with_runtime @@ fun ctx rt ->
+    let pool =
+      BP.create ~name:"cancel-waiter"
+        (blocking_config ~max_threads:1 ~max_queued:0 ())
+    in
+    let first =
+      B.fork_run ctx rt
+        (Eta_blocking.run ~pool (fun () -> Unix.sleepf 0.060))
+    in
+    wait_until (fun () -> (BP.stats pool).active = 1);
+    let callback_ran = Atomic.make false in
+    let waiter =
+      B.fork_run_cancelable ctx rt
+        (Eta_blocking.run ~pool (fun () -> Atomic.set callback_ran true))
+    in
+    wait_until (fun () -> (BP.stats pool).waiting = 1);
+    B.cancel_fiber waiter;
+    (match B.await_cancelable waiter with
+    | `Cancelled -> ()
+    | `Returned (Exit.Error cause) ->
+        Alcotest.(check bool) "waiter interruption" true
+          (Cause.is_interrupt_only cause)
+    | `Returned (Exit.Ok ()) -> Alcotest.fail "expected cancellation");
+    Alcotest.(check int) "waiting cleared" 0 (BP.stats pool).waiting;
+    Alcotest.(check int) "cancellation recorded" 1
+      (BP.stats pool).cancelled_before_start;
+    Alcotest.(check bool) "callback did not run" false (Atomic.get callback_ran);
+    check_exit_ok Alcotest.unit "first" () (B.await first)
+
   let test_blocking_result_lifts_result_value () =
     B.with_runtime @@ fun _ctx rt ->
     let ok =
@@ -92,6 +188,40 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     Alcotest.(check int) "ok" 7 (run_ok rt ok);
     B.run rt err |> check_typed_failure "err" (( = ) `Bad)
+
+  (* blockadm-3vwr blockadm-0cun *)
+  let test_blocking_try_run_result_completes_ok () =
+    B.with_runtime @@ fun _ctx rt ->
+    match B.run rt (Eta_blocking.try_run_result (fun () -> Ok 7)) with
+    | Exit.Ok (Eta_blocking.Completed value) ->
+        Alcotest.(check int) "completed value" 7 value
+    | Exit.Ok (Eta_blocking.Not_run _) -> Alcotest.fail "expected completion"
+    | Exit.Error cause ->
+        Alcotest.failf "expected completion, got %a" (Cause.pp pp_hidden) cause
+
+  (* blockadm-ztyh *)
+  let test_blocking_try_run_result_preserves_error () =
+    B.with_runtime @@ fun _ctx rt ->
+    B.run rt (Eta_blocking.try_run_result (fun () -> Error `Bad))
+    |> check_typed_failure "try_run_result error" (( = ) `Bad)
+
+  (* blockadm-mz5m *)
+  let test_blocking_try_run_exception_is_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    let pool = BP.create ~name:"try-defect" (blocking_config ()) in
+    let defect = Failure "try_run defect" in
+    (match
+       B.run rt
+         (Eta_blocking.try_run ~pool (fun () ->
+              (raise defect : int)))
+     with
+    | Exit.Error (Cause.Die die) when die.exn == defect -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected defect");
+    let stats = BP.stats pool in
+    Alcotest.(check int) "defect released slot" 0 stats.active;
+    Alcotest.(check int) "defect completed callback" 1 stats.completed
 
   let test_blocking_result_short_aliases () =
     B.with_runtime @@ fun _ctx rt ->
@@ -156,8 +286,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let pool =
       BP.create ~name:"blocking-result-timeout-started-drain"
-        (blocking_config ~max_threads:1 ~max_queued:0 ~queue_policy:BP.Reject
-           ~shutdown_policy:BP.Drain ())
+        (blocking_config ~max_threads:1 ~max_queued:0 ~shutdown_policy:BP.Drain
+           ())
     in
     let elapsed, exit =
       elapsed_us (fun () ->
@@ -178,8 +308,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun ctx rt ->
     let pool =
       BP.create ~name:"blocking-result-timeout-queued"
-        (blocking_config ~max_threads:1 ~max_queued:1 ~queue_policy:BP.Wait
-           ~shutdown_policy:BP.Drain ())
+        (blocking_config ~max_threads:1 ~max_queued:1 ~shutdown_policy:BP.Drain
+           ())
     in
     let blocker_done = Atomic.make false in
     let queued_ran = Atomic.make false in
@@ -207,32 +337,6 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "queued job cancelled" 1
       (BP.stats pool).cancelled_before_start
 
-  let test_blocking_reject_policy_deterministic () =
-    B.with_runtime @@ fun ctx rt ->
-    let pool =
-      BP.create ~name:"reject"
-        (blocking_config ~max_threads:1 ~max_queued:0 ~queue_policy:BP.Reject ())
-    in
-    let first =
-      B.fork_run ctx rt
-        (Eta_blocking.run ~pool ~name:"reject.first" (fun () ->
-             Unix.sleepf 0.060))
-    in
-    wait_until (fun () -> (BP.stats pool).active = 1);
-    let rejected =
-      List.init 4 (fun _ ->
-          match
-            B.run rt
-              (Eta_blocking.run ~pool ~name:"reject.extra" (fun () -> ()))
-          with
-          | Exit.Ok _ -> false
-          | Exit.Error _ -> true)
-    in
-    Alcotest.(check int) "rejected count observed" 4
-      (List.length (List.filter Fun.id rejected));
-    Alcotest.(check int) "rejected stats" 4 (BP.stats pool).rejected;
-    check_exit_ok Alcotest.unit "first" () (B.await first)
-
   let test_blocking_started_cancellation_is_nonpreemptive () =
     B.with_runtime @@ fun _ctx rt ->
     let pool =
@@ -252,7 +356,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check bool) "worker completed" true (Atomic.get completed);
     Alcotest.(check bool) "waited for started job" true (elapsed >= 25_000)
 
-  let test_blocking_shutdown_rejects_new_jobs () =
+  (* blockadm-okes blockadm-8a7k *)
+  let test_blocking_shutdown_interrupts_new_jobs () =
     B.with_runtime @@ fun _ctx rt ->
     let pool = BP.create ~name:"shutdown" (blocking_config ()) in
     run_ok rt (BP.shutdown pool);
@@ -260,8 +365,31 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       B.run rt
         (Eta_blocking.run ~pool ~name:"after-shutdown" (fun () -> ()))
     with
-    | Exit.Ok _ -> Alcotest.fail "expected shutdown rejection"
-    | Exit.Error cause -> check_die_message "shutdown" "Pool_shutting_down" cause
+    | Exit.Ok _ -> Alcotest.fail "expected shutdown interruption"
+    | Exit.Error cause ->
+        Alcotest.(check bool) "interruption" true
+          (Cause.is_interrupt_only cause)
+
+  (* blockadm-2qg5 blockadm-6nox blockadm-01e8 blockadm-680x *)
+  let test_blocking_try_run_reports_shutdown () =
+    B.with_runtime @@ fun _ctx rt ->
+    let pool = BP.create ~name:"try-shutdown" (blocking_config ()) in
+    run_ok rt (BP.shutdown pool);
+    let callback_ran = Atomic.make false in
+    (match
+       B.run rt
+         (Eta_blocking.try_run ~pool (fun () -> Atomic.set callback_ran true))
+     with
+    | Exit.Ok (Eta_blocking.Not_run Eta_blocking.Shutting_down) -> ()
+    | Exit.Ok _ -> Alcotest.fail "expected Not_run Shutting_down"
+    | Exit.Error cause ->
+        Alcotest.failf "expected shutdown outcome, got %a" (Cause.pp pp_hidden)
+          cause);
+    let stats = BP.stats pool in
+    Alcotest.(check bool) "callback did not run" false (Atomic.get callback_ran);
+    Alcotest.(check int) "shutdown not rejected" 0 stats.rejected;
+    Alcotest.(check int) "shutdown not cancelled" 0
+      stats.cancelled_before_start
 
   let test_blocking_shutdown_drain_waits_for_started () =
     B.with_runtime @@ fun ctx rt ->
@@ -278,6 +406,119 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let elapsed, () = elapsed_us (fun () -> run_ok rt (BP.shutdown pool)) in
     Alcotest.(check bool) "drain waited" true (elapsed >= 20_000);
     check_exit_ok Alcotest.unit "worker" () (B.await worker)
+
+  (* blockadm-2q6m blockadm-31qp *)
+  let test_blocking_shutdown_drain_runs_queued_job () =
+    B.with_runtime @@ fun ctx rt ->
+    let pool =
+      BP.create ~name:"drain-queued"
+        (blocking_config ~max_threads:1 ~max_queued:1
+           ~shutdown_policy:BP.Drain ())
+    in
+    let first =
+      B.fork_run ctx rt
+        (Eta_blocking.run ~pool (fun () -> Unix.sleepf 0.040))
+    in
+    wait_until (fun () -> (BP.stats pool).active = 1);
+    let queued_ran = Atomic.make false in
+    let queued =
+      B.fork_run ctx rt
+        (Eta_blocking.run ~pool (fun () -> Atomic.set queued_ran true))
+    in
+    wait_until (fun () -> (BP.stats pool).queued = 1);
+    run_ok rt (BP.shutdown pool);
+    check_exit_ok Alcotest.unit "first" () (B.await first);
+    check_exit_ok Alcotest.unit "queued" () (B.await queued);
+    Alcotest.(check bool) "queued callback ran" true (Atomic.get queued_ran)
+
+  (* blockadm-cjsj *)
+  let test_blocking_shutdown_detach_interrupts_queued_job () =
+    B.with_runtime @@ fun ctx rt ->
+    let pool =
+      BP.create ~name:"detach-queued"
+        (blocking_config ~max_threads:1 ~max_queued:1
+           ~shutdown_policy:BP.Detach_started ())
+    in
+    let first =
+      B.fork_run ctx rt
+        (Eta_blocking.run ~pool (fun () -> Unix.sleepf 0.040))
+    in
+    wait_until (fun () -> (BP.stats pool).active = 1);
+    let queued_ran = Atomic.make false in
+    let queued =
+      B.fork_run ctx rt
+        (Eta_blocking.run ~pool (fun () -> Atomic.set queued_ran true))
+    in
+    wait_until (fun () -> (BP.stats pool).queued = 1);
+    run_ok rt (BP.shutdown pool);
+    (match B.await queued with
+    | Exit.Error cause ->
+        Alcotest.(check bool) "queued interruption" true
+          (Cause.is_interrupt_only cause)
+    | Exit.Ok () -> Alcotest.fail "expected queued interruption");
+    Alcotest.(check bool) "queued callback did not run" false
+      (Atomic.get queued_ran);
+    ignore (B.await first : (unit, _) Exit.t)
+
+  (* blockadm-pa7p *)
+  let test_blocking_shutdown_drain_interrupts_admission_waiter () =
+    B.with_runtime @@ fun ctx rt ->
+    let pool =
+      BP.create ~name:"drain-waiter"
+        (blocking_config ~max_threads:1 ~max_queued:0
+           ~shutdown_policy:BP.Drain ())
+    in
+    let first =
+      B.fork_run ctx rt
+        (Eta_blocking.run ~pool (fun () -> Unix.sleepf 0.040))
+    in
+    wait_until (fun () -> (BP.stats pool).active = 1);
+    let waiter_ran = Atomic.make false in
+    let waiter =
+      B.fork_run ctx rt
+        (Eta_blocking.run ~pool (fun () -> Atomic.set waiter_ran true))
+    in
+    wait_until (fun () -> (BP.stats pool).waiting = 1);
+    run_ok rt (BP.shutdown pool);
+    (match B.await waiter with
+    | Exit.Error cause ->
+        Alcotest.(check bool) "waiter interruption" true
+          (Cause.is_interrupt_only cause)
+    | Exit.Ok () -> Alcotest.fail "expected waiter interruption");
+    Alcotest.(check bool) "waiter callback did not run" false
+      (Atomic.get waiter_ran);
+    Alcotest.(check int) "waiting cleared" 0 (BP.stats pool).waiting;
+    check_exit_ok Alcotest.unit "first" () (B.await first)
+
+  (* blockadm-17n6 *)
+  let test_blocking_shutdown_detach_interrupts_admission_waiter () =
+    B.with_runtime @@ fun ctx rt ->
+    let pool =
+      BP.create ~name:"detach-waiter"
+        (blocking_config ~max_threads:1 ~max_queued:0
+           ~shutdown_policy:BP.Detach_started ())
+    in
+    let first =
+      B.fork_run ctx rt
+        (Eta_blocking.run ~pool (fun () -> Unix.sleepf 0.040))
+    in
+    wait_until (fun () -> (BP.stats pool).active = 1);
+    let waiter_ran = Atomic.make false in
+    let waiter =
+      B.fork_run ctx rt
+        (Eta_blocking.run ~pool (fun () -> Atomic.set waiter_ran true))
+    in
+    wait_until (fun () -> (BP.stats pool).waiting = 1);
+    run_ok rt (BP.shutdown pool);
+    (match B.await waiter with
+    | Exit.Error cause ->
+        Alcotest.(check bool) "waiter interruption" true
+          (Cause.is_interrupt_only cause)
+    | Exit.Ok () -> Alcotest.fail "expected waiter interruption");
+    Alcotest.(check bool) "waiter callback did not run" false
+      (Atomic.get waiter_ran);
+    Alcotest.(check int) "waiting cleared" 0 (BP.stats pool).waiting;
+    ignore (B.await first : (unit, _) Exit.t)
 
   let test_blocking_worker_rejects_nested_run () =
     B.with_runtime @@ fun _ctx rt ->
@@ -324,10 +565,24 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         [
           Alcotest.test_case "run and stats" `Quick
             test_blocking_run_and_stats;
+          Alcotest.test_case "stats separate waiting from queue" `Quick
+            test_blocking_stats_separate_waiting_from_queue;
+          Alcotest.test_case "cancelled admission waiter records evidence" `Quick
+            test_blocking_cancelled_admission_waiter_records_evidence;
           Alcotest.test_case "run executes blocking function" `Quick
             test_blocking_run_executes;
+          Alcotest.test_case "try_run completes" `Quick
+            test_blocking_try_run_completes;
+          Alcotest.test_case "try_run reports saturation" `Quick
+            test_blocking_try_run_reports_saturation_without_queueing;
           Alcotest.test_case "result lifts result" `Quick
             test_blocking_result_lifts_result_value;
+          Alcotest.test_case "try_run_result completes Ok" `Quick
+            test_blocking_try_run_result_completes_ok;
+          Alcotest.test_case "try_run_result preserves Error" `Quick
+            test_blocking_try_run_result_preserves_error;
+          Alcotest.test_case "try_run exception is defect" `Quick
+            test_blocking_try_run_exception_is_defect;
           Alcotest.test_case "result short aliases" `Quick
             test_blocking_result_short_aliases;
           Alcotest.test_case "result exception is defect" `Quick
@@ -340,14 +595,22 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_blocking_result_timeout_bounds_started_drain_wait;
           Alcotest.test_case "result_timeout cancels queued work" `Quick
             test_blocking_result_timeout_cancels_queued_work;
-          Alcotest.test_case "reject deterministic" `Quick
-            test_blocking_reject_policy_deterministic;
           Alcotest.test_case "started cancellation nonpreemptive" `Quick
             test_blocking_started_cancellation_is_nonpreemptive;
-          Alcotest.test_case "shutdown rejects new jobs" `Quick
-            test_blocking_shutdown_rejects_new_jobs;
+          Alcotest.test_case "shutdown interrupts new jobs" `Quick
+            test_blocking_shutdown_interrupts_new_jobs;
+          Alcotest.test_case "try_run reports shutdown" `Quick
+            test_blocking_try_run_reports_shutdown;
           Alcotest.test_case "shutdown drain waits" `Quick
             test_blocking_shutdown_drain_waits_for_started;
+          Alcotest.test_case "shutdown drain runs queued" `Quick
+            test_blocking_shutdown_drain_runs_queued_job;
+          Alcotest.test_case "shutdown detach interrupts queued" `Quick
+            test_blocking_shutdown_detach_interrupts_queued_job;
+          Alcotest.test_case "shutdown drain interrupts admission waiter" `Quick
+            test_blocking_shutdown_drain_interrupts_admission_waiter;
+          Alcotest.test_case "shutdown detach interrupts admission waiter"
+            `Quick test_blocking_shutdown_detach_interrupts_admission_waiter;
           Alcotest.test_case "worker rejects nested run" `Quick
             test_blocking_worker_rejects_nested_run;
           Alcotest.test_case "worker rejects runtime run" `Quick

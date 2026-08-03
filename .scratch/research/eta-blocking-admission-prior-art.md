@@ -10,7 +10,8 @@ for Eta?
 The selected Eta contract has these parts:
 
 - `try_run` and `try_run_result` select fail-fast admission at the operation.
-- Admission can use an available worker or configured queue capacity.
+- Admission requires an immediately available worker and never uses queue
+  capacity.
 - Saturation does not run the callback.
 - Shutdown before callback start does not run the callback.
 - The result is `Completed value` or `Not_run admission_failure`.

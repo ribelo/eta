@@ -59,6 +59,14 @@ let () =
             test_blocking_pool_custom_runner;
           Alcotest.test_case "runner cancellation releases started slot" `Quick
             test_blocking_runner_cancellation_releases_started_slot;
+          Alcotest.test_case "try_run cancellation before worker claim" `Quick
+            test_blocking_try_run_cancellation_before_worker_claim;
+          Alcotest.test_case "try_run shutdown before worker claim" `Quick
+            test_blocking_try_run_shutdown_before_worker_claim;
+          Alcotest.test_case "try_run drain cancellation before worker claim"
+            `Quick test_blocking_try_run_drain_cancellation_before_worker_claim;
+          Alcotest.test_case "try_run drain shutdown before worker claim" `Quick
+            test_blocking_try_run_drain_shutdown_before_worker_claim;
           Alcotest.test_case "direct control and heartbeat" `Quick
             test_blocking_direct_control_and_blocking_heartbeat;
           Alcotest.test_case "wait caps active and queue" `Quick
@@ -77,10 +85,14 @@ let () =
             test_blocking_cpu_antipattern_has_no_speedup;
           Alcotest.test_case "observability labels timings" `Quick
             test_blocking_observability_labels_and_timings;
+          Alcotest.test_case "saturation telemetry" `Quick
+            test_blocking_saturation_telemetry_uses_saturated;
           Alcotest.test_case "eio cancellation preserves Cancelled identity" `Quick
             test_blocking_eio_cancellation_preserves_cancelled_identity;
           Alcotest.test_case "cause_of_exn distinguishes Exit from Cancelled" `Quick
             test_cause_of_exn_distinguishes_exit_from_cancelled;
+          Alcotest.test_case "try_run composed timeout before worker claim"
+            `Quick test_blocking_try_run_composed_timeout_before_worker_claim;
         ] );
       ( "Supervisor",
         [

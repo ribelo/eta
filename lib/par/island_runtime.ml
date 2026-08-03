@@ -49,7 +49,6 @@ module Pool = struct
     {
       Eta_blocking.Pool.max_threads = 128;
       max_queued = 64;
-      queue_policy = Eta_blocking.Pool.Wait;
       shutdown_policy = Eta_blocking.Pool.Detach_started;
     }
 
