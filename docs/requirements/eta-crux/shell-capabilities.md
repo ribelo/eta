@@ -17,8 +17,8 @@ to the OCaml core.
 Declarative platform state is output state. Application code exposes it through
 fragments, and the shell renders it. User responses return as inbound actions.
 
-Imperative platform work is a typed outbound capability message. A command whose
-work needs shell-owned behavior sends the outbound capability message through an
+Imperative platform work is a typed outbound capability message. Command work
+that needs shell-owned behavior sends the outbound capability message through an
 injected sender. The shell performs the work and reports completion, failure, or
 user response by dispatching an ordinary inbound action.
 

@@ -19,7 +19,7 @@ bounded action queue
     v
 driver advancement
     |
-    +--> cell transition: input status -> model -> action -> model * scheduled_command list
+    +--> cell transition: input status -> model -> action -> model * scheduled-command list
     |
     +--> graph stabilization
     |
@@ -27,7 +27,7 @@ driver advancement
     |
     +--> fragment observation
     |
-    +--> command spawn
+    +--> command-work start
              |
              v
         Eta effect resolves to action
@@ -39,14 +39,15 @@ driver advancement
 ## Definitions
 
 - **Application instance** — a live Eta Crux root computation with an internal
-  graph, action admission, driver operations, output observation, command and
-  subscription ownership, and shutdown.
+  graph, action admission, driver operations, output observation,
+  scheduled-command and subscription ownership, and shutdown.
 - **Root computation** — the top-level computation returned by the application's
   graph-construction function.
 - **Cell** — a graph-native state-machine computation node with local model
   storage, a local action type, a transition function, lifecycle scope, result
   value, and inject function.
-- **Model** — cell-owned state stored inside the computation graph.
+- **Model** — the application value owned by one cell. State remains the general
+  term for runtime state or aggregate application state.
 - **Read-only model value** — the computation value through which application
   code observes a cell model.
 - **Action** — a typed event addressed to the cell that created the inject
@@ -55,21 +56,43 @@ driver advancement
   cell.
 - **Input status** — the value supplied to an input-dependent cell transition:
   either current input or inactive input status.
-- **Scheduled command** — command work plus Eta Crux execution metadata.
+- **Scheduled command** — command work plus Eta Crux ownership, ordering, and
+  replacement metadata.
 - **Command work** — a force-total Eta effect that resolves to one action.
-- **Command slot** — a per-cell replacement key for command work where a new
-  command interrupts the previous current command in that slot.
+- **Command slot** — a per-cell replacement key for scheduled commands. A new
+  scheduled command interrupts the current command work in that slot.
 - **Subscription** — a state-derived long-lived Eta stream source whose items are
   mapped to actions.
-- **Fragment** — optional typed output derived from cell state or computation
-  values and exposed at an address in the output tree.
+- **Fragment** — one optional typed output value derived from a model or
+  computation value and exposed at an address.
+- **Output tree** — the aggregate of all live fragments in an application
+  instance.
+- **Startup input** — the reserved name for host-supplied startup data. Its type
+  and lifecycle remain open.
 - **Adapter** — host-specific code that submits inbound actions, observes
   fragments, and forwards outbound capability messages.
+- **Message** — a boundary envelope or shell-capability value. A cell input is an
+  action, not a message.
 - **Capability message** — a typed outbound message asking an external shell to
   perform shell-owned work or stop shell-owned work.
 - **Driver operation** — an explicit operation used by a host or test to submit
   actions, advance ready work, observe outputs, advance test time, or request
   shutdown.
+
+## Elm correspondence
+
+This table explains familiar roles. It does not define Elm compatibility or
+require Elm-style OCaml identifiers.
+
+| Eta Crux | Familiar analogue | Difference |
+|---|---|---|
+| Action | Elm `Msg` | An action addresses one cell. An Elm message enters one root update function. |
+| Cell model | Elm `Model` | Each cell owns a model. Eta Crux has no required root-wide model. |
+| Scheduled-command list | Elm `Cmd msg` | `[]` serves the role of `Cmd.none`. List construction and concatenation serve the role of `Cmd.batch`. Each scheduled command carries Eta Crux metadata. |
+| Command work | Elm `Task x a` converted with `Task.attempt` | Typed failures become actions before scheduling. Eta defects and interruption keep Eta semantics. Eta effect composition serves the role of `Task.andThen`. |
+| Subscription list | Elm `Sub msg` | `[]` serves the role of `Sub.none`. List construction and concatenation serve the role of `Sub.batch`. Eta Crux reconciles Eta stream sources by subscription identity. |
+| Fragment and output tree | Rust Crux `ViewModel`, or an Elm `view` result | A fragment is one addressed output value. The output tree is the aggregate. |
+| Startup input | Elm flags | The name is fixed. Its type and lifecycle remain open. |
 
 ## Analogy
 

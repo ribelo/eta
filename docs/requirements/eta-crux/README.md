@@ -21,8 +21,8 @@ and a composed application is a graph of cells under the root computation.
 Eta Crux uses Eta effects for command work, Eta streams for subscriptions, and
 Eta Runtime semantics when hosted as an Eta effect. UI adapters and output
 fragments are optional. A headless application still runs actions, transitions,
-commands, subscriptions, lifecycle, and shutdown through the same computation
-model.
+command work from scheduled commands, subscriptions, lifecycle, and shutdown
+through the same computation model.
 
 Hosts integrate with an Eta Crux application instance through explicit driver
 operations: submit actions, advance ready work, observe outputs, advance test
@@ -40,10 +40,10 @@ to depend on it.
   library `Eta_crux`. ^pkg-a1c7
 - The root `eta` package shall not depend on `eta_crux`. ^pkg-9f3d
 - When an application depends on `eta_crux`, eta_crux shall own that application's
-  computation graph and cell state. ^pkg-4k8e
+  computation graph and cell models. ^pkg-4k8e
 - When an Eta Crux application is created without a UI adapter, eta_crux shall
-  still provide action processing, command execution, subscription execution,
-  lifecycle handling, and shutdown. ^arch-2m6p
+  still provide action processing, execution of command work from scheduled
+  commands, subscription execution, lifecycle handling, and shutdown. ^arch-2m6p
 - When application code defines an Eta Crux application, eta_crux shall require
   the application to be a root computation. ^arch-g9m4
 - When a host integrates with an Eta Crux application instance, eta_crux shall
@@ -58,7 +58,7 @@ to depend on it.
 - [[docs/requirements/eta-crux/composition]] — graph composition, dynamic
   structure, and keyed cells.
 - [[docs/requirements/eta-crux/tick]] — action processing, stabilization,
-  lifecycle order, observation, and command spawning.
+  lifecycle order, observation, and the start order for command work.
 - [[docs/requirements/eta-crux/lifecycle]] — application handles, driver
   operations, startup, activation, shutdown, and hosted drivers.
 - [[docs/requirements/eta-crux/dispatch]] — action admission, inject functions,
@@ -79,6 +79,6 @@ to depend on it.
 - [[docs/requirements/eta-crux/errors]] — typed errors as actions, fatal
   defects, crash reports, and teardown.
 - [[docs/requirements/eta-crux/testing]] — synchronous transition harness,
-  real-driver harness, command handles, and scoped exhaustivity.
+  real-driver harness, scheduled-command handles, and scoped exhaustivity.
 - [[docs/requirements/eta-crux/engine-strategy]] — `eta_signal` and
   `eta_signal_map` engine prerequisites.

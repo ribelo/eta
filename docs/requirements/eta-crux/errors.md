@@ -12,9 +12,9 @@ traces_to: []
 Expected failures are application values. Command work and subscription sources
 fold typed failures into actions before they reach Eta Crux as scheduled work.
 
-Defects are fatal to the application instance. A defect in a transition, init
-work, command fiber, subscription source, lifecycle operation, or resource
-release stops the instance through the crash path.
+Defects are fatal to the application instance. This rule includes defects in
+transitions, init work, command work, subscription sources, lifecycle operations,
+and resource release.
 
 The crash path captures an Eta `Cause` and crash context, invokes the
 application crash handler, and then runs ordered teardown. Model data appears in
@@ -28,7 +28,7 @@ it does not render UI.
 - When command work or a subscription source produces a typed failure, eta_crux
   shall receive that failure only as an action produced by application error
   folding. ^err-4k9t
-- If a defect occurs in a transition, init work, command fiber, subscription
+- If a defect occurs in a transition, init work, command work, subscription
   source, lifecycle operation, or resource release, then eta_crux shall treat the
   defect as fatal to the application instance. ^err-7m2p
 - If a fatal defect occurs, then eta_crux shall capture the Eta `Cause`,
@@ -40,8 +40,8 @@ it does not render UI.
 - If a fatal defect occurs in a cell without a model snapshot hook, then eta_crux
   shall omit that cell's model data from the crash report. ^err-v6p1
 - If a fatal defect occurs, then eta_crux shall tear down cleanly by closing
-  action admission, disposing the graph, interrupting in-flight commands and
-  subscriptions, releasing managed resources, and stopping observers. ^err-b6n1
+  action admission, disposing the graph, interrupting in-flight command work and
+  subscription sources, releasing managed resources, and stopping observers. ^err-b6n1
 - While an application instance is in a crashed state, eta_crux shall reject new
   action admission and shall not advance further application work. ^err-2h8v
 - When eta_crux produces a crash report, eta_crux shall deliver the report to the

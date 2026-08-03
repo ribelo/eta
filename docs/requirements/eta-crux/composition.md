@@ -1,6 +1,6 @@
 ---
 kind: requirement
-tags: [eta_crux, composition, cells, messages]
+tags: [eta_crux, composition, cells, actions]
 refines: ["[[docs/requirements/eta-crux/README]]"]
 depends_on: ["[[docs/requirements/eta-crux/core-loop]]", "[[docs/requirements/eta-crux/commands-and-effects]]"]
 traces_to: ["[[docs/prds/0002-eta-signal-frp]]"]
@@ -22,9 +22,9 @@ composition selects branches and keyed collections from computation values.
 sub-computation per live key and preserves that sub-computation while the key
 remains live.
 
-Child-to-parent notification is expressed as ordinary command construction: a
-parent passes a constructor to a child, and the child schedules the constructed
-command as part of its transition result.
+Child-to-parent notification uses ordinary scheduled-command construction. A
+parent passes a constructor to a child. The child returns the constructed
+scheduled command as part of its transition result.
 
 ## Requirements
 
@@ -40,7 +40,7 @@ command as part of its transition result.
 - While a keyed dynamic collection is live, eta_crux shall maintain one scoped
   sub-computation per live key. ^compose-7d2v
 - While a key remains present in a keyed dynamic collection, eta_crux shall
-  preserve that key's associated cell state and lifecycle scope. ^compose-k8hp
+  preserve that key's associated cell model and lifecycle scope. ^compose-k8hp
 - When a key enters a keyed dynamic collection, eta_crux shall create and activate
   that key's associated scope. ^compose-dz9r
 - When a key leaves a keyed dynamic collection, eta_crux shall deactivate and
@@ -48,13 +48,13 @@ command as part of its transition result.
 - When data changes for an existing key in a keyed dynamic collection,
   eta_crux shall update that key's computation input without
   recreating the key's scope. ^compose-jync
-- When a parent passes a command constructor to a child, eta_crux
-  shall let the child return the constructed command among the
+- When a parent passes a scheduled-command constructor to a child, eta_crux
+  shall let the child return the constructed scheduled command among the
   child's scheduled commands. ^compose-3j6k
 
 ## Open questions
 
 - Whether Eta Crux also exposes a dedicated upward-output channel in addition to
-  command constructors passed down by parents.
-- Recommended API for threading a parent's command constructor through nested
-  child components.
+  scheduled-command constructors passed down by parents.
+- Recommended API for threading a parent's scheduled-command constructor through
+  nested child components.

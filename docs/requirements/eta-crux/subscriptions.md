@@ -22,6 +22,9 @@ Subscription sources are Eta streams. Stream items are mapped to actions and
 admitted through the owner-domain action producer path. Stopping a subscription
 interrupts the stream fiber and runs its release path.
 
+Application code composes subscriptions as ordinary lists. The empty list means
+that the application desires no subscriptions.
+
 ## Requirements
 
 - When graph stabilization completes, eta_crux shall derive the desired
@@ -48,8 +51,8 @@ interrupts the stream fiber and runs its release path.
 - When a subscription stream emits an item, eta_crux shall map the item
   to an action and enqueue the action through the owner-domain
   producer path. ^sub-q2r8
-- When application code composes subscriptions, eta_crux shall provide an empty
-  subscription and a batch combinator. ^sub-n8v5
+- When application code composes subscriptions, eta_crux shall represent that
+  composition as a list of subscriptions. ^sub-zg59
 - When a subscription source reports a typed error, eta_crux shall fold that error
   into an action; when a subscription source defects, eta_crux shall route the
   defect to the crash boundary. ^sub-e4t7

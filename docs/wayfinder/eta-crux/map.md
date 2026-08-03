@@ -38,6 +38,8 @@ Working agreements:
 
 <!-- one line per closed ticket: enough to judge relevance, then follow the link -->
 
+- [Vocabulary: Elm names and the Task framing](issues/03-vocabulary-elm-names.md) — Eta Crux keeps precise native terms, uses lists for composition, and documents Elm analogues without compatibility.
+
 ## Not yet specified
 
 - **The public API surface.** Roughly eleven questions across the notes — the application
@@ -62,7 +64,7 @@ Working agreements:
   backend settles before processing an action — the question that Bonsai answers with a
   stabilization tracker. It does not arise under plain state and returns with the graph
   backend.
-- **Composition ergonomics.** Threading a parent's command constructor through nested
+- **Composition ergonomics.** Threading a parent's scheduled-command constructor through nested
   children, and whether a dedicated upward-output channel exists alongside it.
 
 ## Out of scope
