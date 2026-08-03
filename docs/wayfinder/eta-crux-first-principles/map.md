@@ -56,10 +56,11 @@ deliverable. Implementation is not part of this map.
 - [Reference semantics worth keeping](issues/02-reference-semantics.md) — Keep Bonsai computation laws and Incremental engine laws. Keep only the managed-effects idea from Elm and Rust Crux. Reject copied capability ports, Cmd/Sub, and fragment trees ([report](../../../.scratch/research/eta-crux/reference-semantics.md)).
 - [Graph-neutral computation descriptions](issues/03-public-computation-api.md) — Use one identity-bearing, root-neutral `'a t`. Each root creates isolated live state, and no root can enter description composition ([Bonsai history](../../../.scratch/research/eta-crux/bonsai-functor-history.md)).
 - [Keyed assoc and stable child identity](issues/04-keyed-assoc-contract.md) — Use `Assoc(Map.S)` and one private transactional keyed-map node. Continuous presence keeps state. Committed removal makes re-entry fresh.
-- [Action injection and staged Eta effects](issues/05-action-effect-protocol.md) — State machines return immutable models plus typed-infallible Eta effects. Typed endpoints enqueue actions, while explicit exports add boundary codecs.
+- [Action injection and staged Eta effects](issues/05-action-effect-protocol.md) — State machines return immutable models plus typed-infallible Eta effects. Typed endpoints report ingress closure, while explicit exports add boundary codecs.
 - [Deterministic advancement transaction](issues/06-advancement-transaction.md) — Process one message atomically, return output plus mandatory post-commit work, then drain until idle.
 - [Dynamic lifetime and work ownership](issues/07-dynamic-lifetime-ownership.md) — Committed absence disposes fresh-incarnation child scopes. Scoped Eta programs and transition effects follow the structural ownership tree.
 - [Long-lived sources and subscriptions](issues/08-subscriptions-and-sources.md) — Use a thin `Source` computation with a two-phase Eta producer. Spec equality preserves producers, readiness gates same-commit effects, and terminal outcomes become actions.
+- [Failure, defect, and crash boundary](issues/11-failure-boundary.md) — Escaping non-interruption causes end the root. Detection closes ingress, one mandatory batch settles teardown, and final reports preserve ordered Eta causes.
 - [Eta supervised work substrate](issues/19-eta-supervised-work-substrate.md) — Eta adds request-only supervisor cancellation. Eta Crux registers gated work, requests removed-subtree cancellation, then releases new work without waiting for old cleanup.
 
 ## Not yet specified

@@ -2,7 +2,7 @@
 
 Type: prototype
 Status: open
-Blocked by: 06, 10, 13, 16, 17
+Blocked by: 06, 10, 11, 13, 16, 17
 
 ## Question
 
@@ -16,8 +16,9 @@ Compare:
 - committed models and typed root outputs.
 - staged host-operation requests and resolutions.
 - endpoint activation, invocation, and revocation.
-- stale and malformed delivery results.
+- stale, malformed, full, and closed admission results.
 - effect start and cancellation traces.
+- crash detection and final settlement traces.
 - synchronous re-entry rejection.
 - local-path allocation, remote-handle lookup, and encoding overhead.
 

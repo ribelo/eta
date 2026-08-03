@@ -2,7 +2,7 @@
 
 Type: prototype
 Status: open
-Blocked by: 05, 07
+Blocked by: 05, 07, 11
 
 ## Question
 
@@ -19,9 +19,13 @@ Decide:
 - session-scoped generational remote handles.
 - the core-side registry and its existential codec packaging.
 - how `Endpoint.contramap` narrows the remotely accepted payload.
-- errors for unknown, stale, malformed, and revoked invocations.
+- errors for unknown, stale, malformed, revoked, full, and closed invocations.
 - whether local transport performs any remote-handle lookup or encoding.
 
 The shell must not receive an internal graph path, machine identifier, complete
 action protocol, closure, or type witness. Local and serialized invocation must
 enqueue the same typed message.
+
+Core endpoint admission returns only `Ingress_closed`. A nonblocking exported
+invocation also needs a capacity result. This ticket must keep transport and
+handle failures distinct from both results.

@@ -2,7 +2,7 @@
 
 Type: grilling
 Status: open
-Blocked by: 05, 07, 08, 10
+Blocked by: 05, 07, 08, 10, 11
 
 ## Question
 
@@ -18,6 +18,8 @@ control, and one long-lived host source. Decide:
 - late, duplicate, missing, and streaming responses.
 - whether in-process typed calls differ from cross-process serialized calls.
 - which failures belong to Eta Crux, the application protocol, or the adapter.
+- how `Ingress_closed` affects request admission and pending resolution.
+- how root crash settlement closes unresolved host requests.
 
 One-shot resolution is separate from repeated state-machine endpoints. Do not
 copy Rust Crux request machinery merely because it exists.
@@ -25,3 +27,7 @@ copy Rust Crux request machinery merely because it exists.
 Long-lived repeated host events use the generic producer from [Long-lived
 sources and subscriptions](08-subscriptions-and-sources.md). This ticket owns
 one-shot request resolution and does not add another streaming response path.
+
+[Failure, defect, and crash boundary](11-failure-boundary.md) keeps admission
+closure separate from interruption and root crash. The request protocol must
+preserve those distinctions.

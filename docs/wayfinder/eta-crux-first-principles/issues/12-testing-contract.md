@@ -18,6 +18,9 @@ Decide how tests:
 - control time and long-lived sources.
 - assert dynamic activation, disposal, keyed identity, and stale injection.
 - assert typed failures, defects, and cleanup causes.
+- arbitrate ingress closure against endpoint admission.
+- arbitrate commit against fatal detection and batch start against stop.
+- inspect primary failures, ordered secondary records, and final settlement.
 - request exhaustive checks without depending on internal node structure.
 - test a host adapter through a recording fake.
 

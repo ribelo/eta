@@ -43,8 +43,12 @@ type never = |
 
 module Endpoint : sig
   type 'message t
+  type admission_error = Ingress_closed
 
-  val send : 'message t -> 'message -> (unit, never) Eta.Effect.t
+  val send :
+    'message t ->
+    'message ->
+    (unit, admission_error) Eta.Effect.t
 
   val contramap :
     'target t -> f:('source -> 'target) -> 'source t
@@ -82,7 +86,9 @@ end
 endpoint delivery. [Deterministic advancement transaction](06-advancement-transaction.md)
 defines root advancement and observation.
 [Dynamic lifetime and work ownership](07-dynamic-lifetime-ownership.md) defines
-lifecycle programs and ownership. [OCaml API syntax and ergonomics](14-ocaml-api-ergonomics.md)
+lifecycle programs and ownership.
+[Failure, defect, and crash boundary](11-failure-boundary.md) defines admission
+closure and root failure. [OCaml API syntax and ergonomics](14-ocaml-api-ergonomics.md)
 decides derived helpers and syntax.
 
 Children are ordinary functions that return descriptions. Eta Crux does not
