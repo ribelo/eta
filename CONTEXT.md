@@ -1,5 +1,10 @@
 # Eta domain glossary
 
+## Eta Crux
+
+An Eta-native framework for incremental, composable state machines. It is
+generic application-computation infrastructure, not a UI or GUI framework.
+
 ## Diffable map
 
 An immutable ordered map that can compare two snapshots and report key
@@ -118,6 +123,95 @@ private reconciliation state and host event registrations for that root.
 
 The means by which the application core and shell exchange information. A
 transport does not change application semantics.
+
+Local request transport carries typed values directly. Serialized request
+transport adds codecs, authenticated identities, and protocol errors.
+
+## Request
+
+A framework-owned one-shot exchange across the shell boundary. Eta Crux gives
+each request opaque identity and accepts one resolution. The structural scope
+that starts or receives the request owns it.
+
+## Pending request
+
+A request that has no accepted resolution and whose owning scope remains active.
+It remains pending until resolution, initiator cancellation, owner disposal, or
+root termination. Eta Crux adds no default timeout.
+
+## Request capacity
+
+The root-wide bound on all pending inbound and outbound requests. Outbound Eta
+effects can wait for capacity. Nonblocking inbound admission reports `Full`.
+`Root.create` requires a separate positive request capacity. There is no default
+or unbounded mode.
+
+## Request resolution
+
+The first accepted typed response for a request. Expected operation failure is
+part of the application-defined response value, not the framework lifecycle.
+A later resolution attempt returns `Not_pending`.
+
+## Request cancellation
+
+A terminal request outcome caused by initiator cancellation, owner disposal, or
+root termination. Eta Crux closes the request identity before it sends a
+cancellation notice. The notice requires no peer acknowledgment.
+
+A waiting peer observes one reason: `Initiator_cancelled`, `Owner_disposed`,
+`Root_stopped`, `Root_crashed`, or `Session_closed`. The reason contains no Eta
+cause or structural data.
+
+A serialized-session replacement does not replay requests from the old session.
+
+## Outbound request
+
+A request that the application core starts and the shell resolves.
+
+## Requester
+
+An explicit typed value that grants authority to start one kind of outbound
+request. Application or adapter modules can wrap a requester as a domain
+operation.
+
+The integration constructs transport-bound requesters and passes them to the
+application builder as ordinary typed dependencies.
+
+A requester effect requires Eta Crux-owned work with a structural owner. Use in
+another execution context is invalid.
+
+## Request event
+
+A driver event that asks the shell to dispatch one outbound request. It carries
+an opaque token for dispatch acknowledgment and later resolution.
+
+Dispatch acknowledgment means that the peer accepted the request and installed
+its response and cancellation paths. It does not mean that the operation is
+complete.
+
+Cancellation and dispatch acceptance use first-winner arbitration. A canceled
+unaccepted request does not start. An accepted request receives a cancellation
+notice.
+
+## Inbound request
+
+A request that the shell starts and the application core resolves.
+
+## Request export
+
+A structural computation occurrence that accepts one kind of inbound request.
+It maps each admitted request and its responder to an ordinary action.
+
+The export wraps an endpoint for the request and responder pair. Serialized
+transport adds separate request and response codecs.
+
+## Responder
+
+An opaque value that grants authority to resolve one inbound request. The
+application can retain it for later work in the owning structural scope.
+
+Successful resolution means that Eta Crux accepted the first response and
+queued its handoff. It does not mean that the peer consumed the response.
 
 ## Advancement
 

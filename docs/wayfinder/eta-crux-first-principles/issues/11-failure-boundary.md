@@ -98,6 +98,7 @@ module Failure : sig
     | Transition
     | Owned_work
     | Adapter_delivery
+    | Request_dispatch
     | Export_dispatch
     | Cleanup
     | Crash_handler
@@ -132,6 +133,12 @@ programs, and source work.
 `Adapter_delivery` covers committed output delivery. `Cleanup` covers failures
 from root teardown. `Crash_handler` covers the application crash handler and its
 diagnostic hooks.
+
+`Request_dispatch` covers adapter request-protocol defects and failure to accept
+an admitted response or cancellation handoff. A reported failure before
+outbound dispatch acceptance remains the typed `Dispatch_failed` request error.
+[Host capabilities and request-response](13-host-capabilities-and-requests.md)
+defines this boundary.
 
 `Export_dispatch` covers defects from exported payload decoders and narrowed
 endpoint mappers. Synchronous invocation latches root crash, closes ingress, and

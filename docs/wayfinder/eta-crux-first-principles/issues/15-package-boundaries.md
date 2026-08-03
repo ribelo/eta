@@ -22,5 +22,5 @@ Decide the package and dependency graph for:
 
 Apply the repository's install-only-what-you-use rule. The root `eta` package
 must not depend on Eta Crux. Do not split a package only to hide an internal
-module. Keep renderer, FFI, test, and PPX dependencies out of ordinary Eta Crux
-applications.
+module. Keep host-specific, FFI, test, and PPX dependencies out of ordinary Eta
+Crux applications.

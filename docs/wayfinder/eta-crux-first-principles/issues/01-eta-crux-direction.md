@@ -44,9 +44,10 @@ One deterministic advancement primitive defines runtime semantics. A hosted Eta
 loop and an explicit test or adapter driver both use that primitive.
 
 The root computation yields one typed result. That result is the canonical
-semantic output. Host adapters own rendering and host reconciliation. A
-host adapter retains and reconciles complete root snapshots. V1 exposes no
-typed observation plan, fragments, paths, type witnesses, `Obj`, or raw
+semantic output. Host adapters own host interpretation and reconciliation. A
+host adapter retains and reconciles complete root snapshots. Rendering is one
+possible host interpretation. V1 exposes no typed observation plan, fragments,
+paths, type witnesses, `Obj`, or raw
 `eta_signal` types. [Ticket 09](09-typed-observation-plan.md) records the
 prototype evidence.
 

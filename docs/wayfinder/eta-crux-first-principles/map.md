@@ -2,10 +2,10 @@
 
 ## Destination
 
-An implementation-ready V1 design for `eta_crux`: an Eta-native,
-unidirectional application-computation framework. The design must use OCaml and
-Eta well, use `eta_signal` only where it earns its place, and leave no design
-question for implementation.
+An implementation-ready V1 design for `eta_crux`: an Eta-native framework for
+incremental, composable state machines. The design must use OCaml and Eta well,
+use `eta_signal` only where it earns its place, and leave no design question for
+implementation.
 
 ## Notes
 
@@ -27,8 +27,9 @@ The existing material is provisional input, not settled direction:
 
 Sliml is the first adapter experiment and remains useful prior evidence. Taumel
 is the first active consumer and the near-term testing ground. Neither project
-defines the architecture. A host adapter owns rendering. Eta Crux ends at
-compositional computation and typed output.
+defines the architecture. A host adapter interprets typed output for its host.
+Rendering is one possible interpretation. Eta Crux is not a UI or GUI
+framework.
 
 Eta Crux keeps a functional core with an imperative shell and a generic core
 with specific shells. Shell placement is a transport choice. V1 includes both
@@ -52,7 +53,7 @@ deliverable. Implementation is not part of this map.
 
 ## Decisions so far
 
-- [Eta Crux first-principles direction](issues/01-eta-crux-direction.md) — Build a Bonsai-like layer over private `eta_signal`, with Eta effects, deterministic advancement, typed output, and host-owned rendering.
+- [Eta Crux first-principles direction](issues/01-eta-crux-direction.md) — Build incremental, composable state machines over private `eta_signal`, with Eta effects, deterministic advancement, and host-interpreted typed output.
 - [Reference semantics worth keeping](issues/02-reference-semantics.md) — Keep Bonsai computation laws and Incremental engine laws. Keep only the managed-effects idea from Elm and Rust Crux. Reject copied capability ports, Cmd/Sub, and fragment trees ([report](../../../.scratch/research/eta-crux/reference-semantics.md)).
 - [Graph-neutral computation descriptions](issues/03-public-computation-api.md) — Use one identity-bearing, root-neutral `'a t`. Each root creates isolated live state, and no root can enter description composition ([Bonsai history](../../../.scratch/research/eta-crux/bonsai-functor-history.md)).
 - [Keyed assoc and stable child identity](issues/04-keyed-assoc-contract.md) — Use `Assoc(Map.S)` and one private transactional keyed-map node. Continuous presence keeps state. Committed removal makes re-entry fresh.
@@ -66,6 +67,7 @@ deliverable. Implementation is not part of this map.
 - [Exported endpoint and handle contract](issues/16-exported-endpoint-contract.md) — Use structural export nodes, bounded ingress, authenticated handles, and per-export dispatch permits across local and serialized shells.
 - [Eta supervised work substrate](issues/19-eta-supervised-work-substrate.md) — Eta adds request-only supervisor cancellation. Eta Crux registers gated work, requests removed-subtree cancellation, then releases new work without waiting for old cleanup.
 - [Generic host adapter contract](issues/10-generic-host-adapter.md) — Use a pull driver with one-shot delivery tokens, an optional resource-bracketed hosted loop, and adapter-owned scheduling and reconciliation.
+- [Host capabilities and request-response](issues/13-host-capabilities-and-requests.md) — Use explicit typed requesters and structural request exports with one-shot identity, scoped ownership, bounded capacity, and transport-equivalent driver handoff.
 
 ## Not yet specified
 

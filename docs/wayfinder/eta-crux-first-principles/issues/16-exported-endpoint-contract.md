@@ -100,6 +100,10 @@ local value returns `Revoked` before re-entry and `Stale` after re-entry.
 Registry activation and revocation belong to the atomic structural commit. A
 new handle is active before the adapter receives its output.
 
+`Request_export` reuses these active-interval, generation, revocation, re-entry,
+and dispatch-permit laws. It keeps a separate request and response protocol, as
+defined by [Host capabilities and request-response](13-host-capabilities-and-requests.md).
+
 A removed handle is revoked before the shell observes its removal. Adapter
 delivery and post-commit work do not own export lifetime.
 
