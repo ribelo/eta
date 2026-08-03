@@ -1,7 +1,7 @@
 # Typed observation plan for host delivery
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 03, 04, 06, 07
 
 ## Question
