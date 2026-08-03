@@ -13,7 +13,7 @@ Use Sliml as one falsifier, not as the interface template. The contract must
 show:
 
 - host event conversion into typed injection.
-- delivery of the canonical root result or observation-plan changes.
+- delivery and adapter-owned reconciliation of the canonical root result.
 - host-thread scheduling without exposing host handles to Eta Crux.
 - startup, wake, stop, and ordered teardown.
 - typed `Ingress_closed` admission and adapter capacity reporting.
