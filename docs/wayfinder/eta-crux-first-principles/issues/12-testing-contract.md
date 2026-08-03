@@ -13,7 +13,7 @@ Decide how tests:
 
 - construct a root with inputs and dependencies.
 - inject typed actions and advance one transaction.
-- inspect typed root output and observation-plan delivery.
+- inspect typed root output and explicit adapter reconciliation.
 - intercept, execute, cancel, or provide results for staged Eta effects.
 - control time and long-lived sources.
 - assert dynamic activation, disposal, keyed identity, and stale injection.

@@ -60,6 +60,7 @@ deliverable. Implementation is not part of this map.
 - [Deterministic advancement transaction](issues/06-advancement-transaction.md) — Process one message atomically, return output plus mandatory post-commit work, then drain until idle.
 - [Dynamic lifetime and work ownership](issues/07-dynamic-lifetime-ownership.md) — Committed absence disposes fresh-incarnation child scopes. Scoped Eta programs and transition effects follow the structural ownership tree.
 - [Long-lived sources and subscriptions](issues/08-subscriptions-and-sources.md) — Use a thin `Source` computation with a two-phase Eta producer. Spec equality preserves producers, readiness gates same-commit effects, and terminal outcomes become actions.
+- [Root snapshot observation](issues/09-typed-observation-plan.md) — Expose one canonical root output. Adapters retain and reconcile snapshots after commit. V1 adds no typed observation plan.
 - [Failure, defect, and crash boundary](issues/11-failure-boundary.md) — Escaping non-interruption causes end the root. Detection closes ingress, one mandatory batch settles teardown, and final reports preserve ordered Eta causes.
 - [Eta supervised work substrate](issues/19-eta-supervised-work-substrate.md) — Eta adds request-only supervisor cancellation. Eta Crux registers gated work, requests removed-subtree cancellation, then releases new work without waiting for old cleanup.
 
@@ -67,8 +68,8 @@ deliverable. Implementation is not part of this map.
 
 - **Operational introspection.** Logging, action history, graph inspection, and
   time-travel support depend on the final action, error, and test contracts.
-- **Performance gates.** Useful budgets and benchmarks depend on the public
-  computation API, keyed composition, and output-delivery design.
+- **Performance gates.** Useful budgets and benchmarks depend on the generic
+  host adapter and final package boundaries.
 - **Requirement and ADR replacement.** The old bundle must be reconciled or
   replaced after the design decisions reveal the final document structure.
 - **Additional hosts.** Taumel is the active testing ground. The next distinct
