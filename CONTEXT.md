@@ -104,6 +104,16 @@ all remote handles for that binding. One driver has at most one active session.
 The imperative, host-specific side that presents output, performs external
 work, and returns actions to the application core.
 
+## Host runtime
+
+The external execution environment or event loop that hosts a shell. Its
+startup and shutdown can occur outside OCaml and outside Eta Crux.
+
+## Adapter binding
+
+One live connection between an Eta Crux root and a host runtime. It owns the
+private reconciliation state and host event registrations for that root.
+
 ## Transport
 
 The means by which the application core and shell exchange information. A

@@ -65,6 +65,7 @@ deliverable. Implementation is not part of this map.
 - [OCaml API syntax and ergonomics](issues/14-ocaml-api-ergonomics.md) — Use local computation let operators, ordinary modules and labeled constructors, a labeled source emitter, explicit failures, and no V1 PPX.
 - [Exported endpoint and handle contract](issues/16-exported-endpoint-contract.md) — Use structural export nodes, bounded ingress, authenticated handles, and per-export dispatch permits across local and serialized shells.
 - [Eta supervised work substrate](issues/19-eta-supervised-work-substrate.md) — Eta adds request-only supervisor cancellation. Eta Crux registers gated work, requests removed-subtree cancellation, then releases new work without waiting for old cleanup.
+- [Generic host adapter contract](issues/10-generic-host-adapter.md) — Use a pull driver with one-shot delivery tokens, an optional resource-bracketed hosted loop, and adapter-owned scheduling and reconciliation.
 
 ## Not yet specified
 
@@ -74,8 +75,6 @@ deliverable. Implementation is not part of this map.
   host adapter and final package boundaries.
 - **Requirement and ADR replacement.** The old bundle must be reconciled or
   replaced after the design decisions reveal the final document structure.
-- **Additional hosts.** Taumel is the active testing ground. The next distinct
-  host type is unclear until the generic adapter contract exists.
 
 ## Out of scope
 
@@ -85,4 +84,7 @@ deliverable. Implementation is not part of this map.
 - Compatibility with Rust Crux, Elm, or Bonsai APIs.
 - Sliml and Taumel implementation details beyond the Eta Crux contracts that
   they use.
+- Additional concrete host packages. [Generic host adapter contract](issues/10-generic-host-adapter.md)
+  validates one same-domain host and one foreign retained host without selecting
+  another V1 host.
 - Eta Crux implementation as a deliverable of this map.
