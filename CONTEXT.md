@@ -28,9 +28,50 @@ size. This term applies only to snapshots with shared persistent ancestry.
 One continuous lifetime of a keyed child. Removal ends the incarnation, and a
 later entry of the same key starts a new incarnation.
 
+## Action
+
+A typed input addressed to one live cell and consumed by that cell's
+transition.
+
+## Message
+
+A boundary envelope or shell-capability value. A cell input is an action, not a
+message.
+
+## Model
+
+The application value owned by one cell. State is the general term for runtime
+state or aggregate application state.
+
+## Scheduled command
+
+Deferred command work together with its ownership, ordering, and replacement
+metadata.
+
+## Command work
+
+A force-total Eta effect that resolves to one action.
+
+## Subscription
+
+A state-derived long-lived source whose items become actions.
+
+## Fragment
+
+One typed application output exposed at an address.
+
+## Output tree
+
+The aggregate of all live fragments in an application instance.
+
+## Startup input
+
+The reserved name for host-supplied startup data. Its type and lifecycle are not
+part of this glossary.
+
 ## Endpoint
 
-A typed local capability for enqueueing messages to one live state-machine
+A typed local capability for enqueueing actions to one live state-machine
 incarnation.
 
 ## Exported endpoint
@@ -46,7 +87,7 @@ serialized boundary.
 ## Shell
 
 The imperative, host-specific side that presents output, performs external
-work, and returns messages to the application core.
+work, and returns actions to the application core.
 
 ## Transport
 
@@ -55,7 +96,7 @@ transport does not change application semantics.
 
 ## Advancement
 
-One atomic attempt to process a single queued message and produce a committed
+One atomic attempt to process a single queued action and produce a committed
 application output.
 
 ## Post-commit batch

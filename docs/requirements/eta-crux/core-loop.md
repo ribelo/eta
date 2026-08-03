@@ -30,8 +30,7 @@ construction closure. Eta Crux creates the internal graph engine for the
 application instance.
 
 State-machine transitions are pure. A transition computes a new model and a
-list of scheduled commands. The command work itself runs later through the
-command executor.
+list of scheduled commands. Eta Crux runs the command work later.
 
 Cells are either independent of graph input or dependent on another computation
 value. Input-dependent cells receive an explicit input status when their
@@ -39,8 +38,8 @@ transition runs, so inactive input is handled by application code rather than by
 implicit framework behavior.
 
 View fragments and UI adapters are optional outputs. A graph with no UI adapter
-still runs actions, transitions, commands, subscriptions, lifecycle, and
-shutdown through the root computation.
+still runs actions, transitions, command work from scheduled commands,
+subscriptions, lifecycle, and shutdown through the root computation.
 
 ## Requirements
 
@@ -54,8 +53,8 @@ shutdown through the root computation.
 - When an application has multiple state machines, eta_crux shall compose them as
   computation cells under the root computation. ^core-m2c9
 - When an Eta Crux application runs without a UI adapter, eta_crux shall still
-  execute actions, transitions, commands, subscriptions, lifecycle, and shutdown
-  through the root computation. ^core-h7q5
+  execute actions, transitions, command work from scheduled commands,
+  subscriptions, lifecycle, and shutdown through the root computation. ^core-h7q5
 - When application code defines a state-machine cell, eta_crux shall
   require an initial model value and an action transition function
   for that cell. ^cell-2p7q

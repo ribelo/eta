@@ -10,7 +10,7 @@ traces_to: ["[[docs/prds/0002-eta-signal-frp]]"]
 ## Intent
 
 Eta Crux exposes optional output fragments. A fragment is a typed value derived
-from cell state or other computation values and exposed at an address in the
+from a cell model or other computation values and exposed at an address in the
 application's output tree. Cells without output expose no fragments.
 
 Fragments are not a universal dynamic output variant. A scalar fragment is a

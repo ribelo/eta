@@ -10,10 +10,10 @@ traces_to: []
 ## Intent
 
 Eta Crux has one owner domain for an application instance. The owner domain owns
-the computation graph, cell model storage, action processing, command fibers,
-subscriptions, timers, stabilization, lifecycle, and shutdown. Other domains
-interact with the application instance only through action admission and output
-delivery mechanisms.
+the computation graph, cell model storage, action processing, fibers that run
+command work, subscriptions, timers, stabilization, lifecycle, and shutdown.
+Other domains interact with the application instance only through action
+admission and output delivery mechanisms.
 
 A foreign UI runtime can own the main thread. In that integration, UI events are
 admitted from a non-owner domain through the adapter, and outputs return to the
@@ -31,7 +31,7 @@ same call path.
 
 - When eta_crux creates an application instance, eta_crux shall assign
   that instance one owner domain for graph mutation, action
-  processing, command fibers, subscriptions, timers, stabilization,
+  processing, command work, subscriptions, timers, stabilization,
   lifecycle, and shutdown. ^conc-2h7n
 - While a non-owner domain integrates with an Eta Crux application instance,
   eta_crux shall require inbound actions to enter through the action admission
