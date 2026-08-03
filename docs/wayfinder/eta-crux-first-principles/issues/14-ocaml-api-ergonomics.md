@@ -1,7 +1,7 @@
 # OCaml API syntax and ergonomics
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 03, 04, 05, 07, 08, 11
 
 ## Question
