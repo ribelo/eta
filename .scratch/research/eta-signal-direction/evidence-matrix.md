@@ -12,6 +12,10 @@ answers.
 Each item has one downstream design owner. Prototype tickets remain evidence
 precursors and do not own the final decision.
 
+Eta is a library. Repository use search cannot observe external consumer value.
+This report uses absence as implementation inventory only. It does not use
+absence to justify interface omission, rejection, or deletion.
+
 ## Revision record
 
 `5694938a584edfdc05e33ad7df684eeb2a0bd5d5` is the probe baseline named by the
@@ -146,9 +150,10 @@ name `Signal.Expert`. Its expected error is fixed in
 `private_kernel_negative.ml` protects the public package boundary
 (`test/signal/negative/run.sh:87-88`).
 
-**Missing checks.** No second external node-kind package exists. No test can
-justify a broad Expert API. A future narrow protocol needs compile checks that
-prevent phase, scope, transaction, and arbitrary edge mutation by consumers.
+**Missing checks.** The repository cannot establish whether external library
+authors need a node-kind seam. Ticket 12 must assess external use cases and
+interface leverage. A future protocol needs compile checks that prevent phase,
+scope, transaction, and arbitrary edge mutation by consumers.
 
 **Downstream owner.** Ticket 12, `engine-and-package-seams`.
 
@@ -264,7 +269,7 @@ N2 and N5 show that local tests do not prove the cross-module commit order.
 
 **Downstream owner.** Ticket 15, `internal-module-ownership`.
 
-### F6 - Five graph-algorithm functors are dead in production
+### F6 - Five graph-algorithm functors lack production instantiations
 
 **Current evidence.** Whole-repository symbol search finds:
 
@@ -280,17 +285,25 @@ The live graph duplicates these operations as direct functions
 `Make_edges` is different. Production instantiates it as `Initial_edges`
 (`lib/signal/kernel/eta_signal_kernel.ml:700-716`).
 
-**Assessment.** Settled and confirmed. The five named functors have no
-production consumer. They do have test-only consumers. `Make_edges` remains
-live production code.
+**Assessment.** The usage question is settled, but the design disposition is
+not. The five named functors have test-only consumers and no production
+instantiation. `Make_edges` remains live production code.
+
+The functors are private implementation modules, not a supported external
+interface. Their lack of production use does not justify deletion. Ticket 15
+must compare deliberate private retention, canonical adoption, replacement,
+and removal. If their algorithms give external consumers useful leverage,
+ticket 12 must consider engine and package seams. Ticket 13 must consider
+public Signal algebra. Neither ticket can expose private support types directly.
 
 **Existing coverage.** The test-only functors have direct unit coverage in
 `test_eta_signal_graph_algorithms.ml:205-228,284-326,399-472`.
 These tests explain the mechanical test migration needed by deletion.
 
-**Missing checks.** There is no missing behavioral counterexample. The missing
-work is to redirect tests to the canonical live engine or retain one canonical
-pure algorithm. Deletion must also remove matching `.mli` declarations.
+**Missing checks.** There is no missing behavioral counterexample. The design
+must determine whether each functor owns a reusable algorithm or invariant. It
+must compare deliberate retention, live-engine adoption, replacement, and
+removal. Use count cannot select among these choices.
 
 **Downstream owner.** Ticket 15, `internal-module-ownership`.
 
@@ -338,7 +351,7 @@ The PRD intentionally deferred collection folds without a concrete use case
 
 **Assessment.** Confirmed as an interface capability gap. It is not yet a
 correctness defect. No arbitrary fold can promise constant update work without
-stronger algebra.
+stronger algebra. Ticket 13 must evaluate external aggregation use cases.
 
 **Existing coverage.** `test_n_ary_maps_both_and_all` checks current list
 semantics (`test/signal/contract/test_eta_signal_contract.ml:224-288`).
@@ -372,8 +385,9 @@ intentional or belong to different design classes.
 Their exact expected errors are in `test/signal/negative/run.sh:63-117`.
 
 **Missing checks.** Do not add one parity test batch. Each accepted primitive
-needs a workload, a semantic contract, and a test that distinguishes it from a
-composition of existing primitives.
+needs an external-usefulness rationale and a semantic contract. A rationale can
+come from a concrete use case or coherent algebra. The test must distinguish
+the primitive from a composition of existing primitives.
 
 **Downstream owner.** Ticket 13, `public-signal-algebra`.
 
@@ -418,7 +432,7 @@ The current PRD requires old selector-scope invalidation
 
 **Assessment.** The absence is confirmed. It is not a current contract defect.
 Invalidation is the selected Eta behavior. A rescope mode needs separate
-consumer and lifecycle evidence.
+external consumer and lifecycle evidence.
 
 **Existing coverage.** `test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes`
 checks the current rule (`test/signal/test_eta_signal.ml:1060-1112`).

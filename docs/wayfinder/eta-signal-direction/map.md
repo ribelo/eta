@@ -32,11 +32,23 @@ when that complexity gives consumers a simpler interface. A local correction is
 not sufficient when it preserves scattered invariants, shallow modules, or an
 incoherent interface.
 
-A gap can earn work through correctness, a declared law, asymptotic behavior,
-architectural depth, or coherent interface completeness. Reference-library
-parity does not earn work by itself. Every confirmed correctness defect needs a
-disposition. Severity, reachability, likelihood, and repair dependencies decide
-the sequence.
+Eta is a library. External consumer usefulness is the primary test for an
+interface or capability. Repository use search records current implementation
+use only. The absence of an internal consumer is not evidence against a
+capability. It can prompt an evaluation of Eta's own use of the capability.
+Absence alone answers neither question.
+
+For a private abstraction, no production instantiation identifies a design
+question. The options include deliberate private retention, canonical adoption,
+promotion to a public deep interface, replacement, and removal. Use count does
+not decide that question. For a public interface, external leverage, coherent
+semantics, safety, and depth decide retention and addition.
+
+A gap can earn work through external consumer utility, correctness, a declared
+law, asymptotic behavior, architectural depth, or coherent interface
+completeness. Reference-library parity does not earn work by itself. Every
+confirmed correctness defect needs a disposition. Severity, reachability,
+likelihood, and repair dependencies decide the sequence.
 
 Use executable counterexamples and operation counts when possible. Use static
 reasoning for architecture and interface claims. When implementation, tests,
@@ -57,10 +69,14 @@ main Dune workspace.
 
 ## Decisions so far
 
+- **Library consumer criterion.** External consumer usefulness is primary.
+  Repository use is inventory. Internal absence cannot justify rejection,
+  omission, or deletion.
 - [Complete repository evidence](issues/01-complete-repository-evidence.md) —
   The packed, probe, and evidence-baseline Signal trees are identical. F3 is
   explicit but incomplete debt. Five F6 functors have test-only consumers. The
-  claim census gives every review claim one owner.
+  F6 result is inventory, not a deletion decision. The claim census gives every
+  review claim one owner.
 
 ## Not yet specified
 

@@ -15,5 +15,8 @@ maps, current public interfaces, and available SecondAgent implementation
 evidence.
 
 Identify contradictions and provisional statements. Separate consumer needs
-from implementation choices. Save a concise commitment matrix under
+from implementation choices. Treat external consumers as the primary source of
+consumer value. Internal repository use is inventory, not a retention or
+deletion rule. Internal absence cannot justify rejection or omission. Save a
+concise commitment matrix under
 `.scratch/research/eta-signal-direction/`.

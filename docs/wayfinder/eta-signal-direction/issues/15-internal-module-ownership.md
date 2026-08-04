@@ -16,3 +16,9 @@ owns an invariant or supports real variation.
 
 Resolve F5, F6, and F14. Do not simplify by merging unrelated responsibilities
 into one kernel file.
+
+For each unused private abstraction, compare deliberate retention, canonical
+adoption, replacement, and removal. Lack of current production use does not
+select one option. If the abstraction suggests an externally useful interface,
+coordinate engine and package seams with ticket 12. Coordinate public Signal
+algebra with ticket 13.

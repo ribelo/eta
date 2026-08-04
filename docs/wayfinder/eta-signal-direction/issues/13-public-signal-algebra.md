@@ -15,4 +15,5 @@ operations from aliases and optional subsystems.
 
 Decide the accepted parts of F4, F8, F9, F11, and F12. Feature parity is not a
 goal. A missing operation can earn inclusion when it completes a coherent
-algebra or removes an interface irregularity.
+algebra, removes an interface irregularity, or gives external consumers useful
+leverage. Internal repository use is not a prerequisite.

@@ -12,6 +12,10 @@ The **evidence status** column records the review's evidence basis. It does not 
 
 The **ticket-01 disposition** column resolves traceability for ticket 01. An assignment sends a decision to the named owner.
 
+The gist remains faithful to the review when its disposition rejects the
+review's use-count premise. Repository use cannot establish external consumer
+value for a library interface.
+
 ## 0. Scope, evidence standard, and limitations
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
@@ -126,11 +130,11 @@ The **ticket-01 disposition** column resolves traceability for ticket 01. An ass
 | F02-018 | 116 | The current production keyed path is type-safe. | amended finding | Ticket 12 | Static source synthesis | Retain as a required property. |
 | F02-019 | 120 | Eta must not publish a broad Expert API now. | recommendation | Ticket 12 | Design recommendation | Assign to owner for architecture decision. |
 | F02-020 | 120 | A public mutation API can expose phase, cycle, indexing, invalidation, demand, rollback, and ordering invariants. | risk claim | Ticket 12 | Static architecture analysis | Retain in the seam decision. |
-| F02-021 | 120 | There is no evidence that more than one external node-kind implementation needs a mutation API. | evidence gap | Ticket 12 | Review evidence assessment | Amend if complete repository evidence finds another consumer. |
+| F02-021 | 120 | There is no evidence that more than one external node-kind implementation needs a mutation API. | evidence gap | Ticket 12 | Repository evidence cannot observe external demand | Reject repository absence as evidence against external usefulness. |
 | F02-022 | 122 | Eta must choose between a closed engine and a narrow first-party SPI. | design fork | Ticket 12 | Proposed mutually exclusive choices | Assign to owner for architecture decision. |
 | F02-023 | 124 | A closed-engine choice must amend the ADR to accept embedded keyed nodes. | requirement | Ticket 12 | Conditional design consequence | Assign to owner if it chooses the closed engine. |
 | F02-024 | 124 | A closed-engine choice must reduce the private protocol and fix F7 separately. | requirement | Ticket 12 | Conditional design consequence | Assign to owner if it chooses the closed engine. |
-| F02-025 | 125 | A second real node-kind package can justify a sealed typed first-party SPI. | decision rule | Ticket 12 | Conditional recommendation | Assign to owner for architecture decision. |
+| F02-025 | 125 | A second real node-kind package can justify a sealed typed first-party SPI. | decision rule | Ticket 12 | Conditional recommendation | Amend because external usefulness can justify a sealed SPI without an in-repository package. |
 | F02-026 | 125 | A narrow SPI must leave phase, scheduling, rollback, demand, and invalidation inside the engine. | invariant | Ticket 12 | Proposed seam contract | Assign to owner for architecture decision. |
 | F02-027 | 127 | Eta must not copy Jane Street's full Expert API for superficial similarity. | recommendation | Ticket 12 | Product-boundary principle | Retain as a design constraint. |
 | F02-028 | 131 | The extension decision depends on stable scheduler and edge contracts. | sequencing | Ticket 12 | Proposed dependency order | Assign to owner for route planning. |
@@ -211,15 +215,15 @@ The **ticket-01 disposition** column resolves traceability for ticket 01. An ass
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| F06-001 | 248 | Five graph-algorithm functors appear dead, but confirmation is conditional. | verdict | Ticket 01 | Pack-only symbol search | Retain and run whole-repository use search. |
-| F06-002 | 252 | Five named functors occur only in definitions, interfaces, and audit text inside packed production files. | fact | Ticket 01 | Pack-only use search | Retain for repository-wide comparison. |
+| F06-001 | 248 | Five graph-algorithm functors appear dead, but confirmation is conditional. | verdict | Ticket 01 | Whole-repository use is now known | Amend to no production instantiation without a deletion conclusion. |
+| F06-002 | 252 | Five named functors occur only in definitions, interfaces, and audit text inside packed production files. | fact | Ticket 01 | Whole-repository use confirms test-only instantiations | Retain as implementation inventory, not consumer-value evidence. |
 | F06-003 | 252 | The live graph duplicates those five algorithms directly. | duplication claim | Ticket 15 | Static source comparison | Retain for module design. |
-| F06-004 | 252 | `Make_edges` is the only production instantiation in the pack. | fact | Ticket 01 | Pack-only use search | Retain for repository-wide comparison. |
-| F06-005 | 254 | Missing tests prevent a repository-wide use conclusion. | limitation | Ticket 01 | Omitted pack evidence | Retain and inspect all tests. |
-| F06-006 | 254 | Test-only use does not justify duplicate production abstractions. | design claim | Ticket 15 | Architecture judgment | Assign to owner for module design. |
-| F06-007 | 254 | Test-only use changes the deletion mechanics. | planning claim | Ticket 15 | Conditional impact analysis | Assign to owner after use search. |
-| F06-008 | 258 | Delete all five functors and interface entries if repository use search finds no production consumer. | conditional requirement | Ticket 15 | Proposed cleanup | Assign to owner after ticket-01 evidence. |
-| F06-009 | 258 | Tests that use the functors need redirection to live behavior or one canonical pure module. | conditional requirement | Ticket 15 | Proposed cleanup | Assign to owner after ticket-01 evidence. |
+| F06-004 | 252 | `Make_edges` is the only production instantiation in the pack. | fact | Ticket 01 | Whole-repository use confirms the same production result | Retain as implementation inventory, not consumer-value evidence. |
+| F06-005 | 254 | Missing tests prevent a repository-wide use conclusion. | limitation | Ticket 01 | Complete tests show test-only instantiations | Amend with the whole-repository result. |
+| F06-006 | 254 | Test-only use does not justify duplicate production abstractions. | design claim | Ticket 15 | Architecture judgment | Assign retention, canonical adoption, replacement, or removal without a use-count shortcut. |
+| F06-007 | 254 | Test-only use changes the deletion mechanics. | planning claim | Ticket 15 | Whole-repository use is now known | Retain as migration inventory only. |
+| F06-008 | 258 | Delete all five functors and interface entries if repository use search finds no production consumer. | conditional requirement | Ticket 15 | Proposed cleanup based on use absence | Reject production-use absence as a deletion rule. |
+| F06-009 | 258 | Tests that use the functors need redirection to live behavior or one canonical pure module. | conditional requirement | Ticket 15 | Conditional cleanup | Assign only after the owner chooses retention, canonical adoption, replacement, or removal. |
 | F06-010 | 262 | F6 cleanup follows N1 and N2 but precedes broad F5 cleanup. | sequencing | Ticket 15 | Proposed dependency order | Assign to owner for route planning. |
 | F06-011 | 262 | F6 has low semantic risk and affects support modules plus direct unit tests. | blast radius | Ticket 15 | Preliminary impact estimate | Retain for planning. |
 
@@ -709,7 +713,7 @@ The **ticket-01 disposition** column resolves traceability for ticket 01. An ass
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-14-001 | 928-930 | Last, remove dead functors and semantically empty wrappers. | ranked requirement | Ticket 15 | Proposed correction plan | Assign to owner for module design. |
+| PLN-14-001 | 928-930 | Last, remove dead functors and semantically empty wrappers. | ranked requirement | Ticket 15 | Proposed correction plan | Amend to decide retention, canonical adoption, replacement, or removal from invariant and consumer value. |
 | PLN-14-002 | 930 | Last, extract `Stream_bridge`. | ranked requirement | Ticket 15 | Proposed correction plan | Assign to owner for module design. |
 | PLN-14-003 | 930 | Retain phase-typed state machines and pure policy modules. | ranked requirement | Ticket 15 | Proposed correction plan | Assign to owner for module design. |
 | PLN-14-004 | 932 | Rank 14 follows N1, N2, F1, and N4. | dependency | Ticket 15 | Proposed route | Assign to owner for route planning. |
@@ -719,7 +723,7 @@ The **ticket-01 disposition** column resolves traceability for ticket 01. An ass
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| DEF-001 | 937 | Do not publish broad Expert without a second external node-kind consumer and stable invariants. | rejected correction | Ticket 12 | Conditional architecture recommendation | Assign to owner for final seam decision. |
+| DEF-001 | 937 | Do not publish broad Expert without a second external node-kind consumer and stable invariants. | rejected correction | Ticket 12 | Mixed consumer-count and safety rationale | Reject the consumer-count prerequisite and retain the stable-invariant requirement. |
 | DEF-002 | 938 | Do not pursue F9 interface parity as one batch. | rejected correction | Ticket 13 | Product-scope recommendation | Reject the parity batch. |
 | DEF-003 | 938 | Split F9 candidates by concrete use case. | deferred correction | Ticket 13 | Product-scope recommendation | Assign to owner for algebra decisions. |
 | DEF-004 | 939 | Do not add bind rescoping without a benchmarked workload. | deferred correction | Ticket 13 | Evidence condition | Assign to owner for product decision. |

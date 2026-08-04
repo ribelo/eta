@@ -15,3 +15,6 @@ testing surface.
 
 The result must resolve F2, F7, F10, and ADR 0004. It must not expose phase,
 scope, transaction, or graph-mutation complexity to application consumers.
+Evaluate the seam for external application and library authors. The absence of
+an in-repository node-kind package is not evidence against an externally useful
+sealed protocol.

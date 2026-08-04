@@ -14,6 +14,10 @@ evidence, desired contract, design owner, implementation dependency, migration
 effect, and verification gate. Apply the same format to each accepted adjacent
 gap.
 
+Record the external consumer value of each interface decision. Do not use the
+absence of an internal repository consumer as evidence for rejection, omission,
+or deletion.
+
 Reconcile the complete claim census from
 [Complete repository evidence](01-complete-repository-evidence.md). Every census
 row must have its final disposition or a context pointer to the ticket that owns

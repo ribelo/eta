@@ -53,12 +53,16 @@ The probe timings therefore measure the same Signal code as the packed review.
 They remain supporting evidence because they use wall time and do not give a
 deterministic core-work gate.
 
-The repository settles both conditional findings:
+Repository use is inventory evidence only. It cannot establish external
+consumer value, and it does not justify interface omission or deletion.
+
+The repository settles both conditional evidence questions:
 
 - F3 is explicit but incomplete dated debt. The registry has 15 exact
   `eta_signal.mli` rows, and all 15 cover keyed diagnostics.
 - F6 has five test-only functor consumers. `Make_edges` is the only listed
-  functor with a production consumer.
+  functor with a production instantiation. This result does not decide whether
+  to retain, adopt, replace, expose, or remove the other functors.
 
 The repository has nearby coverage for N1-N5, but no test runs each exact
 discriminating case. Tickets 02-05 own executable evidence for N1-N4. Ticket 09

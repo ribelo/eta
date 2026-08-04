@@ -16,5 +16,6 @@ introspection, memoization, snapshots, time, and expert operations.
 
 Distinguish algebraic completeness from convenience aliases and optional
 subsystems. Record where Eta's effect, package, and consumer model needs a
-different interface. Do not propose parity as a goal. Save the report under
+different interface. Evaluate leverage for external Eta consumers, not current
+repository adoption. Do not propose parity as a goal. Save the report under
 `.scratch/research/eta-signal-direction/`.
