@@ -120,6 +120,13 @@ main Dune workspace.
   node demand events do not imply an Eta observer-lifecycle event. Eta's typed
   effects, explicit disposal, runtime ownership, and timer model require
   different public contracts.
+- [Existing Signal and Eta Crux commitments](issues/08-existing-signal-commitments.md)
+  — Existing sources agree on explicit stabilization, scoped demand, typed
+  failures, stable keyed identity, and private Crux engine types. They conflict
+  on the Crux backend, advancement batching, keyed API, observer order, and
+  stream domain. Tickets 09-14 own the final contracts. No inspectable
+  SecondAgent or production Eta Crux implementation is present in repository
+  refs or worktrees.
 
 ## Not yet specified
 
