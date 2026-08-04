@@ -215,6 +215,25 @@ module Timer = Eta_signal_timer
 module Timer_policy = Eta_signal_timer_policy
 module Transaction = Eta_signal_transaction
 
+module Owner_transaction = struct
+  type t = (Transaction.pure, unit) Transaction.t
+  type 'a cell = 'a Transaction.staged
+
+  let create_cell = Transaction.create_staged
+  let current = Transaction.current
+  let begin_ = Transaction.begin_pure
+  let read = Transaction.read
+  let stage = Transaction.stage
+
+  let commit transaction =
+    match Transaction.preflight transaction (fun () -> Ok ()) with
+    | Error () -> assert false
+    | Ok preflighted ->
+        ignore (Transaction.commit preflighted : (_, unit) Transaction.t)
+
+  let rollback = Transaction.rollback
+end
+
 module type Observer_error = sig
   type t
 

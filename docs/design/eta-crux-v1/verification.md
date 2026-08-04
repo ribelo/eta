@@ -264,6 +264,15 @@ nix develop .#mainline -c bash bench/run.sh --quick --filter '^eta_crux\.'
 nix develop .#mainline -c bash bench/run.sh --filter '^eta_crux\.'
 ```
 
+Run three complete baseline and candidate pairs through the benchmark gate:
+
+```sh
+nix develop -c dune exec bench/compare.exe -- --gate \
+  baseline-1.json candidate-1.json \
+  baseline-2.json candidate-2.json \
+  baseline-3.json candidate-3.json
+```
+
 A full row uses five warm-up samples and 31 measured samples. Each measured
 sample lasts at least 50 ms. Reports include the mean, standard deviation,
 median, p95, allocation classes, deterministic counters, environment, revision,
@@ -283,7 +292,8 @@ The suite contains these rows:
 6. One common identity-binding scenario.
 7. The same serialized scenario with 0 B, 64 B, and 4 KiB payloads.
 8. One disabled-telemetry advancement and its absent-telemetry control.
-9. Capacity saturation and churn at 1, 64, and 1,024 entries.
+9. Ingress and request-capacity saturation at 1, 64, and 1,024 entries.
+10. Serialized-handle replacement, stale lookup, and collection.
 
 Setup is outside each measured operation. Deterministic counters fail on their
 first violation. The identity row requires zero wire operations. Disabled

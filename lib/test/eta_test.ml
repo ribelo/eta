@@ -295,6 +295,101 @@ module Async = struct
   let yield = Eio.Fiber.yield
 end
 
+module Controlled = struct
+  type completion_error = Not_pending
+
+  type status =
+    | Pending
+    | Succeeded
+    | Failed
+    | Died
+    | Cancelled
+
+  type ('input, 'output, 'error) call = {
+    input : 'input;
+    lock : Eta.Sync_lock.t;
+    mutable status : status;
+    resume : ('output, 'error) Eta.Exit.t -> unit;
+  }
+
+  type ('input, 'output, 'error) t = {
+    calls :
+      (('input, 'output, 'error) call, empty) Eta.Queue.t;
+  }
+
+  and empty = |
+
+  let create () = { calls = Eta.Queue.unbounded () }
+
+  let finish call status exit =
+    let won =
+      Eta.Sync_lock.use call.lock @@ fun () ->
+      if call.status = Pending then (
+        call.status <- status;
+        true)
+      else false
+    in
+    if not won then Error Not_pending
+    else (
+      call.resume exit;
+      Ok ())
+
+  let effect controlled input =
+    Eta.Effect.async ~register:(fun resume ->
+        let call =
+          {
+            input;
+            lock = Eta.Sync_lock.create ();
+            status = Pending;
+            resume;
+          }
+        in
+        (match Eta.Queue.try_offer_now controlled.calls call with
+        | `Sent -> ()
+        | `Closed | `Full | `Dropped ->
+            invalid_arg
+              "Eta_test.Controlled: observation queue rejected a call"
+        | `Closed_with_error (_ : empty) -> .);
+        Some
+          (Eta.Effect.sync (fun () ->
+               Eta.Sync_lock.use call.lock @@ fun () ->
+               if call.status = Pending then
+                 call.status <- Cancelled)))
+
+  let poll_call controlled =
+    match Eta.Queue.poll_now controlled.calls with
+    | `Item call -> Some call
+    | `Empty | `Closed -> None
+    | `Closed_with_error (_ : empty) -> .
+
+  let await_call controlled =
+    Eta.Queue.take controlled.calls
+    |> Eta.Effect.map_error (function
+         | `Closed ->
+             invalid_arg
+               "Eta_test.Controlled: observation queue closed"
+         | `Closed_with_error (_ : empty) -> .)
+
+  let input call = call.input
+  let status call = Eta.Sync_lock.use call.lock @@ fun () -> call.status
+
+  let succeed call output =
+    finish call Succeeded (Eta.Exit.Ok output)
+
+  let fail call error =
+    finish call Failed (Eta.Exit.Error (Eta.Cause.fail error))
+
+  let die call exn =
+    finish call Died (Eta.Exit.Error (Eta.Cause.die exn))
+
+  let expect_no_pending controlled =
+    match poll_call controlled with
+    | None -> ()
+    | Some _ ->
+        Alcotest.fail
+          "Eta_test.Controlled has an unobserved call"
+end
+
 module Expect = struct
   let pp_hidden_error fmt _ = Format.pp_print_string fmt "<err>"
 

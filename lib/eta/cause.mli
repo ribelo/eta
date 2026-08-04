@@ -134,6 +134,7 @@ val equal_interrupt_id : interrupt_id -> interrupt_id -> bool
 val interrupt_id_to_int : interrupt_id -> int
 (** Render the runtime-owned interruption identity as its integer value, for
     structured encoders and log correlation. *)
+val interrupt_id_of_int : int -> interrupt_id
 val interrupt : 'err t
 val interrupt_with_id : interrupt_id -> 'err t
 val sequential : 'err t list -> 'err t

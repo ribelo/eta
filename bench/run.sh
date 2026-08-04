@@ -69,6 +69,7 @@ build_targets=(
   bench/runtime_observability/runtime_observability.exe
   bench/effect_construction/effect_construction.exe
   lib/signal/bench/bench_signal.exe
+  lib/crux/bench/bench_eta_crux.exe
   lib/stream/bench/bench_stream.exe
   lib/schema/bench/bench_schema.exe
   lib/otel/bench/bench_otel.exe
@@ -101,6 +102,7 @@ run_runtime _build/default/bench/runtime_observability/runtime_observability.exe
 run_runtime _build/default/bench/effect_construction/effect_construction.exe
 run_json_script bench/runtime_overhead_ts/run.sh
 run_runtime _build/default/lib/signal/bench/bench_signal.exe
+run_runtime _build/default/lib/crux/bench/bench_eta_crux.exe
 run_runtime _build/default/lib/stream/bench/bench_stream.exe
 run_runtime _build/default/lib/schema/bench/bench_schema.exe
 run_runtime _build/default/lib/otel/bench/bench_otel.exe

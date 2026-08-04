@@ -1,0 +1,10 @@
+(test
+ (name test_eta_crux_wire)
+ (libraries eta_crux eta_crux_json eta_crux_sexp alcotest))
+
+(copy_files ../../../lib/crux/crux_sha256.ml)
+
+(test
+ (name test_eta_crux_crypto)
+ (modules test_eta_crux_crypto crux_sha256)
+ (libraries alcotest))

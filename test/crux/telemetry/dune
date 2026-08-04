@@ -1,0 +1,6 @@
+(test
+ (name test_eta_crux_telemetry)
+ (libraries eta eta_crux eta_crux_json eta_eio eta_observability eta_test alcotest eio_main)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

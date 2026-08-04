@@ -1,0 +1,7 @@
+(rule
+ (alias runtest)
+ (deps
+  (source_tree negative)
+  (:eta_crux_cma ../../lib/crux/eta_crux.cma))
+ (action
+  (run bash negative/run.sh %{eta_crux_cma})))

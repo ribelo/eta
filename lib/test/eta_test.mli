@@ -102,6 +102,53 @@ module Async : sig
   (** Yield to sibling fibers in tests that need to observe concurrent state. *)
 end
 
+module Controlled : sig
+  type ('input, 'output, 'error) t
+  type ('input, 'output, 'error) call
+  type completion_error = Not_pending
+
+  type status =
+    | Pending
+    | Succeeded
+    | Failed
+    | Died
+    | Cancelled
+
+  val create : unit -> ('input, 'output, 'error) t
+  val effect :
+    ('input, 'output, 'error) t ->
+    'input ->
+    ('output, 'error) Eta.Effect.t
+
+  val poll_call :
+    ('input, 'output, 'error) t ->
+    ('input, 'output, 'error) call option
+
+  val await_call :
+    ('input, 'output, 'error) t ->
+    (('input, 'output, 'error) call, 'never) Eta.Effect.t
+
+  val input : ('input, 'output, 'error) call -> 'input
+  val status : ('input, 'output, 'error) call -> status
+
+  val succeed :
+    ('input, 'output, 'error) call ->
+    'output ->
+    (unit, completion_error) result
+
+  val fail :
+    ('input, 'output, 'error) call ->
+    'error ->
+    (unit, completion_error) result
+
+  val die :
+    ('input, 'output, 'error) call ->
+    exn ->
+    (unit, completion_error) result
+
+  val expect_no_pending : ('input, 'output, 'error) t -> unit
+end
+
 module Expect : sig
   val expect_ok : ('a, 'err) Eta.Exit.t -> 'a
   (** [expect_ok exit] returns the success value or fails the Alcotest case. *)

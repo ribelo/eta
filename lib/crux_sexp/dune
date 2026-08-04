@@ -1,0 +1,8 @@
+(copy_files ../crux_wire_common/*.ml)
+
+(library
+ (name eta_crux_sexp)
+ (public_name eta_crux_sexp)
+ (modules eta_crux_sexp protocol frame_conversion protocol_model)
+ (private_modules protocol frame_conversion protocol_model)
+ (libraries eta_crux base64))

@@ -133,6 +133,9 @@ val try_offer :
 
     [bounded] queues return [`Full] instead of waiting when full. *)
 
+val try_offer_now : ('a, 'err) t -> 'a -> 'err offer_result
+(** Synchronous form of {!try_offer}. *)
+
 val sent_token : ('a, 'err) t -> sent_token
 (** Opaque token that changes whenever a value is admitted to the queue. *)
 
@@ -147,6 +150,9 @@ val take :
 
 val poll : ('a, 'err) t -> (('a, 'err) poll_result, 'never) Effect.t
 (** Try to take one value without waiting. *)
+
+val poll_now : ('a, 'err) t -> ('a, 'err) poll_result
+(** Synchronous form of {!poll}. *)
 
 val take_all :
   ('a, 'err) t ->
@@ -211,6 +217,8 @@ module Enqueue : sig
   val try_offer :
     ('a, 'err) t -> 'a -> ('err offer_result, 'never) Effect.t
 
+  val try_offer_now : ('a, 'err) t -> 'a -> 'err offer_result
+
   val capacity : ('a, 'err) t -> int option
   val size : ('a, 'err) t -> int
   val is_empty : ('a, 'err) t -> bool
@@ -229,6 +237,8 @@ module Dequeue : sig
     ('a, [> `Closed | `Closed_with_error of 'err ]) Effect.t
 
   val poll : ('a, 'err) t -> (('a, 'err) poll_result, 'never) Effect.t
+
+  val poll_now : ('a, 'err) t -> ('a, 'err) poll_result
 
   val take_all :
     ('a, 'err) t ->

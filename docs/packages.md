@@ -170,6 +170,18 @@ Install `eta_signal_map` only for keyed reactive collections. See the
 [`eta_signal_map` package guide](../lib/signal_map/README.md) for a runnable
 example and the complexity gate.
 
+### Crux
+
+| opam package | OCaml module | what it adds | extra deps |
+| --- | --- | --- | --- |
+| `eta_crux` | `Eta_crux` | incremental, composable state machines and host drivers | `eta_observability`, `eta_signal`, `eta_signal_map` |
+| `eta_crux_json` | `Eta_crux_json` | the exact JSON wire format for Crux | `eta_crux`, `base64`, `yojson` |
+| `eta_crux_sexp` | `Eta_crux_sexp` | the exact S-expression wire format for Crux | `eta_crux`, `base64` |
+| `eta_crux_test` | `Eta_crux_test` | deterministic controls for production Crux drivers | `eta_crux`, `eta_test` |
+
+Install one wire-format package only when a serialized session uses that
+format. Local identity drivers need only `eta_crux`.
+
 ### HTTP
 
 | opam package | OCaml module | what it adds | extra deps |

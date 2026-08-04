@@ -1,0 +1,8 @@
+(copy_files ../crux_wire_common/*.ml)
+
+(library
+ (name eta_crux_json)
+ (public_name eta_crux_json)
+ (modules eta_crux_json protocol frame_conversion protocol_model)
+ (private_modules protocol frame_conversion protocol_model)
+ (libraries eta_crux yojson base64))

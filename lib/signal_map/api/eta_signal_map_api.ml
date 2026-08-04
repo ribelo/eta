@@ -37,6 +37,36 @@ module Map = struct
   module Make (Order : Ordered_type) = Eta_signal_map_kernel.Make (Order)
 end
 
+module Keyed_map (M : Stdlib.Map.S) = struct
+  type ('data, 'child) entry = {
+    data : 'data;
+    child : 'child;
+  }
+
+  let reconcile ~previous ~current ~equal ~create ~retain
+      ~remove =
+    M.merge
+      (fun key previous current ->
+        match previous, current with
+        | None, None -> None
+        | None, Some data ->
+            Some { data; child = create key data }
+        | Some entry, None ->
+            remove key entry.data entry.child;
+            None
+        | Some entry, Some data ->
+            let data_changed = not (equal entry.data data) in
+            let child =
+              retain key ~data_changed ~previous:entry.data
+                ~current:data entry.child
+            in
+            Some { data; child })
+      previous current
+
+  let children entries =
+    M.map (fun entry -> entry.child) entries
+end
+
 module Make (Observer_error : Eta_signal.Observer_error) () = struct
   module Signal = Eta_signal_kernel.Make (Observer_error) ()
   include Signal

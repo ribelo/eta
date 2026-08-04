@@ -1,0 +1,6 @@
+(library
+ (name eta_crux_test)
+ (public_name eta_crux_test)
+ (modules eta_crux_test crux_test_handle crux_controlled_source crux_recording_adapter)
+ (private_modules crux_test_handle crux_controlled_source crux_recording_adapter)
+ (libraries eta eta_crux eta_test))

@@ -123,6 +123,9 @@ module Codec : sig
     encode:('a -> bytes) ->
     decode:(bytes -> ('a, decode_error) result) ->
     'a t
+
+  val encode : 'a t -> 'a -> bytes
+  val decode : 'a t -> bytes -> ('a, decode_error) result
 end
 ```
 
@@ -148,8 +151,13 @@ module Exported_endpoint : sig
     'payload t ->
     'payload ->
     (try_result, availability_error) result
+
+  val remote_handle : 'payload t -> bytes
 end
 ```
+
+`remote_handle` is valid only while a serialized binding calls its output
+codec. It raises `Invalid_argument` outside that encoding boundary.
 
 ```ocaml
 module Request : sig
@@ -165,6 +173,34 @@ module Request : sig
   module Driver_event : sig
     type t
     type completion_error = Already_completed
+
+    type 'error handler = {
+      handle :
+        'request 'response.
+        operation:('request, 'response) Host_operation.t ->
+        request:'request ->
+        resolve:
+          ('response ->
+           ((unit, not_pending) result, never) Eta.Effect.t) ->
+        on_cancel:((closure_reason -> unit) -> unit) ->
+        (unit, 'error) Eta.Effect.t;
+    }
+
+    type handle_result = Handled | Different_operation
+
+    val dispatch : t -> 'error handler -> (unit, 'error) Eta.Effect.t
+
+    val handle :
+      t ->
+      ('request, 'response) Host_operation.t ->
+      f:
+        ('request ->
+         resolve:
+           ('response ->
+            ((unit, not_pending) result, never) Eta.Effect.t) ->
+         on_cancel:((closure_reason -> unit) -> unit) ->
+         (unit, 'error) Eta.Effect.t) ->
+      (handle_result, 'error) Eta.Effect.t
 
     val accepted :
       t ->
@@ -204,6 +240,7 @@ end
 
 ```ocaml
 module Request_export : sig
+  type 'a computation := 'a t
   type ('request, 'response) t
   type availability_error = Stale | Revoked
 
@@ -215,15 +252,17 @@ module Request_export : sig
     | Closed of Request.closure_reason
 
   val create :
-    ('request * 'response Responder.t) Endpoint.t t ->
+    ('request * 'response Responder.t) Endpoint.t computation ->
     request:'request Codec.t ->
     response:'response Codec.t ->
-    ('request, 'response) t t
+    ('request, 'response) t computation
 
   val invoke :
     ('request, 'response) t ->
     'request ->
     ('response, invoke_error) Eta.Effect.t
+
+  val remote_handle : ('request, 'response) t -> bytes
 end
 ```
 
@@ -237,6 +276,10 @@ module Host_operation : sig
     request:'request Codec.t ->
     response:'response Codec.t ->
     ('request, 'response) t
+
+  val name : ('request, 'response) t -> string
+  val request_codec : ('request, 'response) t -> 'request Codec.t
+  val response_codec : ('request, 'response) t -> 'response Codec.t
 end
 ```
 
@@ -324,8 +367,20 @@ module Failure : sig
     teardown_settled : bool;
   }
 
-  type portable
+  type portable_record = {
+    cause : string Eta.Cause.Portable.t;
+    origin : origin;
+    trigger : trigger_kind;
+    position : int64;
+  }
+
+  type portable = {
+    primary : portable_record;
+    secondary : portable_record list;
+  }
   val portable : t -> portable
+  val encode_portable : portable -> bytes
+  val decode_portable : bytes -> (portable, string) result
 end
 ```
 
@@ -446,7 +501,6 @@ end
 
 ```ocaml
 module Adapter : sig
-  type ('output, 'error) binding
   type ('output, 'error) resource
 
   type 'output delivery = {
@@ -456,20 +510,20 @@ module Adapter : sig
 
   val resource :
     pp_error:(Format.formatter -> 'error -> unit) ->
-    acquire:(('output, 'error) binding, 'error) Eta.Effect.t ->
+    acquire:('binding, 'error) Eta.Effect.t ->
     release:
-      (('output, 'error) binding ->
+      ('binding ->
        (unit, 'error) Eta.Effect.t) ->
     deliver:
-      (('output, 'error) binding ->
+      ('binding ->
        'output delivery ->
        (unit, 'error) Eta.Effect.t) ->
     request_event:
-      (('output, 'error) binding ->
+      ('binding ->
        Request.Driver_event.t ->
        (unit, 'error) Eta.Effect.t) ->
     crash_detected:
-      (('output, 'error) binding ->
+      ('binding ->
        Failure.t ->
        (unit, 'error) Eta.Effect.t) ->
     ('output, 'error) resource
@@ -569,6 +623,10 @@ module Wire : sig
   end
 end
 ```
+
+`Wire.Frame.t` is the concrete semantic variant defined in
+[Wire protocol](wire-protocol.md). This is the narrow shared seam used by the
+two codec packages.
 
 `Eta_crux_json.Format` and `Eta_crux_sexp.Format` implement `Wire.FORMAT`.
 

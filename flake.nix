@@ -336,6 +336,10 @@
               dune build \
                 lib/redacted \
                 lib/eta \
+                lib/crux \
+                lib/crux_json \
+                lib/crux_sexp \
+                lib/crux_test \
                 lib/ai \
                 lib/ai/anthropic \
                 lib/ai/openai_compat \
@@ -356,6 +360,7 @@
                 lib/ppx \
                 test/redacted_eio \
                 test/eta \
+                test/crux \
                 test/laws \
                 test/ai/core \
                 test/ai/anthropic \
@@ -377,6 +382,10 @@
               dune runtest \
                 lib/redacted \
                 lib/eta \
+                lib/crux \
+                lib/crux_json \
+                lib/crux_sexp \
+                lib/crux_test \
                 lib/ai \
                 lib/ai/anthropic \
                 lib/ai/openai_compat \
@@ -395,6 +404,8 @@
                 lib/signal_map \
                 lib/stream \
                 lib/ppx \
+                test/crux \
+                test/eta \
                 test/laws \
                 test/ai/openai_codex \
                 test/ai/moonshot \

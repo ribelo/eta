@@ -52,6 +52,17 @@ module Expert = struct
   let current_scope context = context.sw
   let outer_scope context = context.runtime.Runtime_core.outer_scope
   let runtime_service context key = Runtime_core.service context.runtime key
+  let current_local key =
+    make (fun context ->
+        Effect_core.ok
+          (context.runtime.contract.Runtime_contract.local_get key))
+
+  let with_local key value eff =
+    make (fun context ->
+        context.runtime.contract.Runtime_contract.local_with_binding key value
+          (fun () ->
+            Effect_core.eval context (effect_of_public eff)))
+
   let auto_instrument context = context.runtime.Runtime_core.auto_instrument
 
   let instrument_leaf context ~name f =
@@ -73,17 +84,28 @@ module Expert = struct
     Effect_core.run_to_exit context (effect_of_public eff)
 
   let observability_suppress context eff =
-    let runtime =
-      {
-        context.runtime with
-        tracing_enabled = false;
-        auto_instrument = false;
-        logging_enabled = false;
-        metrics_enabled = false;
-        observability_suppressed = true;
-      }
-    in
-    Effect_core.run_to_exit { context with runtime } (effect_of_public eff)
+    let runtime = context.runtime in
+    if
+      runtime.observability_suppressed
+      || ((not runtime.capability_overrides_active)
+         && not runtime.tracing_enabled
+         && not runtime.auto_instrument
+         && not runtime.logging_enabled
+         && not runtime.metrics_enabled)
+    then Effect_core.run_to_exit context (effect_of_public eff)
+    else
+      let runtime =
+        {
+          runtime with
+          tracing_enabled = false;
+          auto_instrument = false;
+          logging_enabled = false;
+          metrics_enabled = false;
+          observability_suppressed = true;
+        }
+      in
+      Effect_core.run_to_exit { context with runtime }
+        (effect_of_public eff)
 
   let observability_with_binding context key value eff =
     let runtime =
@@ -366,6 +388,13 @@ module Expert = struct
           raise exn
       | exn -> Effect_core.exit_of_exn context exn
     else Effect_core.ok ()
+
+  let[@inline always] observability_metrics_enabled context =
+    context.runtime.metrics_enabled
+
+  let[@inline always] observability_now_ms context =
+    let clock = Runtime_core.current_clock context.runtime in
+    clock#now_ms ()
 
   let emit_trace_event context ~name ~attrs =
     let runtime = context.runtime in

@@ -769,3 +769,45 @@ let test_queue_stats_counters_saturate () =
     (run_ok rt (Queue.offer dropped_queue 3));
   Alcotest.(check int) "dropped saturates" max_int
     (Queue.stats dropped_queue).Queue.dropped
+
+let test_queue_now_operations_preserve_waiting_sender_priority () =
+  Test_eta_support.with_test_clock @@ fun sw _clock runtime ->
+  let queue = Queue.bounded ~capacity:1 () in
+  Alcotest.(check bool) "initial synchronous offer"
+    true
+    (Queue.try_offer_now queue 1 = `Sent);
+  let waiting_sender =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Runtime.run runtime (Queue.send queue 2))
+  in
+  yield_until "synchronous queue waiting sender" (fun () ->
+      (Queue.stats queue).Queue.waiting_senders = 1);
+  Alcotest.(check bool) "nonblocking offer does not overtake waiter"
+    true
+    (Queue.try_offer_now queue 3 = `Full);
+  Alcotest.(check bool) "poll returns buffered value"
+    true
+    (Queue.poll_now queue = `Item 1);
+  (match Eio.Promise.await_exn waiting_sender with
+  | Exit.Ok () -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "waiting sender failed: %a" (Cause.pp pp_hidden) cause);
+  Alcotest.(check bool) "waiting sender admitted next"
+    true
+    (Queue.Dequeue.poll_now (Queue.dequeue queue) = `Item 2);
+  Alcotest.(check bool) "enqueue view uses same synchronous boundary"
+    true
+    (Queue.Enqueue.try_offer_now (Queue.enqueue queue) 4 = `Sent);
+  Alcotest.(check bool) "combined poll returns view offer"
+    true
+    (Queue.poll_now queue = `Item 4);
+  Alcotest.(check bool) "open empty probe"
+    true
+    (Queue.poll_now queue = `Empty);
+  Queue.shutdown queue;
+  Alcotest.(check bool) "shutdown offer probe"
+    true
+    (Queue.try_offer_now queue 5 = `Closed);
+  Alcotest.(check bool) "shutdown poll probe"
+    true
+    (Queue.poll_now queue = `Closed)

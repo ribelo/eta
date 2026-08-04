@@ -115,6 +115,28 @@ module Map : sig
       [smmap-4d3u] *)
 end
 
+module Keyed_map (M : Stdlib.Map.S) : sig
+  type ('data, 'child) entry
+
+  val reconcile :
+    previous:('data, 'child) entry M.t ->
+    current:'data M.t ->
+    equal:('data -> 'data -> bool) ->
+    create:(M.key -> 'data -> 'child) ->
+    retain:
+      (M.key ->
+       data_changed:bool ->
+       previous:'data ->
+       current:'data ->
+       'child ->
+       'child) ->
+    remove:(M.key -> 'data -> 'child -> unit) ->
+    ('data, 'child) entry M.t
+
+  val children :
+    ('data, 'child) entry M.t -> 'child M.t
+end
+
 module Make (Observer_error : Eta_signal.Observer_error) () : sig
   include module type of Eta_signal.Make (Observer_error) ()
 

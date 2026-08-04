@@ -164,6 +164,8 @@ let () =
             test_queue_recv_waits_instead_of_returning_empty;
           Alcotest.test_case "stats counters saturate" `Quick
             test_queue_stats_counters_saturate;
+          Alcotest.test_case "synchronous probes preserve sender priority"
+            `Quick test_queue_now_operations_preserve_waiting_sender_priority;
         ] );
       ( "Sync_lock",
         [

@@ -55,6 +55,18 @@ module Expert : sig
   val runtime_service : context -> 'a Runtime_contract.service_key -> 'a option
   (** Runtime-package service attached when the interpreter was created. *)
 
+  val current_local :
+    'a Runtime_contract.local ->
+    ('a option, 'err) Effect.t
+  (** Read a runtime-local binding from the current Eta fiber. *)
+
+  val with_local :
+    'a Runtime_contract.local ->
+    'a ->
+    ('b, 'err) Effect.t ->
+    ('b, 'err) Effect.t
+  (** Run an effect with one runtime-local binding. *)
+
   val auto_instrument : context -> bool
   (** Whether runtime leaf auto-instrumentation is enabled. *)
 
@@ -177,6 +189,13 @@ module Expert : sig
     context ->
     (context -> ts_ms:int -> unit) ->
     (unit, 'err) Exit.t
+
+  val observability_metrics_enabled : context -> bool
+  (** Whether the active runtime has a meter. Runtime packages use this to avoid
+      collecting metric-only measurements when metrics are disabled. *)
+
+  val observability_now_ms : context -> int
+  (** Read the active runtime-local monotonic clock. *)
 
   val observability_emit_metric :
     context -> Capabilities.metric_point -> unit

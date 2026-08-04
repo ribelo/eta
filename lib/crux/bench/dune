@@ -1,0 +1,7 @@
+(executable
+ (name bench_eta_crux)
+ (libraries bench_lib eta eta_crux eta_crux_json eta_eio eta_observability eta_test eio_main unix))
+
+(alias
+ (name bench)
+ (deps bench_eta_crux.exe))

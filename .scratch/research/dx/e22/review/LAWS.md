@@ -475,6 +475,8 @@ qcheck optics.
 | R49 | `send` reports `Dropped` when a dropping Queue rejects admission. | `lib/eta/queue.mli:124-128` | `send drop_new fails on rejection` — `test/core_common/core_common_suites.ml:1866-1867` |
 | R50 | `try_offer` reports `Full` instead of waiting on a full bounded Queue. | `lib/eta/queue.mli:130-134` | `backpressure try_offer reports full` — `test/core_common/core_common_suites.ml:1870-1871` |
 | R51 | A Queue sent token changes whenever a value is admitted and remains stable when no admission occurs. | `lib/eta/queue.mli:136-141` | `sent token changes only on admission` — `test/core_common/core_common_suites.ml:1854-1855` |
+| R51a | `Queue.try_offer_now` is the synchronous form of `try_offer`, including sent, full, closed, and waiting-sender priority outcomes. | `lib/eta/queue.mli:130-137` | `synchronous probes preserve sender priority` — `test/eta/run.ml` |
+| R51b | `Queue.poll_now` is the synchronous form of `poll`, including item, empty, closed, and FIFO waiting-sender admission outcomes. | `lib/eta/queue.mli:151-155` | `synchronous probes preserve sender priority` — `test/eta/run.ml` |
 | R52 | Exceptions raised by `sync` remain unchecked defects, while runtime cancellation remains interruption. | `lib/eta/effect.mli:57-66` | `runtime exit fail die interrupt` — `test/core_common/effect_common_suites.ml:3872-3873` |
 | R53 | `sync_result` maps `Ok` to success and `Error` to typed failure without catching exceptions. | `lib/eta/effect.mli:68-74` | `sync_result parity` — `test/core_common/effect_common_suites.ml:3817-3818` |
 | R54 | `sync_option` maps `Some` to success and `None` to `if_none` failure without catching exceptions. | `lib/eta/effect.mli:76-84` | `sync_option parity` — `test/core_common/effect_common_suites.ml:3819-3820` |
@@ -622,7 +624,7 @@ valid constructor domains; until then their provenance is explicit.
 | `lib/eta/spi.mli` | 0 | 2 | 0 | 2 |
 | `lib/eta/schedule.mli` | 8 | 2 | 2 | 10 |
 | `lib/eta/channel.mli` | 12 | 0 | 0 | 12 |
-| `lib/eta/queue.mli` | 16 | 14 | 0 | 30 |
+| `lib/eta/queue.mli` | 16 | 16 | 0 | 32 |
 | `lib/eta/semaphore.mli` | 17 | 0 | 0 | 17 |
 | `lib/eta/supervisor.mli` | 1 | 5 | 0 | 6 |
 | `lib/eta/runtime_contract.mli` | 0 | 4 | 0 | 4 |

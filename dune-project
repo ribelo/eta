@@ -60,6 +60,51 @@
   (qcheck :with-test)))
 
 (package
+ (name eta_crux)
+ (synopsis "Incremental composable state machines for Eta")
+ (description
+  "eta_crux provides graph-neutral state-machine descriptions, deterministic advancement, and typed host delivery.")
+ (depends
+  (ocaml (>= 5.2.0))
+  eta
+  eta_observability
+  eta_signal
+  eta_signal_map))
+
+(package
+ (name eta_crux_json)
+ (synopsis "JSON wire format for Eta Crux")
+ (description
+  "eta_crux_json implements the exact Eta Crux JSON wire envelope.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (eta_crux (= :version))
+  base64
+  (yojson (>= 2.0))))
+
+(package
+ (name eta_crux_sexp)
+ (synopsis "S-expression wire format for Eta Crux")
+ (description
+  "eta_crux_sexp implements the exact Eta Crux S-expression wire envelope.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (eta_crux (= :version))
+  base64))
+
+(package
+ (name eta_crux_test)
+ (allow_empty)
+ (synopsis "Deterministic test controls for Eta Crux")
+ (description
+  "eta_crux_test provides scoped controls over the production Eta Crux driver.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (eta_crux (= :version))
+  eta
+  eta_test))
+
+(package
  (name eta_js)
  (allow_empty)
  (synopsis "Js_of_ocaml Eta facade")

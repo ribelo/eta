@@ -495,6 +495,7 @@ let offer_sync contract t value =
         | `Cancelled -> raise exn)
 
 let try_offer t value = Effect.sync (fun () -> try_offer_sync t value)
+let try_offer_now t value = try_offer_sync t value
 
 let sent_token t = with_lock t @@ fun () -> t.sent_token
 let same_sent_token left right = left == right
@@ -542,12 +543,21 @@ let take_value wakeups t =
 
 let poll t =
   with_committed_wakeups_effect t @@ fun wakeups ->
-    if t.shutdown then `Closed
+  if t.shutdown then `Closed
     else if not (Stdlib.Queue.is_empty t.values) then take_value wakeups t
     else
       match t.closed with
       | None -> `Empty
       | Some reason -> close_result reason
+
+let poll_now t =
+  with_committed_wakeups_sync t @@ fun wakeups ->
+  if t.shutdown then `Closed
+  else if not (Stdlib.Queue.is_empty t.values) then take_value wakeups t
+  else
+    match t.closed with
+    | None -> `Empty
+    | Some reason -> close_result reason
 
 let drain_locked wakeups t max =
   let rec loop remaining acc =
@@ -760,6 +770,7 @@ module Enqueue = struct
   let offer_all (Enqueue queue) values = offer_all queue values
   let send (Enqueue queue) value = send queue value
   let try_offer (Enqueue queue) value = try_offer queue value
+  let try_offer_now (Enqueue queue) value = try_offer_now queue value
   let capacity (Enqueue queue) = capacity queue
   let size (Enqueue queue) = size queue
   let is_empty (Enqueue queue) = is_empty queue
@@ -775,6 +786,7 @@ module Dequeue = struct
 
   let take (Dequeue queue) = take queue
   let poll (Dequeue queue) = poll queue
+  let poll_now (Dequeue queue) = poll_now queue
   let take_all (Dequeue queue) = take_all queue
   let take_up_to (Dequeue queue) ~max = take_up_to queue ~max
   let capacity (Dequeue queue) = capacity queue
