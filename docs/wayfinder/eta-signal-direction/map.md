@@ -90,6 +90,13 @@ main Dune workspace.
   work. One fixed invalidation frontier must decide commit or discard before
   topology mutation. Public DOT and node counts omit the retained edge, so the
   final gate needs direct topology evidence or corrected diagnostics.
+- [Observer order counterexample](issues/04-observer-order-counterexample.md) —
+  N3 is confirmed by execution. The exact `A < C < B` graph forms the comparison
+  cycle `A < C < B < A`. Six registration orders produce three callback orders,
+  and two deliver `A` before dependency `B`. Creation-order controls are
+  transitive and registration-independent. Identity order is total but does not
+  preserve dependency order. The explicit topological control does both. Ticket
+  11 owns the public-policy choice.
 
 ## Not yet specified
 
