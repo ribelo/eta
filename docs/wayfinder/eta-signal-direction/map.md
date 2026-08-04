@@ -177,12 +177,11 @@ main Dune workspace.
   get adversarial regressions. Private owner counters gate work at 1,000, 10,000,
   and 100,000 nodes or edges. `@signal-gates` combines laws, deterministic
   economics, and Signal Map complexity without a wall-time condition.
+- [Review disposition and implementation route](issues/17-review-disposition-and-route.md)
+  — Every finding and adjacent gap has a final disposition. Twelve ordered
+  slices replace the engine, packages, tests, requirements, registry, and Crux
+  integration without compatibility paths.
 
-## Not yet specified
-
-- **The final correction program.** The evidence and design tickets must first
-  decide which review findings survive, which new gaps matter, and whether the
-  result is a correction or a redesign.
 ## Out of scope
 
 - Production implementation and durable test changes during this planning

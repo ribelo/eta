@@ -1,5 +1,11 @@
 # Independent review claim census
 
+For every row owned by Ticket 17, the final disposition is the matching
+resolution-span row in
+`docs/wayfinder/eta-signal-direction/issues/17-review-disposition-and-route.md`.
+The last column below preserves the Ticket 01 provisional disposition and does
+not override that final context.
+
 ## Schema
 
 The source is `independent-review.md`. A line span is inclusive and uses that file's line numbers.
