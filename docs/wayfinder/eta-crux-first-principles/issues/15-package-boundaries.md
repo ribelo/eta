@@ -32,7 +32,7 @@ Crux applications.
 Eta Crux uses these package dependencies:
 
 ```text
-eta_crux      -> eta
+eta_crux      -> eta, eta_observability
 eta_crux      -> eta_signal -> eta, eta_observability, eta_stream
 eta_crux      -> eta_signal_map -> eta_signal
 eta_crux      -> eta_stream
@@ -44,7 +44,8 @@ eta_crux_test -> eta_crux, eta, eta_test
 Each arrow points from a package to its dependency. The Crux-specific direct
 dependencies are:
 
-- `eta_crux` depends on `eta`, `eta_signal`, `eta_signal_map`, and `eta_stream`.
+- `eta_crux` depends on `eta`, `eta_observability`, `eta_signal`,
+  `eta_signal_map`, and `eta_stream`.
 - `eta_crux_json` depends on `eta_crux` and `yojson`.
 - `eta_crux_sexp` depends on `eta_crux` only.
 - `eta_crux_test` depends on `eta_crux`, `eta`, and `eta_test`.
@@ -57,6 +58,10 @@ dependency set.
 
 The root `eta` package has no Eta Crux dependency. `eta_signal`, `eta_signal_map`,
 and `eta_test` also have no Eta Crux dependency.
+
+`eta_observability` supplies the fixed logs, metrics, and spans from
+[Operational introspection boundary](20-operational-introspection.md). Eta Crux
+uses ordinary observability effects and defines no second observer API.
 
 Each opam package, public Dune library, and top-level OCaml module uses the same
 underscore name. V1 has no dotted public library and no PPX package.

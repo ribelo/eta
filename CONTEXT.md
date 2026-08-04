@@ -199,6 +199,13 @@ Cancellation and dispatch acceptance use first-winner arbitration. A canceled
 unaccepted request does not start. An accepted request receives a cancellation
 notice.
 
+## Operational telemetry
+
+A fixed payload-free set of logs, metrics, and spans that Eta Crux emits through
+Eta observability effects. Operational telemetry exposes semantic operation
+categories and outcomes. It does not expose application values or graph
+identity.
+
 ## Inbound request
 
 A request that the shell starts and the application core resolves.

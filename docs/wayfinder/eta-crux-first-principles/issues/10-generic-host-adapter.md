@@ -64,12 +64,14 @@ module Driver : sig
 
     val output : 'output t -> 'output
     val reason : 'output t -> reason
-    val delivered : 'output t -> (unit, completion_error) result
+    val delivered :
+      'output t ->
+      ((unit, completion_error) result, Eta_crux.never) Eta.Effect.t
 
     val failed :
       'output t ->
       Failure.Packed_cause.t ->
-      (unit, completion_error) result
+      ((unit, completion_error) result, Eta_crux.never) Eta.Effect.t
   end
 
   type 'output event =
@@ -86,19 +88,24 @@ module Driver : sig
     | Closed
 
   val create : 'output Root.t -> 'output t
-  val poll : 'output t -> 'output event option
+  val poll :
+    'output t ->
+    ('output event option, Eta_crux.never) Eta.Effect.t
   val await : 'output t -> ('output event, Eta_crux.never) Eta.Effect.t
   val request_stop : 'output t -> unit
 
   val replace_serialized_session :
     'output t ->
     Serialized_session.candidate ->
-    ('output Delivery.t, replace_error) result
+    (('output Delivery.t, replace_error) result, Eta_crux.never) Eta.Effect.t
 end
 ```
 
-`poll` performs available driver work without waiting. `await` waits on the root
-wake when the root is idle. Eta Crux calls no host wake callback.
+`poll` performs available driver work without waiting or suspension. It is an
+Eta effect so that the driver can emit the fixed telemetry from
+[Operational introspection boundary](20-operational-introspection.md). `await`
+waits on the root wake when the root is idle. Eta Crux calls no host wake
+callback.
 
 Each operation performs at most one root advancement. A stale endpoint produces
 `Rejected Stale_endpoint`. The driver never hides that advancement by selecting
