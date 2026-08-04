@@ -22,7 +22,7 @@ children, one staged effect, one source, and typed root output. Compare inferred
 signatures, compiler errors, source locations, refactor behavior, and generated
 code.
 
-Prototype a clear surface for the two-phase source producer, spec equality,
+Prototype a clear surface for the two-phase source producer, spec cutoff,
 changing mappers, terminal outcomes, and the target endpoint. Keep readiness in
 the type structure instead of an application callback. Compare the rank-2
 emitter record with any equally precise, simpler syntax.
@@ -46,13 +46,23 @@ operators. V1 has no PPX.
 The computation algebra keeps its plain functions:
 
 ```ocaml
+module Cutoff : sig
+  type 'a t
+
+  val always : 'a t
+  val never : 'a t
+  val phys_equal : 'a t
+  val of_equal : ('a -> 'a -> bool) -> 'a t
+  val of_compare : ('a -> 'a -> int) -> 'a t
+end
+
 type 'a t
 type never = |
 
 val return : 'a -> 'a t
 val map : 'a t -> f:('a -> 'b) -> 'b t
 val both : 'a t -> 'b t -> ('a * 'b) t
-val cutoff : 'a t -> equal:('a -> 'a -> bool) -> 'a t
+val cutoff : 'a t -> cutoff:'a Cutoff.t -> 'a t
 val bind : 'a t -> f:('a -> 'b t) -> 'b t
 ```
 
@@ -91,7 +101,7 @@ State machines use a module constructor with one positional input:
 ```ocaml
 module State_machine : sig
   val create :
-    ?equal:('model -> 'model -> bool) ->
+    ?model_cutoff:'model Cutoff.t ->
     ?diagnostics:('model, 'action) Diagnostic.state_machine ->
     'input t ->
     default_model:'model ->
@@ -120,17 +130,18 @@ val lifecycle : (unit, never) Eta.Effect.t t -> unit t
 Keyed applications use the selected map functor:
 
 ```ocaml
-module Assoc (M : Map.S) : sig
+module Assoc
+    (Order : Eta_signal_map.Map.Ordered_type) : sig
   val assoc :
-    ?data_equal:('data -> 'data -> bool) ->
-    'data M.t t ->
-    f:(key:M.key -> data:'data t -> 'result t) ->
-    'result M.t t
+    ?data_cutoff:'data Cutoff.t ->
+    'data Eta_signal_map.Map.Make(Order).t t ->
+    f:(key:Order.t -> data:'data t -> 'result t) ->
+    'result Eta_signal_map.Map.Make(Order).t t
 end
 ```
 
-A local `module Items = Assoc (Item_map)` keeps the dependent map type clear.
-First-class map modules cannot return `M.t` without existential escape.
+A local `module Items = Assoc (Item_order)` keeps the dependent map type clear.
+The direct persistent map path remains visible in inferred types.
 
 Generative application functors add no useful identity. Description nodes and
 structural scopes already define identity.
@@ -192,7 +203,7 @@ module Source : sig
     ((unit, 'error) Eta.Effect.t, 'error) Eta.Effect.t
 
   val create :
-    spec_equal:('spec -> 'spec -> bool) ->
+    spec_cutoff:'spec Cutoff.t ->
     spec:'spec t ->
     producer:('spec -> ('item, 'error) producer) t ->
     target:'action Endpoint.t t ->
@@ -205,7 +216,7 @@ end
 The outer effect is the opening phase. Its success value is the long-lived
 producer effect. Therefore, readiness stays in the nested type.
 
-`spec` and `spec_equal` control producer continuity. The producer factory,
+`spec` and `spec_cutoff` control producer continuity. The producer factory,
 target, item mapper, and terminal mapper are changing computation values.
 
 Committed mapper changes do not restart the producer. A new active interval
@@ -384,8 +395,15 @@ module Root : sig
         post_commit : Post_commit.t;
       }
 
-  val create : ingress_capacity:int -> 'output description -> 'output t
-  val advance : 'output t -> ('output outcome, advance_error) result
+  val create :
+    ingress_capacity:int ->
+    request_capacity:int ->
+    'output description ->
+    'output t
+
+  val advance :
+    'output t ->
+    (('output outcome, advance_error) result, never) Eta.Effect.t
   val request_stop : 'output t -> unit
 end
 ```

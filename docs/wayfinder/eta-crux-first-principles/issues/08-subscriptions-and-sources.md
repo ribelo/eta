@@ -58,17 +58,17 @@ owns final names and argument order.
 ### Identity and updates
 
 The description node locates the source declaration. A changing spec value and
-an application equality function define source continuity.
+one graph-neutral `Cutoff.t` define source continuity.
 
-An equal spec preserves the running producer. Eta Crux updates the item and
-terminal mappers at the atomic graph commit. Later events use the latest
-committed mappers without a producer restart.
+A candidate spec that the cutoff suppresses preserves the producer. Eta Crux
+updates item and terminal mappers at the atomic graph commit. Later events use
+the latest committed mappers without a producer restart.
 
 The mapper closures and producer factory do not participate in identity. The
 spec contains every value that changes producer registration or execution. A
 later active interval samples the latest producer factory and spec.
 
-An unequal spec creates a fresh source incarnation. The post-commit batch first
+A candidate spec that the cutoff accepts creates a fresh source incarnation. The post-commit batch first
 requests cancellation of the old incarnation. The replacement can start while
 old finalizers run.
 
@@ -153,7 +153,7 @@ reconciliation, cancellation, or restart policy.
 ### Rejected alternatives
 
 Eta Crux does not use lifecycle programs as the only public source recipe. That
-recipe lacks explicit spec equality and readiness semantics.
+recipe lacks an explicit spec cutoff and readiness semantics.
 
 Eta Crux does not add `Subscription.empty`, `Subscription.batch`, or a second
 composition language. Computation structure already supplies composition and

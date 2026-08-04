@@ -47,9 +47,9 @@ effects. In particular, `Driver.poll`, delivery-token completion, request-event
 completion, and serialized-session replacement return effects. `Driver.await`
 remains an effect.
 
-`Root.advance` remains synchronous and emits no telemetry. It is the low-level
-semantic operation for internal tests and the production driver. Production
-integrations use `Driver` or `Hosted`.
+`Root.advance` is a typed-infallible Eta effect and emits no telemetry. It is the
+low-level semantic operation for internal tests and the production driver.
+Production integrations use `Driver` or `Hosted`.
 
 The semantic changes to `Driver` include:
 

@@ -28,34 +28,33 @@ local state across data updates, removal, and re-entry. Do not expose a broad
 
 ### Public contract
 
-Eta Crux supports one ordered keyed collection through a functor over a
-caller-owned `Stdlib.Map.S` module:
+Eta Crux supports one ordered persistent collection:
 
 ```ocaml
-module Assoc (M : Map.S) : sig
+module Assoc
+    (Order : Eta_signal_map.Map.Ordered_type) : sig
   val assoc :
-    ?data_equal:('data -> 'data -> bool) ->
-    'data M.t t ->
-    f:(key:M.key -> data:'data t -> 'result t) ->
-    'result M.t t
+    ?data_cutoff:'data Cutoff.t ->
+    'data Eta_signal_map.Map.Make(Order).t t ->
+    f:(key:Order.t -> data:'data t -> 'result t) ->
+    'result Eta_signal_map.Map.Make(Order).t t
 end
 ```
 
-`M` defines key equivalence, key uniqueness, and deterministic output order.
-The output uses the same map type as the input. `M.bindings` defines its linear
-order.
+`Order.compare` defines key identity and deterministic output order. The input
+and output use the direct persistent `Map.Make(Order).t` type.
 
-The key is a plain `M.key` value. It remains constant for one child
+The key is a plain `Order.t` value. It remains constant for one child
 incarnation. A key change is a removal and an addition.
 
 The data argument is one stable description for the child incarnation. A
 same-key data update changes its value without replacing its identity.
 
-`data_equal` defaults to physical equality `( == )`. It controls per-key data
-publication. It does not control the child-output cutoff.
+`data_cutoff` defaults to physical equality. It receives the published data
+before the candidate. A suppressed candidate keeps the published data.
 
-`Map.S` cannot contain duplicate keys. Thus, `assoc` has no duplicate-key error
-branch. The map producer owns all other key validation.
+The map cannot contain duplicate keys. The producer owns all other key
+validation.
 
 The callback is a pure description builder. It runs for a provisional addition
 and can run again after rollback. The contract promises one committed child
@@ -121,80 +120,40 @@ programs and work cancellation.
 
 ### Private engine seam
 
-Eta Crux needs one dedicated keyed-map node in its private `eta_signal` engine
-integration:
+Each root creates one private `Eta_signal.Make` graph. It adapts that graph with
+`Eta_signal_map.Make(Signal.Package)`.
 
-```ocaml
-module Keyed_map (M : Map.S) : sig
-  val create :
-    ?data_equal:('data -> 'data -> bool) ->
-    'data M.t signal ->
-    f:(key:M.key -> data:'data signal -> 'output signal) ->
-    'output M.t signal
-end
-```
+The interpreter maps `Assoc(Order).assoc` to
+`Signal_map.Keyed(Order).mapi`. It translates the graph-neutral Crux cutoff to
+`Eta_signal.Cutoff.t`.
 
-This operator is not part of the Eta Crux application interface. Ticket 15
-decides its package location and whether ordinary `eta_signal` users see it.
+Signal Map owns stable-family entries, provisional child scopes, data sources,
+dependency edges, affected-child indexing, rollback, and pure commit.
 
-The node owns an entry map. Each entry contains the key, scope incarnation,
-stable data variable, data signal, child signal, and keyed scope.
+The committed Crux root frame contains the final keyed output and endpoint
+manifest. Applications receive no Signal type, graph value, scope, or `Keyed`
+module.
 
-The node uses `M.merge` to make a complete plan:
-
-- a left-only entry plans removal.
-- a right-only entry plans addition.
-- an equal common entry keeps its child unchanged.
-- an unequal common entry plans a data-source update.
-
-Eta Signal value staging is necessary but not sufficient. Scope validity,
-dependency edges, and graph registries are mutable graph structure. Keyed edits
-must join the graph preflight, commit, and rollback protocol used by dynamic
-`bind`.
-
-The pure phase creates provisional scopes and runs builders. It also stages data
-cells, the entry map, dependency changes, and the output map. It does not
-invalidate committed removals.
-
-The structural preflight validates every scope and child. It also reserves all
-counters and timer stops. No user callback runs after this point.
-
-Commit first detaches and invalidates every removal. It then attaches additions
-and publishes the staged cells. All operations after preflight are total.
-
-Rollback invalidates provisional additions and discards staged values. It keeps
-removal candidates attached and live. The previous snapshot remains observable
-and the source update remains retryable.
-
-Structural edits must not use a late `on_commit` callback after value
-publication. An exception at that point cannot restore atomicity.
-
-The private surface contains no public scope handle, `Expert` node API,
-`assoc_on`, generic diff callback, or full `Incr_map` operator set.
+Eta Crux implements no `Keyed_map`, generic diff callback, `assoc_on`, or second
+keyed engine.
 
 ### Complexity
 
-`Stdlib.Map.S` does not expose a symmetric-diff operation. Eta Crux therefore
-makes no change-proportional reconciliation claim for V1.
+Keyed reconciliation and child-only changes use the public Signal Map bounds.
+Shared persistent ancestry gives change-proportional key comparisons. An
+independent map remains correct with linear comparisons.
 
-For a changed input map:
+Builders run only for additions. Data publication runs only for accepted
+same-key candidates. Disposal runs only for removals.
 
-- reconciliation takes `O(n_old + n_new)` time through `M.merge`.
-- transient reconciliation data takes `O(n_old + n_new)` space.
-- live keyed engine state takes `O(n_live)` space.
-- builders run for additions only.
-- data publication runs for unequal common keys only.
-- disposal runs for removals only.
-
-The linear scan does not replace unchanged child graphs. Their state and
-expensive computations remain incremental. Performance work can revisit the
-input collection only after measurements show that reconciliation dominates.
+Live keyed state is linear in live keys. Persistent output patches preserve
+unchanged ancestry for downstream diff.
 
 ### Rejected alternatives
 
-A framework-owned keyed collection duplicates the host map type and creates
-conversion work. Its required construction and interoperation surface also
-pulls Eta Crux toward a collection framework.
+`Stdlib.Map.S` is rejected because it exposes no persistent ancestry or
+symmetric-diff contract. Conversion to the Eta persistent map severs ancestry
+and retains an obsolete path.
 
 A generic ordered-diff callback is not safe enough. The engine cannot detect an
 omitted update or removal without doing its own full scan. Such an omission can
@@ -224,7 +183,6 @@ The selected prototype is on branch `prototype/eta-crux-assoc-map` at commit
 
 - [keyed assoc prototype](https://github.com/ribelo/eta/tree/dccefa64/.scratch/prototypes/eta-crux-assoc/map-functor)
 
-The prototype has 101 behavioral checks. It covers stable updates, rollback,
-removal, stale tokens, fresh re-entry, lifecycle order, Taumel agent IDs, and
-linear reconciliation. The checks pass in the OxCaml and upstream OCaml Nix
-shells.
+The prototype has 101 behavioral checks for the old map path. Its identity,
+rollback, removal, stale-token, re-entry, and lifecycle evidence remains useful.
+The final Signal Map suite replaces its reconciliation evidence.

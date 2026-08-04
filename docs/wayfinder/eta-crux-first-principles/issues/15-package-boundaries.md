@@ -33,28 +33,26 @@ Eta Crux uses these package dependencies:
 
 ```text
 eta_crux      -> eta, eta_observability
-eta_crux      -> eta_signal -> eta, eta_observability, eta_stream
-eta_crux      -> eta_signal_map -> eta_signal
-eta_crux      -> eta_stream
-eta_crux_json -> eta_crux, yojson
-eta_crux_sexp -> eta_crux
+eta_crux      -> eta_signal (= same release)
+eta_crux      -> eta_signal_map (= same release)
+eta_crux_json -> eta_crux, base64, yojson
+eta_crux_sexp -> eta_crux, base64
 eta_crux_test -> eta_crux, eta, eta_test
 ```
 
 Each arrow points from a package to its dependency. The Crux-specific direct
 dependencies are:
 
-- `eta_crux` depends on `eta`, `eta_observability`, `eta_signal`,
-  `eta_signal_map`, and `eta_stream`.
-- `eta_crux_json` depends on `eta_crux` and `yojson`.
-- `eta_crux_sexp` depends on `eta_crux` only.
+- `eta_crux` depends on `eta`, `eta_observability`, `eta_signal`, and
+  `eta_signal_map`.
+- `eta_crux_json` depends on `eta_crux`, `base64`, and `yojson`.
+- `eta_crux_sexp` depends on `eta_crux` and `base64`.
 - `eta_crux_test` depends on `eta_crux`, `eta`, and `eta_test`.
-- `eta_signal_map` depends on `eta_signal`.
+- `eta_signal_map` depends on the same `eta_signal` release.
 
-The existing `eta_signal` package already depends on `eta_stream`. The direct
-`eta_stream` dependency in `eta_crux` supports its small stream-to-source
-adapter. A separate package for this adapter does not reduce the installed
-dependency set.
+Eta Crux core has no stream-to-source adapter and no direct `eta_stream`
+dependency. Stream-backed source adapters belong in optional integration
+packages.
 
 The root `eta` package has no Eta Crux dependency. `eta_signal`, `eta_signal_map`,
 and `eta_test` also have no Eta Crux dependency.
@@ -118,13 +116,13 @@ modules do not form a public Expert API.
 Eta Crux depends only on public `eta_signal` and `eta_signal_map` interfaces. It
 does not use a private Dune library from either package.
 
-`eta_signal_map` owns the transactional keyed-map node from
-[Keyed assoc and stable child identity](04-keyed-assoc-contract.md). It exposes
-a public `Keyed_map (M : Map.S)` functor next to the existing `Keyed` API. The
-node uses the supplied `M` operations and preserves the laws from that ticket.
+`eta_signal_map` owns the transactional keyed node. Eta Crux creates one
+`Eta_signal.Make` graph and adapts its package endpoint with
+`Eta_signal_map.Make(Signal.Package)`.
 
-`Eta_crux.Assoc (M)` uses this public node. Eta Crux does not implement a second
-keyed graph node or expose the Eta Signal structural protocol.
+`Eta_crux.Assoc(Order)` maps to `Signal_map.Keyed(Order).mapi`. Eta Crux does not
+implement a second keyed graph node or expose the Eta Signal structural
+protocol.
 
 If implementation work proves that Eta Crux needs another engine hook, the hook
 must enter the public `eta_signal` or `eta_signal_map` API. It must have named

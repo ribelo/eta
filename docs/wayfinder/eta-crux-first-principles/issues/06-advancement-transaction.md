@@ -66,7 +66,8 @@ type advance_error =
   | Closed
 
 val advance :
-  'output Root.t -> ('output outcome, advance_error) result
+  'output Root.t ->
+  (('output outcome, advance_error) result, never) Eta.Effect.t
 ```
 
 This is a semantic signature. [OCaml API syntax and ergonomics](14-ocaml-api-ergonomics.md)

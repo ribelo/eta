@@ -38,6 +38,16 @@ application.
 The public description algebra has this semantic core:
 
 ```ocaml
+module Cutoff : sig
+  type 'a t
+
+  val always : 'a t
+  val never : 'a t
+  val phys_equal : 'a t
+  val of_equal : ('a -> 'a -> bool) -> 'a t
+  val of_compare : ('a -> 'a -> int) -> 'a t
+end
+
 type 'a t
 type never = |
 
@@ -57,11 +67,11 @@ end
 val return : 'a -> 'a t
 val map : 'a t -> f:('a -> 'b) -> 'b t
 val both : 'a t -> 'b t -> ('a * 'b) t
-val cutoff : 'a t -> equal:('a -> 'a -> bool) -> 'a t
+val cutoff : 'a t -> cutoff:'a Cutoff.t -> 'a t
 val bind : 'a t -> f:('a -> 'b t) -> 'b t
 
 val state_machine :
-  ?equal:('model -> 'model -> bool) ->
+  ?model_cutoff:'model Cutoff.t ->
   default_model:'model ->
   input:'input t ->
   apply_action:

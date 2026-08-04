@@ -160,6 +160,13 @@ main Dune workspace.
   One balanced associative reduction closes the static fan-in gap. Observer
   finish is separate from value updates. Time and diagnostics stay engine-owned.
   The optional `eta_signal_stream` package owns the Eio-backed stream bridge.
+- [Eta Crux Signal contract](issues/14-eta-crux-signal-contract.md) —
+  Public Crux computations remain graph-neutral. Each root compiles one
+  description into one private Signal graph and one committed root-frame signal.
+  State models use private Signal variables. `Assoc(Order).assoc` maps to
+  `Keyed(Order).mapi`. `Root.advance` becomes effectful and runs one
+  stabilization for each non-idle event. Crux timers remain endpoint-producing
+  Eta effects or sources.
 
 ## Not yet specified
 

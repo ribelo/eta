@@ -48,7 +48,8 @@ administration before the shared typed boundary.
 ## Package graph
 
 ```text
-eta_crux      -> eta, eta_observability, eta_signal, eta_signal_map
+eta_crux      -> eta, eta_observability
+eta_crux      -> eta_signal (= same release), eta_signal_map (= same release)
 eta_crux_json -> eta_crux, base64, yojson
 eta_crux_sexp -> eta_crux, base64
 eta_crux_test -> eta_crux, eta, eta_test
@@ -61,11 +62,14 @@ underscore name. V1 has no PPX package and no concrete host-adapter package.
 the two exact envelope codecs. `eta_crux_test` contains test controls over the
 production driver. Concrete adapters remain in their host projects.
 
-Eta Crux uses the public Eta Signal owner transaction and
-`Eta_signal_map.Keyed_map` seams for its private graph. Each committed graph
-cell is an owner-transaction cell. Keyed reconciliation uses one ordered merge.
-Eta supervision and `Supervisor.Scope.request_cancel` own long-lived work. Eta
-Crux does not use private cross-package hooks.
+Each root creates one private `Eta_signal.Make` graph. It adapts that graph with
+`Eta_signal_map.Make(Signal.Package)` and maps Crux `Assoc(Order).assoc` to
+`Keyed(Order).mapi`.
+
+Private Signal variables own state-machine models. One committed root-frame
+signal owns output and structural manifests. Eta supervision and
+`Supervisor.Scope.request_cancel` own long-lived work. Eta Crux uses no private
+cross-package hook.
 
 ## Public modules
 
