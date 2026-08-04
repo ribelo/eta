@@ -2,9 +2,9 @@
 
 ## Destination
 
-An evidence-backed, implementation-ready direction for Eta Signal. The effort
-must verify the independent review, decide which gaps matter, and follow each
-accepted consequence until no design decision blocks implementation.
+An evidence-backed, implementation-ready
+[Eta Signal V1 specification](specification.md). The effort must verify the
+independent review and resolve every design choice that blocks implementation.
 
 ## Notes
 
@@ -181,6 +181,9 @@ main Dune workspace.
   — Every finding and adjacent gap has a final disposition. Twelve ordered
   slices replace the engine, packages, tests, requirements, registry, and Crux
   integration without compatibility paths.
+- [Consolidated Eta Signal specification](issues/18-consolidated-specification.md)
+  — The resolved contracts now form one implementation-ready
+  [Eta Signal V1 specification](specification.md).
 
 ## Out of scope
 
