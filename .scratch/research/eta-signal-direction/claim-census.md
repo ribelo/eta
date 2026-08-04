@@ -42,8 +42,8 @@ value for a library interface.
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
 | EXE-001 | 20 | The audit has the correct broad architecture direction but overstates three conclusions. | verdict | Ticket 17 | Review synthesis | Assign to owner for final disposition. |
-| EXE-002 | 22 | The keyed engine is embedded in the kernel. | fact | Ticket 12 | Static source trace | Retain for package-seam evidence. |
-| EXE-003 | 22 | The production keyed package boundary is not `Obj`-typed. | fact | Ticket 12 | Static source trace | Retain and amend F2. |
+| EXE-002 | 22 | The keyed engine is embedded in the kernel. | fact | Ticket 12 | Static source trace | Confirm current embedding. Replace it with the engine-owned stable-family interpreter. |
+| EXE-003 | 22 | The production keyed package boundary is not `Obj`-typed. | fact | Ticket 12 | Static source trace | Confirm the production path is typed. Separate F7 from F2. |
 | EXE-004 | 23 | Streams distinguish disposal from invalid-scope termination. | fact | Ticket 13 | Static source trace | Retain and amend F4. |
 | EXE-005 | 24 | Two packed-code traces refute the audit's conclusion that there is no P0 defect. | verdict | Ticket 17 | Static counterexamples | Assign to owner after tickets 02 and 03. |
 | EXE-006 | 28-32 | The review confirms F7, F8, F10, F12, and F13. | verdict | Ticket 17 | Review finding count | Assign to owner for final disposition. |
@@ -110,37 +110,37 @@ value for a library interface.
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| F02-001 | 98 | Engine embedding is confirmed. | verdict | Ticket 12 | Static review verdict | Retain for seam design. |
-| F02-002 | 98 | The `Obj` causal claim is rejected. | verdict | Ticket 12 | Static review verdict | Retain and amend F2. |
-| F02-003 | 98 | A mandatory public Expert correction is rejected and becomes an architecture decision. | verdict | Ticket 12 | Design assessment | Assign to owner for seam decision. |
+| F02-001 | 98 | Engine embedding is confirmed. | verdict | Ticket 12 | Static review verdict | Confirm current embedding and replace it through the selected sealed protocol. |
+| F02-002 | 98 | The `Obj` causal claim is rejected. | verdict | Ticket 12 | Static review verdict | Confirm the production Obj claim is false. |
+| F02-003 | 98 | A mandatory public Expert correction is rejected and becomes an architecture decision. | verdict | Ticket 12 | Design assessment | Reject a mandatory broad Expert API. Select one sealed stable-family plan form. |
 | F02-004 | 102 | `incr_map` is a separate library built over `Incremental.Expert`. | reference fact | Ticket 06 | Reference source trace | Retain as reference evidence. |
 | F02-005 | 102 | `incr_map` uses stale marking, dynamic edges, and invalidation for keyed updates. | reference fact | Ticket 06 | Reference source trace | Retain as reference evidence. |
-| F02-006 | 104 | Eta's keyed engine lives inside `eta_signal_kernel`. | fact | Ticket 12 | Static source trace | Retain for seam design. |
-| F02-007 | 104 | `eta_signal_map.Make` directly instantiates that kernel. | fact | Ticket 12 | Static source trace | Retain for seam design. |
-| F02-008 | 104 | External libraries cannot add custom recompute node kinds through the current engine. | interface limitation | Ticket 12 | Static package and type trace | Assign to owner for seam decision. |
-| F02-009 | 108 | Signal Map builds typed keyed operation records. | fact | Ticket 12 | Static source trace | Retain and reject the production-`Obj` framing. |
-| F02-010 | 109 | Signal Map passes keyed operation records without `Obj`. | fact | Ticket 12 | Static source trace | Retain and reject the production-`Obj` framing. |
-| F02-011 | 110 | Only `Keyed.Testing` re-exports the `Obj.t` token surface. | fact | Ticket 12 | Static source trace | Retain for testing-seam design. |
-| F02-012 | 110 | Kernel test and introspection helpers implement the untyped token surface. | fact | Ticket 12 | Static source trace | Retain for testing-seam design. |
-| F02-013 | 112 | The production keyed library boundary does not require `Obj`. | correction | Ticket 12 | Static source trace | Reject the contrary audit claim. |
-| F02-014 | 112 | F7 is a private testing-token defect, not a production engine protocol defect. | correction | Ticket 12 | Static source trace | Retain and separate F7 from F2. |
-| F02-015 | 116 | Eta has a closed graph engine. | amended finding | Ticket 12 | Static source synthesis | Assign to owner for architecture decision. |
-| F02-016 | 116 | Signal Map works by instantiating a kernel that already contains keyed nodes. | amended finding | Ticket 12 | Static source synthesis | Retain for architecture decision. |
-| F02-017 | 116 | The closed engine prevents independently linked custom-node libraries. | amended finding | Ticket 12 | Static source synthesis | Assign to owner for architecture decision. |
-| F02-018 | 116 | The current production keyed path is type-safe. | amended finding | Ticket 12 | Static source synthesis | Retain as a required property. |
-| F02-019 | 120 | Eta must not publish a broad Expert API now. | recommendation | Ticket 12 | Design recommendation | Assign to owner for architecture decision. |
-| F02-020 | 120 | A public mutation API can expose phase, cycle, indexing, invalidation, demand, rollback, and ordering invariants. | risk claim | Ticket 12 | Static architecture analysis | Retain in the seam decision. |
-| F02-021 | 120 | There is no evidence that more than one external node-kind implementation needs a mutation API. | evidence gap | Ticket 12 | Repository evidence cannot observe external demand | Reject repository absence as evidence against external usefulness. |
-| F02-022 | 122 | Eta must choose between a closed engine and a narrow first-party SPI. | design fork | Ticket 12 | Proposed mutually exclusive choices | Assign to owner for architecture decision. |
-| F02-023 | 124 | A closed-engine choice must amend the ADR to accept embedded keyed nodes. | requirement | Ticket 12 | Conditional design consequence | Assign to owner if it chooses the closed engine. |
-| F02-024 | 124 | A closed-engine choice must reduce the private protocol and fix F7 separately. | requirement | Ticket 12 | Conditional design consequence | Assign to owner if it chooses the closed engine. |
-| F02-025 | 125 | A second real node-kind package can justify a sealed typed first-party SPI. | decision rule | Ticket 12 | Conditional recommendation | Amend because external usefulness can justify a sealed SPI without an in-repository package. |
-| F02-026 | 125 | A narrow SPI must leave phase, scheduling, rollback, demand, and invalidation inside the engine. | invariant | Ticket 12 | Proposed seam contract | Assign to owner for architecture decision. |
-| F02-027 | 127 | Eta must not copy Jane Street's full Expert API for superficial similarity. | recommendation | Ticket 12 | Product-boundary principle | Retain as a design constraint. |
-| F02-028 | 131 | The extension decision depends on stable scheduler and edge contracts. | sequencing | Ticket 12 | Proposed dependency order | Assign to owner for route planning. |
-| F02-029 | 131 | A broad public API has a large permanent blast radius. | blast radius | Ticket 12 | Architecture assessment | Retain for decision evidence. |
-| F02-030 | 131 | A private typed SPI affects the kernel, map API, package boundaries, and compile-fail tests. | blast radius | Ticket 12 | Static impact estimate | Retain for planning. |
-| F02-031 | 106 | The production sibling-package path is typed. | fact | Ticket 12 | Static source trace | Retain and reject the production-`Obj` framing. |
+| F02-006 | 104 | Eta's keyed engine lives inside `eta_signal_kernel`. | fact | Ticket 12 | Static source trace | Confirm the current keyed engine location. |
+| F02-007 | 104 | `eta_signal_map.Make` directly instantiates that kernel. | fact | Ticket 12 | Static source trace | Confirm the current replacement-factory shape and delete it. |
+| F02-008 | 104 | External libraries cannot add custom recompute node kinds through the current engine. | interface limitation | Ticket 12 | Static package and type trace | Confirm the general-node limit. Add only the sealed stable-family form. |
+| F02-009 | 108 | Signal Map builds typed keyed operation records. | fact | Ticket 12 | Static source trace | Confirm typed keyed operation records. |
+| F02-010 | 109 | Signal Map passes keyed operation records without `Obj`. | fact | Ticket 12 | Static source trace | Confirm the production adapter uses no Obj token. |
+| F02-011 | 110 | Only `Keyed.Testing` re-exports the `Obj.t` token surface. | fact | Ticket 12 | Static source trace | Confirm the token appears only in private testing support. |
+| F02-012 | 110 | Kernel test and introspection helpers implement the untyped token surface. | fact | Ticket 12 | Static source trace | Confirm the private helper owns the unsafe token surface. |
+| F02-013 | 112 | The production keyed library boundary does not require `Obj`. | correction | Ticket 12 | Static source trace | Accept the correction. Production remains typed. |
+| F02-014 | 112 | F7 is a private testing-token defect, not a production engine protocol defect. | correction | Ticket 12 | Static source trace | Accept the correction. F7 is a separate private testing defect. |
+| F02-015 | 116 | Eta has a closed graph engine. | amended finding | Ticket 12 | Static source synthesis | Amend closure to one sealed stable-family plan form with no mutation authority. |
+| F02-016 | 116 | Signal Map works by instantiating a kernel that already contains keyed nodes. | amended finding | Ticket 12 | Static source synthesis | Confirm current embedding and replace the replacement factory. |
+| F02-017 | 116 | The closed engine prevents independently linked custom-node libraries. | amended finding | Ticket 12 | Static source synthesis | Confirm the general-node limit. Permit stable-family packages through the branded endpoint. |
+| F02-018 | 116 | The current production keyed path is type-safe. | amended finding | Ticket 12 | Static source synthesis | Keep type safety as a mandatory protocol property. |
+| F02-019 | 120 | Eta must not publish a broad Expert API now. | recommendation | Ticket 12 | Design recommendation | Accept the ban on a broad Expert API. |
+| F02-020 | 120 | A public mutation API can expose phase, cycle, indexing, invalidation, demand, rollback, and ordering invariants. | risk claim | Ticket 12 | Static architecture analysis | Accept the risk and keep every listed invariant engine-owned. |
+| F02-021 | 120 | There is no evidence that more than one external node-kind implementation needs a mutation API. | evidence gap | Ticket 12 | Repository evidence cannot observe external demand | Reject repository absence as negative evidence. External collection adapters provide positive value. |
+| F02-022 | 122 | Eta must choose between a closed engine and a narrow first-party SPI. | design fork | Ticket 12 | Proposed mutually exclusive choices | Select the narrow sealed protocol. |
+| F02-023 | 124 | A closed-engine choice must amend the ADR to accept embedded keyed nodes. | requirement | Ticket 12 | Conditional design consequence | Reject the closed-engine branch. Amend the ADR for the sealed protocol. |
+| F02-024 | 124 | A closed-engine choice must reduce the private protocol and fix F7 separately. | requirement | Ticket 12 | Conditional design consequence | Reject the closed-engine branch. Fix F7 with typed private probes. |
+| F02-025 | 125 | A second real node-kind package can justify a sealed typed first-party SPI. | decision rule | Ticket 12 | Conditional recommendation | Amend the rule. External stable-family value justifies the sealed protocol now. |
+| F02-026 | 125 | A narrow SPI must leave phase, scheduling, rollback, demand, and invalidation inside the engine. | invariant | Ticket 12 | Proposed seam contract | Accept the invariant and extend it to topology, cleanup, and publication. |
+| F02-027 | 127 | Eta must not copy Jane Street's full Expert API for superficial similarity. | recommendation | Ticket 12 | Product-boundary principle | Accept. Jane Street Incremental is not an API target. |
+| F02-028 | 131 | The extension decision depends on stable scheduler and edge contracts. | sequencing | Ticket 12 | Proposed dependency order | Resolve after Tickets 09 and 10 fixed the engine-owned contracts. |
+| F02-029 | 131 | A broad public API has a large permanent blast radius. | blast radius | Ticket 12 | Architecture assessment | Accept the blast-radius warning and reject the broad API. |
+| F02-030 | 131 | A private typed SPI affects the kernel, map API, package boundaries, and compile-fail tests. | blast radius | Ticket 12 | Static impact estimate | Accept the implementation blast radius for the selected protocol. |
+| F02-031 | 106 | The production sibling-package path is typed. | fact | Ticket 12 | Static source trace | Confirm the current production sibling path is typed. |
 
 ### F3
 
@@ -232,17 +232,17 @@ value for a library interface.
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
 | F07-001 | 268 | F7 is confirmed as an independent P2 defect. | verdict | Ticket 17 | Static review verdict | Assign to owner for final disposition. |
-| F07-002 | 272 | `keyed_entry_identity` casts caller keys with `Obj.magic`. | fact | Ticket 12 | Static source trace | Retain for testing-seam design. |
-| F07-003 | 272 | One `Obj.t` token represents five semantically different object kinds. | fact | Ticket 12 | Static source trace | Retain for testing-seam design. |
-| F07-004 | 272 | `keyed_scope_valid` interprets any generic token as a scope. | fact | Ticket 12 | Static source trace | Retain for testing-seam design. |
-| F07-005 | 272 | A wrong token causes representation confusion instead of a typed or loud error. | correctness claim | Ticket 12 | Static unsafe-cast analysis | Retain for testing-seam design. |
-| F07-006 | 274 | Private test scope limits exposure but still permits undefined behavior. | impact claim | Ticket 12 | Static unsafe-cast analysis | Retain for seam risk. |
-| F07-007 | 274 | The token surface violates Eta's fail-loudly rule. | standards claim | Ticket 12 | Repository-policy comparison | Retain for seam design. |
-| F07-008 | 278-292 | Distinct opaque identity and scope token types can replace the universal token. | contract proposal | Ticket 12 | Proposed typed API | Assign to owner for seam design. |
-| F07-009 | 294 | Source, data, and child identity checks need distinct opaque types or typed accessors. | requirement | Ticket 12 | Proposed type-safety rule | Assign to owner for seam design. |
-| F07-010 | 294 | Eta must not use one universal testing token. | requirement | Ticket 12 | Proposed type-safety rule | Assign to owner for seam design. |
-| F07-011 | 298 | F7 can land independently and only changes private testing signatures and fixtures. | sequencing | Ticket 12 | Preliminary impact estimate | Assign to owner for route planning. |
-| F07-012 | 298 | F7 does not change production `Keyed.mapi`. | interface claim | Ticket 12 | Static API assessment | Retain as a migration constraint. |
+| F07-002 | 272 | `keyed_entry_identity` casts caller keys with `Obj.magic`. | fact | Ticket 12 | Static source trace | Confirm and delete the cast through a typed creation-time probe. |
+| F07-003 | 272 | One `Obj.t` token represents five semantically different object kinds. | fact | Ticket 12 | Static source trace | Confirm and replace the universal token with role-specific identities. |
+| F07-004 | 272 | `keyed_scope_valid` interprets any generic token as a scope. | fact | Ticket 12 | Static source trace | Confirm and restrict scope validation to scope identities. |
+| F07-005 | 272 | A wrong token causes representation confusion instead of a typed or loud error. | correctness claim | Ticket 12 | Static unsafe-cast analysis | Confirm and make cross-role misuse a compile error. |
+| F07-006 | 274 | Private test scope limits exposure but still permits undefined behavior. | impact claim | Ticket 12 | Static unsafe-cast analysis | Confirm private visibility does not excuse unsafe representation use. |
+| F07-007 | 274 | The token surface violates Eta's fail-loudly rule. | standards claim | Ticket 12 | Repository-policy comparison | Confirm the surface violates fail-loudly policy. |
+| F07-008 | 278-292 | Distinct opaque identity and scope token types can replace the universal token. | contract proposal | Ticket 12 | Proposed typed API | Select a typed probe plus distinct opaque identity roles. |
+| F07-009 | 294 | Source, data, and child identity checks need distinct opaque types or typed accessors. | requirement | Ticket 12 | Proposed type-safety rule | Select role-specific identities and typed accessors. |
+| F07-010 | 294 | Eta must not use one universal testing token. | requirement | Ticket 12 | Proposed type-safety rule | Accept. Delete the universal testing token. |
+| F07-011 | 298 | F7 can land independently and only changes private testing signatures and fixtures. | sequencing | Ticket 12 | Preliminary impact estimate | Place the typed private-probe correction in the engine-seam implementation slice. |
+| F07-012 | 298 | F7 does not change production `Keyed.mapi`. | interface claim | Ticket 12 | Static API assessment | Keep the public Keyed.mapi value-level signature. |
 
 ### F8
 
@@ -286,16 +286,16 @@ value for a library interface.
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
 | F10-001 | 368 | The two-graphs usability defect is confirmed at P2. | verdict | Ticket 17 | Static review verdict | Assign to owner for final disposition. |
-| F10-002 | 372 | `Eta_signal_map.Make` creates and includes a fresh kernel instance. | fact | Ticket 12 | Static functor trace | Retain for package-seam design. |
-| F10-003 | 372 | A separately applied `Eta_signal.Make` has a different generative signal type. | fact | Ticket 12 | OCaml generativity analysis | Retain for package-seam design. |
-| F10-004 | 374 | Signal Map documentation does not warn consumers to use its functor as the application graph. | documentation gap | Ticket 12 | Static public-interface inspection | Retain for seam design. |
-| F10-005 | 374 | The type error is safe, but discovery is poor. | impact claim | Ticket 12 | Interface usability assessment | Retain for seam design. |
-| F10-006 | 378 | Documentation must say that Signal Map creates an independent graph and subsumes core Signal. | documentation requirement | Ticket 12 | Proposed public contract | Assign to owner for seam decision. |
-| F10-007 | 378 | Keyed applications must use the map functor as their sole graph functor. | usage requirement | Ticket 12 | Proposed public contract | Assign to owner for seam decision. |
-| F10-008 | 380 | Eta must not provide a shim or graph conversion. | migration rule | Ticket 12 | Repository policy application | Retain as a seam constraint. |
-| F10-009 | 384 | The documentation correction is immediate and independent. | sequencing | Ticket 12 | Proposed route | Assign to owner for route planning. |
-| F10-010 | 384 | A later F2 architecture choice can remove the two-graphs problem. | dependency claim | Ticket 12 | Conditional design assessment | Assign to owner for seam decision. |
-| F10-011 | 384 | The current design needs the warning until its architecture changes. | requirement | Ticket 12 | Current-interface assessment | Assign to owner for seam decision. |
+| F10-002 | 372 | `Eta_signal_map.Make` creates and includes a fresh kernel instance. | fact | Ticket 12 | Static functor trace | Confirm the current replacement factory and delete it. |
+| F10-003 | 372 | A separately applied `Eta_signal.Make` has a different generative signal type. | fact | Ticket 12 | OCaml generativity analysis | Confirm ordinary graph generativity and preserve it. |
+| F10-004 | 374 | Signal Map documentation does not warn consumers to use its functor as the application graph. | documentation gap | Ticket 12 | Static public-interface inspection | Remove the gap by deleting the replacement-factory design. |
+| F10-005 | 374 | The type error is safe, but discovery is poor. | impact claim | Ticket 12 | Interface usability assessment | Accept current type safety. Remove the discovery defect by construction. |
+| F10-006 | 378 | Documentation must say that Signal Map creates an independent graph and subsumes core Signal. | documentation requirement | Ticket 12 | Proposed public contract | Supersede the map-as-sole-factory rule with one Eta_signal.Make graph. |
+| F10-007 | 378 | Keyed applications must use the map functor as their sole graph functor. | usage requirement | Ticket 12 | Proposed public contract | Reject the old usage rule. Signal Map adapts the existing graph. |
+| F10-008 | 380 | Eta must not provide a shim or graph conversion. | migration rule | Ticket 12 | Repository policy application | Accept. Add no shim or graph conversion. |
+| F10-009 | 384 | The documentation correction is immediate and independent. | sequencing | Ticket 12 | Proposed route | Supersede a documentation-only fix with the architecture change. |
+| F10-010 | 384 | A later F2 architecture choice can remove the two-graphs problem. | dependency claim | Ticket 12 | Conditional design assessment | Accept and select the architecture that removes the second factory. |
+| F10-011 | 384 | The current design needs the warning until its architecture changes. | requirement | Ticket 12 | Current-interface assessment | Supersede the temporary warning with the final one-factory contract. |
 
 ### F11
 
@@ -661,18 +661,18 @@ value for a library interface.
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-08-001 | 886-888 | Eighth, remove unsafe casts from package and testing boundaries. | ranked requirement | Ticket 12 | Proposed correction plan | Assign to owner for seam design. |
-| PLN-08-002 | 888 | Testing boundaries need distinct opaque token types. | ranked requirement | Ticket 12 | Proposed correction plan | Assign to owner for seam design. |
+| PLN-08-001 | 886-888 | Eighth, remove unsafe casts from package and testing boundaries. | ranked requirement | Ticket 12 | Proposed correction plan | Keep the correction in the implementation route. |
+| PLN-08-002 | 888 | Testing boundaries need distinct opaque token types. | ranked requirement | Ticket 12 | Proposed correction plan | Require role-specific opaque identities and typed probes. |
 | PLN-08-003 | 890 | Rank 8 has no dependency. | dependency | Ticket 17 | Proposed route | Assign to owner for final route. |
-| PLN-08-004 | 891 | Rank 8 affects the private test API and fixtures. | blast radius | Ticket 12 | Preliminary impact estimate | Retain for planning. |
+| PLN-08-004 | 891 | Rank 8 affects the private test API and fixtures. | blast radius | Ticket 12 | Preliminary impact estimate | Confirm the private test fixtures and engine adapter are affected. |
 
 ### Rank 9: F10
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-09-001 | 893-895 | Ninth, document Signal Map as the sole graph functor for keyed applications. | ranked requirement | Ticket 12 | Proposed correction plan | Assign to owner for seam design. |
+| PLN-09-001 | 893-895 | Ninth, document Signal Map as the sole graph functor for keyed applications. | ranked requirement | Ticket 12 | Proposed correction plan | Supersede the old warning with deletion of the Signal Map graph factory. |
 | PLN-09-002 | 897 | Rank 9 has no dependency. | dependency | Ticket 17 | Proposed route | Assign to owner for final route. |
-| PLN-09-003 | 898 | Rank 9 changes documentation only. | blast radius | Ticket 12 | Preliminary impact estimate | Retain for planning. |
+| PLN-09-003 | 898 | Rank 9 changes documentation only. | blast radius | Ticket 12 | Preliminary impact estimate | Amend the blast radius to the public factory and package protocol. |
 
 ### Rank 10: F3
 
@@ -723,7 +723,7 @@ value for a library interface.
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| DEF-001 | 937 | Do not publish broad Expert without a second external node-kind consumer and stable invariants. | rejected correction | Ticket 12 | Mixed consumer-count and safety rationale | Reject the consumer-count prerequisite and retain the stable-invariant requirement. |
+| DEF-001 | 937 | Do not publish broad Expert without a second external node-kind consumer and stable invariants. | rejected correction | Ticket 12 | Mixed consumer-count and safety rationale | Reject the consumer-count gate. Accept stable invariants and external value as the decision tests. |
 | DEF-002 | 938 | Do not pursue F9 interface parity as one batch. | rejected correction | Ticket 13 | Product-scope recommendation | Reject the parity batch. |
 | DEF-003 | 938 | Split F9 candidates by concrete use case. | deferred correction | Ticket 13 | Product-scope recommendation | Assign to owner for algebra decisions. |
 | DEF-004 | 939 | Do not add bind rescoping without a benchmarked workload. | deferred correction | Ticket 13 | Evidence condition | Assign to owner for product decision. |
@@ -740,10 +740,10 @@ value for a library interface.
 | Q03-002 | 947 | The answer chooses topological scheduling or simple identity order for N3. | design consequence | Ticket 11 | Explicit design fork | Choose topological scheduling with observer identity tie-breaking. |
 | Q04-001 | 948 | Does a test combine nested bind switching with removal of the same keyed child? | open question | Ticket 03 | Packed tests omitted | Retain for executable evidence search. |
 | Q04-002 | 948 | Existing output-only assertions can miss retained invalid topology. | evidence warning | Ticket 03 | Static N2 trace | Retain for prototype observations. |
-| Q05-001 | 949 | Is `Keyed.Testing` intended for packages outside this repository? | open question | Ticket 12 | Package intent not established | Assign to owner for seam decision. |
-| Q05-002 | 949 | If not external, can local typed assertions replace the generic CMI-visible token? | design option | Ticket 12 | Proposed narrower test seam | Assign to owner for seam decision. |
-| Q06-001 | 950 | Does ADR 0004 reject all first-party SPIs or only broad application Expert APIs? | open question | Ticket 12 | ADR omitted from pack | Assign to owner after ticket 08 evidence. |
-| Q06-002 | 950 | The ADR distinction materially changes F2. | design consequence | Ticket 12 | Architecture assessment | Retain in the seam decision. |
+| Q05-001 | 949 | Is `Keyed.Testing` intended for packages outside this repository? | open question | Ticket 12 | Package intent not established | Answer no. Keyed.Testing remains repository-private. |
+| Q05-002 | 949 | If not external, can local typed assertions replace the generic CMI-visible token? | design option | Ticket 12 | Proposed narrower test seam | Answer yes. Typed probes and role-specific identities replace the generic token. |
+| Q06-001 | 950 | Does ADR 0004 reject all first-party SPIs or only broad application Expert APIs? | open question | Ticket 12 | ADR omitted from pack | Answer that ADR 0004 rejects broad graph authority, not every sealed package protocol. |
+| Q06-002 | 950 | The ADR distinction materially changes F2. | design consequence | Ticket 12 | Architecture assessment | Resolve by amending ADR 0004 for the selected stable-family protocol. |
 | Q07-001 | 951 | Must cutoff mutation reevaluate now or affect only later candidates? | open question | Ticket 13 | Runtime semantics unspecified | Assign to owner for cutoff design. |
 | Q07-002 | 951 | Eta must decide cutoff reevaluation before exposing `set_cutoff`. | publication requirement | Ticket 13 | Explicit semantic blocker | Assign to owner for cutoff design. |
 

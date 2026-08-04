@@ -147,6 +147,13 @@ main Dune workspace.
   unrelated groups and same-signal callbacks. Delivery remains sequential,
   fail-fast, and coalescing. It remains at least once while the observer is
   active, until acknowledgement or lifecycle finish.
+- [Engine and package seams](issues/12-engine-and-package-seams.md) —
+  `Eta_signal.Make` is the sole graph factory. One sealed, graph-branded
+  stable-family protocol lets sibling and external collection packages adapt
+  that graph. The engine retains phase, transaction, scheduling, demand,
+  topology, scope, invalidation, cleanup, and observer authority. Signal Map no
+  longer instantiates a second kernel. Its current unsafe private testing tokens
+  become typed probes and role-specific identities.
 
 ## Not yet specified
 

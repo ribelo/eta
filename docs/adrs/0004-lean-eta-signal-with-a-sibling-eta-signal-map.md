@@ -5,38 +5,48 @@ Status: accepted.
 ## Context
 
 Eta Signal needs a keyed operator for collections that preserve per-key state.
-The operator requires a persistent diffable map and a small graph extension
-protocol. Most Eta Signal applications do not need either feature.
+The operator requires a persistent diffable map and stable-family semantics.
+Most Eta Signal applications do not need the map.
 
 Eta follows an install-only-what-you-use package policy. Adding keyed
 collections to `eta_signal` adds an unrelated collection API to every
-signal installation. A public extension API also exposes graph nodes,
-scopes, and transaction state that applications must not control.
+signal installation. A broad extension API also exposes engine authority that
+applications and library packages must not control.
 
 ## Decision
 
 Publish `eta_signal_map` as an optional sibling package. It contains the public
-`Eta_signal_map.Map` module and `Eta_signal_map.Make(...).Keyed` operator.
+`Eta_signal_map.Map` module and a keyed adapter for an existing Signal graph.
 
-Keep `eta_signal` independent of `eta_signal_map`. Put the required graph
-protocol in the package-private `eta_signal_kernel` library. The public
-`Eta_signal` interface does not expose this protocol.
+Keep `eta_signal` independent of `eta_signal_map`. Make `Eta_signal.Make` the
+sole graph factory. Each graph exposes one opaque, graph-branded package
+endpoint.
+
+The endpoint accepts one sealed stable-family plan form. It exposes no graph,
+node, edge, scope, phase, transaction, scheduler, demand, cleanup, or mutation
+handle.
+
+`Eta_signal_map.Make` accepts that endpoint. It never creates another graph.
+Its operators return the existing graph's signal type.
 
 Require `eta_signal_map` and `eta_signal` to use the same release version. This
-constraint protects the private CMI boundary. Keep the root `eta` package
-independent of both optional collection and signal packages.
+constraint lets the protocol and first-party consumers change together. Keep
+the root `eta` package independent of both optional collection and signal
+packages.
 
 ## Alternatives considered
 
 - Put the map and keyed operator in `eta_signal`. Rejected because most signal
   users do not need keyed collections.
-- Publish a general graph extension API. Rejected because it exposes Eta
-  Signal transaction and scope invariants.
+- Publish a general graph extension API. Rejected because it exposes Eta Signal
+  transaction, topology, demand, scheduling, and scope invariants.
+- Keep keyed nodes embedded behind a replacement Signal Map graph factory.
+  Rejected because two optional structural packages cannot share one graph.
 - Use `Stdlib.Map`, Base, or `Incr_map`. Rejected because the selected contract
   needs persistent ancestry, physical-data diffing, and no external runtime map
   dependency.
-- Publish the private kernel as a third opam package. Rejected because it is an
-  implementation protocol, not an application API.
+- Publish the private kernel as a third opam package. Rejected because the
+  kernel is an implementation, not a package interface.
 
 ## Consequences
 
@@ -44,6 +54,12 @@ Applications install `eta_signal_map` only when they need keyed collections.
 The package can evolve its public map and keyed operator without widening
 `eta_signal`.
 
-The private CMI creates a strict same-version dependency. The release process
-must build and test both packages together. A future graph consumer depends on
-`eta_signal_map`, not on the private kernel.
+Applications create one graph. Multiple stable-family packages can adapt the
+same endpoint without receiving engine authority.
+
+The stable-family protocol creates a strict same-version dependency. The release
+process builds and tests first-party protocol consumers together.
+
+External packages can implement stable keyed collections. Packages that need
+arbitrary dependencies, scheduling, invalidation, or commit hooks cannot use
+this seam.
