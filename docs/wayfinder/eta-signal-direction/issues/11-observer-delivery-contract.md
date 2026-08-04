@@ -129,13 +129,13 @@ failure, defect, or interruption stops the remaining plan.
 Before callback construction, the event changes from pending to running. A
 protected finalizer then makes one terminal decision.
 
-Callback effect success records a successful outcome. Acknowledgement
-linearizes later when the protected finalizer changes the current running token
-to delivered while it holds the graph lane.
-
-A construction failure, typed callback failure, callback defect, or earlier
-interruption returns running state to pending. A later stabilization can retry
-that observer.
+Ordinary callback success records a successful outcome. Its protected finalizer
+changes the current running token to delivered under the graph lane.
+Construction failure, typed failure, defect, or interruption returns running
+state to pending. A later stabilization can retry that observer.
+A sealed delivery capability can acknowledge after a durable send or terminal drop.
+That graph-lane change linearizes delivery immediately. Later callback failure or
+interruption cannot return the acknowledged event to pending.
 
 Lifecycle finish competes with acknowledgement through the same graph lane. The
 first lane mutation wins:
@@ -147,13 +147,13 @@ first lane mutation wins:
 A callback already running is not cancelled by disposal. Its result cannot
 restore a disposed cursor or create a retry.
 
-Events before the failure remain acknowledged. The failed event and all later
-active events remain pending. The next plan recomputes their order from the
-latest committed topology.
+Events before failure and directly acknowledged events remain acknowledged.
+Unacknowledged failed and later active events remain pending. The next plan
+recomputes their order from the latest committed topology.
 
-Delivery is therefore at least once while the observer remains active, until
-acknowledgement. Lifecycle finish ends that guarantee. A callback can run again
-when it performs external work and then fails or is interrupted.
+Delivery is at least once while the observer remains active, until
+acknowledgement. Lifecycle finish ends that guarantee. An ordinary callback can
+run again after external work followed by failure or interruption.
 
 Consumers must use idempotent effects or external deduplication when repeated
 work matters.

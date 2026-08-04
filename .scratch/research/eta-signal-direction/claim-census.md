@@ -44,7 +44,7 @@ value for a library interface.
 | EXE-001 | 20 | The audit has the correct broad architecture direction but overstates three conclusions. | verdict | Ticket 17 | Review synthesis | Assign to owner for final disposition. |
 | EXE-002 | 22 | The keyed engine is embedded in the kernel. | fact | Ticket 12 | Static source trace | Confirm current embedding. Replace it with the engine-owned stable-family interpreter. |
 | EXE-003 | 22 | The production keyed package boundary is not `Obj`-typed. | fact | Ticket 12 | Static source trace | Confirm the production path is typed. Separate F7 from F2. |
-| EXE-004 | 23 | Streams distinguish disposal from invalid-scope termination. | fact | Ticket 13 | Static source trace | Retain and amend F4. |
+| EXE-004 | 23 | Streams distinguish disposal from invalid-scope termination. | fact | Ticket 13 | Static source trace | Confirm and preserve the terminal distinction in eta_signal_stream. |
 | EXE-005 | 24 | Two packed-code traces refute the audit's conclusion that there is no P0 defect. | verdict | Ticket 17 | Static counterexamples | Assign to owner after tickets 02 and 03. |
 | EXE-006 | 28-32 | The review confirms F7, F8, F10, F12, and F13. | verdict | Ticket 17 | Review finding count | Assign to owner for final disposition. |
 | EXE-007 | 28-32 | The review amends F1-F6, F11, and F14. | verdict | Ticket 17 | Review finding count | Assign to owner for final disposition. |
@@ -99,7 +99,7 @@ value for a library interface.
 | F01-032 | 92 | Deterministic F13 work counters must land before the scheduler redesign. | sequencing | Ticket 16 | Proposed dependency order | Assign to owner for gate design. |
 | F01-033 | 92 | The scheduler and necessity model need replacement after instrumentation. | recommendation | Ticket 10 | Proposed architecture route | Accept the necessary-stale scheduler and reference-counted demand replacement. |
 | F01-034 | 92 | The redesign affects graph state, dirty propagation, observers, dynamic edges, timers, diagnostics, and model tests. | blast radius | Ticket 10 | Static impact estimate | Retain as the implementation impact. |
-| F01-035 | 92 | The F1 redesign does not require public signal type changes. | interface claim | Ticket 13 | Preliminary design assessment | Assign to owner to preserve if feasible. |
+| F01-035 | 92 | The F1 redesign does not require public signal type changes. | interface claim | Ticket 13 | Preliminary design assessment | Preserve the abstract signal type. The scheduler redesign adds no representation to the public type. |
 | F01-036 | 82 | Quiescence excludes dirty source, timer, and custom nodes. | scope condition | Ticket 10 | Proposed contract boundary | Amend to actionable necessary-stale source, timer, and private-node work. |
 | F01-037 | 82 | Quiescence excludes topology and demand transitions. | scope condition | Ticket 10 | Proposed contract boundary | Accept as topology and demand work classes. |
 | F01-038 | 82 | Quiescence excludes observer registration and disposal transitions. | scope condition | Ticket 10 | Proposed contract boundary | Accept as observer lifecycle work. |
@@ -167,27 +167,27 @@ value for a library interface.
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| F04-001 | 165 | Eta's update type differs from Incremental's lifecycle type. | verdict | Ticket 13 | Static interface comparison | Retain as interface evidence. |
-| F04-002 | 165 | The audit's stream-impact claim is wrong. | verdict | Ticket 13 | Static implementation trace | Reject the contrary claim. |
-| F04-003 | 165 | A proposed `Unnecessary` event is wrong for active Eta observers. | verdict | Ticket 13 | Lifecycle analysis | Assign to owner for final API decision. |
+| F04-001 | 165 | Eta's update type differs from Incremental's lifecycle type. | verdict | Ticket 13 | Static interface comparison | Confirm the type difference. Keep value updates separate from lifecycle finish. |
+| F04-002 | 165 | The audit's stream-impact claim is wrong. | verdict | Ticket 13 | Static implementation trace | Accept the correction. Streams already distinguish terminal outcomes. |
+| F04-003 | 165 | A proposed `Unnecessary` event is wrong for active Eta observers. | verdict | Ticket 13 | Lifecycle analysis | Reject Unnecessary for active observers. |
 | F04-004 | 165 | F4 is a P2 API choice rather than a correctness defect. | priority claim | Ticket 17 | Review assessment | Assign to owner for final disposition. |
-| F04-005 | 169-177 | Eta exposes only `Initialized` and `Changed` observer updates. | interface fact | Ticket 13 | Static public-interface trace | Retain for API design. |
+| F04-005 | 169-177 | Eta exposes only `Initialized` and `Changed` observer updates. | interface fact | Ticket 13 | Static public-interface trace | Keep Initialized and Changed as the complete value-update type. |
 | F04-006 | 177 | Incremental node handlers expose necessary, changed, invalidated, and unnecessary events. | reference fact | Ticket 07 | Reference interface trace | Retain as reference evidence. |
-| F04-007 | 179-184 | Eta stream consumers distinguish clean disposal from invalid scope. | fact | Ticket 13 | Static queue and stream trace | Retain and amend F4. |
+| F04-007 | 179-184 | Eta stream consumers distinguish clean disposal from invalid scope. | fact | Ticket 13 | Static queue and stream trace | Preserve clean disposal and Invalid_scope stream termination. |
 | F04-008 | 186 | Incremental's `Unnecessary` event is not terminal. | reference fact | Ticket 07 | Reference semantic trace | Retain as reference evidence. |
-| F04-009 | 186 | An Eta observer demands its root while registering or active. | fact | Ticket 13 | Static observer trace | Retain for lifecycle design. |
-| F04-010 | 186 | An observed root cannot become unnecessary while its observer stays active. | semantic claim | Ticket 13 | Static demand reasoning | Assign to owner for contract decision. |
-| F04-011 | 186 | Adding `Unnecessary` to observer updates will misstate Eta's lifecycle. | recommendation | Ticket 13 | Semantic comparison | Assign to owner for API decision. |
-| F04-012 | 190 | Direct callbacks do not receive typed invalidation events. | amended finding | Ticket 13 | Static interface trace | Retain for API design. |
-| F04-013 | 190 | Reads, internal finish hooks, and stream errors already expose invalidation. | amended finding | Ticket 13 | Static implementation trace | Retain for API design. |
-| F04-014 | 190 | Active Eta observers have no meaningful `Unnecessary` event. | amended finding | Ticket 13 | Demand and lifecycle reasoning | Assign to owner for contract decision. |
-| F04-015 | 194 | Eta only needs a public lifecycle surface if direct-callback consumers need it. | decision rule | Ticket 13 | Product-need condition | Assign to owner for API decision. |
-| F04-016 | 194-207 | A separate finish callback is preferable to lifecycle values in ordinary updates. | recommendation | Ticket 13 | Proposed API shape | Assign to owner for API decision. |
-| F04-017 | 209 | Disposal must not appear as an ordinary post-disposal update. | requirement | Ticket 13 | Proposed lifecycle contract | Assign to owner for API decision. |
-| F04-018 | 209 | Eta must not add `Unnecessary` without node handlers whose demand can drop and return. | requirement | Ticket 13 | Conditional lifecycle contract | Assign to owner for API decision. |
-| F04-019 | 213 | F4 is scheduler-independent but changes public APIs and stream adapters. | sequencing | Ticket 13 | Static impact estimate | Retain for planning. |
-| F04-020 | 213 | Existing callers must change directly without a compatibility shim. | migration rule | Ticket 13 | Repository policy application | Assign to owner if the API changes. |
-| F04-021 | 184 | `Stream.observe` connects the terminal finish hook to observer creation. | fact | Ticket 13 | Static implementation trace | Retain for lifecycle design. |
+| F04-009 | 186 | An Eta observer demands its root while registering or active. | fact | Ticket 13 | Static observer trace | Make active observer demand part of the retained lifecycle contract. |
+| F04-010 | 186 | An observed root cannot become unnecessary while its observer stays active. | semantic claim | Ticket 13 | Static demand reasoning | Confirm as a public observer law. |
+| F04-011 | 186 | Adding `Unnecessary` to observer updates will misstate Eta's lifecycle. | recommendation | Ticket 13 | Semantic comparison | Accept. Add no Unnecessary update. |
+| F04-012 | 190 | Direct callbacks do not receive typed invalidation events. | amended finding | Ticket 13 | Static interface trace | Resolve with a separate observer finish hook. |
+| F04-013 | 190 | Reads, internal finish hooks, and stream errors already expose invalidation. | amended finding | Ticket 13 | Static implementation trace | Keep typed reads and stream termination, then add direct finish notification. |
+| F04-014 | 190 | Active Eta observers have no meaningful `Unnecessary` event. | amended finding | Ticket 13 | Demand and lifecycle reasoning | Confirm. Active observers cannot receive Unnecessary. |
+| F04-015 | 194 | Eta only needs a public lifecycle surface if direct-callback consumers need it. | decision rule | Ticket 13 | Product-need condition | Accept external lifecycle adapters as the concrete need for a finish hook. |
+| F04-016 | 194-207 | A separate finish callback is preferable to lifecycle values in ordinary updates. | recommendation | Ticket 13 | Proposed API shape | Select a separate exactly-once finish callback. |
+| F04-017 | 209 | Disposal must not appear as an ordinary post-disposal update. | requirement | Ticket 13 | Proposed lifecycle contract | Accept. Finish never appears as a value update. |
+| F04-018 | 209 | Eta must not add `Unnecessary` without node handlers whose demand can drop and return. | requirement | Ticket 13 | Conditional lifecycle contract | Accept. Eta adds no node-level Unnecessary event. |
+| F04-019 | 213 | F4 is scheduler-independent but changes public APIs and stream adapters. | sequencing | Ticket 13 | Static impact estimate | Confirm the public observer and stream-package blast radius. |
+| F04-020 | 213 | Existing callers must change directly without a compatibility shim. | migration rule | Ticket 13 | Repository policy application | Update all callers directly and add no compatibility shim. |
+| F04-021 | 184 | `Stream.observe` connects the terminal finish hook to observer creation. | fact | Ticket 13 | Static implementation trace | Move the bridge to eta_signal_stream and use the public finish hook. |
 
 ### F5
 
@@ -250,36 +250,36 @@ value for a library interface.
 |---|---:|---|---|---|---|---|
 | F08-001 | 304 | The fold-family gap is confirmed, but its correction needs amendment. | verdict | Ticket 17 | Static review verdict | Assign to owner for final disposition. |
 | F08-002 | 308 | `All` computes all children and materializes a complete list after a considered change. | fact | Ticket 05 | Static source trace | Retain for economics evidence. |
-| F08-003 | 308 | Eta has no public associative tree reduction or update-aware fold family. | interface gap | Ticket 13 | Static interface trace | Assign to owner for algebra decision. |
-| F08-004 | 310 | Large fan-in aggregations have a real capability gap. | product claim | Ticket 13 | Interface and implementation analysis | Assign to owner for algebra decision. |
-| F08-005 | 310 | An arbitrary fold cannot promise O(1) updates without a stronger algebra. | complexity constraint | Ticket 13 | Algorithmic reasoning | Retain as an API constraint. |
-| F08-006 | 310 | O(1) fold updates need an inverse, replacement delta, or mutable accumulator law. | algebraic requirement | Ticket 13 | Algorithmic reasoning | Assign to owner for algebra decision. |
-| F08-007 | 314-324 | A balanced associative reduction can promise O(log n) recomputation per child change. | contract proposal | Ticket 13 | Proposed API and law | Assign to owner for algebra decision. |
+| F08-003 | 308 | Eta has no public associative tree reduction or update-aware fold family. | interface gap | Ticket 13 | Static interface trace | Resolve with reduce_balanced. |
+| F08-004 | 310 | Large fan-in aggregations have a real capability gap. | product claim | Ticket 13 | Interface and implementation analysis | Accept the large fan-in capability gap. |
+| F08-005 | 310 | An arbitrary fold cannot promise O(1) updates without a stronger algebra. | complexity constraint | Ticket 13 | Algorithmic reasoning | Accept. Promise no O(1) arbitrary fold. |
+| F08-006 | 310 | O(1) fold updates need an inverse, replacement delta, or mutable accumulator law. | algebraic requirement | Ticket 13 | Algorithmic reasoning | Accept the algebraic constraint and reject a delta fold without that contract. |
+| F08-007 | 314-324 | A balanced associative reduction can promise O(log n) recomputation per child change. | contract proposal | Ticket 13 | Proposed API and law | Select balanced associative reduction with O(log(n + 1)) changed-leaf work. |
 | F08-008 | 324 | Balanced reduction requires associative `combine` at Eta's observation boundary. | law proposal | Ticket 16 | Proposed executable law | Assign to owner for law design. |
-| F08-009 | 326-336 | An update-aware delta fold can promise O(1) amortized accumulator work per changed child. | contract proposal | Ticket 13 | Proposed API and complexity contract | Assign to owner for algebra decision. |
-| F08-010 | 340 | Fold implementation must follow F1 and N4 redesigns. | sequencing | Ticket 13 | Proposed dependency order | Assign to owner for route planning. |
-| F08-011 | 340 | F8 affects public API, tests, complexity gates, and possibly a node kind. | blast radius | Ticket 13 | Preliminary impact estimate | Retain for planning. |
+| F08-009 | 326-336 | An update-aware delta fold can promise O(1) amortized accumulator work per changed child. | contract proposal | Ticket 13 | Proposed API and complexity contract | Reject the update-aware fold until a stronger algebra and consumer contract exist. |
+| F08-010 | 340 | Fold implementation must follow F1 and N4 redesigns. | sequencing | Ticket 13 | Proposed dependency order | Schedule reduction after the completed scheduler and edge decisions. |
+| F08-011 | 340 | F8 affects public API, tests, complexity gates, and possibly a node kind. | blast radius | Ticket 13 | Preliminary impact estimate | Accept the public API, node, law, and economics impact. |
 
 ### F9
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
 | F09-001 | 346 | F9 is not one coherent finding or correction batch. | verdict | Ticket 17 | Interface taxonomy analysis | Assign to owner for final disposition. |
-| F09-002 | 348 | The F9 inventory contains many real absences. | fact | Ticket 13 | Interface comparison | Retain without treating absence as defect. |
+| F09-002 | 348 | The F9 inventory contains many real absences. | fact | Ticket 13 | Interface comparison | Confirm the absences and reject parity as a defect test. |
 | F09-003 | 350 | Some F9 items are trivial aliases or compositions. | classification | Ticket 07 | Reference interface inventory | Retain for algebra evidence. |
-| F09-004 | 351 | Some F9 items are scheduler-sensitive convenience nodes. | classification | Ticket 13 | Semantic classification | Assign to owner for algebra decision. |
-| F09-005 | 352 | Some F9 items are introspection-policy choices. | classification | Ticket 13 | Semantic classification | Assign to owner for algebra decision. |
-| F09-006 | 353 | Some F9 items are major optional subsystems. | classification | Ticket 13 | Semantic classification | Assign to owner for algebra decision. |
-| F09-007 | 354 | Dynamic cutoff work belongs under F12. | classification | Ticket 13 | Finding-boundary correction | Retain and merge into the F12 decision. |
-| F09-008 | 356 | API-name parity and negative tests for every omission are not coherent product requirements. | correction | Ticket 13 | Product and test-design reasoning | Reject parity as a batch goal. |
-| F09-009 | 356 | A smaller correct API is better than an approximate clone. | design principle | Ticket 13 | Product-boundary judgment | Retain as an algebra constraint. |
-| F09-010 | 358 | `Var.value` already returns the latest set value before stabilization. | interface fact | Ticket 13 | Static public-interface trace | Retain and reject this claimed gap. |
+| F09-004 | 351 | Some F9 items are scheduler-sensitive convenience nodes. | classification | Ticket 13 | Semantic classification | Reject scheduler-sensitive convenience nodes without a distinct external task. |
+| F09-005 | 352 | Some F9 items are introspection-policy choices. | classification | Ticket 13 | Semantic classification | Keep only bounded read-only diagnostics and reject raw node introspection. |
+| F09-006 | 353 | Some F9 items are major optional subsystems. | classification | Ticket 13 | Semantic classification | Keep coherent time and diagnostics, split streams, and reject the remaining unsupported subsystems. |
+| F09-007 | 354 | Dynamic cutoff work belongs under F12. | classification | Ticket 13 | Finding-boundary correction | Resolve dynamic cutoff under F12. |
+| F09-008 | 356 | API-name parity and negative tests for every omission are not coherent product requirements. | correction | Ticket 13 | Product and test-design reasoning | Accept. Add no parity batch or omission tests. |
+| F09-009 | 356 | A smaller correct API is better than an approximate clone. | design principle | Ticket 13 | Product-boundary judgment | Use the smaller coherent algebra as the selection rule. |
+| F09-010 | 358 | `Var.value` already returns the latest set value before stabilization. | interface fact | Ticket 13 | Static public-interface trace | Keep Var.value and add no latest-value alias. |
 | F09-011 | 358 | `Var.value` covers latest-source reads outside pure recomputation, but not Incremental's during-stabilization read. | parity assessment | Ticket 07 | Interface semantic comparison | Amend to external reads; reject full stabilization parity. |
 | F09-012 | 362 | F9 must not remain a ranked defect. | recommendation | Ticket 17 | Review synthesis | Assign to owner for final disposition. |
-| F09-013 | 362 | Separate RFCs need concrete workloads. | recommendation | Ticket 13 | Product-need rule | Assign to owner for algebra process. |
-| F09-014 | 362 | Cheap aliases can enter when they improve readability without new semantics. | decision rule | Ticket 13 | Conditional recommendation | Assign to owner for algebra decision. |
-| F09-015 | 362 | Major subsystems need separate contracts and performance models. | requirement | Ticket 13 | Product-scope rule | Assign to owner for algebra decision. |
-| F09-016 | 362 | Dynamic cutoff work remains part of F12. | routing | Ticket 13 | Finding-boundary correction | Retain. |
+| F09-013 | 362 | Separate RFCs need concrete workloads. | recommendation | Ticket 13 | Product-need rule | Retain separate workload-driven design for rejected subsystems. |
+| F09-014 | 362 | Cheap aliases can enter when they improve readability without new semantics. | decision rule | Ticket 13 | Conditional recommendation | Accept the rule but add no shallow alias in V1. |
+| F09-015 | 362 | Major subsystems need separate contracts and performance models. | requirement | Ticket 13 | Product-scope rule | Accept. Unsupported major subsystems need separate contracts and economics. |
+| F09-016 | 362 | Dynamic cutoff work remains part of F12. | routing | Ticket 13 | Finding-boundary correction | Resolve under the immutable named-cutoff decision. |
 
 ### F10
 
@@ -302,36 +302,36 @@ value for a library interface.
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
 | F11-001 | 390 | Eta lacks bind rescoping, but the parity and priority argument is weak. | verdict | Ticket 17 | Static and reference review | Assign to owner for final disposition. |
-| F11-002 | 394 | Eta always detaches and invalidates the old branch before attaching the new branch. | fact | Ticket 13 | Static bind trace | Retain for dynamic-composition design. |
-| F11-003 | 394 | Eta exposes no rescope mode. | interface absence | Ticket 13 | Static interface trace | Retain without treating absence as defect. |
+| F11-002 | 394 | Eta always detaches and invalidates the old branch before attaching the new branch. | fact | Ticket 13 | Static bind trace | Keep invalidation before new-branch attachment. |
+| F11-003 | 394 | Eta exposes no rescope mode. | interface absence | Ticket 13 | Static interface trace | Confirm the absence and retain one bind mode. |
 | F11-004 | 396 | Incremental calls non-invalidating bind behavior a compatibility hack. | reference fact | Ticket 07 | Reference configuration trace | Retain as reference evidence. |
 | F11-005 | 396 | Incremental invalidates the old RHS by default. | reference fact | Ticket 07 | Reference configuration trace | Retain as reference evidence. |
-| F11-006 | 396 | Eta lacks a nondefault optimization mode rather than baseline parity. | amended finding | Ticket 13 | Semantic comparison | Assign to owner for algebra decision. |
+| F11-006 | 396 | Eta lacks a nondefault optimization mode rather than baseline parity. | amended finding | Ticket 13 | Semantic comparison | Reject the nondefault optimization mode. |
 | F11-007 | 398 | The semantic table must route the rescope delta to F11, not F13. | correction | Ticket 01 | Internal review cross-reference | Amend the row mapping in this census. |
-| F11-008 | 402 | Eta must reject near-term bind rescoping. | recommendation | Ticket 13 | Risk and priority assessment | Assign to owner for algebra decision. |
-| F11-009 | 402 | Rescoping affects scope ownership, captures, keyed children, timers, observers, rollback, and N2. | risk claim | Ticket 13 | Static lifecycle analysis | Retain in the algebra decision. |
-| F11-010 | 402 | Rescoping needs a benchmarked branch-flapping workload and a separate semantics RFC. | evidence requirement | Ticket 13 | Conditional product rule | Assign to owner for algebra decision. |
-| F11-011 | 406 | Rescoping follows P0, scheduler, and extension-scope decisions. | sequencing | Ticket 13 | Proposed dependency order | Assign to owner for route planning. |
-| F11-012 | 406 | Rescoping can have large public configuration and lifecycle-test impact. | blast radius | Ticket 13 | Preliminary impact estimate | Retain for planning. |
+| F11-008 | 402 | Eta must reject near-term bind rescoping. | recommendation | Ticket 13 | Risk and priority assessment | Accept. Add no near-term rescope mode. |
+| F11-009 | 402 | Rescoping affects scope ownership, captures, keyed children, timers, observers, rollback, and N2. | risk claim | Ticket 13 | Static lifecycle analysis | Accept the lifecycle blast radius as rejection evidence. |
+| F11-010 | 402 | Rescoping needs a benchmarked branch-flapping workload and a separate semantics RFC. | evidence requirement | Ticket 13 | Conditional product rule | Require the workload, benchmark, and separate RFC before reconsideration. |
+| F11-011 | 406 | Rescoping follows P0, scheduler, and extension-scope decisions. | sequencing | Ticket 13 | Proposed dependency order | Close the route with rejection after the prerequisite decisions. |
+| F11-012 | 406 | Rescoping can have large public configuration and lifecycle-test impact. | blast radius | Ticket 13 | Preliminary impact estimate | Accept the public and lifecycle blast radius. |
 
 ### F12
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
 | F12-001 | 412 | Static, structurally weak cutoffs are confirmed and need a two-phase correction. | verdict | Ticket 17 | Static and reference review | Assign to owner for final disposition. |
-| F12-002 | 416 | Eta stores one fixed equality function per node and exposes only `?equal`. | interface fact | Ticket 13 | Static source and interface trace | Retain for cutoff design. |
+| F12-002 | 416 | Eta stores one fixed equality function per node and exposes only `?equal`. | interface fact | Ticket 13 | Static source and interface trace | Replace fixed raw equality with fixed named Cutoff.t. |
 | F12-003 | 416 | Incremental has named cutoff variants and runtime replacement. | reference fact | Ticket 07 | Reference source trace | Retain as reference evidence. |
-| F12-004 | 418 | A cutoff ADT improves semantics and diagnostics without runtime mutation. | design claim | Ticket 13 | Interface reasoning | Assign to owner for algebra decision. |
-| F12-005 | 418 | Runtime cutoff mutation affects scheduling and needs separate semantics. | design risk | Ticket 13 | Scheduler reasoning | Assign to owner for algebra decision. |
-| F12-006 | 422-435 | Phase 1 proposes a named `Cutoff` type with five constructor functions. | contract proposal | Ticket 13 | Proposed public API | Assign to owner for algebra decision. |
-| F12-007 | 438 | Constructors need `?cutoff` instead of raw `?equal`. | requirement | Ticket 13 | Proposed public API | Assign to owner for algebra decision. |
-| F12-008 | 438 | The old equality path needs deletion and all callers need direct updates. | migration rule | Ticket 13 | Repository no-shim policy | Assign to owner if it accepts the ADT. |
-| F12-009 | 442-444 | Pure-phase `set_cutoff` must fail with a documented typed error before mutation. | unwanted-behavior requirement | Ticket 13 | Conditional contract proposal | Assign to owner if it accepts mutation. |
-| F12-010 | 446 | The RFC must decide immediate reevaluation versus future-only comparison. | open design decision | Ticket 13 | Explicit semantic gap | Assign to owner for design decision. |
-| F12-011 | 446 | `set_cutoff` is underspecified without a scheduling decision. | correction | Ticket 13 | Semantic analysis | Retain as a publication blocker. |
-| F12-012 | 450 | Named cutoffs can land independently. | sequencing | Ticket 13 | Proposed dependency order | Assign to owner for route planning. |
-| F12-013 | 450 | Runtime mutation must follow F1 scheduling work. | sequencing | Ticket 13 | Proposed dependency order | Assign to owner for route planning. |
-| F12-014 | 450 | The cutoff change affects all public constructors and callers. | blast radius | Ticket 13 | Static API impact estimate | Retain for planning. |
+| F12-004 | 418 | A cutoff ADT improves semantics and diagnostics without runtime mutation. | design claim | Ticket 13 | Interface reasoning | Accept immutable named cutoffs. |
+| F12-005 | 418 | Runtime cutoff mutation affects scheduling and needs separate semantics. | design risk | Ticket 13 | Scheduler reasoning | Accept the risk and reject runtime mutation. |
+| F12-006 | 422-435 | Phase 1 proposes a named `Cutoff` type with five constructor functions. | contract proposal | Ticket 13 | Proposed public API | Select the five-constructor Cutoff module. |
+| F12-007 | 438 | Constructors need `?cutoff` instead of raw `?equal`. | requirement | Ticket 13 | Proposed public API | Replace equality with cutoff where later candidates occur. Delete the constant cutoff. |
+| F12-008 | 438 | The old equality path needs deletion and all callers need direct updates. | migration rule | Ticket 13 | Repository no-shim policy | Delete old equality arguments and update callers directly. |
+| F12-009 | 442-444 | Pure-phase `set_cutoff` must fail with a documented typed error before mutation. | unwanted-behavior requirement | Ticket 13 | Conditional contract proposal | Reject set_cutoff, so this conditional error is absent. |
+| F12-010 | 446 | The RFC must decide immediate reevaluation versus future-only comparison. | open design decision | Ticket 13 | Explicit semantic gap | Resolve by exposing no runtime cutoff mutation. |
+| F12-011 | 446 | `set_cutoff` is underspecified without a scheduling decision. | correction | Ticket 13 | Semantic analysis | Accept the blocker and keep mutation unpublished. |
+| F12-012 | 450 | Named cutoffs can land independently. | sequencing | Ticket 13 | Proposed dependency order | Place named immutable cutoffs in the public-algebra implementation slice. |
+| F12-013 | 450 | Runtime mutation must follow F1 scheduling work. | sequencing | Ticket 13 | Proposed dependency order | Close the dependency by rejecting runtime mutation. |
+| F12-014 | 450 | The cutoff change affects all public constructors and callers. | blast radius | Ticket 13 | Static API impact estimate | Accept the producing-constructor and caller blast radius. |
 
 ### F13
 
@@ -350,7 +350,7 @@ value for a library interface.
 | F13-011 | 486 | Wall time can appear only as a non-gating artifact. | gate requirement | Ticket 16 | Proposed verification policy | Assign to owner for final gate design. |
 | F13-012 | 490 | F13 instrumentation must precede F1 and N4 redesigns. | sequencing | Ticket 16 | Proposed dependency order | Assign to owner for route planning. |
 | F13-013 | 490 | F13 mostly affects tests, benchmarks, and private instrumentation. | blast radius | Ticket 16 | Preliminary impact estimate | Retain for planning. |
-| F13-014 | 490 | Public statistics must not grow unless consumers need the counters. | interface constraint | Ticket 13 | Deep-interface principle | Assign to owner for public API control. |
+| F13-014 | 490 | Public statistics must not grow unless consumers need the counters. | interface constraint | Ticket 13 | Deep-interface principle | Narrow public statistics to stable operational state and private economics counters. |
 | F13-015 | 468 | Instrumentation must count nodes reached by compute. | measurement requirement | Ticket 05 | Proposed counter | Assign to owner for prototype evidence. |
 | F13-016 | 469 | Instrumentation must count dependency-edge checks. | measurement requirement | Ticket 05 | Proposed counter | Assign to owner for prototype evidence. |
 | F13-017 | 470 | Instrumentation must count weak-registry cells scanned. | measurement requirement | Ticket 05 | Proposed counter | Assign to owner for prototype evidence. |
@@ -415,8 +415,8 @@ value for a library interface.
 | N01-024 | 566-569 | Tests need forced overflow, typed error, successful retry, and a two-domain case if globals remain. | test requirement | Ticket 16 | Proposed regression set | Assign to owner for final gate design. |
 | N01-025 | 573 | N1 is the first correction. | sequencing | Ticket 17 | Severity and dependency assessment | Assign to owner for final route. |
 | N01-026 | 573 | N1 changes private identity and stabilization code plus the overflow harness. | blast radius | Ticket 09 | Preliminary impact estimate | Retain. The physical-token design removes the transaction-overflow branch from the harness. |
-| N01-027 | 573 | Public success types do not need change. | interface claim | Ticket 13 | Preliminary type assessment | Assign to owner to preserve if feasible. |
-| N01-028 | 573 | The graph-error taxonomy can represent or add a named counter-overflow path. | interface claim | Ticket 13 | Preliminary error-type assessment | Assign to owner for error algebra decision. |
+| N01-027 | 573 | Public success types do not need change. | interface claim | Ticket 13 | Preliminary type assessment | Preserve public success types. |
+| N01-028 | 573 | The graph-error taxonomy can represent or add a named counter-overflow path. | interface claim | Ticket 13 | Preliminary error-type assessment | Keep Counter_overflow as the named graph error. |
 | N01-029 | 566 | A regression must force the next transaction ID to overflow. | test requirement | Ticket 02 | Proposed fault injection | Retain for executable reproduction. |
 | N01-030 | 567 | A regression must observe a typed counter-overflow result. | test requirement | Ticket 16 | Proposed regression assertion | Assign to owner for gate design. |
 | N01-031 | 568 | A regression must observe successful stabilization after the failure. | test requirement | Ticket 16 | Proposed regression assertion | Assign to owner for gate design. |
@@ -465,7 +465,7 @@ value for a library interface.
 | N02-037 | 651-655 | Regression coverage needs five keyed-bind, cleanup, retention, and callback-failure scenarios. | test requirement | Ticket 16 | Proposed regression set | Assign to owner for final gate design. |
 | N02-038 | 659 | N2 follows N1 and precedes scheduler redesign. | sequencing | Ticket 17 | Severity and dependency assessment | Assign to owner for final route. |
 | N02-039 | 659 | N2 affects commit planning, invalidation, discard, cleanup, diagnostics, and Signal Map models. | blast radius | Ticket 09 | Preliminary impact estimate | Retain. The correction also requires prepared topology replacements. |
-| N02-040 | 659 | N2 does not require public type changes. | interface claim | Ticket 13 | Preliminary type assessment | Assign to owner to preserve if feasible. |
+| N02-040 | 659 | N2 does not require public type changes. | interface claim | Ticket 13 | Preliminary type assessment | Preserve public signal and success types. |
 | N02-041 | 651 | A regression must combine keyed removal with a nested bind switch. | test requirement | Ticket 03 | Proposed counterexample | Retain for executable reproduction. |
 | N02-042 | 652 | A top-scope new branch regression must show that no invalid dependent edge remains. | test requirement | Ticket 16 | Proposed topology assertion | Assign to owner for gate design. |
 | N02-043 | 653 | A child-scope branch regression must show cleanup of its provisional scope. | test requirement | Ticket 16 | Proposed cleanup assertion | Assign to owner for gate design. |
@@ -547,7 +547,7 @@ value for a library interface.
 | N05-017 | 801 | Phase-specific tokens need to encode rollback authority. | requirement | Ticket 09 | Proposed type design | Accept internally; sealed and delivery values carry no rollback interface. |
 | N05-018 | 805 | N5 needs resolution with N1 and N2. | sequencing | Ticket 09 | Proposed dependency order | Accept. One atomic-pass and commit-plan design resolves N1, N2, and N5 together. |
 | N05-019 | 805 | N5 changes private orchestration and fault-injection tests. | blast radius | Ticket 09 | Preliminary impact estimate | Retain. Ticket 16 owns the fault slots. |
-| N05-020 | 805 | N5 makes existing public semantics more faithful instead of changing them. | interface claim | Ticket 13 | Preliminary semantic assessment | Assign to owner to preserve if feasible. |
+| N05-020 | 805 | N5 makes existing public semantics more faithful instead of changing them. | interface claim | Ticket 13 | Preliminary semantic assessment | Preserve the public stabilization success contract. |
 | N05-021 | 776 | The shared exception region includes generation, staging, and pending work. | phase fact | Ticket 09 | Static control-flow trace | Retain as current planning-region evidence. |
 | N05-022 | 777 | The shared exception region includes bind planning and event collection. | phase fact | Ticket 09 | Static control-flow trace | Retain as current planning-region evidence. |
 | N05-023 | 778 | The shared exception region includes transaction and topology commit. | phase fact | Ticket 09 | Static control-flow trace | Retain as the hidden commit boundary. |
@@ -567,16 +567,16 @@ value for a library interface.
 | S04-001 | 816 | Retain S4 bind-switch-condition parity. | parity assessment | Ticket 16 | Review conclusion without new qualification | Assign to owner for an executable law decision. |
 | S05-001 | 817 | Amend S5 to reference F11 instead of F13. | cross-reference correction | Ticket 01 | Internal table comparison | Retain the corrected routing. |
 | S05-002 | 817 | Default Incremental invalidates old bind branches. | reference fact | Ticket 07 | Reference semantic trace | Retain as reference evidence. |
-| S05-003 | 817 | Bind rescoping is nondefault compatibility behavior. | parity assessment | Ticket 13 | Reference semantic trace | Assign to owner for algebra decision. |
+| S05-003 | 817 | Bind rescoping is nondefault compatibility behavior. | parity assessment | Ticket 13 | Reference semantic trace | Reject the nondefault bind rescope behavior. |
 | S06-001 | 818 | Retain S6 only for bind-only cascade convergence. | bounded parity assessment | Ticket 16 | Static support with an explicit boundary | Assign to owner for an executable law decision. |
 | S06-002 | 818 | S6 does not cover N2's mixed keyed-removal and staged-bind case. | limitation | Ticket 03 | Static counterexample | Retain for executable reproduction. |
 | S07-001 | 819 | Retain S7 only for selector or validation failure before commit. | bounded parity assessment | Ticket 16 | Static support with an explicit boundary | Assign to owner for an executable law decision. |
 | S08-001 | 820 | Retain S8 parity for variable sets during stabilization. | parity assessment | Ticket 16 | Review conclusion without new qualification | Assign to owner for an executable law decision. |
 | S09-001 | 821 | Refute S9 because the observer comparator is non-total. | parity correction | Ticket 11 | Static N3 counterexample | Retain for the current engine; replace it with the gated topological law. |
 | S10-001 | 822 | Retain S10 richer delivery coalescing. | parity assessment | Ticket 11 | Static semantic review | Retain latest-value coalescing against the last acknowledged value. |
-| S10-002 | 822 | S10 remains subject to documented at-least-once behavior after callback failure or interruption. | limitation | Ticket 11 | Public contract qualification | Retain and specify the success acknowledgement linearization point. |
-| S11-001 | 823 | Amend S11 because direct callbacks lack invalidation events but streams distinguish terminal outcomes. | parity assessment | Ticket 13 | Static interface and implementation trace | Assign to owner for lifecycle decision. |
-| S11-002 | 823 | `Unnecessary` has no valid meaning for an active Eta observer. | semantic claim | Ticket 13 | Demand and lifecycle reasoning | Assign to owner for lifecycle decision. |
+| S10-002 | 822 | S10 remains subject to documented at-least-once behavior after callback failure or interruption. | limitation | Ticket 11 | Public contract qualification | Retain for ordinary callbacks and add direct acknowledgement after a durable send or terminal drop. |
+| S11-001 | 823 | Amend S11 because direct callbacks lack invalidation events but streams distinguish terminal outcomes. | parity assessment | Ticket 13 | Static interface and implementation trace | Accept the amendment and add a separate finish hook. |
+| S11-002 | 823 | `Unnecessary` has no valid meaning for an active Eta observer. | semantic claim | Ticket 13 | Demand and lifecycle reasoning | Confirm Unnecessary has no active-observer meaning. |
 | S12-001 | 824 | Refute universal S12 rollback superiority because N1 and N2 expose boundary failures. | parity correction | Ticket 09 | Static counterexamples | Amend. The desired atomic-pass model restores the stronger contract; ticket 16 must prove it. |
 | S12-002 | 824 | N2 leaves hybrid topology after a successful mixed transaction. | counterexample link | Ticket 03 | Static N2 trace | Retain for executable reproduction. |
 | S12-003 | 824 | N1 corrupts phase state before a transaction exists. | counterexample link | Ticket 02 | Static N1 trace | Retain for executable reproduction. |
@@ -584,7 +584,7 @@ value for a library interface.
 | S13-002 | 825 | Probe A does not cover pairwise searches with many observers. | evidence gap | Ticket 05 | Probe-scope assessment | Retain for scenario design. |
 | S13-003 | 825 | Probe A does not measure the exact packed revision. | evidence gap | Ticket 01 | Revision mismatch | Retain and rerun on the selected revision. |
 | S14-001 | 826 | Refute universal S14 overflow superiority because transaction-ID overflow escapes typed failure and wedges state. | parity correction | Ticket 02 | Static N1 counterexample | Retain for executable reproduction. |
-| S15-001 | 827 | Retain S15 as a dynamic-cutoff delta under F12. | parity assessment | Ticket 13 | Static interface comparison | Assign to owner for cutoff design. |
+| S15-001 | 827 | Retain S15 as a dynamic-cutoff delta under F12. | parity assessment | Ticket 13 | Static interface comparison | Resolve with immutable named cutoffs and no mutation. |
 | S16-001 | 828 | Retain S16 cross-domain safety as a feature difference. | parity assessment | Ticket 09 | Review conclusion with hardening condition | Retain with graph-owned phase state and physical tokens. |
 | S16-002 | 828 | N1 hardening needs removal of module-global transaction and state identifiers. | requirement | Ticket 09 | Static shared-state analysis | Accept. Remove both module-global allocators. |
 | S17-001 | 829 | Amend S17's explanation of Incremental cycle behavior. | parity correction | Ticket 06 | Interface and edge-addition trace | Amend: detection follows active necessary-parent edge insertion and does not provide atomic rejection. |
@@ -686,28 +686,28 @@ value for a library interface.
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-11-001 | 907-909 | Eleventh, replace optional equality with a named cutoff type. | ranked requirement | Ticket 13 | Proposed correction plan | Assign to owner for algebra design. |
-| PLN-11-002 | 909 | Add `set_cutoff` only after its scheduling semantics are complete. | deferred requirement | Ticket 13 | Proposed correction plan | Assign to owner for design decision. |
-| PLN-11-003 | 911 | Runtime mutation depends on F1 scheduling. | dependency | Ticket 13 | Proposed route | Assign to owner for route planning. |
-| PLN-11-004 | 912 | Rank 11 affects public constructors and all callers. | blast radius | Ticket 13 | Preliminary impact estimate | Retain for planning. |
+| PLN-11-001 | 907-909 | Eleventh, replace optional equality with a named cutoff type. | ranked requirement | Ticket 13 | Proposed correction plan | Accept immutable named Cutoff.t for values with later candidates. |
+| PLN-11-002 | 909 | Add `set_cutoff` only after its scheduling semantics are complete. | deferred requirement | Ticket 13 | Proposed correction plan | Reject set_cutoff rather than defer an incomplete contract. |
+| PLN-11-003 | 911 | Runtime mutation depends on F1 scheduling. | dependency | Ticket 13 | Proposed route | Close the dependency because runtime mutation is absent. |
+| PLN-11-004 | 912 | Rank 11 affects public constructors and all callers. | blast radius | Ticket 13 | Preliminary impact estimate | Accept the direct producing-constructor migration. |
 
 ### Rank 12: F8
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-12-001 | 914-916 | Twelfth, add balanced associative reduction with O(log n) updates. | ranked requirement | Ticket 13 | Proposed correction plan | Assign to owner for algebra design. |
-| PLN-12-002 | 916 | O(1) amortized accumulation needs explicit delta algebra. | ranked requirement | Ticket 13 | Proposed correction plan | Assign to owner for algebra design. |
-| PLN-12-003 | 918 | Rank 12 depends on F1 and N4. | dependency | Ticket 13 | Proposed route | Assign to owner for route planning. |
-| PLN-12-004 | 919 | Rank 12 affects public API, node kinds, and complexity tests. | blast radius | Ticket 13 | Preliminary impact estimate | Retain for planning. |
+| PLN-12-001 | 914-916 | Twelfth, add balanced associative reduction with O(log n) updates. | ranked requirement | Ticket 13 | Proposed correction plan | Accept balanced associative reduction. |
+| PLN-12-002 | 916 | O(1) amortized accumulation needs explicit delta algebra. | ranked requirement | Ticket 13 | Proposed correction plan | Accept the stronger-algebra requirement and omit the O(1) fold. |
+| PLN-12-003 | 918 | Rank 12 depends on F1 and N4. | dependency | Ticket 13 | Proposed route | Resolve after the completed scheduler and topology decisions. |
+| PLN-12-004 | 919 | Rank 12 affects public API, node kinds, and complexity tests. | blast radius | Ticket 13 | Preliminary impact estimate | Accept the node, API, and complexity-gate impact. |
 
 ### Rank 13: F4
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-13-001 | 921-923 | Thirteenth, expose a separate observer finish event only if consumers demand it. | optional requirement | Ticket 13 | Proposed correction plan | Assign to owner for lifecycle decision. |
-| PLN-13-002 | 923 | Eta must not add a misleading `Unnecessary` value update. | ranked requirement | Ticket 13 | Proposed correction plan | Assign to owner for lifecycle decision. |
-| PLN-13-003 | 925 | Rank 13 depends on demonstrated product need. | dependency | Ticket 13 | Proposed route | Assign to owner for product decision. |
-| PLN-13-004 | 926 | Rank 13 affects observer APIs and adapters. | blast radius | Ticket 13 | Preliminary impact estimate | Retain for planning. |
+| PLN-13-001 | 921-923 | Thirteenth, expose a separate observer finish event only if consumers demand it. | optional requirement | Ticket 13 | Proposed correction plan | Accept external stream adapters as demand for a separate finish event. |
+| PLN-13-002 | 923 | Eta must not add a misleading `Unnecessary` value update. | ranked requirement | Ticket 13 | Proposed correction plan | Accept. Add no misleading Unnecessary update. |
+| PLN-13-003 | 925 | Rank 13 depends on demonstrated product need. | dependency | Ticket 13 | Proposed route | Resolve product need through lifecycle-correct external adapters. |
+| PLN-13-004 | 926 | Rank 13 affects observer APIs and adapters. | blast radius | Ticket 13 | Preliminary impact estimate | Accept the observer and stream-package impact. |
 
 ### Rank 14: F5, F6, and F14
 
@@ -724,10 +724,10 @@ value for a library interface.
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
 | DEF-001 | 937 | Do not publish broad Expert without a second external node-kind consumer and stable invariants. | rejected correction | Ticket 12 | Mixed consumer-count and safety rationale | Reject the consumer-count gate. Accept stable invariants and external value as the decision tests. |
-| DEF-002 | 938 | Do not pursue F9 interface parity as one batch. | rejected correction | Ticket 13 | Product-scope recommendation | Reject the parity batch. |
-| DEF-003 | 938 | Split F9 candidates by concrete use case. | deferred correction | Ticket 13 | Product-scope recommendation | Assign to owner for algebra decisions. |
-| DEF-004 | 939 | Do not add bind rescoping without a benchmarked workload. | deferred correction | Ticket 13 | Evidence condition | Assign to owner for product decision. |
-| DEF-005 | 939 | Bind rescoping also needs a complete scope and lifecycle RFC. | deferred correction | Ticket 13 | Design condition | Assign to owner for design decision. |
+| DEF-002 | 938 | Do not pursue F9 interface parity as one batch. | rejected correction | Ticket 13 | Product-scope recommendation | Reject the F9 parity batch. |
+| DEF-003 | 938 | Split F9 candidates by concrete use case. | deferred correction | Ticket 13 | Product-scope recommendation | Resolve each candidate by its concrete task and subsystem contract. |
+| DEF-004 | 939 | Do not add bind rescoping without a benchmarked workload. | deferred correction | Ticket 13 | Evidence condition | Accept. Add no bind rescoping. |
+| DEF-005 | 939 | Bind rescoping also needs a complete scope and lifecycle RFC. | deferred correction | Ticket 13 | Design condition | Accept. A future rescope mode needs a separate lifecycle RFC. |
 
 ## 6. Open questions for maintainers
 
@@ -744,8 +744,8 @@ value for a library interface.
 | Q05-002 | 949 | If not external, can local typed assertions replace the generic CMI-visible token? | design option | Ticket 12 | Proposed narrower test seam | Answer yes. Typed probes and role-specific identities replace the generic token. |
 | Q06-001 | 950 | Does ADR 0004 reject all first-party SPIs or only broad application Expert APIs? | open question | Ticket 12 | ADR omitted from pack | Answer that ADR 0004 rejects broad graph authority, not every sealed package protocol. |
 | Q06-002 | 950 | The ADR distinction materially changes F2. | design consequence | Ticket 12 | Architecture assessment | Resolve by amending ADR 0004 for the selected stable-family protocol. |
-| Q07-001 | 951 | Must cutoff mutation reevaluate now or affect only later candidates? | open question | Ticket 13 | Runtime semantics unspecified | Assign to owner for cutoff design. |
-| Q07-002 | 951 | Eta must decide cutoff reevaluation before exposing `set_cutoff`. | publication requirement | Ticket 13 | Explicit semantic blocker | Assign to owner for cutoff design. |
+| Q07-001 | 951 | Must cutoff mutation reevaluate now or affect only later candidates? | open question | Ticket 13 | Runtime semantics unspecified | Answer neither. Eta exposes no runtime cutoff mutation. |
+| Q07-002 | 951 | Eta must decide cutoff reevaluation before exposing `set_cutoff`. | publication requirement | Ticket 13 | Explicit semantic blocker | Accept the publication blocker and omit set_cutoff. |
 
 ## 7. Binding recommendation
 

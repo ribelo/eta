@@ -90,7 +90,7 @@ module type Package_graph = sig
     input:'data_map signal ->
     input_ops:('key, 'data, 'data_map) input_ops ->
     output_ops:('key, 'output, 'output_map) output_ops ->
-    ?data_cutoff:(published:'data -> candidate:'data -> bool) ->
+    ?data_cutoff:'data Eta_signal.Cutoff.t ->
     build:(key:'key -> data:'data signal -> 'output signal) ->
     unit ->
     'output_map plan

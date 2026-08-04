@@ -154,6 +154,12 @@ main Dune workspace.
   topology, scope, invalidation, cleanup, and observer authority. Signal Map no
   longer instantiates a second kernel. Its current unsafe private testing tokens
   become typed probes and role-specific identities.
+- [Public Eta Signal algebra](issues/13-public-signal-algebra.md) —
+  The scalar graph keeps direct maps, `all`, `bind`, explicit stabilization, and
+  two read meanings. Immutable named cutoffs replace raw equality functions.
+  One balanced associative reduction closes the static fan-in gap. Observer
+  finish is separate from value updates. Time and diagnostics stay engine-owned.
+  The optional `eta_signal_stream` package owns the Eio-backed stream bridge.
 
 ## Not yet specified
 
