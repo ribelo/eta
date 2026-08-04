@@ -85,26 +85,26 @@ value for a library interface.
 | F01-018 | 74 | The probe weaknesses prevent precise asymptotic fitting. | limitation | Ticket 05 | Evidence assessment | Retain. |
 | F01-019 | 74 | The probe weaknesses do not explain graph-size growth in idle cost. | evidence claim | Ticket 05 | Static and probe synthesis | Retain for deterministic measurement. |
 | F01-020 | 74 | The code trace independently establishes graph-size-dependent idle work. | evidence claim | Ticket 05 | Static source analysis | Retain for deterministic measurement. |
-| F01-021 | 78 | Every stabilization performs graph-wide registry or reachability work. | amended finding | Ticket 10 | Static source synthesis | Assign to owner for scheduler design. |
-| F01-022 | 78 | User-function recomputation can still be change-proportional. | amended finding | Ticket 10 | Static source synthesis | Assign to owner as a preserved property. |
-| F01-023 | 78 | Bind planning and observer ordering can add repeated graph traversals. | amended finding | Ticket 10 | Static source synthesis | Assign to owner for scheduler design. |
-| F01-024 | 82 | A fully quiescent stabilization must perform O(1) scheduler work. | complexity invariant | Ticket 10 | Proposed contract | Assign to owner for design decision. |
-| F01-025 | 82 | A fully quiescent stabilization must not scan the registry or observer-root graph. | complexity invariant | Ticket 10 | Proposed contract | Assign to owner for design decision. |
-| F01-026 | 84 | A clean-to-dirty transition must enqueue the node or affected frontier once until processing. | requirement | Ticket 10 | Proposed scheduler contract | Assign to owner for design decision. |
-| F01-027 | 84 | Recomputation must settle each dependency before its consumer. | invariant | Ticket 10 | Proposed scheduler contract | Assign to owner for design decision. |
-| F01-028 | 86 | Demand must update from incremental 0-to-1 and 1-to-0 reference transitions. | requirement | Ticket 10 | Proposed demand contract | Assign to owner for design decision. |
-| F01-029 | 86 | Demand must not be reconstructed from all roots. | requirement | Ticket 10 | Proposed demand contract | Assign to owner for design decision. |
-| F01-030 | 88 | The audit's source-cutoff-only condition for O(1) work is too broad. | correction | Ticket 10 | Static counterexamples | Amend the quiescence preconditions. |
-| F01-031 | 88 | Timers, lifecycle changes, and failed pending delivery can create work without source changes. | fact | Ticket 10 | Runtime scenario analysis | Retain in the quiescence model. |
+| F01-021 | 78 | Every stabilization performs graph-wide registry or reachability work. | amended finding | Ticket 10 | Static source synthesis | Confirm for the current engine. Replace registry and reachability admission with one O(1) work ledger. |
+| F01-022 | 78 | User-function recomputation can still be change-proportional. | amended finding | Ticket 10 | Static source synthesis | Retain as the required useful-work property. |
+| F01-023 | 78 | Bind planning and observer ordering can add repeated graph traversals. | amended finding | Ticket 10 | Static source synthesis | Confirm. Replace bind scans here; ticket 11 replaces pairwise observer traversals. |
+| F01-024 | 82 | A fully quiescent stabilization must perform O(1) scheduler work. | complexity invariant | Ticket 10 | Proposed contract | Accept through the graph-owned work ledger. |
+| F01-025 | 82 | A fully quiescent stabilization must not scan the registry or observer-root graph. | complexity invariant | Ticket 10 | Proposed contract | Accept. Quiescence performs no graph, root, observer, or timer scan. |
+| F01-026 | 84 | A clean-to-dirty transition must enqueue the node or affected frontier once until processing. | requirement | Ticket 10 | Proposed scheduler contract | Accept with one scheduled bit per node. |
+| F01-027 | 84 | Recomputation must settle each dependency before its consumer. | invariant | Ticket 10 | Proposed scheduler contract | Accept through explicit-stack dependency-first traversal. |
+| F01-028 | 86 | Demand must update from incremental 0-to-1 and 1-to-0 reference transitions. | requirement | Ticket 10 | Proposed demand contract | Accept with observer and necessary-parent references. |
+| F01-029 | 86 | Demand must not be reconstructed from all roots. | requirement | Ticket 10 | Proposed demand contract | Accept. Apply only incremental reference transitions. |
+| F01-030 | 88 | The audit's source-cutoff-only condition for O(1) work is too broad. | correction | Ticket 10 | Static counterexamples | Amend. Quiescence means that every work-ledger class is empty. |
+| F01-031 | 88 | Timers, lifecycle changes, and failed pending delivery can create work without source changes. | fact | Ticket 10 | Runtime scenario analysis | Retain as work-ledger classes. |
 | F01-032 | 92 | Deterministic F13 work counters must land before the scheduler redesign. | sequencing | Ticket 16 | Proposed dependency order | Assign to owner for gate design. |
-| F01-033 | 92 | The scheduler and necessity model need replacement after instrumentation. | recommendation | Ticket 10 | Proposed architecture route | Assign to owner for design decision. |
-| F01-034 | 92 | The redesign affects graph state, dirty propagation, observers, dynamic edges, timers, diagnostics, and model tests. | blast radius | Ticket 10 | Static impact estimate | Retain for planning. |
+| F01-033 | 92 | The scheduler and necessity model need replacement after instrumentation. | recommendation | Ticket 10 | Proposed architecture route | Accept the necessary-stale scheduler and reference-counted demand replacement. |
+| F01-034 | 92 | The redesign affects graph state, dirty propagation, observers, dynamic edges, timers, diagnostics, and model tests. | blast radius | Ticket 10 | Static impact estimate | Retain as the implementation impact. |
 | F01-035 | 92 | The F1 redesign does not require public signal type changes. | interface claim | Ticket 13 | Preliminary design assessment | Assign to owner to preserve if feasible. |
-| F01-036 | 82 | Quiescence excludes dirty source, timer, and custom nodes. | scope condition | Ticket 10 | Proposed contract boundary | Assign to owner for design decision. |
-| F01-037 | 82 | Quiescence excludes topology and demand transitions. | scope condition | Ticket 10 | Proposed contract boundary | Assign to owner for design decision. |
-| F01-038 | 82 | Quiescence excludes observer registration and disposal transitions. | scope condition | Ticket 10 | Proposed contract boundary | Assign to owner for design decision. |
-| F01-039 | 82 | Quiescence excludes pending callback delivery. | scope condition | Ticket 10 | Proposed contract boundary | Assign to owner for design decision. |
-| F01-040 | 82 | Quiescence excludes pending cleanup. | scope condition | Ticket 10 | Proposed contract boundary | Assign to owner for design decision. |
+| F01-036 | 82 | Quiescence excludes dirty source, timer, and custom nodes. | scope condition | Ticket 10 | Proposed contract boundary | Amend to actionable necessary-stale source, timer, and private-node work. |
+| F01-037 | 82 | Quiescence excludes topology and demand transitions. | scope condition | Ticket 10 | Proposed contract boundary | Accept as topology and demand work classes. |
+| F01-038 | 82 | Quiescence excludes observer registration and disposal transitions. | scope condition | Ticket 10 | Proposed contract boundary | Accept as observer lifecycle work. |
+| F01-039 | 82 | Quiescence excludes pending callback delivery. | scope condition | Ticket 10 | Proposed contract boundary | Accept as observer delivery work. |
+| F01-040 | 82 | Quiescence excludes pending cleanup. | scope condition | Ticket 10 | Proposed contract boundary | Accept as cleanup-ledger work. |
 
 ### F2
 
@@ -510,19 +510,19 @@ value for a library interface.
 | N04-006 | 733 | Building `n` dependencies performs O(n²) parent-list scans. | complexity claim | Ticket 05 | Static summation | Retain for deterministic measurement. |
 | N04-007 | 733 | Wide-parent teardown also repeats list filtering. | complexity claim | Ticket 05 | Static algorithm analysis | Retain for deterministic measurement. |
 | N04-008 | 735 | Public `all` reaches the wide-node behavior directly. | reachability claim | Ticket 05 | Public API trace | Retain for deterministic measurement. |
-| N04-009 | 737 | N4 is independent of graph-wide stabilization work. | finding boundary | Ticket 10 | Algorithmic separation | Assign to owner for topology design. |
-| N04-010 | 737 | A perfect dirty scheduler still leaves quadratic wide construction and teardown. | complexity claim | Ticket 10 | Algorithmic separation | Assign to owner for topology design. |
+| N04-009 | 737 | N4 is independent of graph-wide stabilization work. | finding boundary | Ticket 10 | Algorithmic separation | Retain. Scheduler and adjacency contracts remain separate. |
+| N04-010 | 737 | A perfect dirty scheduler still leaves quadratic wide construction and teardown. | complexity claim | Ticket 10 | Algorithmic separation | Confirm for list membership and repeated live-owner detachment. |
 | N04-011 | 741 | Large consumer fan-in can spend disproportionate time before stabilization. | impact | Ticket 05 | Workload extrapolation | Retain for scenario design. |
-| N04-012 | 745 | Static node creation and invalidation with `n` distinct dependencies must take O(n) adjacency work. | complexity invariant | Ticket 10 | Proposed topology contract | Assign to owner for design decision. |
-| N04-013 | 747-751 | Static arrays, indexed dynamic edges, and small-edge specialization are candidate representations. | design options | Ticket 10 | Proposed representations | Assign to owner for design decision. |
-| N04-014 | 753 | Eta must not copy Incremental's intrusive layout without analysis. | recommendation | Ticket 10 | Reference-use constraint | Retain as a design constraint. |
-| N04-015 | 753 | Dynamic rewiring needs O(1) or amortized O(1) edge identity and removal. | complexity requirement | Ticket 10 | Proposed topology contract | Assign to owner for design decision. |
+| N04-012 | 745 | Static node creation and invalidation with `n` distinct dependencies must take O(n) adjacency work. | complexity invariant | Ticket 10 | Proposed topology contract | Accept with static arrays and indexed dependent vectors. |
+| N04-013 | 747-751 | Static arrays, indexed dynamic edges, and small-edge specialization are candidate representations. | design options | Ticket 10 | Proposed representations | Amend. Select static arrays and indexed dynamic vectors; reject small-edge specialization. |
+| N04-014 | 753 | Eta must not copy Incremental's intrusive layout without analysis. | recommendation | Ticket 10 | Reference-use constraint | Retain. Eta uses graph-local edge records and dense vectors. |
+| N04-015 | 753 | Dynamic rewiring needs O(1) or amortized O(1) edge identity and removal. | complexity requirement | Ticket 10 | Proposed topology contract | Accept indexed handles, O(1) removal, and amortized O(1) insertion. |
 | N04-016 | 757 | Tests need operation counts for wide `all` and wide-parent scope invalidation at three scales. | test requirement | Ticket 16 | Proposed gate | Assign to owner for final gate design. |
-| N04-017 | 761 | N4 edge storage needs co-design with F1 scheduling. | sequencing | Ticket 10 | Proposed dependency order | Assign to owner for route planning. |
-| N04-018 | 761 | N4 affects node records, dynamic rewiring, DOT, invalidation, and construction tests. | blast radius | Ticket 10 | Preliminary impact estimate | Retain for planning. |
-| N04-019 | 749 | Static child dependencies can use immutable arrays or small vectors. | representation option | Ticket 10 | Proposed design option | Assign to owner for topology design. |
-| N04-020 | 750 | Dynamic removal can use indexed parent slots or a hash index. | representation option | Ticket 10 | Proposed design option | Assign to owner for topology design. |
-| N04-021 | 751 | Edge storage can specialize zero, one, and two edges before widening. | representation option | Ticket 10 | Proposed design option | Assign to owner for topology design. |
+| N04-017 | 761 | N4 edge storage needs co-design with F1 scheduling. | sequencing | Ticket 10 | Proposed dependency order | Accept one scheduler, demand, and topology design. |
+| N04-018 | 761 | N4 affects node records, dynamic rewiring, DOT, invalidation, and construction tests. | blast radius | Ticket 10 | Preliminary impact estimate | Retain as the topology implementation impact. |
+| N04-019 | 749 | Static child dependencies can use immutable arrays or small vectors. | representation option | Ticket 10 | Proposed design option | Accept exact immutable edge arrays. |
+| N04-020 | 750 | Dynamic removal can use indexed parent slots or a hash index. | representation option | Ticket 10 | Proposed design option | Accept indexed parent and child vector slots. |
+| N04-021 | 751 | Edge storage can specialize zero, one, and two edges before widening. | representation option | Ticket 10 | Proposed design option | Reject until a deterministic benchmark proves a need. |
 
 ### N5
 
@@ -561,7 +561,7 @@ value for a library interface.
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
 | S01-001 | 813 | Retain S1 glitch freedom because caching and dependency-first pull evaluation support it. | parity assessment | Ticket 16 | Static support with no found counterexample | Assign to owner for an executable law decision. |
-| S02-001 | 814 | Amend S2 because stabilization has more work than one necessary-node traversal. | parity assessment | Ticket 10 | Static graph-work trace | Assign to owner for scheduler design. |
+| S02-001 | 814 | Amend S2 because stabilization has more work than one necessary-node traversal. | parity assessment | Ticket 10 | Static graph-work trace | Amend. The desired engine visits only necessary-stale work and explicit non-node work classes. |
 | S02-002 | 814 | Registry scans, reachability scans, bind fixed points, and pairwise searches enlarge the S2 gap. | complexity claim | Ticket 05 | Static source synthesis | Retain for deterministic measurement. |
 | S03-001 | 815 | Retain S3 user recomputation parity within static nodes and version vectors. | bounded parity assessment | Ticket 16 | Static support with an explicit boundary | Assign to owner for an executable law decision. |
 | S04-001 | 816 | Retain S4 bind-switch-condition parity. | parity assessment | Ticket 16 | Review conclusion without new qualification | Assign to owner for an executable law decision. |
@@ -644,18 +644,18 @@ value for a library interface.
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-06-001 | 872-874 | Sixth, provide O(1) quiescence and change-proportional downstream scheduling. | ranked requirement | Ticket 10 | Proposed correction plan | Assign to owner for scheduler design. |
-| PLN-06-002 | 874 | Sixth, update necessity and timer demand incrementally. | ranked requirement | Ticket 10 | Proposed correction plan | Assign to owner for demand design. |
+| PLN-06-001 | 872-874 | Sixth, provide O(1) quiescence and change-proportional downstream scheduling. | ranked requirement | Ticket 10 | Proposed correction plan | Accept through the work ledger and necessary-stale deque. |
+| PLN-06-002 | 874 | Sixth, update necessity and timer demand incrementally. | ranked requirement | Ticket 10 | Proposed correction plan | Accept through demand reference transitions. |
 | PLN-06-003 | 876 | Rank 6 depends on F13 and preferably the N3 decision. | dependency | Ticket 17 | Proposed route | Assign to owner for final route. |
-| PLN-06-004 | 877 | Rank 6 affects the engine, timers, topology, diagnostics, and model tests. | blast radius | Ticket 10 | Preliminary impact estimate | Retain for planning. |
+| PLN-06-004 | 877 | Rank 6 affects the engine, timers, topology, diagnostics, and model tests. | blast radius | Ticket 10 | Preliminary impact estimate | Retain. |
 
 ### Rank 7: N4
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-07-001 | 879-881 | Seventh, make wide construction and invalidation linear with efficient dynamic edge removal. | ranked requirement | Ticket 10 | Proposed correction plan | Assign to owner for topology design. |
-| PLN-07-002 | 883 | Rank 7 needs co-design with F1. | dependency | Ticket 10 | Proposed route | Assign to owner for route planning. |
-| PLN-07-003 | 884 | Rank 7 affects node representation and all topology operations. | blast radius | Ticket 10 | Preliminary impact estimate | Retain for planning. |
+| PLN-07-001 | 879-881 | Seventh, make wide construction and invalidation linear with efficient dynamic edge removal. | ranked requirement | Ticket 10 | Proposed correction plan | Accept through indexed edge records. |
+| PLN-07-002 | 883 | Rank 7 needs co-design with F1. | dependency | Ticket 10 | Proposed route | Accept and combine both changes in one topology-aware scheduler slice. |
+| PLN-07-003 | 884 | Rank 7 affects node representation and all topology operations. | blast radius | Ticket 10 | Preliminary impact estimate | Retain. |
 
 ### Rank 8: F7
 
@@ -762,7 +762,7 @@ value for a library interface.
 | REC-009 | 961 | The immediate design needs one explicit immutable commit plan. | binding recommendation | Ticket 09 | Review synthesis | Accept as one sealed declarative mutation tape. |
 | REC-010 | 961 | The immediate design needs one closed invalidation frontier. | binding recommendation | Ticket 09 | Review synthesis | Accept as the operation-partition authority. |
 | REC-011 | 961 | The immediate design needs an atomic phase machine. | binding recommendation | Ticket 09 | Review synthesis | Accept as one `Idle`, `Planning`, or `Delivering` field. |
-| REC-012 | 961 | The immediate design needs measurable dirty-driven work. | binding recommendation | Ticket 10 | Review synthesis | Assign to owner for scheduler design. |
+| REC-012 | 961 | The immediate design needs measurable dirty-driven work. | binding recommendation | Ticket 10 | Review synthesis | Accept with deterministic scheduler and adjacency counters. |
 | REC-013 | 961 | All other work is downstream from those core design results. | sequencing | Ticket 17 | Review synthesis | Assign to owner for final route. |
 
 ## Coverage summary

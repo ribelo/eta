@@ -135,6 +135,12 @@ main Dune workspace.
   One sealed plan freezes the invalidation frontier and partitions every dynamic
   operation, which closes N2. A declarative mutation tape and direct transition
   to delivery separate rollback from all post-commit failures, which closes N5.
+- [Scheduler, demand, and topology model](issues/10-scheduler-demand-and-topology.md)
+  — An O(1) work ledger admits stabilization. A necessary-stale deque settles
+  dirty dependencies before consumers. Demand changes through incremental
+  reference transitions, including timer demand. Static edge arrays and indexed
+  dynamic vectors make wide construction, invalidation, and keyed removal
+  linear in the affected edges.
 
 ## Not yet specified
 
