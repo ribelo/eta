@@ -274,7 +274,7 @@ value for a library interface.
 | F09-008 | 356 | API-name parity and negative tests for every omission are not coherent product requirements. | correction | Ticket 13 | Product and test-design reasoning | Reject parity as a batch goal. |
 | F09-009 | 356 | A smaller correct API is better than an approximate clone. | design principle | Ticket 13 | Product-boundary judgment | Retain as an algebra constraint. |
 | F09-010 | 358 | `Var.value` already returns the latest set value before stabilization. | interface fact | Ticket 13 | Static public-interface trace | Retain and reject this claimed gap. |
-| F09-011 | 358 | `Var.value` covers the core semantics of Incremental's `Var.latest_value`. | parity assessment | Ticket 07 | Interface semantic comparison | Retain as reference evidence. |
+| F09-011 | 358 | `Var.value` covers latest-source reads outside pure recomputation, but not Incremental's during-stabilization read. | parity assessment | Ticket 07 | Interface semantic comparison | Amend to external reads; reject full stabilization parity. |
 | F09-012 | 362 | F9 must not remain a ranked defect. | recommendation | Ticket 17 | Review synthesis | Assign to owner for final disposition. |
 | F09-013 | 362 | Separate RFCs need concrete workloads. | recommendation | Ticket 13 | Product-need rule | Assign to owner for algebra process. |
 | F09-014 | 362 | Cheap aliases can enter when they improve readability without new semantics. | decision rule | Ticket 13 | Conditional recommendation | Assign to owner for algebra decision. |
@@ -587,8 +587,8 @@ value for a library interface.
 | S15-001 | 827 | Retain S15 as a dynamic-cutoff delta under F12. | parity assessment | Ticket 13 | Static interface comparison | Assign to owner for cutoff design. |
 | S16-001 | 828 | Retain S16 cross-domain safety as a feature difference. | parity assessment | Ticket 09 | Review conclusion with hardening condition | Assign to owner for domain-safe design. |
 | S16-002 | 828 | N1 hardening needs removal of module-global transaction and state identifiers. | requirement | Ticket 09 | Static shared-state analysis | Assign to owner for domain-safe design. |
-| S17-001 | 829 | Amend S17's explanation of Incremental cycle behavior. | parity correction | Ticket 06 | Reference documentation trace | Retain as corrected reference evidence. |
-| S17-002 | 829 | Incremental documents that bind and Expert edges can create cycles. | reference fact | Ticket 06 | Reference interface documentation | Retain as reference evidence. |
+| S17-001 | 829 | Amend S17's explanation of Incremental cycle behavior. | parity correction | Ticket 06 | Interface and edge-addition trace | Amend: detection follows active necessary-parent edge insertion and does not provide atomic rejection. |
+| S17-002 | 829 | The review claims that Incremental documents cycles from bind and Expert edges. | reference fact | Ticket 06 | Interface and Expert implementation trace | Amend: the interface documents bind cycles; active necessary Expert edges use the same cycle-checked parent path. |
 | S17-003 | 829 | Incremental height adjustment detects those cycles. | reference fact | Ticket 06 | Reference interface documentation | Retain as reference evidence. |
 | S17-004 | 829 | The S17 parity conclusion remains reasonable despite the wrong explanation. | parity assessment | Ticket 16 | Static semantic comparison | Assign to owner for an executable law decision. |
 

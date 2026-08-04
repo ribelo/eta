@@ -105,6 +105,21 @@ main Dune workspace.
   `n * (n + 5) / 2` detachment checks. The bounded tombstone list adds separate
   `sum min(i, 1024)` invalidation work. Tickets 10, 15, and 16 own the design
   and gates.
+- [Incremental engine reference](issues/06-incremental-engine-reference.md) —
+  The useful reference requirements are necessary-stale scheduling,
+  dependency-first recomputation, incremental demand edges, default bind-scope
+  invalidation, keyed edge removal, and successful stabilization with an
+  acyclic necessary graph. The reference inserts an active necessary-parent
+  edge before its cycle check and does not roll it back. Heights, packed arrays,
+  intrusive lists, LIFO delivery, finalizer demand, and exception poisoning are
+  not Eta contracts. Eta must define its own commit and effect boundaries.
+- [Incremental interface reference](issues/07-incremental-interface-reference.md)
+  — The coherent scalar algebra is small: sources, fixed maps, dynamic
+  selection, cutoffs, demand, stabilization, and folds. Clock, memoization,
+  diagnostics, `Expert`, and `Incr_map` are separate subsystems. Incremental
+  node demand events do not imply an Eta observer-lifecycle event. Eta's typed
+  effects, explicit disposal, runtime ownership, and timer model require
+  different public contracts.
 
 ## Not yet specified
 
