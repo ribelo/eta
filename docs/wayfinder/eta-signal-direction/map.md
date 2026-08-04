@@ -167,16 +167,17 @@ main Dune workspace.
   `Keyed(Order).mapi`. `Root.advance` becomes effectful and runs one
   stabilization for each non-idle event. Crux timers remain endpoint-producing
   Eta effects or sources.
+- [Internal module ownership](issues/15-internal-module-ownership.md) —
+  One private engine library contains modules that each own one named invariant.
+  The kernel becomes the composition root. All six graph functors leave after
+  canonical replacements land. A fixed 1,024-slot ring makes tombstone insertion
+  O(1). The complete stream bridge moves to `eta_signal_stream`.
 
 ## Not yet specified
 
 - **The final correction program.** The evidence and design tickets must first
   decide which review findings survive, which new gaps matter, and whether the
   result is a correction or a redesign.
-- **Migration and implementation slices.** Their shape depends on the final
-  interfaces and internal module ownership. The repository does not keep
-  compatibility paths.
-
 ## Out of scope
 
 - Production implementation and durable test changes during this planning

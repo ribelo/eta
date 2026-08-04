@@ -193,23 +193,23 @@ value for a library interface.
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| F05-001 | 219 | Support-layer complexity is real, but the audit's universal abstraction rule is rejected. | verdict | Ticket 15 | Static architecture review | Assign to owner for module design. |
-| F05-002 | 223 | The graph interface says one adapter exists and callback records are implementation protocol. | fact | Ticket 15 | Static interface trace | Retain for the deletion test. |
-| F05-003 | 223 | The support layer has many multi-parameter records and one-constructor forwarding wrappers. | architecture fact | Ticket 15 | Static source inspection | Retain for module census. |
-| F05-004 | 225 | Cross-module phase ordering is materially hard to review. | maintainability claim | Ticket 15 | N2-supported architecture analysis | Assign to owner for module design. |
-| F05-005 | 225 | N2 spans kernel invalidation, graph staging, bind lifecycle, and pass orchestration. | architecture fact | Ticket 15 | Static ownership trace | Retain for invariant ownership. |
-| F05-006 | 227 | A two-instantiation rule for every abstraction is unsound. | correction | Ticket 15 | Design reasoning | Reject the universal rule. |
-| F05-007 | 227 | A ban on closure records is unsound. | correction | Ticket 15 | Design reasoning | Reject the universal rule. |
-| F05-008 | 227 | Single-use abstractions are useful when they make illegal phase transitions unrepresentable. | design principle | Ticket 15 | Type-design reasoning | Retain as a deletion-test exception. |
-| F05-009 | 227 | Transaction and stabilization modules deserve retention after exception-safety fixes. | recommendation | Ticket 15 | Preliminary module assessment | Assign to owner for module design. |
-| F05-010 | 231 | A support abstraction must own a named invariant that direct code cannot express as clearly. | review invariant | Ticket 15 | Proposed deletion test | Assign to owner for module design. |
-| F05-011 | 233-238 | Semantically empty wrappers and single-caller port records need deletion after core fixes. | recommendation | Ticket 15 | Proposed cleanup rule | Assign to owner after architecture settles. |
-| F05-012 | 237 | Phase-typed state machines and pure timer-policy logic need retention. | recommendation | Ticket 15 | Proposed ownership rule | Assign to owner for module design. |
-| F05-013 | 238 | Subsystem modules need movement instead of a merge into one kernel file. | recommendation | Ticket 15 | Deep-module principle | Assign to owner for module design. |
-| F05-014 | 242 | F5 cleanup comes after architectural changes. | sequencing | Ticket 15 | Proposed dependency order | Assign to owner for route planning. |
-| F05-015 | 242 | Early cleanup risks duplicate work and loss of useful correctness boundaries. | risk claim | Ticket 15 | Architecture reasoning | Retain for sequencing. |
-| F05-016 | 235 | Inline one-constructor wrappers that only rename one call. | cleanup requirement | Ticket 15 | Proposed deletion rule | Assign to owner after architecture settles. |
-| F05-017 | 236 | Collapse single-caller port records whose fields are always assembled and consumed together. | cleanup requirement | Ticket 15 | Proposed deletion rule | Assign to owner after architecture settles. |
+| F05-001 | 219 | Support-layer complexity is real, but the audit's universal abstraction rule is rejected. | verdict | Ticket 15 | Static architecture review | Accept the complexity concern and use named invariant ownership at issue 15 lines 31-105 and 169-194. |
+| F05-002 | 223 | The graph interface says one adapter exists and callback records are implementation protocol. | fact | Ticket 15 | Static interface trace | Delete the single-adapter graph protocol at issue 15 lines 169-194 and 222-239. |
+| F05-003 | 223 | The support layer has many multi-parameter records and one-constructor forwarding wrappers. | architecture fact | Ticket 15 | Static source inspection | Delete empty wrappers and single-adapter records at issue 15 lines 150-194 and 222-239. |
+| F05-004 | 225 | Cross-module phase ordering is materially hard to review. | maintainability claim | Ticket 15 | N2-supported architecture analysis | Concentrate phase authority in the transaction owners at issue 15 lines 42-63. |
+| F05-005 | 225 | N2 spans kernel invalidation, graph staging, bind lifecycle, and pass orchestration. | architecture fact | Ticket 15 | Static ownership trace | Replace the spread with typed proposals and one sealed plan at issue 15 lines 42-82. |
+| F05-006 | 227 | A two-instantiation rule for every abstraction is unsound. | correction | Ticket 15 | Design reasoning | Reject the universal rule at issue 15 lines 38-40 and 150-167. |
+| F05-007 | 227 | A ban on closure records is unsound. | correction | Ticket 15 | Design reasoning | Reject the universal ban and keep only structural exceptions at issue 15 lines 38-40 and 222-239. |
+| F05-008 | 227 | Single-use abstractions are useful when they make illegal phase transitions unrepresentable. | design principle | Ticket 15 | Type-design reasoning | Accept the phase-type exception at issue 15 lines 150-167. |
+| F05-009 | 227 | Transaction and stabilization modules deserve retention after exception-safety fixes. | recommendation | Ticket 15 | Preliminary module assessment | Rewrite transaction and replace stabilization with atomic-pass ownership at issue 15 lines 169-194. |
+| F05-010 | 231 | A support abstraction must own a named invariant that direct code cannot express as clearly. | review invariant | Ticket 15 | Proposed deletion test | Adopt the named-invariant deletion test at issue 15 lines 150-167. |
+| F05-011 | 233-238 | Semantically empty wrappers and single-caller port records need deletion after core fixes. | recommendation | Ticket 15 | Proposed cleanup rule | Delete them after their invariant owners land at issue 15 lines 42-105 and 150-194. |
+| F05-012 | 237 | Phase-typed state machines and pure timer-policy logic need retention. | recommendation | Ticket 15 | Proposed ownership rule | Retain phase and timer-policy owners at issue 15 lines 42-105 and 169-186. |
+| F05-013 | 238 | Subsystem modules need movement instead of a merge into one kernel file. | recommendation | Ticket 15 | Deep-module principle | Give work and timer policy separate owners at issue 15 lines 65-74 and 99-105. |
+| F05-014 | 242 | F5 cleanup comes after architectural changes. | sequencing | Ticket 15 | Proposed dependency order | Place replacement before deletion at issue 15 lines 311-333. |
+| F05-015 | 242 | Early cleanup risks duplicate work and loss of useful correctness boundaries. | risk claim | Ticket 15 | Architecture reasoning | Use replacement-driven deletion at issue 15 lines 311-333. |
+| F05-016 | 235 | Inline one-constructor wrappers that only rename one call. | cleanup requirement | Ticket 15 | Proposed deletion rule | Delete these wrappers at issue 15 lines 222-239. |
+| F05-017 | 236 | Collapse single-caller port records whose fields are always assembled and consumed together. | cleanup requirement | Ticket 15 | Proposed deletion rule | Delete these port records at issue 15 lines 169-194 and 222-239. |
 
 ### F6
 
@@ -217,15 +217,15 @@ value for a library interface.
 |---|---:|---|---|---|---|---|
 | F06-001 | 248 | Five graph-algorithm functors appear dead, but confirmation is conditional. | verdict | Ticket 01 | Whole-repository use is now known | Amend to no production instantiation without a deletion conclusion. |
 | F06-002 | 252 | Five named functors occur only in definitions, interfaces, and audit text inside packed production files. | fact | Ticket 01 | Whole-repository use confirms test-only instantiations | Retain as implementation inventory, not consumer-value evidence. |
-| F06-003 | 252 | The live graph duplicates those five algorithms directly. | duplication claim | Ticket 15 | Static source comparison | Retain for module design. |
+| F06-003 | 252 | The live graph duplicates those five algorithms directly. | duplication claim | Ticket 15 | Static source comparison | Remove the duplicate paths through canonical owners at issue 15 lines 196-220. |
 | F06-004 | 252 | `Make_edges` is the only production instantiation in the pack. | fact | Ticket 01 | Whole-repository use confirms the same production result | Retain as implementation inventory, not consumer-value evidence. |
 | F06-005 | 254 | Missing tests prevent a repository-wide use conclusion. | limitation | Ticket 01 | Complete tests show test-only instantiations | Amend with the whole-repository result. |
-| F06-006 | 254 | Test-only use does not justify duplicate production abstractions. | design claim | Ticket 15 | Architecture judgment | Assign retention, canonical adoption, replacement, or removal without a use-count shortcut. |
-| F06-007 | 254 | Test-only use changes the deletion mechanics. | planning claim | Ticket 15 | Whole-repository use is now known | Retain as migration inventory only. |
-| F06-008 | 258 | Delete all five functors and interface entries if repository use search finds no production consumer. | conditional requirement | Ticket 15 | Proposed cleanup based on use absence | Reject production-use absence as a deletion rule. |
-| F06-009 | 258 | Tests that use the functors need redirection to live behavior or one canonical pure module. | conditional requirement | Ticket 15 | Conditional cleanup | Assign only after the owner chooses retention, canonical adoption, replacement, or removal. |
-| F06-010 | 262 | F6 cleanup follows N1 and N2 but precedes broad F5 cleanup. | sequencing | Ticket 15 | Proposed dependency order | Assign to owner for route planning. |
-| F06-011 | 262 | F6 has low semantic risk and affects support modules plus direct unit tests. | blast radius | Ticket 15 | Preliminary impact estimate | Retain for planning. |
+| F06-006 | 254 | Test-only use does not justify duplicate production abstractions. | design claim | Ticket 15 | Architecture judgment | Remove the five test-only functors by invariant analysis at issue 15 lines 196-220. |
+| F06-007 | 254 | Test-only use changes the deletion mechanics. | planning claim | Ticket 15 | Whole-repository use is now known | Redirect their tests before deletion at issue 15 lines 215-217, 311-333, and 342-359. |
+| F06-008 | 258 | Delete all five functors and interface entries if repository use search finds no production consumer. | conditional requirement | Ticket 15 | Proposed cleanup based on use absence | Reject use absence as the rule and remove obsolete algorithms at issue 15 lines 196-220. |
+| F06-009 | 258 | Tests that use the functors need redirection to live behavior or one canonical pure module. | conditional requirement | Ticket 15 | Conditional cleanup | Redirect coverage to invariant owners at issue 15 lines 215-217 and 342-359. |
+| F06-010 | 262 | F6 cleanup follows N1 and N2 but precedes broad F5 cleanup. | sequencing | Ticket 15 | Proposed dependency order | Replace each functor with its owner before deletion at issue 15 lines 219-220 and 311-333. |
+| F06-011 | 262 | F6 has low semantic risk and affects support modules plus direct unit tests. | blast radius | Ticket 15 | Preliminary impact estimate | Amend the risk because scheduler and topology replacement is substantial at issue 15 lines 196-220 and 311-333. |
 
 ### F7
 
@@ -371,17 +371,17 @@ value for a library interface.
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
 | F14-001 | 496 | F14 needs amendment rather than wholesale helper centralization. | verdict | Ticket 17 | Static architecture review | Assign to owner for final disposition. |
-| F14-002 | 498 | `Stream_bridge` is a coherent queue, lifecycle, drop, and metrics subsystem. | architecture claim | Ticket 15 | Static source inspection | Assign to owner for module design. |
-| F14-003 | 498 | Extracting `Stream_bridge` improves ownership and reviewability. | recommendation | Ticket 15 | Architecture judgment | Assign to owner for module design. |
-| F14-004 | 500 | Repeated arithmetic helper names do not prove identical semantics. | correction | Ticket 15 | Law-boundary analysis | Retain in the deletion test. |
-| F14-005 | 500 | Deadlines, diagnostic counters, and identifiers have different laws and error boundaries. | architecture fact | Ticket 15 | Semantic comparison | Retain for module ownership. |
-| F14-006 | 500 | One generic arithmetic helper can hide those differences. | risk claim | Ticket 15 | N1-supported design analysis | Retain for module ownership. |
-| F14-007 | 500 | N1 shows why counter policy needs explicit ownership. | evidence claim | Ticket 15 | Static counterexample linkage | Retain for module ownership. |
-| F14-008 | 504 | Move `Stream_bridge` into a private implementation and interface module. | requirement | Ticket 15 | Proposed refactor | Assign to owner after architecture settles. |
-| F14-009 | 505 | Deduplicate helpers only when semantics, names, overflow policy, and boundaries match. | review invariant | Ticket 15 | Proposed deletion test | Assign to owner for module design. |
-| F14-010 | 506 | Keep identifier checks, diagnostic saturation, and time caps separate and documented. | requirement | Ticket 15 | Proposed ownership rule | Assign to owner for module design. |
-| F14-011 | 510 | F14 cleanup follows correctness and scheduler changes. | sequencing | Ticket 15 | Proposed dependency order | Assign to owner for route planning. |
-| F14-012 | 510 | F14 changes private modules, Dune, and tests without public behavior changes. | blast radius | Ticket 15 | Preliminary impact estimate | Retain as a refactor constraint. |
+| F14-002 | 498 | `Stream_bridge` is a coherent queue, lifecycle, drop, and metrics subsystem. | architecture claim | Ticket 15 | Static source inspection | Give the bridge one package-local invariant at issue 15 lines 241-256. |
+| F14-003 | 498 | Extracting `Stream_bridge` improves ownership and reviewability. | recommendation | Ticket 15 | Architecture judgment | Move the complete bridge to `eta_signal_stream` at issue 15 lines 241-256. |
+| F14-004 | 500 | Repeated arithmetic helper names do not prove identical semantics. | correction | Ticket 15 | Law-boundary analysis | Reject generic arithmetic centralization at issue 15 lines 99-105. |
+| F14-005 | 500 | Deadlines, diagnostic counters, and identifiers have different laws and error boundaries. | architecture fact | Ticket 15 | Semantic comparison | Give each arithmetic policy a separate owner at issue 15 lines 99-105. |
+| F14-006 | 500 | One generic arithmetic helper can hide those differences. | risk claim | Ticket 15 | N1-supported design analysis | Prohibit a generic safe-arithmetic module at issue 15 lines 99-105. |
+| F14-007 | 500 | N1 shows why counter policy needs explicit ownership. | evidence claim | Ticket 15 | Static counterexample linkage | Put checked identity allocation under `Eta_signal_id` at issue 15 lines 99-105. |
+| F14-008 | 504 | Move `Stream_bridge` into a private implementation and interface module. | requirement | Ticket 15 | Proposed refactor | Move it to the optional package path at issue 15 lines 241-256. |
+| F14-009 | 505 | Deduplicate helpers only when semantics, names, overflow policy, and boundaries match. | review invariant | Ticket 15 | Proposed deletion test | Keep arithmetic local to its semantic owner at issue 15 lines 84-105. |
+| F14-010 | 506 | Keep identifier checks, diagnostic saturation, and time caps separate and documented. | requirement | Ticket 15 | Proposed ownership rule | Assign the separate owners at issue 15 lines 84-105. |
+| F14-011 | 510 | F14 cleanup follows correctness and scheduler changes. | sequencing | Ticket 15 | Proposed dependency order | Place extraction after invariant-owner adoption at issue 15 lines 311-333. |
+| F14-012 | 510 | F14 changes private modules, Dune, and tests without public behavior changes. | blast radius | Ticket 15 | Preliminary impact estimate | Amend the blast radius to include the optional package boundary at issue 15 lines 241-256 and 311-340. |
 
 ## 3. New findings N1-N5
 
@@ -537,7 +537,7 @@ value for a library interface.
 | N05-007 | 784 | Types and control flow do not localize the non-raising post-commit invariant. | architecture gap | Ticket 09 | Static type analysis | Confirm. Private phase types and module ownership localize it. |
 | N05-008 | 786 | N1 and N2 demonstrate related phase-boundary weaknesses. | evidence synthesis | Ticket 09 | Cross-finding analysis | Retain. One atomic-pass design resolves all three findings. |
 | N05-009 | 790 | A future post-commit failure can trigger illegal rollback and stick the phase. | risk claim | Ticket 09 | Static future-change counterexample | Accept the risk and remove the shared rollback path. |
-| N05-010 | 790 | The current exception structure hides the commit boundary from reviewers. | maintainability claim | Ticket 15 | Static architecture assessment | Assign to owner for module ownership. |
+| N05-010 | 790 | The current exception structure hides the commit boundary from reviewers. | maintainability claim | Ticket 15 | Static architecture assessment | Expose the boundary through atomic-pass authority and a sealed commit plan at issue 15 lines 42-63. |
 | N05-011 | 794-799 | The pass needs explicit planning, commit, delivery transition, and post-commit phases. | requirement | Ticket 09 | Proposed phase model | Accept behind the atomic-pass interface. |
 | N05-012 | 796 | Planning and preflight can return errors while rollback remains legal. | phase requirement | Ticket 09 | Proposed phase model | Accept. Planning returns typed rejection or a defect. |
 | N05-013 | 797 | Commit can contain no callbacks, fallible validation, or allocation-dependent planning. | commit invariant | Ticket 09 | Proposed phase model | Accept. Commit interprets only prepared engine-owned writes. |
@@ -713,11 +713,11 @@ value for a library interface.
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-14-001 | 928-930 | Last, remove dead functors and semantically empty wrappers. | ranked requirement | Ticket 15 | Proposed correction plan | Amend to decide retention, canonical adoption, replacement, or removal from invariant and consumer value. |
-| PLN-14-002 | 930 | Last, extract `Stream_bridge`. | ranked requirement | Ticket 15 | Proposed correction plan | Assign to owner for module design. |
-| PLN-14-003 | 930 | Retain phase-typed state machines and pure policy modules. | ranked requirement | Ticket 15 | Proposed correction plan | Assign to owner for module design. |
-| PLN-14-004 | 932 | Rank 14 follows N1, N2, F1, and N4. | dependency | Ticket 15 | Proposed route | Assign to owner for route planning. |
-| PLN-14-005 | 933 | Rank 14 affects private modules, Dune, and tests. | blast radius | Ticket 15 | Preliminary impact estimate | Retain for planning. |
+| PLN-14-001 | 928-930 | Last, remove dead functors and semantically empty wrappers. | ranked requirement | Ticket 15 | Proposed correction plan | Use explicit dispositions and replacement-driven deletion at issue 15 lines 169-239 and 311-333. |
+| PLN-14-002 | 930 | Last, extract `Stream_bridge`. | ranked requirement | Ticket 15 | Proposed correction plan | Extract the complete bridge at issue 15 lines 241-256. |
+| PLN-14-003 | 930 | Retain phase-typed state machines and pure policy modules. | ranked requirement | Ticket 15 | Proposed correction plan | Retain the named phase and pure-policy owners at issue 15 lines 42-105 and 169-194. |
+| PLN-14-004 | 932 | Rank 14 follows N1, N2, F1, and N4. | dependency | Ticket 15 | Proposed route | Implement resolved correctness and scheduler owners before deletion at issue 15 lines 311-333. |
+| PLN-14-005 | 933 | Rank 14 affects private modules, Dune, and tests. | blast radius | Ticket 15 | Preliminary impact estimate | Amend the route to include private modules, packages, Dune, Crux, and direct tests at issue 15 lines 258-340. |
 
 ### Explicitly rejected or deferred corrections
 
@@ -758,7 +758,7 @@ value for a library interface.
 | REC-005 | 959 | Then redesign F1 scheduling, N3 ordering, and N4 edge storage. | binding recommendation | Ticket 17 | Dependency synthesis | Assign to owner for final route. |
 | REC-006 | 959 | Core changes determine stable laws for extensions, folds, cutoffs, and cleanup. | dependency claim | Ticket 17 | Architecture synthesis | Assign to owner for final route. |
 | REC-007 | 961 | Eta Signal is ambitious and often carefully engineered. | assessment | Ticket 17 | Review synthesis | Retain as context, not evidence of correctness. |
-| REC-008 | 961 | Its correctness argument is spread across too many phase adapters. | architecture verdict | Ticket 15 | Static architecture synthesis | Assign to owner for module design. |
+| REC-008 | 961 | Its correctness argument is spread across too many phase adapters. | architecture verdict | Ticket 15 | Static architecture synthesis | Concentrate the argument in transaction, plan, observer, and delivery owners at issue 15 lines 42-63 and 65-82. |
 | REC-009 | 961 | The immediate design needs one explicit immutable commit plan. | binding recommendation | Ticket 09 | Review synthesis | Accept as one sealed declarative mutation tape. |
 | REC-010 | 961 | The immediate design needs one closed invalidation frontier. | binding recommendation | Ticket 09 | Review synthesis | Accept as the operation-partition authority. |
 | REC-011 | 961 | The immediate design needs an atomic phase machine. | binding recommendation | Ticket 09 | Review synthesis | Accept as one `Idle`, `Planning`, or `Delivering` field. |
