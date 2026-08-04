@@ -14,8 +14,9 @@ module Signal_snapshot = Graph_algorithms.Snapshot
 module Observer_core = Eta_signal_observer
 module Observer_snapshot = Observer_core.Snapshot
 module Observer_lifecycle = Observer_core.Lifecycle
+module Node_lifetime = Eta_signal_node
 module Scope = Eta_signal_scope
-module Stabilization_pass = Eta_signal_stabilization_pass
+module Atomic_pass = Eta_signal_atomic_pass
 module Stream_bridge = struct
   module Effect = Eta.Effect
   module Queue = Eta.Queue
@@ -216,17 +217,17 @@ module Timer_policy = Eta_signal_timer_policy
 module Transaction = Eta_signal_transaction
 
 module Owner_transaction = struct
-  type t = (Transaction.pure, unit) Transaction.t
+  type t = (Transaction.planning, unit) Transaction.t
   type 'a cell = 'a Transaction.staged
 
   let create_cell = Transaction.create_staged
   let current = Transaction.current
-  let begin_ = Transaction.begin_pure
+  let begin_ = Transaction.begin_planning
   let read = Transaction.read
   let stage = Transaction.stage
 
   let commit transaction =
-    match Transaction.preflight transaction (fun () -> Ok ()) with
+    match Transaction.seal transaction (fun () -> Ok ()) with
     | Error () -> assert false
     | Ok preflighted ->
         ignore (Transaction.commit preflighted : (_, unit) Transaction.t)
@@ -472,7 +473,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable changed_seen : bool;
     mutable computed_generation : int;
     scope : scope option;
-    mutable valid : bool;
+    lifetime : Node_lifetime.t;
     mutable timer : timer_node option;
   }
 
@@ -673,6 +674,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   open Observer_core.Delivery
 
+  let signal_valid signal = Node_lifetime.is_live signal.lifetime
+
   let packed_signal_id (P signal) = signal.id
   let scope_owner_id scope = packed_signal_id (Scope.owner scope)
 
@@ -683,7 +686,7 @@ module Make (Observer_error : Observer_error) () = struct
     type node = packed_signal
 
     let node_id (P signal) = signal.id
-    let valid (P signal) = signal.valid
+    let valid (P signal) = signal_valid signal
     let scope (P signal) = signal.scope
 
     let children (P signal) =
@@ -820,19 +823,19 @@ module Make (Observer_error : Observer_error) () = struct
 
   let children_with_scope_owner signal children =
     Scope.children_with_scope_owner
-      ~owner_valid:(fun (P owner) -> owner.valid)
+      ~owner_valid:(fun (P owner) -> signal_valid owner)
       ~owner_node:(fun owner -> owner)
       signal.scope children
 
   let reachable_ops =
     Graph.reachable_ops ~id:(fun (P signal) -> signal.id)
-      ~valid:(fun (P signal) -> signal.valid)
+      ~valid:(fun (P signal) -> signal_valid signal)
       ~children:(fun (P signal) ->
         children_with_scope_owner signal signal.dependencies)
 
   let source_watchers_unlocked source =
     let cells, watchers =
-      collect_live_weak_signals (fun (P signal) -> signal.valid) source.watchers
+      collect_live_weak_signals (fun (P signal) -> signal_valid signal) source.watchers
     in
     source.watchers <- cells;
     watchers
@@ -933,7 +936,7 @@ module Make (Observer_error : Observer_error) () = struct
     let seen = Hashtbl.create 16 in
     let rec visit (P signal) =
       let id = signal_id_int signal.id in
-      if signal.valid && not (Hashtbl.mem seen id) then (
+      if signal_valid signal && not (Hashtbl.mem seen id) then (
         Hashtbl.replace seen id ();
         List.iter (fun notify -> notify ()) signal.dirty_listeners;
         List.iter visit signal.dependents)
@@ -956,7 +959,7 @@ module Make (Observer_error : Observer_error) () = struct
         (fun cell ->
           match weak_packed_signal_value cell with
           | None -> false
-          | Some (P candidate) -> candidate.valid && candidate.id <> signal.id)
+          | Some (P candidate) -> signal_valid candidate && candidate.id <> signal.id)
         source.watchers
 
   let stage_var_graph_value (type a) lane staging (var : a var) value =
@@ -1103,7 +1106,7 @@ module Make (Observer_error : Observer_error) () = struct
            invalidate_observer_unlocked lane observer))
 
   let validate_dependency (P signal) =
-    if not signal.valid then raise (Graph_error `Invalid_scope)
+    if not (signal_valid signal) then raise (Graph_error `Invalid_scope)
 
   let timer_state_generation = Timer_policy.state_generation
 
@@ -1205,7 +1208,7 @@ module Make (Observer_error : Observer_error) () = struct
           changed_seen = false;
           computed_generation = -1;
           scope;
-          valid = true;
+          lifetime = Node_lifetime.create ();
           timer = None;
         })
       ~attach_dependency:(fun ~parent ~child ->
@@ -1244,7 +1247,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let prune_invalid_nodes_unlocked lane =
     Graph.prune_live_nodes graph lane live_signal_registry
-      ~keep:(fun (P signal) -> signal.valid)
+      ~keep:(fun (P signal) -> signal_valid signal)
 
   let timer_debug_snapshot timer =
     let snapshot = Timer_policy.debug_snapshot (timer_effective_state timer) in
@@ -1295,8 +1298,9 @@ module Make (Observer_error : Observer_error) () = struct
 
   let node_invalidation lane =
     Graph.node_invalidation
-      ~valid:(fun (P signal) -> signal.valid)
-      ~set_invalid:(fun (P signal) -> signal.valid <- false)
+      ~valid:(fun (P signal) -> signal_valid signal)
+      ~set_invalid:(fun (P signal) ->
+        ignore (Node_lifetime.invalidate signal.lifetime : bool))
       ~timer_hooks:(fun (P signal) ->
         match signal.timer with
         | None -> []
@@ -1357,7 +1361,7 @@ module Make (Observer_error : Observer_error) () = struct
     | None -> raise (Graph_error `Invalid_scope)
 
   let signal_commit (P signal) =
-    Graph.staged_signal_commit ~valid:signal.valid ~cell:signal.snapshot
+    Graph.staged_signal_commit ~valid:(signal_valid signal) ~cell:signal.snapshot
       ~commit:(fun () -> signal.dirty <- false)
 
   let stage_bind_switch (type a b) lane staging (bind : (a, b) bind)
@@ -1377,7 +1381,7 @@ module Make (Observer_error : Observer_error) () = struct
 
     let node_id (P signal) = signal.id
     let equal_node_id left right = signal_id_int left = signal_id_int right
-    let valid (P signal) = signal.valid
+    let valid (P signal) = signal_valid signal
     let dependents (P signal) = signal.dependents
 
     let nested_scope (P signal) =
@@ -1437,7 +1441,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let preflight_signal_commit lane staging invalidations (P signal) =
     if
-      signal.valid
+      signal_valid signal
       && not (staged_bind_invalidates invalidations (P signal))
       && signal_staged_in_active_transaction lane staging signal
     then
@@ -1553,12 +1557,12 @@ module Make (Observer_error : Observer_error) () = struct
     | None -> ()
     | Some plan ->
         keyed.keyed_preflight ();
-        if not owner.valid then raise (Graph_error `Invalid_scope);
+        if not (signal_valid owner) then raise (Graph_error `Invalid_scope);
         List.iter
           (fun child ->
             if
               (not (Scope.valid child.keyed_child_scope))
-              || not child.keyed_child_output.valid
+              || not (signal_valid child.keyed_child_output)
             then raise (Graph_error `Invalid_scope);
             match
               Scope_validation.validate_inner ~scope:child.keyed_child_scope
@@ -1629,7 +1633,7 @@ module Make (Observer_error : Observer_error) () = struct
     let reachable_ops =
       Graph.reachable_ops ~id:(fun (P signal) -> signal.id)
         ~valid:(fun (P signal) ->
-          signal.valid
+          signal_valid signal
           && not (staged_bind_invalidates invalidations (P signal)))
         ~children:(fun (P signal) ->
           let signal_children =
@@ -1851,7 +1855,7 @@ module Make (Observer_error : Observer_error) () = struct
   let rec compute : type a. graph_lane -> Graph.staging -> a signal -> a * bool
       =
    fun lane staging signal ->
-    if not signal.valid then raise (Graph_error `Invalid_scope);
+    if not (signal_valid signal) then raise (Graph_error `Invalid_scope);
     refresh_timer_source_for_compute lane staging signal;
     Graph.compute_cached graph lane compute_ops (P signal)
       ~current:(fun _compute_node -> effective_signal_value signal)
@@ -2447,7 +2451,7 @@ module Make (Observer_error : Observer_error) () = struct
     let plan_bind_if_needed (P signal as packed) =
       let signal_id = signal_id_int signal.id in
       if
-        signal.valid
+        signal_valid signal
         && (not (Hashtbl.mem planned_bind_ids signal_id))
         && not (staged_bind_invalidates !invalidations packed)
       then (
@@ -2647,21 +2651,21 @@ module Make (Observer_error : Observer_error) () = struct
                          begin_stabilize_with_pending_hooks lane timer_refresh
                            hooks_ref stabilization_finish
                        with Graph_error err ->
-                         Stabilization_pass.graph_error ~hooks:[] err)
+                         Atomic_pass.graph_error ~hooks:[] err)
                    |> Effect.bind (fun result ->
-                          Stabilization_pass.result result
+                          Atomic_pass.result result
                             ~graph_error:(fun ~hooks:_ err ->
                               graph_error_with_pending_disposal_hooks hooks_ref
                                 err)
                             ~defect:(fun ~hooks:_ exn backtrace ->
                               defect_with_pending_disposal_hooks hooks_ref exn
                                 backtrace)
-                            ~pure_ok:
-                              (fun ~hooks:_ ~events ~delivering_token:_ ->
+                            ~planning_ok:
+                              (fun ~hooks:_ ~events ->
                                 refresh_timers := true;
-                                Stabilization_pass.deliver delivery_ops events)))
+                                Atomic_pass.deliver delivery_ops events)))
            |> Effect.on_exit (fun _exit ->
-                  Stabilization_pass.finish_delivery delivery_ops)))
+                  Atomic_pass.finish_delivery delivery_ops)))
 
   module Var = struct
     type 'a t = 'a var
@@ -2752,7 +2756,7 @@ module Make (Observer_error : Observer_error) () = struct
           | Some (O observer) -> abort_observer_registration_effect observer)
         (with_graph_lane_access (fun lane ->
              try
-               if not signal.valid then Error `Invalid_scope
+               if not (signal_valid signal) then Error `Invalid_scope
                else
                  let live =
                    {
@@ -2863,13 +2867,13 @@ module Make (Observer_error : Observer_error) () = struct
   let live_dirty_node_count all_nodes =
     List.fold_left
       (fun count (P signal) ->
-        if signal.valid && signal.dirty then saturating_succ count else count)
+        if signal_valid signal && signal.dirty then saturating_succ count else count)
       0 all_nodes
 
   let keyed_gauges all_nodes =
     List.fold_left
       (fun (node_count, child_count) (P signal) ->
-        if signal.valid then
+        if signal_valid signal then
           match signal.kind with
           | Keyed keyed ->
               let committed_children =
@@ -2982,7 +2986,7 @@ module Make (Observer_error : Observer_error) () = struct
    fun options necessary signal ->
     match options.dot_scope with
     | `Necessary -> Graph.necessary_mem necessary signal.id
-    | `All_valid -> signal.valid
+    | `All_valid -> signal_valid signal
     | `All_including_invalid -> true
 
   let signal_state_snapshot : type a. a signal -> Debug.signal_state_snapshot =
@@ -3002,7 +3006,7 @@ module Make (Observer_error : Observer_error) () = struct
           None
     in
     {
-      Debug.signal_valid = signal.valid;
+      Debug.signal_valid = signal_valid signal;
       signal_initialized = Signal_snapshot.is_initialized snapshot;
       signal_dirty = signal.dirty;
       signal_computing = signal.computing;
@@ -3207,7 +3211,7 @@ module Make (Observer_error : Observer_error) () = struct
     let selected_live_signal signal =
       selected signal
       && not
-           (include_dead_nodes && (not signal.valid)
+           (include_dead_nodes && (not (signal_valid signal))
           && Hashtbl.mem dead_ids signal.id)
     in
     List.iter

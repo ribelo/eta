@@ -6,13 +6,18 @@
  (wrapped false)
  (modules
   eta_signal_atomic_pass
+  eta_signal_cleanup
   eta_signal_commit_plan
   eta_signal_demand
   eta_signal_observer_delivery
   eta_signal_observer_plan
+  eta_signal_node
   eta_signal_scheduler
+  eta_signal_scope
   eta_signal_stable_family_plan
   eta_signal_test_probe
   eta_signal_tombstone_index
   eta_signal_topology
-  eta_signal_work))
+  eta_signal_transaction
+  eta_signal_work)
+ (libraries eta))

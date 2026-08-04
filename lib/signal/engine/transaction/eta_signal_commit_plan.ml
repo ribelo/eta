@@ -46,19 +46,59 @@ let counter_snapshot (counters : counters) =
 
 let succ value = if value = max_int then max_int else value + 1
 
+let note update counters =
+  if counters.enabled then update counters
+
 let note_sealed_plan counters =
-  if counters.enabled then counters.sealed_plans <- succ counters.sealed_plans
+  note (fun counters -> counters.sealed_plans <- succ counters.sealed_plans) counters
 
 let note_prepared_write counters =
-  if counters.enabled then
-    counters.prepared_writes <- succ counters.prepared_writes
+  note
+    (fun counters -> counters.prepared_writes <- succ counters.prepared_writes)
+    counters
 
 let note_applied_write counters =
-  if counters.enabled then
-    counters.applied_writes <- succ counters.applied_writes
+  note
+    (fun counters -> counters.applied_writes <- succ counters.applied_writes)
+    counters
 
 let note_cycle_node counters =
-  if counters.enabled then counters.cycle_nodes <- succ counters.cycle_nodes
+  note (fun counters -> counters.cycle_nodes <- succ counters.cycle_nodes) counters
 
 let note_cycle_edge counters =
-  if counters.enabled then counters.cycle_edges <- succ counters.cycle_edges
+  note (fun counters -> counters.cycle_edges <- succ counters.cycle_edges) counters
+
+type open_
+type sealed
+
+type 'hook write = unit -> 'hook list
+
+type ('phase, 'hook) t = {
+  counters : counters;
+  mutable writes : 'hook write list;
+  mutable sealed : bool;
+}
+
+let create counters = { counters; writes = []; sealed = false }
+
+let add_write plan write =
+  if plan.sealed then invalid_arg "Eta_signal_commit_plan.add_write: sealed plan";
+  plan.writes <- write :: plan.writes;
+  note_prepared_write plan.counters
+
+let seal plan =
+  if plan.sealed then invalid_arg "Eta_signal_commit_plan.seal: sealed plan";
+  plan.sealed <- true;
+  plan.writes <- List.rev plan.writes;
+  note_sealed_plan plan.counters;
+  { counters = plan.counters; writes = plan.writes; sealed = true }
+
+let apply plan =
+  let rec loop hooks = function
+    | [] -> List.rev hooks |> List.concat
+    | write :: rest ->
+        let produced = write () in
+        note_applied_write plan.counters;
+        loop (produced :: hooks) rest
+  in
+  loop [] plan.writes

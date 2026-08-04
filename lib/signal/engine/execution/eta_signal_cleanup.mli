@@ -22,6 +22,24 @@ val note_hook_attempt : counters -> unit
 val note_hook_completion : counters -> unit
 val note_duplicate_transition_rejection : counters -> unit
 
+type disposition =
+  | Committed
+  | Discarded
+
+type ledger
+type resource
+
+val create_ledger : counters -> ledger
+val register : ledger -> hook -> resource
+
+val transition :
+  ledger ->
+  resource ->
+  disposition ->
+  (hook option, [ `Already_terminal ]) result
+
+val pending_resources : ledger -> int
+
 val run_hooks : hook list -> (unit, 'error) Eta.Effect.t
 val run_as_finalizers : hook list -> (unit, 'error) Eta.Effect.t
 val run_pending_as_finalizers : hook list ref -> (unit, 'error) Eta.Effect.t

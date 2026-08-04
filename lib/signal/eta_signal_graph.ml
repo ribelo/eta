@@ -173,15 +173,11 @@ module State = struct
   let timer_commit_plan ~commit = { timer_commit = commit }
 
   type snapshot_commit_plan = {
-    snapshot_commit_transaction : unit -> unit;
     snapshot_advance : int -> int;
   }
 
-  let snapshot_commit_plan ~commit_transaction ~advance_snapshot =
-    {
-      snapshot_commit_transaction = commit_transaction;
-      snapshot_advance = advance_snapshot;
-    }
+  let snapshot_commit_plan ~advance_snapshot =
+    { snapshot_advance = advance_snapshot }
 
   type ('bind, 'node, 'prepared, 'hook, 'timer) commit_plan = {
     commit_preflight : unit -> unit;
@@ -200,31 +196,44 @@ module State = struct
       commit_snapshot = snapshot;
     }
 
-  let commit_staging t staging context =
+  let prepare_staging t staging context plan =
     validate_staging t staging;
     context.commit_preflight ();
-    let bind_hooks =
-      List.concat_map context.commit_binds.bind_commit t.staged_binds
-    in
-    remember_pure_disposal_hooks t staging bind_hooks;
     let signal_commits =
       List.map context.commit_signals.signal_prepare t.computed_nodes
     in
-    context.commit_snapshot.snapshot_commit_transaction ();
-    List.iter context.commit_timers.timer_commit
+    List.iter
+      (fun bind ->
+        Eta_signal_commit_plan.add_write plan (fun () ->
+            context.commit_binds.bind_commit bind))
+      t.staged_binds;
+    List.iter
+      (fun timer ->
+        Eta_signal_commit_plan.add_write plan (fun () ->
+            context.commit_timers.timer_commit timer;
+            []))
       t.timer_refresh_staged_timers;
-    List.iter context.commit_signals.signal_commit signal_commits;
-    let hooks = t.pure_disposal_hooks @ t.timer_refresh_disposal_hooks in
-    t.computed_nodes <- [];
-    t.staged_binds <- [];
-    t.pure_disposal_hooks <- [];
-    t.timer_refresh_disposal_hooks <- [];
-    t.timer_refresh_staged_timers <- [];
-    t.pure_snapshot_commit_count <-
-      context.commit_snapshot.snapshot_advance
-        t.pure_snapshot_commit_count;
-    clear_staging_token t staging;
-    hooks
+    List.iter
+      (fun signal ->
+        Eta_signal_commit_plan.add_write plan (fun () ->
+            context.commit_signals.signal_commit signal;
+            []))
+      signal_commits;
+    Eta_signal_commit_plan.add_write plan (fun () ->
+        let hooks =
+          t.pure_disposal_hooks @ t.timer_refresh_disposal_hooks
+        in
+        t.computed_nodes <- [];
+        t.staged_binds <- [];
+        t.pure_disposal_hooks <- [];
+        t.timer_refresh_disposal_hooks <- [];
+        t.timer_refresh_staged_timers <- [];
+        t.pure_snapshot_commit_count <-
+          context.commit_snapshot.snapshot_advance
+            t.pure_snapshot_commit_count;
+        clear_staging_token t staging;
+        hooks);
+    plan
 
   let pure_snapshot_commit_count t = t.pure_snapshot_commit_count
 
@@ -382,7 +391,7 @@ type
   t =
   {
     core : Core.t;
-    stabilization :
+    atomic_pass :
       ( ( 'pending,
           'bind,
           'node,
@@ -396,7 +405,7 @@ type
           'stream_metrics )
         t,
         Eta_signal_error.graph_error )
-      Eta_signal_stabilization.t;
+      Eta_signal_atomic_pass.t;
     state :
       ('pending, 'bind, 'node, 'hook, 'timer, 'refresh)
       State.t;
@@ -600,7 +609,7 @@ let core_counter = function
 let create ~create_scope_context ~create_stream_bridge_metrics () =
   {
     core = Core.create ();
-    stabilization = Eta_signal_stabilization.create ();
+    atomic_pass = Eta_signal_atomic_pass.create ();
     state = State.create ();
     observers = [];
     all_nodes = [];
@@ -858,7 +867,7 @@ let remember_staged_bind t _lane staging bind =
 
 let stage_bind_switch t lane staging bind snapshot ~source_value ~inner ~scope =
   Eta_signal_bind.stage_transaction_switch
-    (Eta_signal_stabilization.active_transaction t.stabilization)
+    (Eta_signal_atomic_pass.active_transaction t.atomic_pass)
     snapshot
     ~remember:(fun () -> remember_staged_bind t lane staging bind)
     ~source_value ~inner ~scope
@@ -991,7 +1000,7 @@ let reset_staging t _lane staging context =
         | Ok hooks -> hooks
         | Error err -> raise (Rollback_error err))
       ~rollback_transaction:(fun () ->
-        Eta_signal_stabilization.rollback_transaction t.stabilization)
+        Eta_signal_atomic_pass.rollback_transaction t.atomic_pass)
       ~rollback_timer_refresh_dirty:(fun refresh ->
         rollback_staging_timer_refresh_dirty staging refresh context)
       ~clear_timer_refresh_timer:(fun timer ->
@@ -1045,9 +1054,11 @@ type 'node staging_signal_commit_plan = {
 let staging_signal_commit_plan ~commit = { staging_signal_commit = commit }
 
 let signal_staged_in_active_transaction t cell =
-  match Eta_signal_stabilization.transaction t.stabilization with
-  | Some transaction -> Eta_signal_transaction.staged transaction cell
-  | None -> false
+  if Eta_signal_atomic_pass.is_planning t.atomic_pass then
+    Eta_signal_transaction.staged
+      (Eta_signal_atomic_pass.active_transaction t.atomic_pass)
+      cell
+  else false
 
 let prepare_staging_signal t _staging = function
   | Staged_signal_commit { signal_valid; signal_cell; _ } as commit ->
@@ -1056,7 +1067,7 @@ let prepare_staging_signal t _staging = function
         && signal_staged_in_active_transaction t signal_cell
       then
         Eta_signal_transaction.discard
-          (Eta_signal_stabilization.active_transaction t.stabilization)
+          (Eta_signal_atomic_pass.active_transaction t.atomic_pass)
           signal_cell;
       commit
 
@@ -1101,7 +1112,7 @@ let staging_commit_plan ~preflight ~binds ~signals ~timers =
     staging_commit_timers = timers;
   }
 
-let commit_staging t _lane staging context =
+let prepare_staging t _lane staging context =
   let exception Commit_error of Eta_signal_error.graph_error in
   let state_plan =
     State.commit_plan
@@ -1129,17 +1140,11 @@ let commit_staging t _lane staging context =
                context.staging_commit_timers))
       ~snapshot:
         (State.snapshot_commit_plan
-           ~commit_transaction:(fun () ->
-             (match
-                Eta_signal_stabilization.preflight_transaction
-                  t.stabilization (fun () -> Ok ())
-              with
-             | Ok () -> ()
-             | Error err -> raise (Commit_error err));
-             Eta_signal_stabilization.commit_transaction t.stabilization)
            ~advance_snapshot:saturating_succ)
   in
-  try Ok (State.commit_staging t.state staging state_plan)
+  try
+    let plan = Eta_signal_atomic_pass.new_commit_plan t.atomic_pass in
+    Ok (State.prepare_staging t.state staging state_plan plan)
   with Commit_error err -> Error err
 
 let pure_snapshot_commit_count t _lane =
@@ -1149,12 +1154,12 @@ let set_pure_snapshot_commit_count t _lane count =
   State.set_pure_snapshot_commit_count t.state count
 
 let active_transaction t =
-  Eta_signal_stabilization.active_transaction t.stabilization
+  Eta_signal_atomic_pass.active_transaction t.atomic_pass
 
 let read_effective t cell =
-  match Eta_signal_stabilization.transaction t.stabilization with
-  | Some transaction -> Eta_signal_transaction.read transaction cell
-  | None -> Eta_signal_transaction.current cell
+  if Eta_signal_atomic_pass.is_planning t.atomic_pass then
+    Eta_signal_transaction.read (active_transaction t) cell
+  else Eta_signal_transaction.current cell
 
 let stage_cell t _lane _staging cell value =
   Eta_signal_transaction.stage (active_transaction t) cell value
@@ -1168,15 +1173,16 @@ let update_cell t _lane _staging cell f =
   Eta_signal_transaction.stage transaction cell (f value)
 
 let staged_in_active_transaction t _lane _staging cell =
-  match Eta_signal_stabilization.transaction t.stabilization with
-  | Some transaction -> Eta_signal_transaction.staged transaction cell
-  | None -> false
+  Eta_signal_atomic_pass.is_planning t.atomic_pass
+  && Eta_signal_transaction.staged (active_transaction t) cell
 
 let staged_value t _lane _staging cell =
-  match Eta_signal_stabilization.transaction t.stabilization with
-  | Some transaction when Eta_signal_transaction.staged transaction cell ->
+  if Eta_signal_atomic_pass.is_planning t.atomic_pass then
+    let transaction = active_transaction t in
+    if Eta_signal_transaction.staged transaction cell then
       Some (Eta_signal_transaction.read transaction cell)
-  | Some _ | None -> None
+    else None
+  else None
 
 let next_timer_refresh_token t _lane =
   let exception Overflow in
@@ -1218,19 +1224,19 @@ let with_timer_refresh_timer t _lane timer ~none ~some =
   | None, _ | Some _, None -> none ()
 
 let allocation_scope t ops =
-  match Eta_signal_stabilization.state t.stabilization with
+  match Eta_signal_atomic_pass.phase t.atomic_pass with
   | Idle -> Ok (ops.scope_current t.current_scope)
-  | Pure -> (
+  | Planning -> (
       match ops.scope_require_valid_current t.current_scope with
       | Ok scope -> Ok (Some scope)
       | Error `Ambiguous_scope -> Error `Ambiguous_scope)
-  | Committed | Delivering -> Error `Ambiguous_scope
+  | Delivering -> Error `Ambiguous_scope
 
 let with_current_scope t ops scope f =
   ops.scope_with_current t.current_scope scope f
 
 let ensure_not_pure t =
-  if Eta_signal_stabilization.is_pure t.stabilization then
+  if Eta_signal_atomic_pass.is_planning t.atomic_pass then
     Error `Ambiguous_scope
   else Ok ()
 
@@ -1321,8 +1327,8 @@ let collect_observer_diagnostics t _lane diagnostics =
 
 let observer_delivery_plan t _lane delivery =
   Eta_signal_observer.delivery_plan delivery ~observers:t.observers
-    ~capability:Eta_signal_stabilization_pass.pure_capability
-    ~make_plan:Eta_signal_stabilization_pass.observer_plan
+    ~capability:Fun.id
+    ~make_plan:Eta_signal_atomic_pass.observer_snapshot
 
 type 'pending stabilization_pending_plan = {
   pending_release_marks :
@@ -1510,155 +1516,81 @@ let stabilization_ops ~classify_graph_error ~pure ~rollback =
 
 exception Graph_phase_error of Eta_signal_error.graph_error
 
-let pass_errors ops =
-  Eta_signal_stabilization_pass.errors
-    ~reentrant_stabilization:`Reentrant_stabilization
-    ~classify_graph_error:(function
-      | Graph_phase_error err -> Some err
-      | exn -> ops.classify_graph_error exn)
+let classify_graph_error ops = function
+  | Graph_phase_error error -> Some error
+  | exn -> ops.classify_graph_error exn
 
-let pass_pure t timer_refresh pure =
-  let generation =
-    Eta_signal_stabilization_pass.pure_generation_plan
-      ~advance_generation:(fun _context ->
+let atomic_ops t timer_refresh ops =
+  Eta_signal_atomic_pass.ops
+    ~reentrant_error:`Reentrant_stabilization
+    ~classify_graph_error:(classify_graph_error ops)
+    ~advance_generation:(fun _lane ->
       match advance_generation t with
       | Ok () -> ()
-      | Error err -> raise (Graph_phase_error err))
-  in
-  let staging =
-    Eta_signal_stabilization_pass.pure_staging_plan
-      ~begin_staging:(fun _context -> begin_staging t ~timer_refresh)
-  in
-  let pending =
-    Eta_signal_stabilization_pass.pure_pending_plan
-      ~drain_pending:(fun _context -> drain_pending t)
-      ~release_pending_marks:(fun context pending ->
-        run_stabilization_pending_mark_release
-          (Eta_signal_stabilization_pass.pure_capability context)
-          pending pure.pending_plan.pending_release_marks)
-      ~stage_pending:(fun context pending ->
-        run_stabilization_pending_stage
-          (Eta_signal_stabilization_pass.pure_capability context)
-          (require_active_staging t)
-          pending pure.pending_plan.pending_stage)
-  in
-  let observers =
-    Eta_signal_stabilization_pass.pure_observer_plan
-      ~observer_plan:(fun context ->
-        let lane = Eta_signal_stabilization_pass.pure_capability context in
-        let staging = require_active_staging t in
-        let delivery =
-          pure.observer_plan.observer_delivery lane staging
-        in
-        observer_delivery_plan t lane delivery)
-      ~plan_staged_binds:(fun context observers ->
-        let plan =
-          pure.observer_plan.observer_plan_staged_binds
-            (Eta_signal_stabilization_pass.pure_capability context)
-            (require_active_staging t)
-            observers
-        in
-        run_staged_bind_planning plan)
-  in
-  let commit =
-    Eta_signal_stabilization_pass.pure_commit_plan
-      ~commit_staging:(fun context staging ->
-        let lane = Eta_signal_stabilization_pass.pure_capability context in
-        let plan =
-          pure.commit_plan.stabilization_commit_staging_plan lane staging
-        in
-        match commit_staging t lane staging plan with
-        | Ok hooks -> hooks
-        | Error err -> raise (Graph_phase_error err))
-      ~update_necessity:(fun context ->
-        run_stabilization_necessity_update
-          (Eta_signal_stabilization_pass.pure_capability context)
-          pure.commit_plan.stabilization_update_necessity)
-  in
-  Eta_signal_stabilization_pass.pure_ops ~generation ~staging ~pending
-    ~observers ~commit
-
-let pass_rollback t rollback =
-  let staging =
-    Eta_signal_stabilization_pass.rollback_staging_plan
-      ~rollback_staging:(fun context staging ->
-        Eta_signal_stabilization_pass.rollback_staging_action
-          ~rollback:(fun () ->
-            let lane =
-              Eta_signal_stabilization_pass.rollback_capability context
-            in
-            let reset_context =
-              rollback.rollback_staging_context lane staging
-            in
-            reset_staging t lane staging reset_context))
-  in
-  let observers =
-    Eta_signal_stabilization_pass.rollback_observer_plan
-      ~mark_observers_failed_without_current:
-      (fun context observers ->
-        Eta_signal_stabilization_pass.rollback_observer_failure_mark
-          ~mark:(fun () ->
-            run_stabilization_observer_failure_mark
-              (Eta_signal_stabilization_pass.rollback_capability context)
-              observers rollback.mark_observers_failed_without_current))
-  in
-  let pending =
-    Eta_signal_stabilization_pass.rollback_pending_plan
-      ~requeue_pending:(fun context pending ->
-        Eta_signal_stabilization_pass.rollback_pending_requeue
-          ~requeue:(fun () ->
-            run_stabilization_pending_requeue
-              (Eta_signal_stabilization_pass.rollback_capability context)
-              pending rollback.requeue_pending))
-  in
-  Eta_signal_stabilization_pass.rollback_ops ~staging ~observers ~pending
-
-let clear_timer_refresh t _context =
-  Eta_signal_stabilization_pass.timer_refresh_clear ~clear:(fun () ->
-      State.clear_active_timer_refresh t.state)
+      | Error error -> raise (Graph_phase_error error))
+    ~begin_staging:(fun _lane -> begin_staging t ~timer_refresh)
+    ~drain_pending:(fun _lane -> drain_pending t)
+    ~release_pending_marks:(fun lane pending ->
+      run_stabilization_pending_mark_release lane pending
+        ops.pure.pending_plan.pending_release_marks)
+    ~observer_snapshot:(fun lane ->
+      let staging = require_active_staging t in
+      let delivery = ops.pure.observer_plan.observer_delivery lane staging in
+      observer_delivery_plan t lane delivery)
+    ~stage_pending:(fun lane pending ->
+      run_stabilization_pending_stage lane (require_active_staging t) pending
+        ops.pure.pending_plan.pending_stage)
+    ~plan_dynamic:(fun lane observers ->
+      let plan =
+        ops.pure.observer_plan.observer_plan_staged_binds lane
+          (require_active_staging t) observers
+      in
+      run_staged_bind_planning plan)
+    ~prepare_commit:(fun lane staging ->
+      let context =
+        ops.pure.commit_plan.stabilization_commit_staging_plan lane staging
+      in
+      prepare_staging t lane staging context)
+    ~update_necessity:(fun lane ->
+      run_stabilization_necessity_update lane
+        ops.pure.commit_plan.stabilization_update_necessity)
+    ~clear_timer_refresh:(fun _lane -> State.clear_active_timer_refresh t.state)
+    ~rollback_staging:(fun lane staging ->
+      let context = ops.rollback.rollback_staging_context lane staging in
+      reset_staging t lane staging context)
+    ~mark_observers_failed:(fun lane observers ->
+      run_stabilization_observer_failure_mark lane observers
+        ops.rollback.mark_observers_failed_without_current)
+    ~requeue_pending:(fun lane pending ->
+      run_stabilization_pending_requeue lane pending
+        ops.rollback.requeue_pending)
 
 let run_stabilization t capability ~timer_refresh ops =
-  Eta_signal_stabilization_pass.run t.stabilization capability
-    (Eta_signal_stabilization_pass.pass_ops ~errors:(pass_errors ops)
-       ~pure:(pass_pure t timer_refresh ops.pure)
-       ~rollback:(pass_rollback t ops.rollback)
-       ~timer_refresh:
-         (Eta_signal_stabilization_pass.timer_refresh_ops
-            ~clear_active_timer_refresh:(clear_timer_refresh t)))
+  Eta_signal_atomic_pass.run t.atomic_pass capability
+    (atomic_ops t timer_refresh ops)
 
-let finish_stabilization t _lane delivering_token =
+let finish_stabilization t _lane =
   State.clear_active_timer_refresh t.state;
-  ignore
-    (Eta_signal_stabilization.finish_delivering t.stabilization
-       delivering_token
-      : (_, Eta_signal_stabilization.idle) Eta_signal_stabilization.token)
+  Eta_signal_atomic_pass.finish_delivering t.atomic_pass
 
-type 'owner stabilization_finish = {
-  mutable delivering_token :
-    ('owner, Eta_signal_stabilization.delivering)
-    Eta_signal_stabilization.token
-    option;
-}
+type stabilization_finish = { mutable delivery_pending : bool }
 
-let create_stabilization_finish () = { delivering_token = None }
+let create_stabilization_finish () = { delivery_pending = false }
 
 let record_stabilization_result finish _lane result =
-  Eta_signal_stabilization_pass.result result
-    ~pure_ok:(fun ~hooks ~events:_ ~delivering_token ->
-      finish.delivering_token <- Some delivering_token;
+  Eta_signal_atomic_pass.result result
+    ~planning_ok:(fun ~hooks ~events:_ ->
+      finish.delivery_pending <- true;
       hooks)
     ~graph_error:(fun ~hooks _ -> hooks)
     ~defect:(fun ~hooks _ _ -> hooks)
 
-let stabilization_finish_pending finish =
-  Option.is_some finish.delivering_token
+let stabilization_finish_pending finish = finish.delivery_pending
 
 let finish_recorded_stabilization t lane finish =
-  match finish.delivering_token with
-  | None -> ()
-  | Some delivering_token ->
-      finish.delivering_token <- None;
-      finish_stabilization t lane delivering_token
+  if finish.delivery_pending then (
+    finish.delivery_pending <- false;
+    finish_stabilization t lane)
 
 type ('event, 'error) stabilization_delivery_context = {
   delivery_run_pending_cleanup : unit -> (unit, 'error) Eta.Effect.t;
@@ -1682,20 +1614,14 @@ let finish_recorded_stabilization_effect t finish context =
   else Eta.Effect.unit
 
 let stabilization_delivery_ops t finish context =
-  let cleanup =
-    Eta_signal_stabilization_pass.delivery_cleanup_plan
-      ~run_pending_cleanup:context.delivery_run_pending_cleanup
-      ~finish:(fun () ->
-        finish_recorded_stabilization_effect t finish context)
-  in
-  let events =
-    Eta_signal_stabilization_pass.delivery_event_plan
-      ~run_events:context.delivery_run_events
-      ~mark_complete:(fun () ->
-        context.delivery_with_lane_access (fun lane ->
-            bump_counter t lane Callback_delivery_count))
-  in
-  Eta_signal_stabilization_pass.delivery_ops ~cleanup ~events
+  Eta_signal_atomic_pass.delivery
+    ~run_pending_cleanup:context.delivery_run_pending_cleanup
+    ~run_events:context.delivery_run_events
+    ~mark_complete:(fun () ->
+      context.delivery_with_lane_access (fun lane ->
+          bump_counter t lane Callback_delivery_count))
+    ~finish:(fun () ->
+      finish_recorded_stabilization_effect t finish context)
 
 let max_dead_node_tombstones = 1024
 

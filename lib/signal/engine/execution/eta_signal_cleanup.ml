@@ -69,6 +69,53 @@ let note_duplicate_transition_rejection counters =
     counters.duplicate_transition_rejections <-
       succ counters.duplicate_transition_rejections
 
+type disposition =
+  | Committed
+  | Discarded
+
+type resource_state =
+  | Pending
+  | Terminal of disposition
+
+type resource = {
+  cleanup : hook;
+  mutable state : resource_state;
+}
+
+type ledger = {
+  counters : counters;
+  mutable resources : resource list;
+}
+
+let create_ledger counters = { counters; resources = [] }
+
+let register ledger cleanup =
+  let resource = { cleanup; state = Pending } in
+  ledger.resources <- resource :: ledger.resources;
+  note_resource_registration ledger.counters;
+  resource
+
+let transition ledger resource disposition =
+  match resource.state with
+  | Terminal _ ->
+      note_duplicate_transition_rejection ledger.counters;
+      Error `Already_terminal
+  | Pending ->
+      resource.state <- Terminal disposition;
+      note_terminal_transition ledger.counters;
+      Ok
+        (match disposition with
+        | Committed -> None
+        | Discarded -> Some resource.cleanup)
+
+let pending_resources ledger =
+  List.fold_left
+    (fun count resource ->
+      match resource.state with
+      | Pending -> count + 1
+      | Terminal _ -> count)
+    0 ledger.resources
+
 let fail_hooks causes =
   let cause =
     match causes with

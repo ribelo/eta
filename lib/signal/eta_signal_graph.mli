@@ -801,43 +801,22 @@ val run_stabilization :
     'timer,
     'refresh )
   stabilization_ops ->
-  ( ( 'pending,
-      'bind,
-      'node,
-      'hook,
-      'timer,
-      'refresh,
-      'observer,
-      'weak_node,
-      'dead_node,
-      'scope_context,
-      'stream_metrics )
-    t,
-    'hook,
-    'event,
-    Eta_signal_error.graph_error )
-  Eta_signal_stabilization_pass.result
+  ('event, 'hook, Eta_signal_error.graph_error) Eta_signal_atomic_pass.result
 (** Run the graph stabilization pass with graph-owned phase state and
     timer-refresh cleanup. This module owns graph generation advancement,
     staging setup, pending draining, the stabilization object, and the
     graph-state finalizer; callers provide the remaining graph-specific
     pure/rollback plans. *)
 
-type 'owner stabilization_finish
+type stabilization_finish
 
-val create_stabilization_finish : unit -> 'owner stabilization_finish
+val create_stabilization_finish : unit -> stabilization_finish
 
 val record_stabilization_result :
-  'owner stabilization_finish ->
+  stabilization_finish ->
   lane_access ->
-  ('owner, 'hook, 'event, Eta_signal_error.graph_error)
-  Eta_signal_stabilization_pass.result ->
+  ('event, 'hook, Eta_signal_error.graph_error) Eta_signal_atomic_pass.result ->
   'hook list
-(** Remember the delivering token from a pure pass result and return the
-    cleanup hooks carried by that result. The lane capability makes
-    delivering-token bookkeeping part of graph mutation, so callers do not
-    need to inspect successful stabilization results just to finish the graph
-    phase later. *)
 
 type ('event, 'error) stabilization_delivery_context
 
@@ -860,25 +839,9 @@ val stabilization_delivery_ops :
     'scope_context,
     'stream_metrics )
   t ->
-  ( ( 'pending,
-      'bind,
-      'node,
-      'hook,
-      'timer,
-      'refresh,
-      'observer,
-      'weak_node,
-      'dead_node,
-      'scope_context,
-      'stream_metrics )
-    t )
   stabilization_finish ->
   ('event, 'error) stabilization_delivery_context ->
-  ('event, 'error) Eta_signal_stabilization_pass.delivery
-(** Build the delivering-phase plan for a recorded graph stabilization. The
-    caller supplies effectful cleanup, observer event execution, and graph-lane
-    acquisition; the graph owns the callback-delivery counter and finishing the
-    recorded stabilization token. *)
+  ('event, 'error) Eta_signal_atomic_pass.delivery
 
 val create_live_node :
   (_, _, _, _, _, _, _, 'weak_node, _, 'scope_context, _) t ->

@@ -7,7 +7,6 @@
   eta_signal_overflow_harness
   eta_signal_overflow_impl
   eta_signal_bind
-  eta_signal_cleanup
   eta_signal_debug
   eta_signal_error
   eta_signal_graph
@@ -15,13 +14,9 @@
   eta_signal_graph_algorithms
   eta_signal_lane
   eta_signal_observer
-  eta_signal_scope
-  eta_signal_stabilization_pass
   eta_signal_timer
-  eta_signal_timer_policy
-  eta_signal_transaction
-  eta_signal_stabilization)
- (libraries eta eta_stream))
+  eta_signal_timer_policy)
+ (libraries eta eta_stream eta_signal_engine))
 
 (rule
  (target eta_signal_overflow_impl.ml)
@@ -38,18 +33,6 @@
 (rule
  (target eta_signal_bind.mli)
  (deps ../../lib/signal/eta_signal_bind.mli)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_cleanup.ml)
- (deps ../../lib/signal/eta_signal_cleanup.ml)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_cleanup.mli)
- (deps ../../lib/signal/eta_signal_cleanup.mli)
  (action
   (copy %{deps} %{target})))
 
@@ -86,30 +69,6 @@
 (rule
  (target eta_signal_graph.mli)
  (deps ../../lib/signal/eta_signal_graph.mli)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_transaction.ml)
- (deps ../../lib/signal/eta_signal_transaction.ml)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_transaction.mli)
- (deps ../../lib/signal/eta_signal_transaction.mli)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_stabilization.ml)
- (deps ../../lib/signal/eta_signal_stabilization.ml)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_stabilization.mli)
- (deps ../../lib/signal/eta_signal_stabilization.mli)
  (action
   (copy %{deps} %{target})))
 
@@ -158,30 +117,6 @@
 (rule
  (target eta_signal_observer.mli)
  (deps ../../lib/signal/eta_signal_observer.mli)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_scope.ml)
- (deps ../../lib/signal/eta_signal_scope.ml)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_scope.mli)
- (deps ../../lib/signal/eta_signal_scope.mli)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_stabilization_pass.ml)
- (deps ../../lib/signal/eta_signal_stabilization_pass.ml)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_stabilization_pass.mli)
- (deps ../../lib/signal/eta_signal_stabilization_pass.mli)
  (action
   (copy %{deps} %{target})))
 

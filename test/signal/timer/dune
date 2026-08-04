@@ -1,16 +1,4 @@
 (rule
- (target eta_signal_cleanup.ml)
- (deps ../../../lib/signal/eta_signal_cleanup.ml)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_cleanup.mli)
- (deps ../../../lib/signal/eta_signal_cleanup.mli)
- (action
-  (copy %{deps} %{target})))
-
-(rule
  (target eta_signal_timer_policy.ml)
  (deps ../../../lib/signal/eta_signal_timer_policy.ml)
  (action
@@ -34,18 +22,6 @@
  (action
   (copy %{deps} %{target})))
 
-(rule
- (target eta_signal_transaction.ml)
- (deps ../../../lib/signal/eta_signal_transaction.ml)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_transaction.mli)
- (deps ../../../lib/signal/eta_signal_transaction.mli)
- (action
-  (copy %{deps} %{target})))
-
 (test
  (name test_eta_signal_timer_policy)
  (modules test_eta_signal_timer_policy eta_signal_timer_policy)
@@ -55,8 +31,6 @@
  (name test_eta_signal_timer)
  (modules
   test_eta_signal_timer
-  eta_signal_cleanup
   eta_signal_timer
-  eta_signal_timer_policy
-  eta_signal_transaction)
- (libraries eta eta_eio eta_test alcotest eio_main))
+  eta_signal_timer_policy)
+ (libraries eta eta_eio eta_test eta_signal_engine alcotest eio_main))

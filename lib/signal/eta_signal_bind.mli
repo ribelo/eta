@@ -102,7 +102,7 @@ val run_dynamic :
   ('value * bool, 'error) result
 
 val stage_transaction_switch :
-  (Eta_signal_transaction.pure, 'error) Eta_signal_transaction.t ->
+  (Eta_signal_transaction.planning, 'error) Eta_signal_transaction.t ->
   ('source, 'inner, 'scope) snapshot Eta_signal_transaction.staged ->
   remember:(unit -> unit) ->
   source_value:'source ->

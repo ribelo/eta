@@ -4,7 +4,6 @@
  (wrapped false)
  (modules
   eta_signal_bind
-  eta_signal_cleanup
   eta_signal_debug
   eta_signal_error
   eta_signal_graph
@@ -12,13 +11,9 @@
   eta_signal_graph_algorithms
   eta_signal_lane
   eta_signal_observer
-  eta_signal_scope
-  eta_signal_stabilization_pass
   eta_signal_timer
-  eta_signal_timer_policy
-  eta_signal_transaction
-  eta_signal_stabilization)
- (libraries eta eta_stream))
+  eta_signal_timer_policy)
+ (libraries eta eta_stream eta_signal_engine))
 
 (library
  (name eta_signal)

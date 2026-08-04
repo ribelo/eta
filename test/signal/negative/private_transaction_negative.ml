@@ -1,1 +1,1 @@
-let _must_not_typecheck = Eta_signal_transaction.begin_pure
+let _must_not_typecheck = Eta_signal_transaction.begin_planning

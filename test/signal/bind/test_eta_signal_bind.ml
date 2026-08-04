@@ -25,7 +25,7 @@ let test_switch_snapshot () =
 let test_stage_transaction_switch_remembers_once () =
   let effects = ref [] in
   let staged = T.create_staged Bind.empty in
-  let tx : (T.pure, unit) T.t = T.begin_pure () in
+  let tx : (T.planning, unit) T.t = T.begin_planning () in
   let remember () = effects := !effects @ [ "remember" ] in
   Bind.stage_transaction_switch tx staged ~remember ~source_value:1
     ~inner:"inner" ~scope:2;

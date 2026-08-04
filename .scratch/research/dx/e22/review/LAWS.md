@@ -340,13 +340,14 @@ installed `Eta_signal` CMI path.
 
 | ID | Claim | Exact normative source | Named executable evidence |
 | --- | --- | --- | --- |
-| SX01 | A failed preflight leaves the transaction open and publishes no staged cell. | `lib/signal/eta_signal_transaction.mli:43-49` | `test_preflight_failure_leaves_current_values_unchanged` |
-| SX02 | Successful preflight produces the only phase accepted by commit. | `lib/signal/eta_signal_transaction.mli:43-49` | `test_commit_is_total_after_preflight`; compile-time `preflighted` argument to `commit` |
-| SX03 | Commit publishes every staged cell without a user callback or failure result. | `lib/signal/eta_signal_transaction.mli:51-53` | `test_commit_is_total_after_preflight` — two independently staged cells and direct total return |
-| SX04 | Stabilization runs structural preflight before entering total commit. | `lib/signal/eta_signal_stabilization.mli:36-41` | `test_begin_commit_finish`; compile-time `preflighted` transaction phase |
-| SX05 | Stabilization commit is total after successful preflight. | `lib/signal/eta_signal_stabilization.mli:43-45` | `test_commit_is_total_after_preflight`; `success callback order` |
+| SX01 | Transaction identities are fresh physical identities. | `lib/signal/engine/transaction/eta_signal_transaction.mli:1-1` | `test_transaction_identity_is_physical_and_fresh` |
+| SX02 | Failed sealing preserves committed cells and leaves the transaction planning. | `lib/signal/engine/transaction/eta_signal_transaction.mli:36-38` | `test_seal_failure_leaves_current_values_unchanged` |
+| SX03 | Successful sealing produces the only phase accepted by commit. | `lib/signal/engine/transaction/eta_signal_transaction.mli:36-40` | `test_commit_is_total_after_seal`; compile-time `sealed` argument to `commit` |
+| SX04 | Transaction commit publishes staged cells and is total after sealing. | `lib/signal/engine/transaction/eta_signal_transaction.mli:40-41` | `test_commit_is_total_after_seal` — two independently staged cells and direct total return |
+| SX05 | A sealed commit plan applies only prepared engine writes and is total. | `lib/signal/engine/transaction/eta_signal_commit_plan.mli:24-28` | `test_total_commit_interprets_only_prepared_writes` |
 | SX06 | Structural preflight processes an owner before its descendant. | `docs/requirements/eta-signal/keyed-extension.md:29` | `test_preflight_orders_owner_before_descendant` — reversed input plans over root and dynamic child scopes |
 | SX07 | An affected child notifies its keyed extension path without visiting an unaffected child. | `docs/requirements/eta-signal/keyed-extension.md:34` | `test_affected_child_notification_avoids_scan` — two independent child frontiers, one source change |
+| SX08 | Node lifetime changes from live to invalid at most once. | `lib/signal/engine/structure/eta_signal_node.mli:3-6` | `test_node_and_scope_lifetimes_are_one_way` |
 
 ## Registered external named suites
 

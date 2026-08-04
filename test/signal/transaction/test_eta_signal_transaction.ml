@@ -3,14 +3,14 @@ module T = Eta_signal_transaction
 type test_error = [ `Preflight_failed ]
 
 let commit_ok tx =
-  match T.preflight tx (fun () -> Ok ()) with
+  match T.seal tx (fun () -> Ok ()) with
   | Ok preflighted -> T.commit preflighted
   | Error `Preflight_failed -> Alcotest.fail "unexpected preflight failure"
 
-let test_commit_is_total_after_preflight () =
+let test_commit_is_total_after_seal () =
   let left = T.create_staged 1 in
   let right = T.create_staged 10 in
-  let tx : (T.pure, test_error) T.t = T.begin_pure () in
+  let tx : (T.planning, test_error) T.t = T.begin_planning () in
   T.stage tx left 2;
   T.stage tx right 20;
   let committed = commit_ok tx in
@@ -27,7 +27,7 @@ let expect_invalid_arg label f =
 
 let test_stage_read_commit () =
   let cell = T.create_staged 1 in
-  let tx : (T.pure, test_error) T.t = T.begin_pure () in
+  let tx : (T.planning, test_error) T.t = T.begin_planning () in
   Alcotest.(check int) "initial current" 1 (T.current cell);
   Alcotest.(check int) "initial read" 1 (T.read tx cell);
   T.stage tx cell 2;
@@ -41,7 +41,7 @@ let test_stage_read_commit () =
 
 let test_restage_uses_last_value () =
   let cell = T.create_staged 0 in
-  let tx : (T.pure, test_error) T.t = T.begin_pure () in
+  let tx : (T.planning, test_error) T.t = T.begin_planning () in
   T.stage tx cell 1;
   T.stage tx cell 2;
   Alcotest.(check int) "staged last value" 2 (T.read tx cell);
@@ -50,7 +50,7 @@ let test_restage_uses_last_value () =
 
 let test_publish_current_rejects_pending_transaction_value () =
   let cell = T.create_staged 0 in
-  let tx : (T.pure, test_error) T.t = T.begin_pure () in
+  let tx : (T.planning, test_error) T.t = T.begin_planning () in
   T.stage tx cell 1;
   expect_invalid_arg "publish current while pending" (fun () ->
       T.publish_current T.source_publication cell 2);
@@ -73,7 +73,7 @@ let test_publish_current_requires_explicit_writer () =
 
 let test_stage_read_rollback () =
   let cell = T.create_staged "old" in
-  let tx : (T.pure, test_error) T.t = T.begin_pure () in
+  let tx : (T.planning, test_error) T.t = T.begin_planning () in
   T.stage tx cell "new";
   Alcotest.(check string) "staged read" "new" (T.read tx cell);
   T.rollback tx;
@@ -85,7 +85,7 @@ let test_stage_read_rollback () =
 let test_discard_skips_one_staged_cell () =
   let skipped = T.create_staged 1 in
   let committed = T.create_staged 10 in
-  let tx : (T.pure, test_error) T.t = T.begin_pure () in
+  let tx : (T.planning, test_error) T.t = T.begin_planning () in
   T.stage tx skipped 2;
   T.stage tx committed 20;
   T.discard tx skipped;
@@ -99,8 +99,8 @@ let test_discard_skips_one_staged_cell () =
 
 let test_two_transactions_cannot_share_pending_state () =
   let cell = T.create_staged 0 in
-  let first : (T.pure, test_error) T.t = T.begin_pure () in
-  let second : (T.pure, test_error) T.t = T.begin_pure () in
+  let first : (T.planning, test_error) T.t = T.begin_planning () in
+  let second : (T.planning, test_error) T.t = T.begin_planning () in
   T.stage first cell 1;
   Alcotest.(check bool) "first owns staged value" true (T.staged first cell);
   Alcotest.(check bool)
@@ -113,13 +113,23 @@ let test_two_transactions_cannot_share_pending_state () =
   ignore (commit_ok second : (T.committed, test_error) T.t);
   Alcotest.(check int) "second commits after first rollback" 3 (T.current cell)
 
-let test_preflight_failure_leaves_current_values_unchanged () =
+let test_transaction_identity_is_physical_and_fresh () =
+  let first : (T.planning, test_error) T.t = T.begin_planning () in
+  let second : (T.planning, test_error) T.t = T.begin_planning () in
+  Alcotest.(check bool) "self identity" true
+    (T.equal_id (T.id first) (T.id first));
+  Alcotest.(check bool) "fresh physical identity" false
+    (T.equal_id (T.id first) (T.id second));
+  T.rollback first;
+  T.rollback second
+
+let test_seal_failure_leaves_current_values_unchanged () =
   let left = T.create_staged 1 in
   let right = T.create_staged 10 in
-  let tx : (T.pure, test_error) T.t = T.begin_pure () in
+  let tx : (T.planning, test_error) T.t = T.begin_planning () in
   T.stage tx left 2;
   T.stage tx right 20;
-  (match T.preflight tx (fun () -> Error `Preflight_failed) with
+  (match T.seal tx (fun () -> Error `Preflight_failed) with
    | Error `Preflight_failed -> ()
    | Ok _ -> Alcotest.fail "expected preflight failure");
   Alcotest.(check int) "left current unchanged" 1 (T.current left);
@@ -136,8 +146,8 @@ let () =
       ( "transaction",
         [
           Alcotest.test_case "stage read commit" `Quick test_stage_read_commit;
-          Alcotest.test_case "commit is total after preflight" `Quick
-            test_commit_is_total_after_preflight;
+          Alcotest.test_case "commit is total after seal" `Quick
+            test_commit_is_total_after_seal;
           Alcotest.test_case "restage uses last value" `Quick
             test_restage_uses_last_value;
           Alcotest.test_case
@@ -151,7 +161,9 @@ let () =
             test_discard_skips_one_staged_cell;
           Alcotest.test_case "two transactions cannot share pending state"
             `Quick test_two_transactions_cannot_share_pending_state;
-          Alcotest.test_case "preflight failure leaves current unchanged"
-            `Quick test_preflight_failure_leaves_current_values_unchanged;
+          Alcotest.test_case "transaction identity is physical and fresh"
+            `Quick test_transaction_identity_is_physical_and_fresh;
+          Alcotest.test_case "seal failure leaves current unchanged"
+            `Quick test_seal_failure_leaves_current_values_unchanged;
         ] );
     ]
