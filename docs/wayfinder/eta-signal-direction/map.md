@@ -83,6 +83,13 @@ main Dune workspace.
   phase entry must return a live transaction or preserve the idle state exactly.
   A fresh physical token removes the counter and the shared allocator, but it
   does not replace that ordering invariant.
+- [Keyed removal with a nested bind switch](issues/03-keyed-bind-invalidation.md)
+  — N2 is confirmed by execution. The current order commits a staged bind after
+  keyed removal invalidates its owner. The result retains invalid bind edges and
+  a valid provisional scope under an invalid parent, with no pending transaction
+  work. One fixed invalidation frontier must decide commit or discard before
+  topology mutation. Public DOT and node counts omit the retained edge, so the
+  final gate needs direct topology evidence or corrected diagnostics.
 
 ## Not yet specified
 
