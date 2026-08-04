@@ -53,8 +53,8 @@ value for a library interface.
 | EXE-010 | 39 | N2 says keyed removal can commit a nested bind switch after invalidating its owner. | counterexample | Ticket 03 | Static trace, rated P0 | Retain for executable reproduction. |
 | EXE-011 | 40 | N3 says the observer comparator is not a total order on dynamic graphs. | counterexample | Ticket 04 | Static trace, rated P1 | Retain for executable reproduction. |
 | EXE-012 | 41 | N4 says wide edge attachment and removal are quadratic. | complexity claim | Ticket 05 | Static algorithm analysis, rated P1 | Retain for deterministic measurement. |
-| EXE-013 | 42 | N5 says one exception region spans pre-commit and post-commit work. | architecture claim | Ticket 09 | Static control-flow analysis, rated P2 | Assign to owner for model decision. |
-| EXE-014 | 42 | N5 says the non-failing commit tail is implicit and not type-enforced. | invariant gap | Ticket 09 | Static type and control-flow analysis | Assign to owner for model decision. |
+| EXE-013 | 42 | N5 says one exception region spans pre-commit and post-commit work. | architecture claim | Ticket 09 | Static control-flow analysis, rated P2 | Confirm. Replace the shared region with separate planning and delivery regions. |
+| EXE-014 | 42 | N5 says the non-failing commit tail is implicit and not type-enforced. | invariant gap | Ticket 09 | Static type and control-flow analysis | Confirm. Seal a private declarative mutation tape before total commit. |
 | EXE-015 | 44 | Static review found no other confirmed P0 in six named runtime protocols. | negative finding | Ticket 01 | Packed-code static review only | Retain as bounded negative evidence. |
 | EXE-016 | 44 | The negative P0 finding is limited to packed code and static review. | limitation | Ticket 01 | Explicit qualification | Retain and do not generalize it. |
 | EXE-017 | 20 | The audit gets the large architectural facts broadly right. | verdict | Ticket 17 | Review synthesis | Assign to owner for final disposition. |
@@ -403,18 +403,18 @@ value for a library interface.
 | N01-012 | 542 | The path causes permanent state-machine corruption. | impact claim | Ticket 02 | Static state trace | Retain for executable reproduction. |
 | N01-013 | 546 | One graph becomes permanently unusable. | impact | Ticket 02 | Static state trace | Retain for executable reproduction. |
 | N01-014 | 546 | The defect bypasses the typed error channel. | impact | Ticket 02 | Static control-flow trace | Retain for executable reproduction. |
-| N01-015 | 546 | The defect breaks the internal phase invariant. | impact | Ticket 09 | Static state trace | Assign to owner for phase-model design. |
-| N01-016 | 550 | `Pure` must imply a live transaction and active pure status at each observation boundary. | invariant | Ticket 09 | Proposed phase contract | Assign to owner for design decision. |
-| N01-017 | 550 | No raising operation can occur between establishment of the pure-phase fields. | invariant | Ticket 09 | Proposed atomicity contract | Assign to owner for design decision. |
-| N01-018 | 552 | Allocation failure must return typed `Counter_overflow "transaction id"`. | unwanted-behavior requirement | Ticket 09 | Proposed error contract | Assign to owner for design decision. |
-| N01-019 | 552 | Allocation failure must leave the graph idle. | unwanted-behavior requirement | Ticket 09 | Proposed atomicity contract | Assign to owner for design decision. |
-| N01-020 | 554-558 | A graph-owned fresh physical token can replace the global integer identity. | recommendation | Ticket 09 | Proposed representation | Assign to owner for design decision. |
-| N01-021 | 560 | A retained integer needs allocation before phase mutation and graph-local ownership. | conditional requirement | Ticket 09 | Proposed safe alternative | Assign to owner for design decision. |
-| N01-022 | 560 | Module-global identifiers can race across independent graphs on different domains. | concurrency risk | Ticket 09 | Static shared-state analysis | Assign to owner for domain-safe design. |
-| N01-023 | 562 | `begin_pure` must return a valid token or preserve the prior idle state exactly. | exception-safety invariant | Ticket 09 | Proposed atomicity contract | Assign to owner for design decision. |
+| N01-015 | 546 | The defect breaks the internal phase invariant. | impact | Ticket 09 | Static state trace | Confirm. One phase variant replaces the inconsistent fields. |
+| N01-016 | 550 | `Pure` must imply a live transaction and active pure status at each observation boundary. | invariant | Ticket 09 | Proposed phase contract | Accept as `Planning` containing one live session and transaction. |
+| N01-017 | 550 | No raising operation can occur between establishment of the pure-phase fields. | invariant | Ticket 09 | Proposed atomicity contract | Accept. Allocate the session before one phase-field assignment. |
+| N01-018 | 552 | Allocation failure must return typed `Counter_overflow "transaction id"`. | unwanted-behavior requirement | Ticket 09 | Proposed error contract | Reject. Fresh physical identity has no transaction counter; allocation defects preserve `Idle`. |
+| N01-019 | 552 | Allocation failure must leave the graph idle. | unwanted-behavior requirement | Ticket 09 | Proposed atomicity contract | Amend. Any defect before the phase assignment leaves graph-owned state idle. |
+| N01-020 | 554-558 | A graph-owned fresh physical token can replace the global integer identity. | recommendation | Ticket 09 | Proposed representation | Accept. Use one fresh physical transaction identity for staged cells and phase sessions. |
+| N01-021 | 560 | A retained integer needs allocation before phase mutation and graph-local ownership. | conditional requirement | Ticket 09 | Proposed safe alternative | Reject the integer alternative. |
+| N01-022 | 560 | Module-global identifiers can race across independent graphs on different domains. | concurrency risk | Ticket 09 | Static shared-state analysis | Confirm and remove both shared phase and transaction allocators. |
+| N01-023 | 562 | `begin_pure` must return a valid token or preserve the prior idle state exactly. | exception-safety invariant | Ticket 09 | Proposed atomicity contract | Accept for atomic `Idle` to `Planning` entry. |
 | N01-024 | 566-569 | Tests need forced overflow, typed error, successful retry, and a two-domain case if globals remain. | test requirement | Ticket 16 | Proposed regression set | Assign to owner for final gate design. |
 | N01-025 | 573 | N1 is the first correction. | sequencing | Ticket 17 | Severity and dependency assessment | Assign to owner for final route. |
-| N01-026 | 573 | N1 changes private identity and stabilization code plus the overflow harness. | blast radius | Ticket 09 | Preliminary impact estimate | Retain for planning. |
+| N01-026 | 573 | N1 changes private identity and stabilization code plus the overflow harness. | blast radius | Ticket 09 | Preliminary impact estimate | Retain. The physical-token design removes the transaction-overflow branch from the harness. |
 | N01-027 | 573 | Public success types do not need change. | interface claim | Ticket 13 | Preliminary type assessment | Assign to owner to preserve if feasible. |
 | N01-028 | 573 | The graph-error taxonomy can represent or add a named counter-overflow path. | interface claim | Ticket 13 | Preliminary error-type assessment | Assign to owner for error algebra decision. |
 | N01-029 | 566 | A regression must force the next transaction ID to overflow. | test requirement | Ticket 02 | Proposed fault injection | Retain for executable reproduction. |
@@ -445,26 +445,26 @@ value for a library interface.
 | N02-017 | 617 | Later dirty propagation skips the invalid owner and does not remove the edge. | retained-topology claim | Ticket 03 | Static propagation trace | Retain for executable reproduction. |
 | N02-018 | 617 | The invalid edge and node persist in all-node diagnostics. | observable impact | Ticket 03 | Static diagnostics trace | Retain for executable reproduction. |
 | N02-019 | 621 | Successful stabilization can attach an invalid dependent to a valid signal. | impact | Ticket 03 | Static counterexample trace | Retain for executable reproduction. |
-| N02-020 | 622 | Dynamic-scope invalidation is not closed over staged bind state. | invariant failure | Ticket 09 | Static counterexample synthesis | Assign to owner for invalidation design. |
+| N02-020 | 622 | Dynamic-scope invalidation is not closed over staged bind state. | invariant failure | Ticket 09 | Static counterexample synthesis | Confirm. One fixed frontier must cover every staged dynamic operation. |
 | N02-021 | 623 | The defect can retain invalid nodes and provisional scopes. | impact | Ticket 03 | Static topology trace | Retain for executable reproduction. |
 | N02-022 | 624 | Later topology algorithms receive lists with invalid parents. | impact | Ticket 03 | Static topology trace | Retain for executable reproduction. |
 | N02-023 | 625 | The public keyed transaction law does not describe the resulting hybrid state. | law gap | Ticket 16 | Interface and counterexample comparison | Assign to owner for law disposition. |
 | N02-024 | 627 | N2 requires no impure callback, exception, or timer creation. | reachability claim | Ticket 03 | Pure public counterexample | Retain for executable reproduction. |
-| N02-025 | 631 | Commit planning must compute one fixed invalidation frontier before topology mutation. | invariant | Ticket 09 | Proposed invalidation contract | Assign to owner for design decision. |
-| N02-026 | 631 | The frontier must include staged bind switches, keyed removals, and future extension plans. | requirement | Ticket 09 | Proposed invalidation contract | Assign to owner for design decision. |
-| N02-027 | 631 | No staged operation owned by the frontier can commit. | invariant | Ticket 09 | Proposed invalidation contract | Assign to owner for design decision. |
-| N02-028 | 633 | An invalidated staged-bind owner must cause staged snapshot discard. | event requirement | Ticket 09 | Proposed transaction contract | Assign to owner for design decision. |
-| N02-029 | 633 | Discard processing must invalidate the provisional new scope without `commit_switch`. | event requirement | Ticket 09 | Proposed cleanup contract | Assign to owner for design decision. |
-| N02-030 | 635 | Each committed staged bind must have a valid owner outside the frozen frontier. | commit invariant | Ticket 09 | Proposed commit contract | Assign to owner for design decision. |
-| N02-031 | 635 | The engine must decide staged-bind validity before keyed or bind topology mutation. | sequencing invariant | Ticket 09 | Proposed commit contract | Assign to owner for design decision. |
-| N02-032 | 637-645 | An explicit commit-or-discard plan can encode staged-bind partitioning. | recommendation | Ticket 09 | Proposed internal plan shape | Assign to owner for design decision. |
-| N02-033 | 645 | The commit phase can consume only commit decisions. | commit invariant | Ticket 09 | Proposed plan contract | Assign to owner for design decision. |
-| N02-034 | 645 | The discard phase must invalidate provisional scopes and clear pending bind cells before commit. | rollback requirement | Ticket 09 | Proposed plan contract | Assign to owner for design decision. |
-| N02-035 | 647 | Preflight can check and build an immutable plan but must not mutate topology. | phase invariant | Ticket 09 | Proposed phase contract | Assign to owner for design decision. |
-| N02-036 | 647 | One non-failing commit phase must execute frozen topology actions. | commit invariant | Ticket 09 | Proposed phase contract | Assign to owner for design decision. |
+| N02-025 | 631 | Commit planning must compute one fixed invalidation frontier before topology mutation. | invariant | Ticket 09 | Proposed invalidation contract | Accept. Freeze the frontier before partitioning operations. |
+| N02-026 | 631 | The frontier must include staged bind switches, keyed removals, and future extension plans. | requirement | Ticket 09 | Proposed invalidation contract | Accept for bind, keyed, and future private dynamic-operation plans. |
+| N02-027 | 631 | No staged operation owned by the frontier can commit. | invariant | Ticket 09 | Proposed invalidation contract | Accept. Owner membership selects the discard partition. |
+| N02-028 | 633 | An invalidated staged-bind owner must cause staged snapshot discard. | event requirement | Ticket 09 | Proposed transaction contract | Accept. Discard clears the staged cell before sealing. |
+| N02-029 | 633 | Discard processing must invalidate the provisional new scope without `commit_switch`. | event requirement | Ticket 09 | Proposed cleanup contract | Accept. Discard transfers attempt-owned provisional state to the exactly-once cleanup ledger. |
+| N02-030 | 635 | Each committed staged bind must have a valid owner outside the frozen frontier. | commit invariant | Ticket 09 | Proposed commit contract | Accept as a sealed-plan invariant. |
+| N02-031 | 635 | The engine must decide staged-bind validity before keyed or bind topology mutation. | sequencing invariant | Ticket 09 | Proposed commit contract | Accept. All operation decisions precede committed mutation. |
+| N02-032 | 637-645 | An explicit commit-or-discard plan can encode staged-bind partitioning. | recommendation | Ticket 09 | Proposed internal plan shape | Accept and apply the partition to every dynamic-operation kind. |
+| N02-033 | 645 | The commit phase can consume only commit decisions. | commit invariant | Ticket 09 | Proposed plan contract | Accept. The mutation tape contains only prepared commit writes. |
+| N02-034 | 645 | The discard phase must invalidate provisional scopes and clear pending bind cells before commit. | rollback requirement | Ticket 09 | Proposed plan contract | Amend. Discard runs during planning before the plan seals. |
+| N02-035 | 647 | Preflight can check and build an immutable plan but must not mutate topology. | phase invariant | Ticket 09 | Proposed phase contract | Accept for committed topology; provisional work remains isolated. |
+| N02-036 | 647 | One non-failing commit phase must execute frozen topology actions. | commit invariant | Ticket 09 | Proposed phase contract | Accept through one sealed declarative mutation tape. |
 | N02-037 | 651-655 | Regression coverage needs five keyed-bind, cleanup, retention, and callback-failure scenarios. | test requirement | Ticket 16 | Proposed regression set | Assign to owner for final gate design. |
 | N02-038 | 659 | N2 follows N1 and precedes scheduler redesign. | sequencing | Ticket 17 | Severity and dependency assessment | Assign to owner for final route. |
-| N02-039 | 659 | N2 affects commit planning, invalidation, discard, cleanup, diagnostics, and Signal Map models. | blast radius | Ticket 09 | Preliminary impact estimate | Retain for planning. |
+| N02-039 | 659 | N2 affects commit planning, invalidation, discard, cleanup, diagnostics, and Signal Map models. | blast radius | Ticket 09 | Preliminary impact estimate | Retain. The correction also requires prepared topology replacements. |
 | N02-040 | 659 | N2 does not require public type changes. | interface claim | Ticket 13 | Preliminary type assessment | Assign to owner to preserve if feasible. |
 | N02-041 | 651 | A regression must combine keyed removal with a nested bind switch. | test requirement | Ticket 03 | Proposed counterexample | Retain for executable reproduction. |
 | N02-042 | 652 | A top-scope new branch regression must show that no invalid dependent edge remains. | test requirement | Ticket 16 | Proposed topology assertion | Assign to owner for gate design. |
@@ -529,32 +529,32 @@ value for a library interface.
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
 | N05-001 | 765 | N5 classifies the shared rollback region as P2. | verdict | Ticket 17 | Static review priority | Assign to owner for final disposition. |
-| N05-002 | 769-770 | N5 locates the exception region and graph commit code. | location | Ticket 09 | Exact source pointers | Retain for transaction-model design. |
-| N05-003 | 774-782 | One `try` region covers planning, commit, pending events, demand, cleanup, and delivery transition. | fact | Ticket 09 | Static control-flow trace | Retain for transaction-model design. |
-| N05-004 | 784 | Any exception in that region calls `rollback_current`. | fact | Ticket 09 | Static exception-flow trace | Retain for transaction-model design. |
-| N05-005 | 784 | Rollback becomes illegal after staging commits and clears its token. | invariant gap | Ticket 09 | Static state and control-flow trace | Assign to owner for transaction design. |
-| N05-006 | 784 | Current safety relies on every post-commit operation being non-raising. | architecture claim | Ticket 09 | Static control-flow analysis | Assign to owner for transaction design. |
-| N05-007 | 784 | Types and control flow do not localize the non-raising post-commit invariant. | architecture gap | Ticket 09 | Static type analysis | Assign to owner for transaction design. |
-| N05-008 | 786 | N1 and N2 demonstrate related phase-boundary weaknesses. | evidence synthesis | Ticket 09 | Cross-finding analysis | Retain for transaction-model design. |
-| N05-009 | 790 | A future post-commit failure can trigger illegal rollback and stick the phase. | risk claim | Ticket 09 | Static future-change counterexample | Assign to owner for transaction design. |
+| N05-002 | 769-770 | N5 locates the exception region and graph commit code. | location | Ticket 09 | Exact source pointers | Retain as the replaced control flow. |
+| N05-003 | 774-782 | One `try` region covers planning, commit, pending events, demand, cleanup, and delivery transition. | fact | Ticket 09 | Static control-flow trace | Confirm. Split planning from delivery. |
+| N05-004 | 784 | Any exception in that region calls `rollback_current`. | fact | Ticket 09 | Static exception-flow trace | Confirm. Rollback must remain inside the planning region. |
+| N05-005 | 784 | Rollback becomes illegal after staging commits and clears its token. | invariant gap | Ticket 09 | Static state and control-flow trace | Confirm. Delivery values grant no rollback authority. |
+| N05-006 | 784 | Current safety relies on every post-commit operation being non-raising. | architecture claim | Ticket 09 | Static control-flow analysis | Confirm. Replace convention with a sealed mutation tape and separate control flow. |
+| N05-007 | 784 | Types and control flow do not localize the non-raising post-commit invariant. | architecture gap | Ticket 09 | Static type analysis | Confirm. Private phase types and module ownership localize it. |
+| N05-008 | 786 | N1 and N2 demonstrate related phase-boundary weaknesses. | evidence synthesis | Ticket 09 | Cross-finding analysis | Retain. One atomic-pass design resolves all three findings. |
+| N05-009 | 790 | A future post-commit failure can trigger illegal rollback and stick the phase. | risk claim | Ticket 09 | Static future-change counterexample | Accept the risk and remove the shared rollback path. |
 | N05-010 | 790 | The current exception structure hides the commit boundary from reviewers. | maintainability claim | Ticket 15 | Static architecture assessment | Assign to owner for module ownership. |
-| N05-011 | 794-799 | The pass needs explicit planning, commit, delivery transition, and post-commit phases. | requirement | Ticket 09 | Proposed phase model | Assign to owner for design decision. |
-| N05-012 | 796 | Planning and preflight can return errors while rollback remains legal. | phase requirement | Ticket 09 | Proposed phase model | Assign to owner for design decision. |
-| N05-013 | 797 | Commit can contain no callbacks, fallible validation, or allocation-dependent planning. | commit invariant | Ticket 09 | Proposed phase model | Assign to owner for design decision. |
-| N05-014 | 798 | State must transition to committed or delivering immediately after commit. | phase requirement | Ticket 09 | Proposed phase model | Assign to owner for design decision. |
-| N05-015 | 799 | Post-commit failures must preserve the snapshot and never roll back. | exception-safety invariant | Ticket 09 | Proposed phase model | Assign to owner for design decision. |
-| N05-016 | 801 | Rollback is legal only with both an open transaction and active staging token. | invariant | Ticket 09 | Proposed rollback authority | Assign to owner for design decision. |
-| N05-017 | 801 | Phase-specific tokens need to encode rollback authority. | requirement | Ticket 09 | Proposed type design | Assign to owner for design decision. |
-| N05-018 | 805 | N5 needs resolution with N1 and N2. | sequencing | Ticket 09 | Proposed dependency order | Assign to owner for route planning. |
-| N05-019 | 805 | N5 changes private orchestration and fault-injection tests. | blast radius | Ticket 09 | Preliminary impact estimate | Retain for planning. |
+| N05-011 | 794-799 | The pass needs explicit planning, commit, delivery transition, and post-commit phases. | requirement | Ticket 09 | Proposed phase model | Accept behind the atomic-pass interface. |
+| N05-012 | 796 | Planning and preflight can return errors while rollback remains legal. | phase requirement | Ticket 09 | Proposed phase model | Accept. Planning returns typed rejection or a defect. |
+| N05-013 | 797 | Commit can contain no callbacks, fallible validation, or allocation-dependent planning. | commit invariant | Ticket 09 | Proposed phase model | Accept. Commit interprets only prepared engine-owned writes. |
+| N05-014 | 798 | State must transition to committed or delivering immediately after commit. | phase requirement | Ticket 09 | Proposed phase model | Accept as a direct transition to `Delivering`. |
+| N05-015 | 799 | Post-commit failures must preserve the snapshot and never roll back. | exception-safety invariant | Ticket 09 | Proposed phase model | Accept as the delivery invariant. |
+| N05-016 | 801 | Rollback is legal only with both an open transaction and active staging token. | invariant | Ticket 09 | Proposed rollback authority | Amend. Only the atomic-pass module can authorize rollback for its active `Planning` session. |
+| N05-017 | 801 | Phase-specific tokens need to encode rollback authority. | requirement | Ticket 09 | Proposed type design | Accept internally; sealed and delivery values carry no rollback interface. |
+| N05-018 | 805 | N5 needs resolution with N1 and N2. | sequencing | Ticket 09 | Proposed dependency order | Accept. One atomic-pass and commit-plan design resolves N1, N2, and N5 together. |
+| N05-019 | 805 | N5 changes private orchestration and fault-injection tests. | blast radius | Ticket 09 | Preliminary impact estimate | Retain. Ticket 16 owns the fault slots. |
 | N05-020 | 805 | N5 makes existing public semantics more faithful instead of changing them. | interface claim | Ticket 13 | Preliminary semantic assessment | Assign to owner to preserve if feasible. |
-| N05-021 | 776 | The shared exception region includes generation, staging, and pending work. | phase fact | Ticket 09 | Static control-flow trace | Retain for transaction design. |
-| N05-022 | 777 | The shared exception region includes bind planning and event collection. | phase fact | Ticket 09 | Static control-flow trace | Retain for transaction design. |
-| N05-023 | 778 | The shared exception region includes transaction and topology commit. | phase fact | Ticket 09 | Static control-flow trace | Retain for transaction design. |
-| N05-024 | 779 | The shared exception region includes pending observer-event marking. | phase fact | Ticket 09 | Static control-flow trace | Retain for transaction design. |
-| N05-025 | 780 | The shared exception region includes necessity update. | phase fact | Ticket 09 | Static control-flow trace | Retain for transaction design. |
-| N05-026 | 781 | The shared exception region includes timer-context cleanup. | phase fact | Ticket 09 | Static control-flow trace | Retain for transaction design. |
-| N05-027 | 782 | The shared exception region includes transition to delivery. | phase fact | Ticket 09 | Static control-flow trace | Retain for transaction design. |
+| N05-021 | 776 | The shared exception region includes generation, staging, and pending work. | phase fact | Ticket 09 | Static control-flow trace | Retain as current planning-region evidence. |
+| N05-022 | 777 | The shared exception region includes bind planning and event collection. | phase fact | Ticket 09 | Static control-flow trace | Retain as current planning-region evidence. |
+| N05-023 | 778 | The shared exception region includes transaction and topology commit. | phase fact | Ticket 09 | Static control-flow trace | Retain as the hidden commit boundary. |
+| N05-024 | 779 | The shared exception region includes pending observer-event marking. | phase fact | Ticket 09 | Static control-flow trace | Retain. Pending delivery state moves into the mutation tape. |
+| N05-025 | 780 | The shared exception region includes necessity update. | phase fact | Ticket 09 | Static control-flow trace | Retain. Prepared demand state moves into the mutation tape. |
+| N05-026 | 781 | The shared exception region includes timer-context cleanup. | phase fact | Ticket 09 | Static control-flow trace | Retain. Timer lifecycle work moves into the post-commit batch. |
+| N05-027 | 782 | The shared exception region includes transition to delivery. | phase fact | Ticket 09 | Static control-flow trace | Retain. Commit installs `Delivering` before returning. |
 
 ## 4. Semantic-parity challenges S1-S17
 
@@ -577,7 +577,7 @@ value for a library interface.
 | S10-002 | 822 | S10 remains subject to documented at-least-once behavior after callback failure or interruption. | limitation | Ticket 11 | Public contract qualification | Assign to owner for observer contract. |
 | S11-001 | 823 | Amend S11 because direct callbacks lack invalidation events but streams distinguish terminal outcomes. | parity assessment | Ticket 13 | Static interface and implementation trace | Assign to owner for lifecycle decision. |
 | S11-002 | 823 | `Unnecessary` has no valid meaning for an active Eta observer. | semantic claim | Ticket 13 | Demand and lifecycle reasoning | Assign to owner for lifecycle decision. |
-| S12-001 | 824 | Refute universal S12 rollback superiority because N1 and N2 expose boundary failures. | parity correction | Ticket 09 | Static counterexamples | Assign to owner for transaction design. |
+| S12-001 | 824 | Refute universal S12 rollback superiority because N1 and N2 expose boundary failures. | parity correction | Ticket 09 | Static counterexamples | Amend. The desired atomic-pass model restores the stronger contract; ticket 16 must prove it. |
 | S12-002 | 824 | N2 leaves hybrid topology after a successful mixed transaction. | counterexample link | Ticket 03 | Static N2 trace | Retain for executable reproduction. |
 | S12-003 | 824 | N1 corrupts phase state before a transaction exists. | counterexample link | Ticket 02 | Static N1 trace | Retain for executable reproduction. |
 | S13-001 | 825 | Narrow S13 because Probe A covers one shape, runtime, and apparently few observers. | evidence limitation | Ticket 05 | Probe-scope assessment | Amend with broader deterministic scenarios. |
@@ -585,8 +585,8 @@ value for a library interface.
 | S13-003 | 825 | Probe A does not measure the exact packed revision. | evidence gap | Ticket 01 | Revision mismatch | Retain and rerun on the selected revision. |
 | S14-001 | 826 | Refute universal S14 overflow superiority because transaction-ID overflow escapes typed failure and wedges state. | parity correction | Ticket 02 | Static N1 counterexample | Retain for executable reproduction. |
 | S15-001 | 827 | Retain S15 as a dynamic-cutoff delta under F12. | parity assessment | Ticket 13 | Static interface comparison | Assign to owner for cutoff design. |
-| S16-001 | 828 | Retain S16 cross-domain safety as a feature difference. | parity assessment | Ticket 09 | Review conclusion with hardening condition | Assign to owner for domain-safe design. |
-| S16-002 | 828 | N1 hardening needs removal of module-global transaction and state identifiers. | requirement | Ticket 09 | Static shared-state analysis | Assign to owner for domain-safe design. |
+| S16-001 | 828 | Retain S16 cross-domain safety as a feature difference. | parity assessment | Ticket 09 | Review conclusion with hardening condition | Retain with graph-owned phase state and physical tokens. |
+| S16-002 | 828 | N1 hardening needs removal of module-global transaction and state identifiers. | requirement | Ticket 09 | Static shared-state analysis | Accept. Remove both module-global allocators. |
 | S17-001 | 829 | Amend S17's explanation of Incremental cycle behavior. | parity correction | Ticket 06 | Interface and edge-addition trace | Amend: detection follows active necessary-parent edge insertion and does not provide atomic rejection. |
 | S17-002 | 829 | The review claims that Incremental documents cycles from bind and Expert edges. | reference fact | Ticket 06 | Interface and Expert implementation trace | Amend: the interface documents bind cycles; active necessary Expert edges use the same cycle-checked parent path. |
 | S17-003 | 829 | Incremental height adjustment detects those cycles. | reference fact | Ticket 06 | Reference interface documentation | Retain as reference evidence. |
@@ -598,30 +598,30 @@ value for a library interface.
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-01-001 | 835-837 | First, make transaction allocation precede phase mutation or use guaranteed rollback. | ranked requirement | Ticket 09 | Proposed correction plan | Assign to owner for phase-model design. |
-| PLN-01-002 | 837 | Overflow must use typed failure and leave the graph idle. | ranked requirement | Ticket 09 | Proposed correction plan | Assign to owner for phase-model design. |
+| PLN-01-001 | 835-837 | First, make transaction allocation precede phase mutation or use guaranteed rollback. | ranked requirement | Ticket 09 | Proposed correction plan | Accept allocation before one phase mutation. |
+| PLN-01-002 | 837 | Overflow must use typed failure and leave the graph idle. | ranked requirement | Ticket 09 | Proposed correction plan | Reject transaction overflow because physical identity removes the counter. Allocation defects preserve `Idle`. |
 | PLN-01-003 | 839 | Rank 1 has no design dependency. | dependency | Ticket 17 | Proposed route | Assign to owner for final route. |
-| PLN-01-004 | 840 | Rank 1 affects private transaction code, stabilization code, and the overflow harness. | blast radius | Ticket 09 | Preliminary impact estimate | Retain for planning. |
+| PLN-01-004 | 840 | Rank 1 affects private transaction code, stabilization code, and the overflow harness. | blast radius | Ticket 09 | Preliminary impact estimate | Retain. |
 | PLN-01-005 | 841 | The gate is forced overflow followed by a successful retry. | gate | Ticket 16 | Proposed regression gate | Assign to owner for final gate design. |
 
 ### Rank 2: N2
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-02-001 | 843-845 | Second, merge bind switches, keyed removals, and extension invalidations into one frozen frontier. | ranked requirement | Ticket 09 | Proposed correction plan | Assign to owner for invalidation design. |
-| PLN-02-002 | 845 | Discard staged binds whose owners enter that frontier. | ranked requirement | Ticket 09 | Proposed correction plan | Assign to owner for invalidation design. |
+| PLN-02-001 | 843-845 | Second, merge bind switches, keyed removals, and extension invalidations into one frozen frontier. | ranked requirement | Ticket 09 | Proposed correction plan | Accept through the sealed commit plan. |
+| PLN-02-002 | 845 | Discard staged binds whose owners enter that frontier. | ranked requirement | Ticket 09 | Proposed correction plan | Accept before the plan seals. |
 | PLN-02-003 | 847 | Rank 2 depends on N1's reliable phase and rollback boundary. | dependency | Ticket 17 | Proposed route | Assign to owner for final route. |
-| PLN-02-004 | 848 | Rank 2 affects keyed planning, bind planning, commit plans, invalidation, and Signal Map tests. | blast radius | Ticket 09 | Preliminary impact estimate | Retain for planning. |
+| PLN-02-004 | 848 | Rank 2 affects keyed planning, bind planning, commit plans, invalidation, and Signal Map tests. | blast radius | Ticket 09 | Preliminary impact estimate | Retain. |
 | PLN-02-005 | 849 | The gate combines keyed removal, nested bind switching, and bounded retained-node count. | gate | Ticket 16 | Proposed regression gate | Assign to owner for final gate design. |
 
 ### Rank 3: N5
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-03-001 | 851-853 | Third, make rollback callable only before commit. | ranked requirement | Ticket 09 | Proposed correction plan | Assign to owner for phase-model design. |
-| PLN-03-002 | 853 | Post-commit failures must never invoke rollback. | ranked requirement | Ticket 09 | Proposed correction plan | Assign to owner for phase-model design. |
+| PLN-03-001 | 851-853 | Third, make rollback callable only before commit. | ranked requirement | Ticket 09 | Proposed correction plan | Accept. Rollback remains private to `Planning`. |
+| PLN-03-002 | 853 | Post-commit failures must never invoke rollback. | ranked requirement | Ticket 09 | Proposed correction plan | Accept. Delivery has no rollback path. |
 | PLN-03-003 | 855 | Rank 3 depends on the N1 and N2 designs. | dependency | Ticket 17 | Proposed route | Assign to owner for final route. |
-| PLN-03-004 | 856 | Rank 3 affects private pass orchestration and fault injection. | blast radius | Ticket 09 | Preliminary impact estimate | Retain for planning. |
+| PLN-03-004 | 856 | Rank 3 affects private pass orchestration and fault injection. | blast radius | Ticket 09 | Preliminary impact estimate | Retain. |
 
 ### Rank 4: F13
 
@@ -759,9 +759,9 @@ value for a library interface.
 | REC-006 | 959 | Core changes determine stable laws for extensions, folds, cutoffs, and cleanup. | dependency claim | Ticket 17 | Architecture synthesis | Assign to owner for final route. |
 | REC-007 | 961 | Eta Signal is ambitious and often carefully engineered. | assessment | Ticket 17 | Review synthesis | Retain as context, not evidence of correctness. |
 | REC-008 | 961 | Its correctness argument is spread across too many phase adapters. | architecture verdict | Ticket 15 | Static architecture synthesis | Assign to owner for module design. |
-| REC-009 | 961 | The immediate design needs one explicit immutable commit plan. | binding recommendation | Ticket 09 | Review synthesis | Assign to owner for transaction design. |
-| REC-010 | 961 | The immediate design needs one closed invalidation frontier. | binding recommendation | Ticket 09 | Review synthesis | Assign to owner for invalidation design. |
-| REC-011 | 961 | The immediate design needs an atomic phase machine. | binding recommendation | Ticket 09 | Review synthesis | Assign to owner for phase-model design. |
+| REC-009 | 961 | The immediate design needs one explicit immutable commit plan. | binding recommendation | Ticket 09 | Review synthesis | Accept as one sealed declarative mutation tape. |
+| REC-010 | 961 | The immediate design needs one closed invalidation frontier. | binding recommendation | Ticket 09 | Review synthesis | Accept as the operation-partition authority. |
+| REC-011 | 961 | The immediate design needs an atomic phase machine. | binding recommendation | Ticket 09 | Review synthesis | Accept as one `Idle`, `Planning`, or `Delivering` field. |
 | REC-012 | 961 | The immediate design needs measurable dirty-driven work. | binding recommendation | Ticket 10 | Review synthesis | Assign to owner for scheduler design. |
 | REC-013 | 961 | All other work is downstream from those core design results. | sequencing | Ticket 17 | Review synthesis | Assign to owner for final route. |
 

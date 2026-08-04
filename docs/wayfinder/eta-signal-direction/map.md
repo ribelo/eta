@@ -127,6 +127,14 @@ main Dune workspace.
   stream domain. Tickets 09-14 own the final contracts. No inspectable
   SecondAgent or production Eta Crux implementation is present in repository
   refs or worktrees.
+- [Transaction and invalidation model](issues/09-transaction-and-invalidation-model.md)
+  — One finalizer-owned atomic-pass effect owns phase and exception-region
+  orchestration. A commit-plan module owns total publication, and one cleanup
+  ledger owns hook lifecycle and failure aggregation. A single phase variant and
+  one physical transaction identity close N1.
+  One sealed plan freezes the invalidation frontier and partitions every dynamic
+  operation, which closes N2. A declarative mutation tape and direct transition
+  to delivery separate rollback from all post-commit failures, which closes N5.
 
 ## Not yet specified
 
