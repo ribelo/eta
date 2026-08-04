@@ -14,6 +14,11 @@ evidence, desired contract, design owner, implementation dependency, migration
 effect, and verification gate. Apply the same format to each accepted adjacent
 gap.
 
+Reconcile the complete claim census from
+[Complete repository evidence](01-complete-repository-evidence.md). Every census
+row must have its final disposition or a context pointer to the ticket that owns
+that disposition. No row can remain unowned or unresolved.
+
 Order implementation by invariant dependency, severity, reachability,
 likelihood, and design leverage. The answer must leave no design decision for
 implementation.

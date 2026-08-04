@@ -43,6 +43,12 @@ reasoning for architecture and interface claims. When implementation, tests,
 and prose disagree, treat each artifact as evidence and decide the desired
 contract from first principles.
 
+[Complete repository evidence](issues/01-complete-repository-evidence.md) owns
+review traceability. Its claim census must cover every substantive claim in all
+seven review sections. Each row must have an exact source span, one owner, and a
+final disposition. A ticket answer must cite each census row that it resolves.
+This map is not complete while a census row is unowned or unresolved.
+
 Use `$prototype` for prototype tickets and `$research` for research tickets.
 Use `$batch-grill-me`, `$domain-modeling`, and `$codebase-design` for grilling
 tickets. Use `$simple-english` for written artifacts. Keep durable research in
