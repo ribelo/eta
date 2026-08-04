@@ -131,6 +131,21 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
       let pending = Signal.Extension.keyed_pending
       let set_preflight = Signal.Extension.set_keyed_preflight
       let set_atomic_fault = Signal.Extension.set_atomic_pass_fault
+      let signal_token = Signal.Extension.signal_token
+      let signal_valid_token = Signal.Extension.signal_valid_token
+      let signal_demand_token = Signal.Extension.signal_demand_token
+
+      let dependent_edge_count_token =
+        Signal.Extension.dependent_edge_count_token
+
+      let topology_counter_snapshot =
+        Signal.Extension.topology_counter_snapshot
+
+      let reset_counters = Signal.Extension.reset_counters
+
+      let has_dependent_edge_token =
+        Signal.Extension.has_dependent_edge_token
+
       let set_event_recorder = Signal.Extension.set_keyed_event_recorder
       let set_counter = Signal.Extension.set_keyed_counter
     end

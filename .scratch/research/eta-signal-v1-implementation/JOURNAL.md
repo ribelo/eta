@@ -292,3 +292,32 @@ nix develop -c dune runtest test/signal test/signal_map --force
 ```sh
 nix develop -c dune runtest test/signal test/signal_map --force
 ```
+
+## 2026-08-05 - Slice 4: first N2 frontier regression
+
+- Added graph-branded topology probes through the kernel `Extension` seam and
+  re-exported them in Signal Map `Testing`. Tests can now inspect signal
+  validity, demand, dependent counts, and exact child-to-parent edges without
+  DOT text or unsafe object casts. Counter reset now covers topology and demand
+  counters as well as the existing keyed counters.
+- Closed the first mixed keyed-bind frontier hole: prospective invalidation
+  now discards every staged bind whose owner is in the combined bind/keyed
+  frontier. Discard rolls back the staged switch, invalidates the provisional
+  branch scope, clears the bind and owner staged cells, and moves disposal
+  hooks into the cleanup batch before any keyed topology commits.
+- Fixed an edge-removal precedence bug exposed by the new topology counters:
+  the dynamic-index `match` previously captured the slot reset and removal
+  counter update into its fallback arm. Removing an indexed dynamic edge now
+  always removes the index entry, resets both edge slots, and records the
+  indexed removal.
+- Added `test_keyed_removal_discards_nested_bind_switch_to_top_scope`, the
+  first exact N2 regression from issue 16. One stabilization switches a nested
+  bind toward a top-scope signal and removes its keyed owner. The test proves
+  the switched bind is invalid and undemanded, the discarded branch never
+  attaches to the top-scope signal, no dynamic edge is inserted, and exactly
+  four committed edges are removed.
+- Verified with:
+
+```sh
+nix develop -c dune runtest test/signal test/signal_map --force
+```

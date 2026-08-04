@@ -879,6 +879,10 @@ let collect_reachable_ids t lane ops ~roots =
 let remember_staged_bind t _lane staging bind =
   State.stage_bind t.state staging bind
 
+let iter_staged_binds t _lane staging ~f =
+  State.validate_staging t.state staging;
+  List.iter f (State.staged_binds t.state)
+
 let stage_bind_switch t lane staging bind snapshot ~source_value ~inner ~scope =
   Eta_signal_bind.stage_transaction_switch
     (Eta_signal_atomic_pass.active_transaction t.atomic_pass)

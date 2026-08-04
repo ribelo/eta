@@ -143,6 +143,65 @@ let test_keyed_mapi_atomic_fault_rolls_back_topology () =
     [ (2, 20) ] (run_ok runtime (S.Observer.read observer) |> M.to_list);
   run_ok runtime (S.Observer.dispose observer)
 
+let test_keyed_removal_discards_nested_bind_switch_to_top_scope () =
+  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  let left_source = S.Var.create 1 in
+  let right_source = S.Var.create 100 in
+  let switch_source = S.Var.create false in
+  let input = S.Var.create (M.set 1 10 M.empty) in
+  let left = S.Var.watch left_source in
+  let right = S.Var.watch right_source in
+  let nested_bind = ref None in
+  let output =
+    K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data:_ ->
+        let branch =
+          S.bind (S.Var.watch switch_source) (fun use_right ->
+              if use_right then right else left)
+        in
+        nested_bind := Some branch;
+        S.map Fun.id branch)
+  in
+  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  run_ok runtime S.stabilize;
+  let branch =
+    match !nested_bind with
+    | Some branch -> branch
+    | None -> Alcotest.fail "missing nested bind"
+  in
+  let branch_token = T.signal_token branch in
+  Alcotest.(check bool) "nested bind starts valid" true
+    (T.signal_valid_token branch_token);
+  Alcotest.(check int) "left dependent count before removal" 1
+    (T.dependent_edge_count_token (T.signal_token left));
+  Alcotest.(check bool) "left owns committed branch edge" true
+    (T.has_dependent_edge_token ~child:(T.signal_token left) ~parent:branch);
+  Alcotest.(check bool) "right has no branch edge" false
+    (T.has_dependent_edge_token ~child:(T.signal_token right) ~parent:branch);
+  T.reset_counters ();
+  run_ok runtime (S.Var.set switch_source true);
+  run_ok runtime (S.Var.set input M.empty);
+  run_ok runtime S.stabilize;
+  Alcotest.(check (list (pair int int))) "keyed output removed" []
+    (run_ok runtime (S.Observer.read observer) |> M.to_list);
+  Alcotest.(check bool) "nested bind invalidated" false
+    (T.signal_valid_token branch_token);
+  Alcotest.(check int) "nested bind has no demand" 0
+    (T.signal_demand_token branch_token);
+  Alcotest.(check bool) "left edge removed" false
+    (T.has_dependent_edge_token ~child:(T.signal_token left) ~parent:branch);
+  Alcotest.(check bool) "discarded switch never attached right" false
+    (T.has_dependent_edge_token ~child:(T.signal_token right) ~parent:branch);
+  Alcotest.(check int) "left dependents empty" 0
+    (T.dependent_edge_count_token (T.signal_token left));
+  Alcotest.(check int) "right dependents empty" 0
+    (T.dependent_edge_count_token (T.signal_token right));
+  let topology = T.topology_counter_snapshot () in
+  Alcotest.(check int) "discarded switch inserts no dynamic edge" 0
+    topology.Eta_signal_topology.dynamic_inserts;
+  Alcotest.(check int) "removal detaches exactly four committed edges" 4
+    topology.Eta_signal_topology.indexed_removals;
+  run_ok runtime (S.Observer.dispose observer)
+
 let () =
   Alcotest.run "eta_signal_map_keyed_private"
     [
@@ -155,5 +214,8 @@ let () =
             test_keyed_mapi_preflight_failure_preserves_committed_snapshot;
           Alcotest.test_case "keyed_mapi_atomic_fault_rolls_back_topology"
             `Quick test_keyed_mapi_atomic_fault_rolls_back_topology;
+          Alcotest.test_case
+            "keyed_removal_discards_nested_bind_switch_to_top_scope" `Quick
+            test_keyed_removal_discards_nested_bind_switch_to_top_scope;
         ] );
     ]

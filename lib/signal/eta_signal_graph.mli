@@ -333,6 +333,13 @@ val collect_reachable_bind_nodes :
 (** Traverse valid reachable nodes from [roots], deduplicate by node id, and
     return bind nodes selected by the caller's concrete node representation. *)
 
+val iter_staged_binds :
+  (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
+  staging ->
+  f:('bind -> unit) ->
+  unit
+
 val stage_bind_switch :
   (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->

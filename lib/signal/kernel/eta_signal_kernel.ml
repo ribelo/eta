@@ -1073,11 +1073,11 @@ module Make (Observer_error : Observer_error) () = struct
         moved.child_slot <- child_slot;
         Topology.note_slot_repair topology_counters)
       moved_child;
-    if edge.dynamic then
+    if edge.dynamic then (
       match Hashtbl.find_opt parent.dependency_index (signal_id_int child.id) with
       | Some indexed when indexed == edge ->
           Hashtbl.remove parent.dependency_index (signal_id_int child.id)
-      | None | Some _ -> ();
+      | None | Some _ -> ());
     edge.parent_slot <- -1;
     edge.child_slot <- -1;
     Topology.note_indexed_removal topology_counters
@@ -1740,6 +1740,24 @@ module Make (Observer_error : Observer_error) () = struct
     in
     { invalidated_ids; invalidated_nodes = !invalidated_nodes }
 
+  let discard_invalid_staged_binds lane staging invalidations =
+    let hooks = ref [] in
+    Graph.iter_staged_binds graph lane staging ~f:(fun (B bind) ->
+        match bind.owner with
+        | Some owner when staged_bind_invalidates invalidations (P owner) ->
+            let staged = bind_staged_snapshot lane staging bind in
+            (match
+               Bind.rollback_staged_switch ~staged
+                 (bind_switch_lifecycle lane)
+             with
+            | Ok bind_hooks -> hooks := List.rev_append bind_hooks !hooks
+            | Error `Invalid_scope -> ());
+            Graph.discard_cell graph lane staging bind.snapshot;
+            Graph.discard_cell graph lane staging owner.snapshot
+        | Some _ | None -> ());
+    if !hooks <> [] then
+      Graph.remember_pure_disposal_hooks graph lane staging (List.rev !hooks)
+
   type packed_keyed =
     | Packed_keyed :
         'output_map signal
@@ -1967,6 +1985,7 @@ module Make (Observer_error : Observer_error) () = struct
         let active_keyed, excluded_keyed =
           partition_keyed_plans invalidations keyed_plans
         in
+        discard_invalid_staged_binds lane staging invalidations;
         let excluded_hooks =
           List.concat_map (discard_keyed_plan lane staging) excluded_keyed
         in
@@ -3999,6 +4018,7 @@ module Make (Observer_error : Observer_error) () = struct
   module Extension = struct
     type nonrec 'a signal = 'a signal
     type dirty_listener = unit -> unit
+    type token = Obj.t
 
     let scheduler_empty () = Scheduler.is_empty scheduler
     let actionable_work_count () = Work.total work
@@ -4013,9 +4033,39 @@ module Make (Observer_error : Observer_error) () = struct
     let set_atomic_pass_fault fault =
       Atomic_pass.set_fault (Graph.atomic_pass_fault_injector graph) fault
 
+    let signal_token (type a) (signal : a signal) : token = Obj.repr signal
+
+    let packed_signal_of_token token : packed_signal = P (Obj.obj token)
+
+    let signal_valid_token token =
+      let (P signal) = packed_signal_of_token token in
+      signal_valid signal
+
+    let signal_demand_token token =
+      let (P signal) = packed_signal_of_token token in
+      signal.demand
+
+    let dependent_edge_count_token token =
+      let (P signal) = packed_signal_of_token token in
+      Topology.length signal.dependents
+
+    let dependent_parent_tokens_token token =
+      let (P signal) = packed_signal_of_token token in
+      Topology.fold signal.dependents ~init:[] ~f:(fun parents edge ->
+          let (P parent) = edge.parent in
+          Obj.repr parent :: parents)
+
+    let has_dependent_edge_token ~child ~parent =
+      let parent = signal_token parent in
+      List.exists
+        (fun candidate -> candidate == parent)
+        (dependent_parent_tokens_token child)
+
     let reset_counters () =
       Atomic_pass.reset_counters (Graph.atomic_pass_counters graph);
+      Demand.reset_counters demand_counters;
       Scheduler.reset_counters scheduler_counters;
+      Topology.reset_counters topology_counters;
       Work.reset_counters work_counters
 
     let atomic_pass_counter_snapshot () =
@@ -4023,6 +4073,9 @@ module Make (Observer_error : Observer_error) () = struct
 
     let scheduler_counter_snapshot () =
       Scheduler.counter_snapshot scheduler_counters
+
+    let topology_counter_snapshot () =
+      Topology.counter_snapshot topology_counters
 
     let work_counter_snapshot () = Work.counter_snapshot work_counters
 
@@ -4039,8 +4092,6 @@ module Make (Observer_error : Observer_error) () = struct
 
     type nonrec ('key, 'value, 'map) keyed_diff_ops =
       ('key, 'value, 'map) keyed_diff_ops
-
-    type token = Obj.t
 
     type keyed_entry_identity = {
       keyed_key_token : token;
