@@ -57,7 +57,10 @@ main Dune workspace.
 
 ## Decisions so far
 
-<!-- Add one context pointer for each resolved ticket. -->
+- [Complete repository evidence](issues/01-complete-repository-evidence.md) —
+  The packed, probe, and evidence-baseline Signal trees are identical. F3 is
+  explicit but incomplete debt. Five F6 functors have test-only consumers. The
+  claim census gives every review claim one owner.
 
 ## Not yet specified
 
