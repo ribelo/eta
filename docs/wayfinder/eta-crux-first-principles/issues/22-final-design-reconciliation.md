@@ -1,7 +1,7 @@
 # Final design and legacy reconciliation
 
 Type: task
-Status: open
+Status: resolved
 Blocked by: 15, 20, 21
 
 ## Question
@@ -22,3 +22,26 @@ The work must:
 - leave no provisional path that contradicts the final design.
 
 This task changes design documentation only. It does not implement Eta Crux.
+
+## Answer
+
+The authoritative V1 design is
+[`docs/design/eta-crux-v1/`](../../../design/eta-crux-v1/README.md).
+It contains four linked contracts:
+
+- the package and architecture index.
+- the complete public OCaml API.
+- the exact serialized wire protocol.
+- one semantic-law registry with one named implementation gate for each law.
+- the public test surface, telemetry contract, and performance gates.
+
+The old `docs/requirements/eta-crux/` bundle and
+`docs/wayfinder/eta-crux/` map were removed. They described the superseded
+command, subscription, fragment, output-tree, and backend designs.
+
+`CONTEXT.md` now removes those stale terms. It defines `Source` and `Root output`
+for the final design.
+
+The first-principles map and its resolved tickets remain as design provenance.
+They are not a second contract. Eta Signal and Eta supervision keep their own
+authoritative package contracts.

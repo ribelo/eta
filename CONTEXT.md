@@ -48,36 +48,20 @@ message.
 The application value owned by one cell. State is the general term for runtime
 state or aggregate application state.
 
-## Scheduled command
-
-Deferred command work together with its ownership, ordering, and replacement
-metadata.
-
-## Command work
-
-A force-total Eta effect that resolves to one action.
-
-## Subscription
-
-A state-derived long-lived source whose items become actions.
-
-## Fragment
-
-One typed application output exposed at an address.
-
-## Output tree
-
-The aggregate of all live fragments in an application instance.
-
-## Startup input
-
-The reserved name for host-supplied startup data. Its type and lifecycle are not
-part of this glossary.
-
 ## Endpoint
 
 A typed local capability for enqueueing actions to one live state-machine
 incarnation.
+
+## Source
+
+A structurally owned producer whose items and terminal outcome become actions.
+Its specification defines producer continuity.
+
+## Root output
+
+The complete typed application value that one successful advancement commits.
+It is the only application observation boundary.
 
 ## Ingress queue
 

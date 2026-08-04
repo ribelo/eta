@@ -16,10 +16,8 @@ The package name `eta_crux` is fixed. Its design is not fixed. Use **Rust Crux**
 for the Rust framework and **Eta Crux** for this project. Rust Crux, Elm,
 Bonsai, and Incremental are references, not compatibility targets.
 
-The existing material is provisional input, not settled direction:
+The original material was provisional input:
 
-- `docs/requirements/eta-crux/`
-- `docs/wayfinder/eta-crux/`
 - `docs/prds/0002-eta-signal-frp.md`
 - `docs/design/eta_signal-kernel-contract.md`
 - `/home/ribelo/projects/ribelo/sliml/docs/`
@@ -74,6 +72,7 @@ deliverable. Implementation is not part of this map.
 - [Deterministic testing contract](issues/12-testing-contract.md) — Use a thin scoped handle over production Root and Driver, real Eta effects with controlled dependencies, typed shell-request control, and step-local exact observations.
 - [Operational introspection boundary](issues/20-operational-introspection.md) — Emit a small fixed Eta telemetry contract around production driver operations. Retain no history, payloads, graph inspection, time travel, or replay.
 - [V1 performance gates](issues/21-performance-gates.md) — Use fresh same-environment revision comparisons, deterministic contract gates, and the existing Eta benchmark runner without checked-in numeric baselines.
+- [Final design and legacy reconciliation](issues/22-final-design-reconciliation.md) — Make `docs/design/eta-crux-v1/` authoritative, remove the stale bundles, and register every V1 law with one implementation gate.
 
 ## Not yet specified
 
