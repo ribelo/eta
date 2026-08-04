@@ -155,7 +155,8 @@ module Eta_crux_test : sig
 
     val poll :
       ('output, 'incoming) t ->
-      ('output Driver.event option, operation_error) result
+      (('output Driver.event option, operation_error) result, Eta_crux.never)
+        Eta.Effect.t
 
     val await :
       ('output, 'incoming) t ->
@@ -164,13 +165,15 @@ module Eta_crux_test : sig
     val delivery_delivered :
       ('output, 'incoming) t ->
       'output Driver.Delivery.t ->
-      (unit, Driver.Delivery.completion_error) result
+      ((unit, Driver.Delivery.completion_error) result, Eta_crux.never)
+        Eta.Effect.t
 
     val delivery_failed :
       ('output, 'incoming) t ->
       'output Driver.Delivery.t ->
       Failure.Packed_cause.t ->
-      (unit, Driver.Delivery.completion_error) result
+      ((unit, Driver.Delivery.completion_error) result, Eta_crux.never)
+        Eta.Effect.t
 
     val request_stop : ('output, 'incoming) t -> unit
   end
@@ -183,6 +186,10 @@ enters the root failure protocol instead of the body effect's typed error.
 `poll`, `await`, `delivery_delivered`, `delivery_failed`, and `request_stop` are
 the low-level forwarding surface. Callers use these operations instead of the
 aliased root while the handle owns it.
+
+The production telemetry contract makes `poll`, `delivery_delivered`, and
+`delivery_failed` typed-infallible Eta effects. The test handle forwards those
+effects without adding an observer path.
 
 `Incoming.none` uses the uninhabited `Eta_crux.never` type. It avoids an
 optional weak type variable for roots that accept no test input.
