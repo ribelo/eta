@@ -126,6 +126,15 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
 
       type atomic_fault = Signal.Extension.atomic_fault
 
+      type work_class = Signal.Extension.work_class =
+        | Sources
+        | Scheduler
+        | Observer_delivery
+        | Timer_reconciliation
+        | Cleanup
+
+      let work_count = Signal.Extension.work_count
+
       let entry_identity = Signal.Extension.keyed_entry_identity
       let scope_valid = Signal.Extension.keyed_scope_valid
       let pending = Signal.Extension.keyed_pending

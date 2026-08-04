@@ -325,6 +325,65 @@ let test_keyed_removal_clears_nested_bind_pending_state () =
   Alcotest.(check bool) "keyed plan cleared" false (T.pending output);
   run_ok runtime (S.Observer.dispose observer)
 
+let test_keyed_removal_nested_bind_topology_survives_callback_defect () =
+  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  let switch_source = S.Var.create false in
+  let input = S.Var.create (M.set 1 10 M.empty) in
+  let left = S.map (fun use -> if use then 1 else 0) (S.Var.watch switch_source)
+  in
+  let right = S.map (fun use -> if use then 3 else 2) (S.Var.watch switch_source)
+  in
+  let nested_bind = ref None in
+  let output =
+    K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data:_ ->
+        let branch =
+          S.bind (S.Var.watch switch_source) (fun use_right ->
+              if use_right then right else left)
+        in
+        nested_bind := Some branch;
+        branch)
+  in
+  let fail_delivery = ref false in
+  let observer =
+    run_ok runtime
+      (S.Observer.observe output (fun _ ->
+           if !fail_delivery then failwith "delivery defect" else E.unit))
+  in
+  run_ok runtime S.stabilize;
+  let branch = Option.get !nested_bind in
+  fail_delivery := true;
+  run_ok runtime (S.Var.set switch_source true);
+  run_ok runtime (S.Var.set input M.empty);
+  expect_defect "observer delivery defect"
+    (run_exit runtime S.stabilize);
+  Alcotest.(check bool) "nested bind remains retired after defect" false
+    (T.signal_valid_token (T.signal_token branch));
+  Alcotest.(check bool) "discarded branch still has no right edge" false
+    (T.has_dependent_edge_token ~child:(T.signal_token right) ~parent:branch);
+  Alcotest.(check int) "right dependents remain empty after defect" 0
+    (T.dependent_edge_count_token (T.signal_token right));
+  Alcotest.(check bool) "keyed plan remains cleared after defect" false
+    (T.pending output);
+  Alcotest.(check int) "source work drained after defect" 0
+    (T.work_count T.Sources);
+  Alcotest.(check int) "scheduler work drained after defect" 0
+    (T.work_count T.Scheduler);
+  Alcotest.(check int) "cleanup work drained after defect" 0
+    (T.work_count T.Cleanup);
+  Alcotest.(check int) "only observer delivery remains pending" 1
+    (T.work_count T.Observer_delivery);
+  fail_delivery := false;
+  run_ok runtime S.stabilize;
+  Alcotest.(check (list (pair int int))) "retry observes removed output" []
+    (run_ok runtime (S.Observer.read observer) |> M.to_list);
+  Alcotest.(check int) "delivery retry releases work" 0
+    (T.work_count T.Observer_delivery);
+  Alcotest.(check bool) "nested bind remains retired after retry" false
+    (T.signal_valid_token (T.signal_token branch));
+  Alcotest.(check int) "right dependents remain empty after retry" 0
+    (T.dependent_edge_count_token (T.signal_token right));
+  run_ok runtime (S.Observer.dispose observer)
+
 let () =
   Alcotest.run "eta_signal_map_keyed_private"
     [
@@ -346,5 +405,9 @@ let () =
           Alcotest.test_case
             "keyed_removal_clears_nested_bind_pending_state" `Quick
             test_keyed_removal_clears_nested_bind_pending_state;
+          Alcotest.test_case
+            "keyed_removal_nested_bind_topology_survives_callback_defect"
+            `Quick
+            test_keyed_removal_nested_bind_topology_survives_callback_defect;
         ] );
     ]

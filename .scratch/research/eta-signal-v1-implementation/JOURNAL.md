@@ -358,3 +358,22 @@ nix develop -c dune runtest test/signal test/signal_map --force
 ```sh
 nix develop -c dune runtest test/signal test/signal_map --force
 ```
+
+## 2026-08-05 - Slice 4: callback-defect topology regression
+
+- Exposed per-class work-ledger counts through the graph-branded Signal Map
+  testing seam. Private regressions can now prove which work classes remain
+  pending without inspecting scheduler or observer internals directly.
+- Added `test_keyed_removal_nested_bind_topology_survives_callback_defect`.
+  The keyed removal and nested bind switch commit, then observer delivery
+  raises a defect. The retired bind remains invalid, the discarded top-scope
+  edge is not restored, source/scheduler/cleanup work is drained, and exactly
+  one observer-delivery item remains pending. Clearing the defect retries the
+  delivery and releases the final work item without reviving retired topology.
+- This is the fourth exact N2 regression from issue 16. Only the bounded
+  add/remove/switch churn case remains.
+- Verified with:
+
+```sh
+nix develop -c dune runtest test/signal test/signal_map --force
+```

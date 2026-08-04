@@ -4047,6 +4047,15 @@ module Make (Observer_error : Observer_error) () = struct
 
     let cleanup_work_count () = Work.count work Work.Cleanup
 
+    type nonrec work_class = Work.class_ =
+      | Sources
+      | Scheduler
+      | Observer_delivery
+      | Timer_reconciliation
+      | Cleanup
+
+    let work_count class_ = Work.count work class_
+
     type atomic_fault = Atomic_pass.fault
 
     let set_atomic_pass_fault fault =
