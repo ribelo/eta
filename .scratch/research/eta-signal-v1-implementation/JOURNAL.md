@@ -321,3 +321,25 @@ nix develop -c dune runtest test/signal test/signal_map --force
 ```sh
 nix develop -c dune runtest test/signal test/signal_map --force
 ```
+
+## 2026-08-05 - Slice 4: discard closes through provisional scopes
+
+- Dynamic discard now runs to a fixed point. A retired staged bind still rolls
+  back its provisional branch, but that rollback can invalidate bind or keyed
+  owners created inside the branch. The discard loop now rechecks staged bind
+  and pending keyed owners after each retirement and clears every operation
+  whose owner became invalid before preflight continues.
+- Retired keyed plans are discarded through the same path. Their staged owner,
+  input, child, and source cells are cleared and provisional scopes are
+  invalidated before the surviving keyed set is preflighted.
+- Added `test_keyed_removal_clears_nested_bind_pending_state`. The keyed child
+  is removed in the same stabilization that stages an outer bind and a second
+  bind created inside the outer provisional branch. The regression proves both
+  binds are invalid and undemanded, neither staged switch inserts a dynamic
+  edge, top-scope dependencies retain no invalid dependents, and the keyed
+  pending plan is cleared.
+- Verified with:
+
+```sh
+nix develop -c dune runtest test/signal test/signal_map --force
+```

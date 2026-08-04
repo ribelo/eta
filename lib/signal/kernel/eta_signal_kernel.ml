@@ -1742,21 +1742,27 @@ module Make (Observer_error : Observer_error) () = struct
 
   let discard_invalid_staged_binds lane staging invalidations =
     let hooks = ref [] in
+    let discarded = ref false in
     Graph.iter_staged_binds graph lane staging ~f:(fun (B bind) ->
         match bind.owner with
-        | Some owner when staged_bind_invalidates invalidations (P owner) ->
+        | Some owner
+          when (not (signal_valid owner))
+               || staged_bind_invalidates invalidations (P owner) ->
             let staged = bind_staged_snapshot lane staging bind in
-            (match
-               Bind.rollback_staged_switch ~staged
-                 (bind_switch_lifecycle lane)
-             with
-            | Ok bind_hooks -> hooks := List.rev_append bind_hooks !hooks
-            | Error `Invalid_scope -> ());
-            Graph.discard_cell graph lane staging bind.snapshot;
-            Graph.discard_cell graph lane staging owner.snapshot
+            if Option.is_some staged then (
+              discarded := true;
+              (match
+                 Bind.rollback_staged_switch ~staged
+                   (bind_switch_lifecycle lane)
+               with
+              | Ok bind_hooks -> hooks := List.rev_append bind_hooks !hooks
+              | Error `Invalid_scope -> ());
+              Graph.discard_cell graph lane staging bind.snapshot;
+              Graph.discard_cell graph lane staging owner.snapshot)
         | Some _ | None -> ());
     if !hooks <> [] then
-      Graph.remember_pure_disposal_hooks graph lane staging (List.rev !hooks)
+      Graph.remember_pure_disposal_hooks graph lane staging (List.rev !hooks);
+    !discarded
 
   type packed_keyed =
     | Packed_keyed :
@@ -1829,11 +1835,31 @@ module Make (Observer_error : Observer_error) () = struct
       plans;
     { invalidations with invalidated_nodes = !invalidated_nodes }
 
-  let partition_keyed_plans invalidations plans =
-    List.partition
-      (fun packed ->
-        not (staged_bind_invalidates invalidations (packed_keyed_owner packed)))
-      plans
+  let discard_retired_keyed_plans lane staging invalidations =
+    let retired, _active =
+      List.partition
+        (fun packed ->
+          let (P owner) = packed_keyed_owner packed in
+          (not (signal_valid owner))
+          || staged_bind_invalidates invalidations (packed_keyed_owner packed))
+        (pending_keyed_nodes lane)
+    in
+    let hooks =
+      List.concat_map (discard_keyed_plan lane staging) retired
+    in
+    if hooks <> [] then
+      Graph.remember_pure_disposal_hooks graph lane staging hooks;
+    retired <> []
+
+  let rec discard_invalid_dynamic_work lane staging invalidations =
+    let discarded_binds =
+      discard_invalid_staged_binds lane staging invalidations
+    in
+    let discarded_keyed =
+      discard_retired_keyed_plans lane staging invalidations
+    in
+    if discarded_binds || discarded_keyed then
+      discard_invalid_dynamic_work lane staging invalidations
 
   let preflight_keyed_plan (Packed_keyed (owner, keyed)) =
     match keyed.keyed_pending with
@@ -1982,15 +2008,8 @@ module Make (Observer_error : Observer_error) () = struct
           collect_staged_bind_invalidations lane staging
           |> extend_keyed_invalidations keyed_plans
         in
-        let active_keyed, excluded_keyed =
-          partition_keyed_plans invalidations keyed_plans
-        in
-        discard_invalid_staged_binds lane staging invalidations;
-        let excluded_hooks =
-          List.concat_map (discard_keyed_plan lane staging) excluded_keyed
-        in
-        if excluded_hooks <> [] then
-          Graph.remember_pure_disposal_hooks graph lane staging excluded_hooks;
+        discard_invalid_dynamic_work lane staging invalidations;
+        let active_keyed = pending_keyed_nodes lane in
         List.iter preflight_keyed_plan active_keyed;
         let post_commit_necessary =
           collect_post_commit_necessary_timers lane invalidations

@@ -202,6 +202,76 @@ let test_keyed_removal_discards_nested_bind_switch_to_top_scope () =
     topology.Eta_signal_topology.indexed_removals;
   run_ok runtime (S.Observer.dispose observer)
 
+let test_keyed_removal_clears_nested_bind_pending_state () =
+  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  let outer_source = S.Var.create false in
+  let inner_source = S.Var.create false in
+  let input = S.Var.create (M.set 1 10 M.empty) in
+  let left =
+    S.map (fun use -> if use then 1 else 0) (S.Var.watch outer_source)
+  in
+  let right =
+    S.map (fun use -> if use then 3 else 2) (S.Var.watch inner_source)
+  in
+  let outer_bind = ref None in
+  let inner_bind = ref None in
+  let output =
+    K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data:_ ->
+        let outer =
+          S.bind (S.Var.watch outer_source) (fun use_inner ->
+              if use_inner then
+                let inner =
+                  S.bind (S.Var.watch inner_source) (fun use_right ->
+                      if use_right then right else left)
+                in
+                inner_bind := Some inner;
+                inner
+              else left)
+        in
+        outer_bind := Some outer;
+        outer)
+  in
+  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  run_ok runtime S.stabilize;
+  let outer = Option.get !outer_bind in
+  let outer_token = T.signal_token outer in
+  Alcotest.(check bool) "outer bind starts valid" true
+    (T.signal_valid_token outer_token);
+  Alcotest.(check int) "right starts without dependents" 0
+    (T.dependent_edge_count_token (T.signal_token right));
+  T.reset_counters ();
+  run_ok runtime (S.Var.set outer_source true);
+  run_ok runtime (S.Var.set inner_source true);
+  run_ok runtime (S.Var.set input M.empty);
+  run_ok runtime S.stabilize;
+  let inner =
+    match !inner_bind with
+    | Some inner -> inner
+    | None -> Alcotest.fail "missing provisional nested bind"
+  in
+  let inner_token = T.signal_token inner in
+  Alcotest.(check (list (pair int int))) "keyed output removed" []
+    (run_ok runtime (S.Observer.read observer) |> M.to_list);
+  Alcotest.(check bool) "outer bind invalidated" false
+    (T.signal_valid_token outer_token);
+  Alcotest.(check bool) "provisional nested bind invalidated" false
+    (T.signal_valid_token inner_token);
+  Alcotest.(check bool) "outer has no demand" false
+    (T.signal_demand_token (T.signal_token outer) > 0);
+  Alcotest.(check bool) "inner has no demand" false
+    (T.signal_demand_token (T.signal_token inner) > 0);
+  Alcotest.(check bool) "inner never attached to right" false
+    (T.has_dependent_edge_token ~child:(T.signal_token right) ~parent:inner);
+  Alcotest.(check int) "right dependents stay empty" 0
+    (T.dependent_edge_count_token (T.signal_token right));
+  Alcotest.(check int) "left dependents stay empty" 0
+    (T.dependent_edge_count_token (T.signal_token left));
+  let topology = T.topology_counter_snapshot () in
+  Alcotest.(check int) "retired nested switches insert no dynamic edge" 0
+    topology.Eta_signal_topology.dynamic_inserts;
+  Alcotest.(check bool) "keyed plan cleared" false (T.pending output);
+  run_ok runtime (S.Observer.dispose observer)
+
 let () =
   Alcotest.run "eta_signal_map_keyed_private"
     [
@@ -217,5 +287,8 @@ let () =
           Alcotest.test_case
             "keyed_removal_discards_nested_bind_switch_to_top_scope" `Quick
             test_keyed_removal_discards_nested_bind_switch_to_top_scope;
+          Alcotest.test_case
+            "keyed_removal_clears_nested_bind_pending_state" `Quick
+            test_keyed_removal_clears_nested_bind_pending_state;
         ] );
     ]
