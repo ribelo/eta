@@ -17,3 +17,5 @@ operation.
 The result must resolve F1, N4, and the engine part of F13. It must preserve the
 transaction and invalidation model from
 [Transaction and invalidation model](09-transaction-and-invalidation-model.md).
+It must distinguish whole-node invalidation from repeated edge detachment while
+an owner stays live.

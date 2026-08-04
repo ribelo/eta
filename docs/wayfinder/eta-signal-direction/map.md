@@ -97,6 +97,14 @@ main Dune workspace.
   transitive and registration-independent. Identity order is total but does not
   preserve dependency order. The explicit topological control does both. Ticket
   11 owns the public-policy choice.
+- [Core work economics](issues/05-core-work-economics.md) — F1 and F13 are
+  confirmed by deterministic counts. Quiescent, narrow, nested-bind, and keyed
+  child workloads all retain graph-wide core scans. Public `all` construction
+  performs exactly `n * (n - 1) / 2` attachment checks. Whole-node `all`
+  adjacency detachment is linear, but keyed bulk removal performs exactly
+  `n * (n + 5) / 2` detachment checks. The bounded tombstone list adds separate
+  `sum min(i, 1024)` invalidation work. Tickets 10, 15, and 16 own the design
+  and gates.
 
 ## Not yet specified
 

@@ -17,6 +17,9 @@ owns an invariant or supports real variation.
 Resolve F5, F6, and F14. Do not simplify by merging unrelated responsibilities
 into one kernel file.
 
+Decide the bounded tombstone-index representation. Ticket 05 found that each
+insertion scans up to 1,024 retained tombstones during invalidation.
+
 For each unused private abstraction, compare deliberate retention, canonical
 adoption, replacement, and removal. Lack of current production use does not
 select one option. If the abstraction suggests an externally useful interface,
