@@ -70,15 +70,11 @@ deliverable. Implementation is not part of this map.
 - [Host capabilities and request-response](issues/13-host-capabilities-and-requests.md) — Use explicit typed requesters and structural request exports with one-shot identity, scoped ownership, bounded capacity, and transport-equivalent driver handoff.
 - [Wire codec and protocol contract](issues/17-wire-codec-protocol.md) — Use one strict sequenced driver protocol with typed host-operation descriptors, closed frame outcomes, and exact JSON and S-expression encodings.
 - [Identity and serialized transport equivalence](issues/18-transport-equivalence.md) — Select one closed driver binding at root integration. Both variants preserve core semantics, while only the serialized variant owns wire state and session administration.
+- [Deterministic testing contract](issues/12-testing-contract.md) — Use a thin scoped handle over production Root and Driver, real Eta effects with controlled dependencies, typed shell-request control, and step-local exact observations.
 
 ## Not yet specified
 
-- **Operational introspection.** Logging, action history, graph inspection, and
-  time-travel support depend on the final action, error, and test contracts.
-- **Performance gates.** Useful budgets and benchmarks depend on the generic
-  host adapter and final package boundaries.
-- **Requirement and ADR replacement.** The old bundle must be reconciled or
-  replaced after the design decisions reveal the final document structure.
+No remaining fog is known. Open child tickets contain the remaining decisions.
 
 ## Out of scope
 
