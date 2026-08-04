@@ -1,7 +1,7 @@
 # Incremental engine reference
 
 Type: research
-Status: open
+Status: claimed
 Blocked by: none
 
 ## Question
