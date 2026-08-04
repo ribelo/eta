@@ -1,7 +1,7 @@
 # State representation seam and plain-state V1
 
 Type: grilling
-Status: open
+Status: resolved
 
 ## Question
 
@@ -40,3 +40,13 @@ To decide:
 
 Consequences to confirm: under plain-state V1 both the `eta_signal_map` hook and the
 input-dependent-cell settle question leave V1's critical path.
+
+## Answer
+
+This ticket closed without a design decision. The
+[Eta Crux first-principles design map](../../eta-crux-first-principles/map.md)
+replaced this map as the canonical route.
+
+The canonical direction also rejected this ticket's premise. Eta Crux V1 uses
+private `eta_signal` for incremental computation instead of a plain-state
+backend with a later graph seam.

@@ -10,6 +10,11 @@ a prototype that unblocks a decision is in scope as a ticket.
 
 ## Notes
 
+This map is inactive. The
+[Eta Crux first-principles design map](../eta-crux-first-principles/map.md)
+replaced it as the canonical route. No open child ticket in this map is
+takeable.
+
 Domain: an optional OCaml package on the Eta effect runtime. Applications own state; Eta
 owns effect description and interpretation. Requirements live in
 `docs/requirements/eta-crux/` and are the output of the decisions made here.
@@ -68,6 +73,10 @@ Working agreements:
   children, and whether a dedicated upward-output channel exists alongside it.
 
 ## Out of scope
+
+- [State representation seam and plain-state V1](issues/01-state-representation-seam.md)
+  closed without a decision because the canonical map rejected its plain-state
+  premise.
 
 - The `eta_signal` redesign and the `eta_signal_map` implementation. Only the contract
   eta_crux depends on is in scope, in
