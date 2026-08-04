@@ -343,3 +343,18 @@ nix develop -c dune runtest test/signal test/signal_map --force
 ```sh
 nix develop -c dune runtest test/signal test/signal_map --force
 ```
+
+## 2026-08-05 - Slice 4: provisional-branch regression
+
+- Added `test_keyed_removal_invalidates_nested_bind_provisional_scope`. The
+  nested bind builds a new map node inside its provisional branch while the
+  keyed owner is removed. The regression proves the provisional node is
+  invalid and undemanded, its static dependency edge is gone, no dynamic bind
+  edge is inserted, and the top-scope dependency has no retained dependents.
+- This is the second exact N2 regression from issue 16. The remaining N2 work
+  is churn bounding and callback-defect topology preservation.
+- Verified with:
+
+```sh
+nix develop -c dune runtest test/signal test/signal_map --force
+```

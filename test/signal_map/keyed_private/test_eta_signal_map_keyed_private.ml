@@ -202,6 +202,59 @@ let test_keyed_removal_discards_nested_bind_switch_to_top_scope () =
     topology.Eta_signal_topology.indexed_removals;
   run_ok runtime (S.Observer.dispose observer)
 
+let test_keyed_removal_invalidates_nested_bind_provisional_scope () =
+  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  let switch_source = S.Var.create false in
+  let input = S.Var.create (M.set 1 10 M.empty) in
+  let left = S.map (fun use -> if use then 1 else 0) (S.Var.watch switch_source)
+  in
+  let right = S.map (fun use -> if use then 3 else 2) (S.Var.watch switch_source)
+  in
+  let nested_bind = ref None in
+  let provisional_branch = ref None in
+  let output =
+    K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data:_ ->
+        let branch =
+          S.bind (S.Var.watch switch_source) (fun use_right ->
+              if use_right then
+                let provisional = S.map (fun value -> value + 1) right in
+                provisional_branch := Some provisional;
+                provisional
+              else left)
+        in
+        nested_bind := Some branch;
+        branch)
+  in
+  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  run_ok runtime S.stabilize;
+  T.reset_counters ();
+  run_ok runtime (S.Var.set switch_source true);
+  run_ok runtime (S.Var.set input M.empty);
+  run_ok runtime S.stabilize;
+  let branch = Option.get !nested_bind in
+  let provisional =
+    match !provisional_branch with
+    | Some provisional -> provisional
+    | None -> Alcotest.fail "missing provisional branch"
+  in
+  Alcotest.(check (list (pair int int))) "keyed output removed" []
+    (run_ok runtime (S.Observer.read observer) |> M.to_list);
+  Alcotest.(check bool) "nested bind invalidated" false
+    (T.signal_valid_token (T.signal_token branch));
+  Alcotest.(check bool) "provisional branch invalidated" false
+    (T.signal_valid_token (T.signal_token provisional));
+  Alcotest.(check int) "provisional branch has no demand" 0
+    (T.signal_demand_token (T.signal_token provisional));
+  Alcotest.(check bool) "provisional branch has no committed edge" false
+    (T.has_dependent_edge_token ~child:(T.signal_token right)
+       ~parent:provisional);
+  Alcotest.(check int) "right dependents empty after rollback" 0
+    (T.dependent_edge_count_token (T.signal_token right));
+  let topology = T.topology_counter_snapshot () in
+  Alcotest.(check int) "discarded provisional switch inserts no dynamic edge" 0
+    topology.Eta_signal_topology.dynamic_inserts;
+  run_ok runtime (S.Observer.dispose observer)
+
 let test_keyed_removal_clears_nested_bind_pending_state () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let outer_source = S.Var.create false in
@@ -287,6 +340,9 @@ let () =
           Alcotest.test_case
             "keyed_removal_discards_nested_bind_switch_to_top_scope" `Quick
             test_keyed_removal_discards_nested_bind_switch_to_top_scope;
+          Alcotest.test_case
+            "keyed_removal_invalidates_nested_bind_provisional_scope" `Quick
+            test_keyed_removal_invalidates_nested_bind_provisional_scope;
           Alcotest.test_case
             "keyed_removal_clears_nested_bind_pending_state" `Quick
             test_keyed_removal_clears_nested_bind_pending_state;
