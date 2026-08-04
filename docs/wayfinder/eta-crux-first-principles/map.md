@@ -73,6 +73,7 @@ deliverable. Implementation is not part of this map.
 - [Identity and serialized transport equivalence](issues/18-transport-equivalence.md) — Select one closed driver binding at root integration. Both variants preserve core semantics, while only the serialized variant owns wire state and session administration.
 - [Deterministic testing contract](issues/12-testing-contract.md) — Use a thin scoped handle over production Root and Driver, real Eta effects with controlled dependencies, typed shell-request control, and step-local exact observations.
 - [Operational introspection boundary](issues/20-operational-introspection.md) — Emit a small fixed Eta telemetry contract around production driver operations. Retain no history, payloads, graph inspection, time travel, or replay.
+- [V1 performance gates](issues/21-performance-gates.md) — Use fresh same-environment revision comparisons, deterministic contract gates, and the existing Eta benchmark runner without checked-in numeric baselines.
 
 ## Not yet specified
 
