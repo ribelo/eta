@@ -1,3 +1,85 @@
+type counters = {
+  mutable enabled : bool;
+  mutable reconcile_claims : int;
+  mutable starts : int;
+  mutable stops : int;
+  mutable cancellations : int;
+  mutable wakes : int;
+  mutable stale_wakes : int;
+  mutable cleanup_claims : int;
+}
+
+type counter_snapshot = {
+  reconcile_claims : int;
+  starts : int;
+  stops : int;
+  cancellations : int;
+  wakes : int;
+  stale_wakes : int;
+  cleanup_claims : int;
+}
+
+let create_counters () =
+  {
+    enabled = false;
+    reconcile_claims = 0;
+    starts = 0;
+    stops = 0;
+    cancellations = 0;
+    wakes = 0;
+    stale_wakes = 0;
+    cleanup_claims = 0;
+  }
+
+let reset_counters counters =
+  counters.enabled <- true;
+  counters.reconcile_claims <- 0;
+  counters.starts <- 0;
+  counters.stops <- 0;
+  counters.cancellations <- 0;
+  counters.wakes <- 0;
+  counters.stale_wakes <- 0;
+  counters.cleanup_claims <- 0
+
+let disable_counters counters = counters.enabled <- false
+
+let counter_snapshot (counters : counters) =
+  {
+    reconcile_claims = counters.reconcile_claims;
+    starts = counters.starts;
+    stops = counters.stops;
+    cancellations = counters.cancellations;
+    wakes = counters.wakes;
+    stale_wakes = counters.stale_wakes;
+    cleanup_claims = counters.cleanup_claims;
+  }
+
+let succ value = if value = max_int then max_int else value + 1
+
+let note_reconcile_claim counters =
+  if counters.enabled then
+    counters.reconcile_claims <- succ counters.reconcile_claims
+
+let note_start counters =
+  if counters.enabled then counters.starts <- succ counters.starts
+
+let note_stop counters =
+  if counters.enabled then counters.stops <- succ counters.stops
+
+let note_cancellation counters =
+  if counters.enabled then
+    counters.cancellations <- succ counters.cancellations
+
+let note_wake counters =
+  if counters.enabled then counters.wakes <- succ counters.wakes
+
+let note_stale_wake counters =
+  if counters.enabled then counters.stale_wakes <- succ counters.stale_wakes
+
+let note_cleanup_claim counters =
+  if counters.enabled then
+    counters.cleanup_claims <- succ counters.cleanup_claims
+
 module Adapter = struct
   open Eta
 

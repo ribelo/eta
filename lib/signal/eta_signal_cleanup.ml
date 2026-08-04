@@ -1,5 +1,74 @@
 type hook = unit -> unit
 
+type counters = {
+  mutable enabled : bool;
+  mutable resource_registrations : int;
+  mutable terminal_transitions : int;
+  mutable hook_attempts : int;
+  mutable hook_completions : int;
+  mutable duplicate_transition_rejections : int;
+}
+
+type counter_snapshot = {
+  resource_registrations : int;
+  terminal_transitions : int;
+  hook_attempts : int;
+  hook_completions : int;
+  duplicate_transition_rejections : int;
+}
+
+let create_counters () =
+  {
+    enabled = false;
+    resource_registrations = 0;
+    terminal_transitions = 0;
+    hook_attempts = 0;
+    hook_completions = 0;
+    duplicate_transition_rejections = 0;
+  }
+
+let reset_counters counters =
+  counters.enabled <- true;
+  counters.resource_registrations <- 0;
+  counters.terminal_transitions <- 0;
+  counters.hook_attempts <- 0;
+  counters.hook_completions <- 0;
+  counters.duplicate_transition_rejections <- 0
+
+let disable_counters counters = counters.enabled <- false
+
+let counter_snapshot (counters : counters) =
+  {
+    resource_registrations = counters.resource_registrations;
+    terminal_transitions = counters.terminal_transitions;
+    hook_attempts = counters.hook_attempts;
+    hook_completions = counters.hook_completions;
+    duplicate_transition_rejections =
+      counters.duplicate_transition_rejections;
+  }
+
+let succ value = if value = max_int then max_int else value + 1
+
+let note_resource_registration counters =
+  if counters.enabled then
+    counters.resource_registrations <- succ counters.resource_registrations
+
+let note_terminal_transition counters =
+  if counters.enabled then
+    counters.terminal_transitions <- succ counters.terminal_transitions
+
+let note_hook_attempt counters =
+  if counters.enabled then counters.hook_attempts <- succ counters.hook_attempts
+
+let note_hook_completion counters =
+  if counters.enabled then
+    counters.hook_completions <- succ counters.hook_completions
+
+let note_duplicate_transition_rejection counters =
+  if counters.enabled then
+    counters.duplicate_transition_rejections <-
+      succ counters.duplicate_transition_rejections
+
 let fail_hooks causes =
   let cause =
     match causes with

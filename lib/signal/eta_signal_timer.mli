@@ -1,3 +1,29 @@
+(** Timer lifecycle execution. *)
+
+type counters
+
+type counter_snapshot = {
+  reconcile_claims : int;
+  starts : int;
+  stops : int;
+  cancellations : int;
+  wakes : int;
+  stale_wakes : int;
+  cleanup_claims : int;
+}
+
+val create_counters : unit -> counters
+val reset_counters : counters -> unit
+val disable_counters : counters -> unit
+val counter_snapshot : counters -> counter_snapshot
+val note_reconcile_claim : counters -> unit
+val note_start : counters -> unit
+val note_stop : counters -> unit
+val note_cancellation : counters -> unit
+val note_wake : counters -> unit
+val note_stale_wake : counters -> unit
+val note_cleanup_claim : counters -> unit
+
 (** Timer-node lifecycle orchestration for Eta_signal internals.
 
     Timer_policy owns pure state transitions and Timer_adapter owns daemon

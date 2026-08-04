@@ -57,3 +57,7 @@
 (alias
  (name eta-js-runtest)
  (deps (alias test/js_jsoo/runtest) (alias test/js_stream/runtest)))
+
+(alias
+ (name signal-economics)
+ (deps (alias test/signal/economics/signal-economics)))

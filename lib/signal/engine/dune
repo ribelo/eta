@@ -1,0 +1,18 @@
+(include_subdirs unqualified)
+
+(library
+ (name eta_signal_engine)
+ (package eta_signal)
+ (wrapped false)
+ (modules
+  eta_signal_atomic_pass
+  eta_signal_commit_plan
+  eta_signal_demand
+  eta_signal_observer_delivery
+  eta_signal_observer_plan
+  eta_signal_scheduler
+  eta_signal_stable_family_plan
+  eta_signal_test_probe
+  eta_signal_tombstone_index
+  eta_signal_topology
+  eta_signal_work))

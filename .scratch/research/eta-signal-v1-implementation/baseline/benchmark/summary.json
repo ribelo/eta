@@ -1,0 +1,200 @@
+{
+  "eta_signal.changed.depth_1": {
+    "max_wall_ns": 6210549539.989896,
+    "median_allocated_words": 108890845.0,
+    "median_wall_ns": 2716399457.719591,
+    "min_wall_ns": 2663888163.0367703,
+    "process_means_wall_ns": [
+      2663888163.0367703,
+      2716399457.719591,
+      6210549539.989896
+    ]
+  },
+  "eta_signal.changed.depth_10": {
+    "max_wall_ns": 4206095086.203681,
+    "median_allocated_words": 108891250.0,
+    "median_wall_ns": 2732937335.9680176,
+    "min_wall_ns": 2714686022.8644476,
+    "process_means_wall_ns": [
+      2732937335.9680176,
+      2714686022.8644476,
+      4206095086.203681
+    ]
+  },
+  "eta_signal.changed.depth_100": {
+    "max_wall_ns": 5897420273.886786,
+    "median_allocated_words": 108895504.0,
+    "median_wall_ns": 2805998934.639825,
+    "min_wall_ns": 2552447901.8317327,
+    "process_means_wall_ns": [
+      2805998934.639825,
+      2552447901.8317327,
+      5897420273.886786
+    ]
+  },
+  "eta_signal.cutoff.depth_10": {
+    "max_wall_ns": 6212796502.643162,
+    "median_allocated_words": 108888598.0,
+    "median_wall_ns": 5998275306.489733,
+    "min_wall_ns": 3244963831.3717313,
+    "process_means_wall_ns": [
+      3244963831.3717313,
+      5998275306.489733,
+      6212796502.643162
+    ]
+  },
+  "eta_signal.dynamic.switch": {
+    "max_wall_ns": 6253921111.424764,
+    "median_allocated_words": 115933906.0,
+    "median_wall_ns": 2710472159.9155,
+    "min_wall_ns": 2646135568.6187744,
+    "process_means_wall_ns": [
+      2710472159.9155,
+      6253921111.424764,
+      2646135568.6187744
+    ]
+  },
+  "eta_signal_map.child_change.10000": {
+    "max_wall_ns": 3016574382.7819824,
+    "median_allocated_words": 108891197.0,
+    "median_wall_ns": 2688821872.075399,
+    "min_wall_ns": 2642747826.046414,
+    "process_means_wall_ns": [
+      2642747826.046414,
+      2688821872.075399,
+      3016574382.7819824
+    ]
+  },
+  "eta_signal_map.child_change.100000": {
+    "max_wall_ns": 5958732340.070936,
+    "median_allocated_words": 108891221.0,
+    "median_wall_ns": 2716388861.3382974,
+    "min_wall_ns": 2690203189.8498535,
+    "process_means_wall_ns": [
+      2716388861.3382974,
+      5958732340.070936,
+      2690203189.8498535
+    ]
+  },
+  "eta_signal_map.data_change.10000": {
+    "max_wall_ns": 3764657232.4964733,
+    "median_allocated_words": 108891108.0,
+    "median_wall_ns": 2929531627.231174,
+    "min_wall_ns": 2876333077.7486167,
+    "process_means_wall_ns": [
+      2876333077.7486167,
+      3764657232.4964733,
+      2929531627.231174
+    ]
+  },
+  "eta_signal_map.data_change.100000": {
+    "max_wall_ns": 2708879629.7709146,
+    "median_allocated_words": 108891156.0,
+    "median_wall_ns": 2673577891.455756,
+    "min_wall_ns": 2651168770.260281,
+    "process_means_wall_ns": [
+      2708879629.7709146,
+      2651168770.260281,
+      2673577891.455756
+    ]
+  },
+  "incr_map.child_change.10000": {
+    "max_wall_ns": 89.99849555555555,
+    "median_allocated_words": 78.000001,
+    "median_wall_ns": 89.39221011111111,
+    "min_wall_ns": 89.36873677777778,
+    "process_means_wall_ns": [
+      89.39221011111111,
+      89.36873677777778,
+      89.99849555555555
+    ]
+  },
+  "incr_map.child_change.100000": {
+    "max_wall_ns": 157.9058701111111,
+    "median_allocated_words": 102.000001,
+    "median_wall_ns": 105.58840322222223,
+    "min_wall_ns": 103.13364866666667,
+    "process_means_wall_ns": [
+      103.13364866666667,
+      157.9058701111111,
+      105.58840322222223
+    ]
+  },
+  "incr_map.data_change.10000": {
+    "max_wall_ns": 551.3003694444444,
+    "median_allocated_words": 180.000005,
+    "median_wall_ns": 264.09435977777775,
+    "min_wall_ns": 262.33506855555555,
+    "process_means_wall_ns": [
+      262.33506855555555,
+      551.3003694444444,
+      264.09435977777775
+    ]
+  },
+  "incr_map.data_change.100000": {
+    "max_wall_ns": 325.4859342222222,
+    "median_allocated_words": 228.000005,
+    "median_wall_ns": 324.1116626666667,
+    "min_wall_ns": 320.0463601111111,
+    "process_means_wall_ns": [
+      320.0463601111111,
+      324.1116626666667,
+      325.4859342222222
+    ]
+  },
+  "incremental.changed.depth_1": {
+    "max_wall_ns": 61.855221,
+    "median_allocated_words": 1e-06,
+    "median_wall_ns": 31.99684811111111,
+    "min_wall_ns": 31.76636511111111,
+    "process_means_wall_ns": [
+      31.76636511111111,
+      31.99684811111111,
+      61.855221
+    ]
+  },
+  "incremental.changed.depth_10": {
+    "max_wall_ns": 214.1523068888889,
+    "median_allocated_words": 1e-06,
+    "median_wall_ns": 148.53540955555556,
+    "min_wall_ns": 99.11244733333334,
+    "process_means_wall_ns": [
+      99.11244733333334,
+      148.53540955555556,
+      214.1523068888889
+    ]
+  },
+  "incremental.changed.depth_100": {
+    "max_wall_ns": 2045.6916192222222,
+    "median_allocated_words": 1.9e-05,
+    "median_wall_ns": 1043.982794888889,
+    "min_wall_ns": 1036.5558611111112,
+    "process_means_wall_ns": [
+      1036.5558611111112,
+      1043.982794888889,
+      2045.6916192222222
+    ]
+  },
+  "incremental.cutoff.depth_10": {
+    "max_wall_ns": 60.33107222222222,
+    "median_allocated_words": 1e-06,
+    "median_wall_ns": 53.73914933333333,
+    "min_wall_ns": 30.80160122222222,
+    "process_means_wall_ns": [
+      30.80160122222222,
+      53.73914933333333,
+      60.33107222222222
+    ]
+  },
+  "incremental.dynamic.switch": {
+    "max_wall_ns": 234.48249444444446,
+    "median_allocated_words": 43.000002,
+    "median_wall_ns": 228.65688422222223,
+    "min_wall_ns": 124.00419611111111,
+    "process_means_wall_ns": [
+      124.00419611111111,
+      228.65688422222223,
+      234.48249444444446
+    ]
+  }
+}
