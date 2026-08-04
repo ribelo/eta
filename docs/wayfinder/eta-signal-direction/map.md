@@ -172,6 +172,11 @@ main Dune workspace.
   The kernel becomes the composition root. All six graph functors leave after
   canonical replacements land. A fixed 1,024-slot ring makes tombstone insertion
   O(1). The complete stream bridge moves to `eta_signal_stream`.
+- [Laws and economics gates](issues/16-laws-and-economics-gates.md) —
+  Generated laws name each observation boundary and generated class. N1 and N2
+  get adversarial regressions. Private owner counters gate work at 1,000, 10,000,
+  and 100,000 nodes or edges. `@signal-gates` combines laws, deterministic
+  economics, and Signal Map complexity without a wall-time condition.
 
 ## Not yet specified
 

@@ -28,7 +28,7 @@ value for a library interface.
 | SCP-006 | 14 | Raw probe timings only corroborate claims and do not measure the packed revision. | limitation | Ticket 05 | Revision mismatch | Amend with deterministic work counts on the selected revision. |
 | SCP-007 | 16 | The reviewer did not compile or run the code. | limitation | Ticket 01 | Stated method | Retain and use repository tests plus focused prototypes. |
 | SCP-008 | 16 | New correctness findings are static counterexample traces. | limitation | Ticket 01 | Static reasoning only | Retain until tickets 02-04 supply executable evidence. |
-| SCP-009 | 16 | Each new defect needs an executable regression before its fix merges. | requirement | Ticket 16 | Proposed verification rule | Assign to owner for a gate decision. |
+| SCP-009 | 16 | Each new defect needs an executable regression before its fix merges. | requirement | Ticket 16 | Proposed verification rule | Accept the deterministic regression policy at issue 16 lines 27-33. |
 | SCP-010 | 5 | The requested task includes independent assessment of F1-F14. | scope | Ticket 01 | Review task statement | Retain as the finding boundary. |
 | SCP-011 | 5 | The requested task includes challenges to semantic-parity claims. | scope | Ticket 01 | Review task statement | Retain as the S1-S17 boundary. |
 | SCP-012 | 5 | The requested task includes a search for missed correctness defects. | scope | Ticket 01 | Review task statement | Retain as the N1-N5 boundary. |
@@ -96,7 +96,7 @@ value for a library interface.
 | F01-029 | 86 | Demand must not be reconstructed from all roots. | requirement | Ticket 10 | Proposed demand contract | Accept. Apply only incremental reference transitions. |
 | F01-030 | 88 | The audit's source-cutoff-only condition for O(1) work is too broad. | correction | Ticket 10 | Static counterexamples | Amend. Quiescence means that every work-ledger class is empty. |
 | F01-031 | 88 | Timers, lifecycle changes, and failed pending delivery can create work without source changes. | fact | Ticket 10 | Runtime scenario analysis | Retain as work-ledger classes. |
-| F01-032 | 92 | Deterministic F13 work counters must land before the scheduler redesign. | sequencing | Ticket 16 | Proposed dependency order | Assign to owner for gate design. |
+| F01-032 | 92 | Deterministic F13 work counters must land before the scheduler redesign. | sequencing | Ticket 16 | Proposed dependency order | Add owner counters and run discriminating fixtures before replacement at issue 16 lines 337-393 and 554-565. |
 | F01-033 | 92 | The scheduler and necessity model need replacement after instrumentation. | recommendation | Ticket 10 | Proposed architecture route | Accept the necessary-stale scheduler and reference-counted demand replacement. |
 | F01-034 | 92 | The redesign affects graph state, dirty propagation, observers, dynamic edges, timers, diagnostics, and model tests. | blast radius | Ticket 10 | Static impact estimate | Retain as the implementation impact. |
 | F01-035 | 92 | The F1 redesign does not require public signal type changes. | interface claim | Ticket 13 | Preliminary design assessment | Preserve the abstract signal type. The scheduler redesign adds no representation to the public type. |
@@ -146,22 +146,22 @@ value for a library interface.
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| F03-001 | 137 | Signal's interface contains normative prose, but the review cannot decide the registry violation. | verdict | Ticket 16 | Conditional because the pack omits registry evidence | Retain and settle from the repository. |
-| F03-002 | 141-147 | The interface states executable laws for observers, bind, stabilization, timers, and streams. | fact | Ticket 16 | Static interface census, not repository-complete | Retain and build exact registry mappings. |
+| F03-001 | 137 | Signal's interface contains normative prose, but the review cannot decide the registry violation. | verdict | Ticket 16 | Conditional because the pack omits registry evidence | Confirm explicit but incomplete coverage at issue 16 lines 56-88. |
+| F03-002 | 141-147 | The interface states executable laws for observers, bind, stabilization, timers, and streams. | fact | Ticket 16 | Static interface census, not repository-complete | Replace stale laws with the final matrices at issue 16 lines 56-122 and 239-335. |
 | F03-003 | 149 | The pack omits `LAWS.md` and test files. | limitation | Ticket 01 | Pack inventory statement | Retain and inspect those files. |
 | F03-004 | 149 | The review cannot reproduce the audit's law census. | limitation | Ticket 01 | Missing evidence | Retain until the repository census is complete. |
-| F03-005 | 153 | Every normative interface span must have an exact registry entry. | policy requirement | Ticket 16 | Repository policy quoted by the review | Assign to owner for final law gate. |
-| F03-006 | 153 | Each registry entry must name a test, property, or dated debt. | policy requirement | Ticket 16 | Repository policy quoted by the review | Assign to owner for final law gate. |
-| F03-007 | 153 | Existing tests need registration instead of duplication. | recommendation | Ticket 16 | Proposed application of policy | Assign to owner for evidence mapping. |
+| F03-005 | 153 | Every normative interface span must have an exact registry entry. | policy requirement | Ticket 16 | Repository policy quoted by the review | Require one final claim row per normative span at issue 16 lines 64-70. |
+| F03-006 | 153 | Each registry entry must name a test, property, or dated debt. | policy requirement | Ticket 16 | Repository policy quoted by the review | Require one named executable and prohibit new final debt at issue 16 lines 64-70. |
+| F03-007 | 153 | Existing tests need registration instead of duplication. | recommendation | Ticket 16 | Proposed application of policy | Register exact surviving evidence and replace incomplete authorities at issue 16 lines 68-74 and 456-505. |
 | F03-008 | 155 | Maintainers must supply registry ranges and named tests before accepting F3. | evidence requirement | Ticket 01 | Missing pack evidence | Amend by reading the complete repository directly. |
 | F03-009 | 155 | Until repository evidence exists, F3 is an unverified policy violation. | amended finding | Ticket 01 | Conditional review conclusion | Retain as the starting status. |
-| F03-010 | 159 | F3 is documentation and registry work unless evidence reveals test gaps. | blast radius | Ticket 16 | Preliminary impact estimate | Assign to owner after evidence mapping. |
-| F03-011 | 159 | New transaction laws and regression tests must register with the P0 fixes. | sequencing | Ticket 16 | Proposed dependency order | Assign to owner for gate design. |
-| F03-012 | 143 | The interface states laws for observer initialization, cutoff, callback failure, and invalid-scope reads. | law-bearing fact | Ticket 16 | Static interface trace | Assign to owner for exact registry mapping. |
-| F03-013 | 144 | The interface states laws for bind invalidation and rollback-visible purity. | law-bearing fact | Ticket 16 | Static interface trace | Assign to owner for exact registry mapping. |
-| F03-014 | 145 | The interface states laws for transactions, delivery retry, and coalescing. | law-bearing fact | Ticket 16 | Static interface trace | Assign to owner for exact registry mapping. |
-| F03-015 | 146 | The interface states laws for timer clocks and catch-up. | law-bearing fact | Ticket 16 | Static interface trace | Assign to owner for exact registry mapping. |
-| F03-016 | 147 | The interface states laws for stream dropping and lifecycle. | law-bearing fact | Ticket 16 | Static interface trace | Assign to owner for exact registry mapping. |
+| F03-010 | 159 | F3 is documentation and registry work unless evidence reveals test gaps. | blast radius | Ticket 16 | Preliminary impact estimate | Amend the blast radius because final semantics need new generated laws at issue 16 lines 56-88 and 90-335. |
+| F03-011 | 159 | New transaction laws and regression tests must register with the P0 fixes. | sequencing | Ticket 16 | Proposed dependency order | Register atomic and N2 properties in their implementation slices at issue 16 lines 124-237 and 554-565. |
+| F03-012 | 143 | The interface states laws for observer initialization, cutoff, callback failure, and invalid-scope reads. | law-bearing fact | Ticket 16 | Static interface trace | Map final cutoff and observer claims to generated properties at issue 16 lines 90-122 and 239-254. |
+| F03-013 | 144 | The interface states laws for bind invalidation and rollback-visible purity. | law-bearing fact | Ticket 16 | Static interface trace | Map final bind and rollback claims at issue 16 lines 103-122 and 124-237. |
+| F03-014 | 145 | The interface states laws for transactions, delivery retry, and coalescing. | law-bearing fact | Ticket 16 | Static interface trace | Map final transaction and delivery claims at issue 16 lines 124-250. |
+| F03-015 | 146 | The interface states laws for timer clocks and catch-up. | law-bearing fact | Ticket 16 | Static interface trace | Map final timer claims at issue 16 lines 256-292. |
+| F03-016 | 147 | The interface states laws for stream dropping and lifecycle. | law-bearing fact | Ticket 16 | Static interface trace | Move and map final stream claims at issue 16 lines 294-335. |
 
 ### F4
 
@@ -255,7 +255,7 @@ value for a library interface.
 | F08-005 | 310 | An arbitrary fold cannot promise O(1) updates without a stronger algebra. | complexity constraint | Ticket 13 | Algorithmic reasoning | Accept. Promise no O(1) arbitrary fold. |
 | F08-006 | 310 | O(1) fold updates need an inverse, replacement delta, or mutable accumulator law. | algebraic requirement | Ticket 13 | Algorithmic reasoning | Accept the algebraic constraint and reject a delta fold without that contract. |
 | F08-007 | 314-324 | A balanced associative reduction can promise O(log n) recomputation per child change. | contract proposal | Ticket 13 | Proposed API and law | Select balanced associative reduction with O(log(n + 1)) changed-leaf work. |
-| F08-008 | 324 | Balanced reduction requires associative `combine` at Eta's observation boundary. | law proposal | Ticket 16 | Proposed executable law | Assign to owner for law design. |
+| F08-008 | 324 | Balanced reduction requires associative `combine` at Eta's observation boundary. | law proposal | Ticket 16 | Proposed executable law | Accept the generated monoid law and logarithmic gate at issue 16 lines 107-115 and 432-439. |
 | F08-009 | 326-336 | An update-aware delta fold can promise O(1) amortized accumulator work per changed child. | contract proposal | Ticket 13 | Proposed API and complexity contract | Reject the update-aware fold until a stronger algebra and consumer contract exist. |
 | F08-010 | 340 | Fold implementation must follow F1 and N4 redesigns. | sequencing | Ticket 13 | Proposed dependency order | Schedule reduction after the completed scheduler and edge decisions. |
 | F08-011 | 340 | F8 affects public API, tests, complexity gates, and possibly a node kind. | blast radius | Ticket 13 | Preliminary impact estimate | Accept the public API, node, law, and economics impact. |
@@ -340,16 +340,16 @@ value for a library interface.
 | F13-001 | 456 | Missing core-engine scale gates are confirmed at P2 and precede F1. | verdict | Ticket 17 | Static benchmark review | Assign to owner for final disposition. |
 | F13-002 | 460 | The current core benchmark covers a small diamond and one dynamic bind workload. | fact | Ticket 01 | Static benchmark inspection | Retain and compare with complete tests. |
 | F13-003 | 460 | The benchmark repeats each workload 10k times and compares against mutable references. | fact | Ticket 01 | Static benchmark inspection | Retain as existing evidence. |
-| F13-004 | 460 | The benchmark does not bound seven named graph-work dimensions. | evidence gap | Ticket 16 | Static benchmark inspection | Retain for gate design. |
-| F13-005 | 462 | The raw scale probe is not deterministic enough for a gate. | limitation | Ticket 16 | Probe design assessment | Retain and reject wall time as a gate. |
+| F13-004 | 460 | The benchmark does not bound seven named graph-work dimensions. | evidence gap | Ticket 16 | Static benchmark inspection | Close the gap with owner-local counters and exact gates at issue 16 lines 337-454. |
+| F13-005 | 462 | The raw scale probe is not deterministic enough for a gate. | limitation | Ticket 16 | Probe design assessment | Reject wall time as a gate at issue 16 lines 23-25 and 551-552. |
 | F13-006 | 462 | The raw scale probe targets a different revision. | limitation | Ticket 01 | Revision metadata | Retain and rerun selected evidence. |
 | F13-007 | 466-475 | Private instrumentation needs counters for compute, edges, registries, observers, sorting, binds, demand, and timers. | requirement | Ticket 05 | Proposed measurement set | Assign to owner for prototype evidence. |
-| F13-008 | 477-484 | Gates need six scenarios from quiescence through wide construction and invalidation. | requirement | Ticket 16 | Proposed gate set | Assign to owner for final gate design. |
-| F13-009 | 477 | Gate scenarios need 1k, 10k, and 100k node scales. | requirement | Ticket 16 | Proposed size classes | Assign to owner for final gate design. |
-| F13-010 | 486 | Deterministic operation counts must decide pass or fail. | gate requirement | Ticket 16 | Proposed verification policy | Assign to owner for final gate design. |
-| F13-011 | 486 | Wall time can appear only as a non-gating artifact. | gate requirement | Ticket 16 | Proposed verification policy | Assign to owner for final gate design. |
-| F13-012 | 490 | F13 instrumentation must precede F1 and N4 redesigns. | sequencing | Ticket 16 | Proposed dependency order | Assign to owner for route planning. |
-| F13-013 | 490 | F13 mostly affects tests, benchmarks, and private instrumentation. | blast radius | Ticket 16 | Preliminary impact estimate | Retain for planning. |
+| F13-008 | 477-484 | Gates need six scenarios from quiescence through wide construction and invalidation. | requirement | Ticket 16 | Proposed gate set | Expand and define the complete scenario set at issue 16 lines 395-454. |
+| F13-009 | 477 | Gate scenarios need 1k, 10k, and 100k node scales. | requirement | Ticket 16 | Proposed size classes | Use exact sizes 1,000, 10,000, and 100,000 at issue 16 lines 385-393 and 435-445. |
+| F13-010 | 486 | Deterministic operation counts must decide pass or fail. | gate requirement | Ticket 16 | Proposed verification policy | Accept deterministic manifests and counts at issue 16 lines 368-454. |
+| F13-011 | 486 | Wall time can appear only as a non-gating artifact. | gate requirement | Ticket 16 | Proposed verification policy | Keep wall time only under `@bench` at issue 16 lines 23-25 and 551-552. |
+| F13-012 | 490 | F13 instrumentation must precede F1 and N4 redesigns. | sequencing | Ticket 16 | Proposed dependency order | Add counters and run failing fixtures before replacement at issue 16 lines 554-565. |
+| F13-013 | 490 | F13 mostly affects tests, benchmarks, and private instrumentation. | blast radius | Ticket 16 | Preliminary impact estimate | Amend the blast radius to gates, probes, shipped gates, and registry work at issue 16 lines 35-54 and 507-575. |
 | F13-014 | 490 | Public statistics must not grow unless consumers need the counters. | interface constraint | Ticket 13 | Deep-interface principle | Narrow public statistics to stable operational state and private economics counters. |
 | F13-015 | 468 | Instrumentation must count nodes reached by compute. | measurement requirement | Ticket 05 | Proposed counter | Assign to owner for prototype evidence. |
 | F13-016 | 469 | Instrumentation must count dependency-edge checks. | measurement requirement | Ticket 05 | Proposed counter | Assign to owner for prototype evidence. |
@@ -359,12 +359,12 @@ value for a library interface.
 | F13-020 | 473 | Instrumentation must count bind passes and candidates. | measurement requirement | Ticket 05 | Proposed counter | Assign to owner for prototype evidence. |
 | F13-021 | 474 | Instrumentation must count necessity traversal visits. | measurement requirement | Ticket 05 | Proposed counter | Assign to owner for prototype evidence. |
 | F13-022 | 475 | Instrumentation must count timer registry and reachability visits. | measurement requirement | Ticket 05 | Proposed counter | Assign to owner for prototype evidence. |
-| F13-023 | 479 | Gates must cover quiescent stabilization. | gate scenario | Ticket 16 | Proposed deterministic gate | Assign to owner for gate design. |
-| F13-024 | 480 | Gates must cover one narrow source change. | gate scenario | Ticket 16 | Proposed deterministic gate | Assign to owner for gate design. |
-| F13-025 | 481 | Gates must cover one half-graph source change. | gate scenario | Ticket 16 | Proposed deterministic gate | Assign to owner for gate design. |
-| F13-026 | 482 | Gates must cover a nested bind switch. | gate scenario | Ticket 16 | Proposed deterministic gate | Assign to owner for gate design. |
-| F13-027 | 483 | Gates must cover a keyed child-only change. | gate scenario | Ticket 16 | Proposed deterministic gate | Assign to owner for gate design. |
-| F13-028 | 484 | Gates must cover wide `all` construction and invalidation. | gate scenario | Ticket 16 | Proposed deterministic gate | Assign to owner for gate design. |
+| F13-023 | 479 | Gates must cover quiescent stabilization. | gate scenario | Ticket 16 | Proposed deterministic gate | Define the exact quiescent gate at issue 16 line 421. |
+| F13-024 | 480 | Gates must cover one narrow source change. | gate scenario | Ticket 16 | Proposed deterministic gate | Define the ten-map narrow gate at issue 16 line 422. |
+| F13-025 | 481 | Gates must cover one half-graph source change. | gate scenario | Ticket 16 | Proposed deterministic gate | Define the manifest-based half-graph gate at issue 16 line 423. |
+| F13-026 | 482 | Gates must cover a nested bind switch. | gate scenario | Ticket 16 | Proposed deterministic gate | Define the frontier-bounded bind gate at issue 16 line 424. |
+| F13-027 | 483 | Gates must cover a keyed child-only change. | gate scenario | Ticket 16 | Proposed deterministic gate | Define the one-child gate at issue 16 line 425. |
+| F13-028 | 484 | Gates must cover wide `all` construction and invalidation. | gate scenario | Ticket 16 | Proposed deterministic gate | Define wide attachment, invalidation, and removal gates at issue 16 lines 429-431 and 435-436. |
 
 ### F14
 
@@ -398,7 +398,7 @@ value for a library interface.
 | N01-007 | 534-538 | The escaped failure leaves `Pure`, active status, and no transaction. | counterexample state | Ticket 02 | Static state trace | Retain for executable reproduction. |
 | N01-008 | 540 | Each later stabilization returns `Reentrant_stabilization`. | counterexample effect | Ticket 02 | Static state-machine trace | Retain for executable reproduction. |
 | N01-009 | 540 | The public API has no recovery operation. | impact claim | Ticket 02 | Static public-interface trace | Retain for executable reproduction. |
-| N01-010 | 540 | The overflow path contradicts the public no-partial-publication overflow statement. | law conflict | Ticket 16 | Static interface and implementation comparison | Assign to owner for law disposition. |
+| N01-010 | 540 | The overflow path contradicts the public no-partial-publication overflow statement. | law conflict | Ticket 16 | Static interface and implementation comparison | Remove transaction overflow and gate remaining counters before publication at issue 16 lines 169-207. |
 | N01-011 | 542 | Production reachability is remote, but fault injection can exercise the defect. | reachability claim | Ticket 02 | Counter-bound and harness reasoning | Retain for prototype design. |
 | N01-012 | 542 | The path causes permanent state-machine corruption. | impact claim | Ticket 02 | Static state trace | Retain for executable reproduction. |
 | N01-013 | 546 | One graph becomes permanently unusable. | impact | Ticket 02 | Static state trace | Retain for executable reproduction. |
@@ -412,15 +412,15 @@ value for a library interface.
 | N01-021 | 560 | A retained integer needs allocation before phase mutation and graph-local ownership. | conditional requirement | Ticket 09 | Proposed safe alternative | Reject the integer alternative. |
 | N01-022 | 560 | Module-global identifiers can race across independent graphs on different domains. | concurrency risk | Ticket 09 | Static shared-state analysis | Confirm and remove both shared phase and transaction allocators. |
 | N01-023 | 562 | `begin_pure` must return a valid token or preserve the prior idle state exactly. | exception-safety invariant | Ticket 09 | Proposed atomicity contract | Accept for atomic `Idle` to `Planning` entry. |
-| N01-024 | 566-569 | Tests need forced overflow, typed error, successful retry, and a two-domain case if globals remain. | test requirement | Ticket 16 | Proposed regression set | Assign to owner for final gate design. |
+| N01-024 | 566-569 | Tests need forced overflow, typed error, successful retry, and a two-domain case if globals remain. | test requirement | Ticket 16 | Proposed regression set | Amend to remaining checked counters, typed failure, retry, and graph isolation at issue 16 lines 169-207. |
 | N01-025 | 573 | N1 is the first correction. | sequencing | Ticket 17 | Severity and dependency assessment | Assign to owner for final route. |
 | N01-026 | 573 | N1 changes private identity and stabilization code plus the overflow harness. | blast radius | Ticket 09 | Preliminary impact estimate | Retain. The physical-token design removes the transaction-overflow branch from the harness. |
 | N01-027 | 573 | Public success types do not need change. | interface claim | Ticket 13 | Preliminary type assessment | Preserve public success types. |
 | N01-028 | 573 | The graph-error taxonomy can represent or add a named counter-overflow path. | interface claim | Ticket 13 | Preliminary error-type assessment | Keep Counter_overflow as the named graph error. |
 | N01-029 | 566 | A regression must force the next transaction ID to overflow. | test requirement | Ticket 02 | Proposed fault injection | Retain for executable reproduction. |
-| N01-030 | 567 | A regression must observe a typed counter-overflow result. | test requirement | Ticket 16 | Proposed regression assertion | Assign to owner for gate design. |
-| N01-031 | 568 | A regression must observe successful stabilization after the failure. | test requirement | Ticket 16 | Proposed regression assertion | Assign to owner for gate design. |
-| N01-032 | 569 | A retained global allocator needs a two-domain regression. | conditional test requirement | Ticket 16 | Proposed concurrency gate | Assign to owner if the design retains a global allocator. |
+| N01-030 | 567 | A regression must observe a typed counter-overflow result. | test requirement | Ticket 16 | Proposed regression assertion | Require the exact synchronous or effectful `Counter_overflow` channel at issue 16 lines 183-203. |
+| N01-031 | 568 | A regression must observe successful stabilization after the failure. | test requirement | Ticket 16 | Proposed regression assertion | Require successful retry after probe reset at issue 16 lines 183-203. |
+| N01-032 | 569 | A retained global allocator needs a two-domain regression. | conditional test requirement | Ticket 16 | Proposed concurrency gate | Cancel the condition because the design has no global allocator at issue 16 lines 205-207. |
 
 ### N2
 
@@ -448,7 +448,7 @@ value for a library interface.
 | N02-020 | 622 | Dynamic-scope invalidation is not closed over staged bind state. | invariant failure | Ticket 09 | Static counterexample synthesis | Confirm. One fixed frontier must cover every staged dynamic operation. |
 | N02-021 | 623 | The defect can retain invalid nodes and provisional scopes. | impact | Ticket 03 | Static topology trace | Retain for executable reproduction. |
 | N02-022 | 624 | Later topology algorithms receive lists with invalid parents. | impact | Ticket 03 | Static topology trace | Retain for executable reproduction. |
-| N02-023 | 625 | The public keyed transaction law does not describe the resulting hybrid state. | law gap | Ticket 16 | Interface and counterexample comparison | Assign to owner for law disposition. |
+| N02-023 | 625 | The public keyed transaction law does not describe the resulting hybrid state. | law gap | Ticket 16 | Interface and counterexample comparison | Close the gap with final frontier and mixed keyed-bind observations at issue 16 lines 209-237. |
 | N02-024 | 627 | N2 requires no impure callback, exception, or timer creation. | reachability claim | Ticket 03 | Pure public counterexample | Retain for executable reproduction. |
 | N02-025 | 631 | Commit planning must compute one fixed invalidation frontier before topology mutation. | invariant | Ticket 09 | Proposed invalidation contract | Accept. Freeze the frontier before partitioning operations. |
 | N02-026 | 631 | The frontier must include staged bind switches, keyed removals, and future extension plans. | requirement | Ticket 09 | Proposed invalidation contract | Accept for bind, keyed, and future private dynamic-operation plans. |
@@ -462,15 +462,15 @@ value for a library interface.
 | N02-034 | 645 | The discard phase must invalidate provisional scopes and clear pending bind cells before commit. | rollback requirement | Ticket 09 | Proposed plan contract | Amend. Discard runs during planning before the plan seals. |
 | N02-035 | 647 | Preflight can check and build an immutable plan but must not mutate topology. | phase invariant | Ticket 09 | Proposed phase contract | Accept for committed topology; provisional work remains isolated. |
 | N02-036 | 647 | One non-failing commit phase must execute frozen topology actions. | commit invariant | Ticket 09 | Proposed phase contract | Accept through one sealed declarative mutation tape. |
-| N02-037 | 651-655 | Regression coverage needs five keyed-bind, cleanup, retention, and callback-failure scenarios. | test requirement | Ticket 16 | Proposed regression set | Assign to owner for final gate design. |
+| N02-037 | 651-655 | Regression coverage needs five keyed-bind, cleanup, retention, and callback-failure scenarios. | test requirement | Ticket 16 | Proposed regression set | Define all five graph-branded regressions at issue 16 lines 209-237. |
 | N02-038 | 659 | N2 follows N1 and precedes scheduler redesign. | sequencing | Ticket 17 | Severity and dependency assessment | Assign to owner for final route. |
 | N02-039 | 659 | N2 affects commit planning, invalidation, discard, cleanup, diagnostics, and Signal Map models. | blast radius | Ticket 09 | Preliminary impact estimate | Retain. The correction also requires prepared topology replacements. |
 | N02-040 | 659 | N2 does not require public type changes. | interface claim | Ticket 13 | Preliminary type assessment | Preserve public signal and success types. |
 | N02-041 | 651 | A regression must combine keyed removal with a nested bind switch. | test requirement | Ticket 03 | Proposed counterexample | Retain for executable reproduction. |
-| N02-042 | 652 | A top-scope new branch regression must show that no invalid dependent edge remains. | test requirement | Ticket 16 | Proposed topology assertion | Assign to owner for gate design. |
-| N02-043 | 653 | A child-scope branch regression must show cleanup of its provisional scope. | test requirement | Ticket 16 | Proposed cleanup assertion | Assign to owner for gate design. |
-| N02-044 | 654 | Repeated add, remove, and switch cycles need a bounded-node regression. | test requirement | Ticket 16 | Proposed retention gate | Assign to owner for gate design. |
-| N02-045 | 655 | Callback failure after snapshot commit needs a topology-coherence regression. | test requirement | Ticket 16 | Proposed failure-path gate | Assign to owner for gate design. |
+| N02-042 | 652 | A top-scope new branch regression must show that no invalid dependent edge remains. | test requirement | Ticket 16 | Proposed topology assertion | Define the top-scope edge regression at issue 16 line 216. |
+| N02-043 | 653 | A child-scope branch regression must show cleanup of its provisional scope. | test requirement | Ticket 16 | Proposed cleanup assertion | Define the child-scope cleanup regression at issue 16 line 217. |
+| N02-044 | 654 | Repeated add, remove, and switch cycles need a bounded-node regression. | test requirement | Ticket 16 | Proposed retention gate | Define generated bounded churn and exact formulas at issue 16 line 219 and lines 225-234. |
+| N02-045 | 655 | Callback failure after snapshot commit needs a topology-coherence regression. | test requirement | Ticket 16 | Proposed failure-path gate | Define the post-commit topology regression at issue 16 line 220. |
 
 ### N3
 
@@ -517,7 +517,7 @@ value for a library interface.
 | N04-013 | 747-751 | Static arrays, indexed dynamic edges, and small-edge specialization are candidate representations. | design options | Ticket 10 | Proposed representations | Amend. Select static arrays and indexed dynamic vectors; reject small-edge specialization. |
 | N04-014 | 753 | Eta must not copy Incremental's intrusive layout without analysis. | recommendation | Ticket 10 | Reference-use constraint | Retain. Eta uses graph-local edge records and dense vectors. |
 | N04-015 | 753 | Dynamic rewiring needs O(1) or amortized O(1) edge identity and removal. | complexity requirement | Ticket 10 | Proposed topology contract | Accept indexed handles, O(1) removal, and amortized O(1) insertion. |
-| N04-016 | 757 | Tests need operation counts for wide `all` and wide-parent scope invalidation at three scales. | test requirement | Ticket 16 | Proposed gate | Assign to owner for final gate design. |
+| N04-016 | 757 | Tests need operation counts for wide `all` and wide-parent scope invalidation at three scales. | test requirement | Ticket 16 | Proposed gate | Gate exact wide counts at three scales at issue 16 lines 429-431 and 435-436. |
 | N04-017 | 761 | N4 edge storage needs co-design with F1 scheduling. | sequencing | Ticket 10 | Proposed dependency order | Accept one scheduler, demand, and topology design. |
 | N04-018 | 761 | N4 affects node records, dynamic rewiring, DOT, invalidation, and construction tests. | blast radius | Ticket 10 | Preliminary impact estimate | Retain as the topology implementation impact. |
 | N04-019 | 749 | Static child dependencies can use immutable arrays or small vectors. | representation option | Ticket 10 | Proposed design option | Accept exact immutable edge arrays. |
@@ -560,18 +560,18 @@ value for a library interface.
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| S01-001 | 813 | Retain S1 glitch freedom because caching and dependency-first pull evaluation support it. | parity assessment | Ticket 16 | Static support with no found counterexample | Assign to owner for an executable law decision. |
+| S01-001 | 813 | Retain S1 glitch freedom because caching and dependency-first pull evaluation support it. | parity assessment | Ticket 16 | Static support with no found counterexample | Retain through the generated static-DAG law at issue 16 line 101 and lines 117-119. |
 | S02-001 | 814 | Amend S2 because stabilization has more work than one necessary-node traversal. | parity assessment | Ticket 10 | Static graph-work trace | Amend. The desired engine visits only necessary-stale work and explicit non-node work classes. |
 | S02-002 | 814 | Registry scans, reachability scans, bind fixed points, and pairwise searches enlarge the S2 gap. | complexity claim | Ticket 05 | Static source synthesis | Retain for deterministic measurement. |
-| S03-001 | 815 | Retain S3 user recomputation parity within static nodes and version vectors. | bounded parity assessment | Ticket 16 | Static support with an explicit boundary | Assign to owner for an executable law decision. |
-| S04-001 | 816 | Retain S4 bind-switch-condition parity. | parity assessment | Ticket 16 | Review conclusion without new qualification | Assign to owner for an executable law decision. |
+| S03-001 | 815 | Retain S3 user recomputation parity within static nodes and version vectors. | bounded parity assessment | Ticket 16 | Static support with an explicit boundary | Amend to necessary stale static DAG nodes and gate exact calls at issue 16 line 101 and lines 117-119. |
+| S04-001 | 816 | Retain S4 bind-switch-condition parity. | parity assessment | Ticket 16 | Review conclusion without new qualification | Retain through accepted selector publication at issue 16 line 103 and lines 121-122. |
 | S05-001 | 817 | Amend S5 to reference F11 instead of F13. | cross-reference correction | Ticket 01 | Internal table comparison | Retain the corrected routing. |
 | S05-002 | 817 | Default Incremental invalidates old bind branches. | reference fact | Ticket 07 | Reference semantic trace | Retain as reference evidence. |
 | S05-003 | 817 | Bind rescoping is nondefault compatibility behavior. | parity assessment | Ticket 13 | Reference semantic trace | Reject the nondefault bind rescope behavior. |
-| S06-001 | 818 | Retain S6 only for bind-only cascade convergence. | bounded parity assessment | Ticket 16 | Static support with an explicit boundary | Assign to owner for an executable law decision. |
+| S06-001 | 818 | Retain S6 only for bind-only cascade convergence. | bounded parity assessment | Ticket 16 | Static support with an explicit boundary | Retain the bind-only generated cascade at issue 16 line 104 and lines 121-122. |
 | S06-002 | 818 | S6 does not cover N2's mixed keyed-removal and staged-bind case. | limitation | Ticket 03 | Static counterexample | Retain for executable reproduction. |
-| S07-001 | 819 | Retain S7 only for selector or validation failure before commit. | bounded parity assessment | Ticket 16 | Static support with an explicit boundary | Assign to owner for an executable law decision. |
-| S08-001 | 820 | Retain S8 parity for variable sets during stabilization. | parity assessment | Ticket 16 | Review conclusion without new qualification | Assign to owner for an executable law decision. |
+| S07-001 | 819 | Retain S7 only for selector or validation failure before commit. | bounded parity assessment | Ticket 16 | Static support with an explicit boundary | Retain the pre-commit failure and retry property at issue 16 line 105 and lines 121-122. |
+| S08-001 | 820 | Retain S8 parity for variable sets during stabilization. | parity assessment | Ticket 16 | Review conclusion without new qualification | Retain the delayed callback-set property at issue 16 line 106 and lines 121-122. |
 | S09-001 | 821 | Refute S9 because the observer comparator is non-total. | parity correction | Ticket 11 | Static N3 counterexample | Retain for the current engine; replace it with the gated topological law. |
 | S10-001 | 822 | Retain S10 richer delivery coalescing. | parity assessment | Ticket 11 | Static semantic review | Retain latest-value coalescing against the last acknowledged value. |
 | S10-002 | 822 | S10 remains subject to documented at-least-once behavior after callback failure or interruption. | limitation | Ticket 11 | Public contract qualification | Retain for ordinary callbacks and add direct acknowledgement after a durable send or terminal drop. |
@@ -590,7 +590,7 @@ value for a library interface.
 | S17-001 | 829 | Amend S17's explanation of Incremental cycle behavior. | parity correction | Ticket 06 | Interface and edge-addition trace | Amend: detection follows active necessary-parent edge insertion and does not provide atomic rejection. |
 | S17-002 | 829 | The review claims that Incremental documents cycles from bind and Expert edges. | reference fact | Ticket 06 | Interface and Expert implementation trace | Amend: the interface documents bind cycles; active necessary Expert edges use the same cycle-checked parent path. |
 | S17-003 | 829 | Incremental height adjustment detects those cycles. | reference fact | Ticket 06 | Reference interface documentation | Retain as reference evidence. |
-| S17-004 | 829 | The S17 parity conclusion remains reasonable despite the wrong explanation. | parity assessment | Ticket 16 | Static semantic comparison | Assign to owner for an executable law decision. |
+| S17-004 | 829 | The S17 parity conclusion remains reasonable despite the wrong explanation. | parity assessment | Ticket 16 | Static semantic comparison | Retain with prospective validation and generated recovery at issue 16 line 109 and lines 121-122. |
 
 ## 5. Ranked correction plan
 
@@ -602,7 +602,7 @@ value for a library interface.
 | PLN-01-002 | 837 | Overflow must use typed failure and leave the graph idle. | ranked requirement | Ticket 09 | Proposed correction plan | Reject transaction overflow because physical identity removes the counter. Allocation defects preserve `Idle`. |
 | PLN-01-003 | 839 | Rank 1 has no design dependency. | dependency | Ticket 17 | Proposed route | Assign to owner for final route. |
 | PLN-01-004 | 840 | Rank 1 affects private transaction code, stabilization code, and the overflow harness. | blast radius | Ticket 09 | Preliminary impact estimate | Retain. |
-| PLN-01-005 | 841 | The gate is forced overflow followed by a successful retry. | gate | Ticket 16 | Proposed regression gate | Assign to owner for final gate design. |
+| PLN-01-005 | 841 | The gate is forced overflow followed by a successful retry. | gate | Ticket 16 | Proposed regression gate | Amend to phase-allocation defect plus remaining-counter overflow and retry at issue 16 lines 169-207. |
 
 ### Rank 2: N2
 
@@ -612,7 +612,7 @@ value for a library interface.
 | PLN-02-002 | 845 | Discard staged binds whose owners enter that frontier. | ranked requirement | Ticket 09 | Proposed correction plan | Accept before the plan seals. |
 | PLN-02-003 | 847 | Rank 2 depends on N1's reliable phase and rollback boundary. | dependency | Ticket 17 | Proposed route | Assign to owner for final route. |
 | PLN-02-004 | 848 | Rank 2 affects keyed planning, bind planning, commit plans, invalidation, and Signal Map tests. | blast radius | Ticket 09 | Preliminary impact estimate | Retain. |
-| PLN-02-005 | 849 | The gate combines keyed removal, nested bind switching, and bounded retained-node count. | gate | Ticket 16 | Proposed regression gate | Assign to owner for final gate design. |
+| PLN-02-005 | 849 | The gate combines keyed removal, nested bind switching, and bounded retained-node count. | gate | Ticket 16 | Proposed regression gate | Accept the five mixed keyed-bind regressions at issue 16 lines 209-237. |
 
 ### Rank 3: N5
 
@@ -627,9 +627,9 @@ value for a library interface.
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-04-001 | 858-860 | Fourth, gate deterministic work counts across six core workload classes. | ranked requirement | Ticket 16 | Proposed correction plan | Assign to owner for gate design. |
-| PLN-04-002 | 862 | Non-invasive instrumentation can start in parallel with P0 work. | dependency | Ticket 16 | Proposed route | Assign to owner for route planning. |
-| PLN-04-003 | 863 | Rank 4 affects tests, benchmarks, and private counters. | blast radius | Ticket 16 | Preliminary impact estimate | Retain for planning. |
+| PLN-04-001 | 858-860 | Fourth, gate deterministic work counts across six core workload classes. | ranked requirement | Ticket 16 | Proposed correction plan | Expand to the complete owner-counter gate set at issue 16 lines 337-454 and 507-575. |
+| PLN-04-002 | 862 | Non-invasive instrumentation can start in parallel with P0 work. | dependency | Ticket 16 | Proposed route | Require counters and failing fixtures before replacement at issue 16 lines 554-565. |
+| PLN-04-003 | 863 | Rank 4 affects tests, benchmarks, and private counters. | blast radius | Ticket 16 | Preliminary impact estimate | Amend the scope to gates, typed probes, counters, and cleanup at issue 16 lines 35-54 and 337-454. |
 
 ### Rank 5: N3
 
@@ -678,9 +678,9 @@ value for a library interface.
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-10-001 | 900-902 | Tenth, give each normative span a registry row plus a test or dated debt. | ranked requirement | Ticket 16 | Proposed correction plan | Assign to owner for law design. |
+| PLN-10-001 | 900-902 | Tenth, give each normative span a registry row plus a test or dated debt. | ranked requirement | Ticket 16 | Proposed correction plan | Replace blanket debt with exact final rows and executables at issue 16 lines 56-88 and 554-565. |
 | PLN-10-002 | 904 | Rank 10 needs omitted repository files and includes new N1 and N2 laws. | dependency | Ticket 01 | Missing pack evidence | Amend by inspecting the complete repository. |
-| PLN-10-003 | 905 | Rank 10 affects the registry and tests. | blast radius | Ticket 16 | Preliminary impact estimate | Retain for planning. |
+| PLN-10-003 | 905 | Rank 10 affects the registry and tests. | blast radius | Ticket 16 | Preliminary impact estimate | Amend the scope to registry, tests, aliases, and shipped gates at issue 16 lines 35-88 and 507-575. |
 
 ### Rank 11: F12
 
