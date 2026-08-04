@@ -1,0 +1,15 @@
+Eta commit: 5614fa6641cb6ac95ee51eccc6b2051d6bf01955
+Eta branch: docs/eta-crux-v1-design
+OCaml: 5.2.0+ox
+Flambda: false
+Jane Street Incremental: v0.18~preview.130.91+190
+Incremental source commit: 31eb755facdfcaaf4ccbae55dffd829f7c7278f9
+Jane Street Incr_map: v0.18~preview.130.91+190
+Incr_map source commit: 07e7d3ca75fe1aa855595cf617fd205f9d419653
+Host: Linux 7.1.3 x86_64
+CPU: AMD Ryzen 9 9950X 16-Core Processor
+Pinned logical CPU: 2
+CPU governor: performance
+Dune profile: release
+Signal samples: 3 process runs x 9 timed samples per workload
+Calibration: at least 0.5 seconds, capped at 16,777,216 operations

@@ -1,0 +1,3 @@
+(executable
+ (name compare)
+ (libraries eta_crux eta_eio eta_test incremental eio_main unix))

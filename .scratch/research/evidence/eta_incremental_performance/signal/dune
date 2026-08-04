@@ -1,0 +1,4 @@
+(executable
+ (name compare)
+ (libraries eta eta_signal eta_signal_map eta_eio incremental incr_map core
+   eio_main unix))
