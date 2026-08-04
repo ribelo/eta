@@ -77,6 +77,12 @@ main Dune workspace.
   explicit but incomplete debt. Five F6 functors have test-only consumers. The
   F6 result is inventory, not a deletion decision. The claim census gives every
   review claim one owner.
+- [Atomic phase entry](issues/02-atomic-phase-entry.md) — N1 is confirmed by
+  execution. Identity exhaustion escapes as a defect and wedges the graph in the
+  pure phase permanently. Identity construction must precede phase mutation, and
+  phase entry must return a live transaction or preserve the idle state exactly.
+  A fresh physical token removes the counter and the shared allocator, but it
+  does not replace that ordering invariant.
 
 ## Not yet specified
 
