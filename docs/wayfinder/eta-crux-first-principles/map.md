@@ -64,6 +64,7 @@ deliverable. Implementation is not part of this map.
 - [Root snapshot observation](issues/09-typed-observation-plan.md) — Expose one canonical root output. Adapters retain and reconcile snapshots after commit. V1 adds no typed observation plan.
 - [Failure, defect, and crash boundary](issues/11-failure-boundary.md) — Escaping non-interruption causes end the root. Detection closes ingress, one mandatory batch settles teardown, and final reports preserve ordered Eta causes.
 - [OCaml API syntax and ergonomics](issues/14-ocaml-api-ergonomics.md) — Use local computation let operators, ordinary modules and labeled constructors, a labeled source emitter, explicit failures, and no V1 PPX.
+- [Package and module boundaries](issues/15-package-boundaries.md) — Use one wrapped core, a public Eta Signal keyed seam, optional codec and test packages, and host-owned concrete adapters.
 - [Exported endpoint and handle contract](issues/16-exported-endpoint-contract.md) — Use structural export nodes, bounded ingress, authenticated handles, and per-export dispatch permits across local and serialized shells.
 - [Eta supervised work substrate](issues/19-eta-supervised-work-substrate.md) — Eta adds request-only supervisor cancellation. Eta Crux registers gated work, requests removed-subtree cancellation, then releases new work without waiting for old cleanup.
 - [Generic host adapter contract](issues/10-generic-host-adapter.md) — Use a pull driver with one-shot delivery tokens, an optional resource-bracketed hosted loop, and adapter-owned scheduling and reconciliation.
