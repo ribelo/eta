@@ -377,3 +377,27 @@ nix develop -c dune runtest test/signal test/signal_map --force
 ```sh
 nix develop -c dune runtest test/signal test/signal_map --force
 ```
+
+## 2026-08-05 - Slice 4: Package endpoint and engine-owned child state
+
+- Added the graph-branded `Signal.Package` endpoint with opaque plans,
+  `stable_family`, and `install`. The public input contract is only the pure
+  ordered symmetric diff; the public output contract is only empty/set/remove.
+- Signal Map `Keyed.mapi` now adapts those pure map operations through
+  `Signal.Package` instead of calling the private keyed constructor directly.
+- Keyed child state moved into the engine. The family owner now builds its
+  child map from the package `compare_key` using a balanced persistent tree;
+  collection packages no longer supply child lookup, insertion, removal, or
+  traversal handles. This removes the old adapter-owned child-state protocol
+  while preserving stable key order and logarithmic child-map operations.
+- Keyed raw-input and output records now carry only the operations the engine
+  actually uses. The previous adapter-owned diff bundle and full output-map
+  operation bundle were deleted.
+- The larger factory-shape migration (`Eta_signal_map.Make (Signal.Package)`)
+  remains open; the current Signal Map factory still returns the graph module
+  for the existing private test seam.
+- Verified with:
+
+```sh
+nix develop -c dune runtest test/signal test/signal_map --force
+```

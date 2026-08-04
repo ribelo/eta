@@ -459,16 +459,23 @@ module Make (Observer_error : Observer_error) () = struct
     keyed_fold : 'acc. ('key -> 'value -> 'acc -> 'acc) -> 'map -> 'acc -> 'acc;
   }
 
-  and ('key, 'value, 'map) keyed_diff_ops = {
-    keyed_map : ('key, 'value, 'map) keyed_map_ops;
-    keyed_fold_diff :
+  and ('key, 'data, 'map) keyed_input_ops = {
+    keyed_input_empty : 'map;
+    keyed_compare_key : 'key -> 'key -> int;
+    keyed_fold_symmetric_diff :
       'acc.
       'map ->
       'map ->
       on_compare:(unit -> unit) ->
       init:'acc ->
-      f:('acc -> 'key -> 'value keyed_change -> 'acc) ->
+      f:('acc -> 'key -> 'data keyed_change -> 'acc) ->
       'acc;
+  }
+
+  and ('key, 'output, 'map) keyed_output_ops = {
+    keyed_output_empty : 'map;
+    keyed_output_set : 'key -> 'output -> 'map -> 'map;
+    keyed_output_remove : 'key -> 'map -> 'map;
   }
 
   and scheduler_visit_state =
@@ -611,8 +618,8 @@ module Make (Observer_error : Observer_error) () = struct
     keyed_input : 'data_map signal;
     keyed_data_cutoff : published:'data -> candidate:'data -> bool;
     keyed_builder : key:'key -> data:'data signal -> 'output signal;
-    keyed_data_ops : ('key, 'data, 'data_map) keyed_diff_ops;
-    keyed_output_ops : ('key, 'output, 'output_map) keyed_map_ops;
+    keyed_data_ops : ('key, 'data, 'data_map) keyed_input_ops;
+    keyed_output_ops : ('key, 'output, 'output_map) keyed_output_ops;
     keyed_child_ops :
       ('key, ('key, 'data, 'output) keyed_child, 'child_map) keyed_map_ops;
     keyed_raw_input : 'data_map Transaction.staged;
@@ -810,6 +817,141 @@ module Make (Observer_error : Observer_error) () = struct
       (scope_id, packed_signal, packed_signal) Scope.context,
       Stream_bridge.metrics )
     Graph.t
+
+  type ('key, 'value) keyed_child_tree =
+    | Keyed_child_empty
+    | Keyed_child_node of {
+        left : ('key, 'value) keyed_child_tree;
+        key : 'key;
+        value : 'value;
+        right : ('key, 'value) keyed_child_tree;
+        height : int;
+      }
+
+  let keyed_child_height = function
+    | Keyed_child_empty -> 0
+    | Keyed_child_node node -> node.height
+
+  let keyed_child_node left key value right =
+    Keyed_child_node
+      {
+        left;
+        key;
+        value;
+        right;
+        height =
+          1
+          + Int.max (keyed_child_height left) (keyed_child_height right);
+      }
+
+  let keyed_child_balance left key value right =
+    let left_height = keyed_child_height left in
+    let right_height = keyed_child_height right in
+    if left_height > right_height + 1 then
+      match left with
+      | Keyed_child_node left_node
+        when keyed_child_height left_node.right
+             > keyed_child_height left_node.left -> (
+          match left_node.right with
+          | Keyed_child_node inner ->
+              keyed_child_node
+                (keyed_child_node left_node.left left_node.key
+                   left_node.value inner.left)
+                inner.key inner.value
+                (keyed_child_node inner.right key value right)
+          | Keyed_child_empty -> keyed_child_node left key value right)
+      | Keyed_child_node left_node ->
+          keyed_child_node left_node.left left_node.key left_node.value
+            (keyed_child_node left_node.right key value right)
+      | Keyed_child_empty -> keyed_child_node left key value right
+    else if right_height > left_height + 1 then
+      match right with
+      | Keyed_child_node right_node
+        when keyed_child_height right_node.left
+             > keyed_child_height right_node.right -> (
+          match right_node.left with
+          | Keyed_child_node inner ->
+              keyed_child_node
+                (keyed_child_node left key value inner.left)
+                inner.key inner.value
+                (keyed_child_node inner.right right_node.key right_node.value
+                   right_node.right)
+          | Keyed_child_empty -> keyed_child_node left key value right)
+      | Keyed_child_node right_node ->
+          keyed_child_node
+            (keyed_child_node left key value right_node.left)
+            right_node.key right_node.value right_node.right
+      | Keyed_child_empty -> keyed_child_node left key value right
+    else keyed_child_node left key value right
+
+  let rec keyed_child_find_opt compare key = function
+    | Keyed_child_empty -> None
+    | Keyed_child_node node ->
+        let order = compare key node.key in
+        if order = 0 then Some node.value
+        else if order < 0 then keyed_child_find_opt compare key node.left
+        else keyed_child_find_opt compare key node.right
+
+  let rec keyed_child_set compare key value tree =
+    match tree with
+    | Keyed_child_empty -> keyed_child_node tree key value tree
+    | Keyed_child_node node ->
+        let order = compare key node.key in
+        if order = 0 then keyed_child_node node.left key value node.right
+        else if order < 0 then
+          keyed_child_balance
+            (keyed_child_set compare key value node.left)
+            node.key node.value node.right
+        else
+          keyed_child_balance node.left node.key node.value
+            (keyed_child_set compare key value node.right)
+
+  let rec keyed_child_min_binding = function
+    | Keyed_child_empty -> invalid_arg "Eta_signal: empty keyed child map"
+    | Keyed_child_node { left = Keyed_child_empty; key; value; _ } ->
+        (key, value)
+    | Keyed_child_node node -> keyed_child_min_binding node.left
+
+  let rec keyed_child_remove compare key tree =
+    match tree with
+    | Keyed_child_empty -> tree
+    | Keyed_child_node node ->
+        let order = compare key node.key in
+        if order < 0 then
+          keyed_child_balance
+            (keyed_child_remove compare key node.left)
+            node.key node.value node.right
+        else if order > 0 then
+          keyed_child_balance node.left node.key node.value
+            (keyed_child_remove compare key node.right)
+        else
+          match (node.left, node.right) with
+          | Keyed_child_empty, Keyed_child_empty -> Keyed_child_empty
+          | Keyed_child_empty, Keyed_child_node _ -> node.right
+          | Keyed_child_node _, Keyed_child_empty -> node.left
+          | Keyed_child_node _, Keyed_child_node _ ->
+              let successor_key, successor_value =
+                keyed_child_min_binding node.right
+              in
+              keyed_child_balance node.left successor_key successor_value
+                (keyed_child_remove compare successor_key node.right)
+
+  let rec keyed_child_fold f tree acc =
+    match tree with
+    | Keyed_child_empty -> acc
+    | Keyed_child_node node ->
+        let acc = keyed_child_fold f node.left acc in
+        let acc = f node.key node.value acc in
+        keyed_child_fold f node.right acc
+
+  let keyed_child_ops compare_key =
+    {
+      keyed_empty = Keyed_child_empty;
+      keyed_find_opt = keyed_child_find_opt compare_key;
+      keyed_set = keyed_child_set compare_key;
+      keyed_remove = keyed_child_remove compare_key;
+      keyed_fold = keyed_child_fold;
+    }
 
   let graph =
     Graph.create ~create_scope_context:Scope.create_context
@@ -2342,7 +2484,7 @@ module Make (Observer_error : Observer_error) () = struct
     let current_output =
       match Signal_snapshot.value (signal_effective_snapshot signal) with
       | Some output -> output
-      | None -> output_ops.keyed_empty
+      | None -> output_ops.keyed_output_empty
     in
     let plan =
       {
@@ -2369,7 +2511,7 @@ module Make (Observer_error : Observer_error) () = struct
       let value, changed = compute lane staging child.keyed_child_output in
       if changed then
         plan.keyed_plan_output <-
-          output_ops.keyed_set child.keyed_child_key value
+          output_ops.keyed_output_set child.keyed_child_key value
             plan.keyed_plan_output;
       visited :=
         child_ops.keyed_set child.keyed_child_key child !visited
@@ -2430,9 +2572,9 @@ module Make (Observer_error : Observer_error) () = struct
       plan.keyed_plan_children <-
         child_ops.keyed_remove key plan.keyed_plan_children;
       plan.keyed_plan_output <-
-        output_ops.keyed_remove child.keyed_child_key plan.keyed_plan_output
+        output_ops.keyed_output_remove child.keyed_child_key plan.keyed_plan_output
     in
-    keyed.keyed_data_ops.keyed_fold_diff current_input input
+    keyed.keyed_data_ops.keyed_fold_symmetric_diff current_input input
       ~on_compare:(fun () -> bump_keyed_counter Input_key_comparison_count)
       ~init:()
       ~f:(fun () key -> function
@@ -4118,8 +4260,11 @@ module Make (Observer_error : Observer_error) () = struct
     type nonrec ('key, 'value, 'map) keyed_map_ops =
       ('key, 'value, 'map) keyed_map_ops
 
-    type nonrec ('key, 'value, 'map) keyed_diff_ops =
-      ('key, 'value, 'map) keyed_diff_ops
+    type nonrec ('key, 'data, 'map) keyed_input_ops =
+      ('key, 'data, 'map) keyed_input_ops
+
+    type nonrec ('key, 'output, 'map) keyed_output_ops =
+      ('key, 'output, 'map) keyed_output_ops
 
     type keyed_entry_identity = {
       keyed_key_token : token;
@@ -4226,8 +4371,8 @@ module Make (Observer_error : Observer_error) () = struct
 
     let keyed_mapi
         ?(data_cutoff = fun ~published ~candidate -> default_equal published candidate)
-        ~data_ops ~child_ops
-        ~output_ops input ~f =
+        ~data_ops ~output_ops input ~f =
+      let child_ops = keyed_child_ops data_ops.keyed_compare_key in
       let keyed =
         {
           keyed_input = input;
@@ -4236,8 +4381,7 @@ module Make (Observer_error : Observer_error) () = struct
           keyed_data_ops = data_ops;
           keyed_output_ops = output_ops;
           keyed_child_ops = child_ops;
-          keyed_raw_input =
-            Transaction.create_staged data_ops.keyed_map.keyed_empty;
+          keyed_raw_input = Transaction.create_staged data_ops.keyed_input_empty;
           keyed_children = Transaction.create_staged child_ops.keyed_empty;
           keyed_affected = child_ops.keyed_empty;
           keyed_owner = None;
@@ -4249,6 +4393,66 @@ module Make (Observer_error : Observer_error) () = struct
       let owner = new_signal (Keyed keyed) [ P input ] in
       keyed.keyed_owner <- Some owner;
       owner
+  end
+
+  module Package = struct
+    type nonrec 'a signal = 'a signal
+
+    type 'a change =
+      | Left of 'a
+      | Right of 'a
+      | Changed of 'a * 'a
+
+    type ('key, 'data, 'map) input_ops = {
+      empty : 'map;
+      compare_key : 'key -> 'key -> int;
+      fold_symmetric_diff :
+        'acc.
+        'map ->
+        'map ->
+        on_compare:(unit -> unit) ->
+        init:'acc ->
+        f:('acc -> 'key -> 'data change -> 'acc) ->
+        'acc;
+    }
+
+    type ('key, 'output, 'map) output_ops = {
+      empty : 'map;
+      set : 'key -> 'output -> 'map -> 'map;
+      remove : 'key -> 'map -> 'map;
+    }
+
+    type 'a plan = Plan of (unit -> 'a signal)
+
+    let stable_family ?data_cutoff ~input
+        ~(input_ops : (_, _, _) input_ops)
+        ~(output_ops : (_, _, _) output_ops) ~build () =
+      let data_ops =
+        {
+          keyed_input_empty = input_ops.empty;
+          keyed_compare_key = input_ops.compare_key;
+          keyed_fold_symmetric_diff =
+            (fun left right ~on_compare ~init ~f ->
+            input_ops.fold_symmetric_diff left right ~on_compare ~init
+              ~f:(fun acc key -> function
+                | Left value -> f acc key (Keyed_left value)
+                | Right value -> f acc key (Keyed_right value)
+                | Changed (previous, current) ->
+                    f acc key (Keyed_changed (previous, current))));
+        }
+      in
+      let output_ops =
+        {
+          keyed_output_empty = output_ops.empty;
+          keyed_output_set = output_ops.set;
+          keyed_output_remove = output_ops.remove;
+        }
+      in
+      Plan (fun () ->
+          Extension.keyed_mapi ?data_cutoff ~data_ops ~output_ops input
+            ~f:build)
+
+    let install (Plan install) = install ()
   end
 end
 

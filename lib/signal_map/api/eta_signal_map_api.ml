@@ -75,35 +75,29 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
     module M = Map.Make (Order)
     module Kernel_map = Eta_signal_map_kernel.Make (Order)
 
-    let map_ops () : (_, _, _) Signal.Extension.keyed_map_ops =
-      {
-        Signal.keyed_empty = M.empty;
-        keyed_find_opt = M.find_opt;
-        keyed_set = M.set;
-        keyed_remove = M.remove;
-        keyed_fold = M.fold;
-      }
-
     let mapi ?data_cutoff input ~f =
-      let data_map = map_ops () in
-      let data_ops : (_, _, _) Signal.Extension.keyed_diff_ops =
+      let input_ops : (_, _, _) Signal.Package.input_ops =
         {
-          Signal.keyed_map = data_map;
-          keyed_fold_diff =
-            (fun left right ~on_compare ~init ~f ->
+          Signal.Package.empty = M.empty;
+          compare_key = Order.compare;
+          fold_symmetric_diff =
+            (fun left right ~on_compare ~init ~f:emit ->
             Kernel_map.fold_symmetric_diff_counted left right ~on_compare ~init
               ~f:(fun acc key -> function
-                | Map.Left value ->
-                    f acc key (Signal.Extension.Keyed_left value)
+                | Map.Left value -> emit acc key (Signal.Package.Left value)
                 | Map.Right value ->
-                    f acc key (Signal.Extension.Keyed_right value)
+                    emit acc key (Signal.Package.Right value)
                 | Map.Changed (old_value, new_value) ->
-                    f acc key
-                      (Signal.Extension.Keyed_changed (old_value, new_value))));
+                    emit acc key
+                      (Signal.Package.Changed (old_value, new_value))));
         }
       in
-      Signal.Extension.keyed_mapi ?data_cutoff ~data_ops
-        ~child_ops:(map_ops ()) ~output_ops:(map_ops ()) input ~f
+      let output_ops : (_, _, _) Signal.Package.output_ops =
+        { Signal.Package.empty = M.empty; set = M.set; remove = M.remove }
+      in
+      Signal.Package.install
+        (Signal.Package.stable_family ?data_cutoff ~input ~input_ops
+           ~output_ops ~build:f ())
 
     module Testing = struct
       type token = Signal.Extension.token
