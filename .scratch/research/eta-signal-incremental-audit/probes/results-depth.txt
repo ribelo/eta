@@ -1,0 +1,14 @@
+# Probe depth: single-chain stabilization, ulimit -s = 8192 kB, EIO_BACKEND unset (posix not required for this run)
+depth=   1000 ok value=1001
+depth=  10000 ok value=10001
+depth=  25000 ok value=25001
+depth=  50000 ok value=50001
+depth=  75000 ok value=75001
+depth= 100000 ok value=100001
+depth= 150000 ok value=150001
+depth= 200000 ok value=200001
+# second run (extended)
+depth= 200000 ok value=200001
+depth= 400000 ok value=400001
+depth= 800000 ok value=800001
+depth=1600000 ok value=1600001

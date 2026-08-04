@@ -1,0 +1,14 @@
+(env
+ (_
+  (flags
+   (:standard -w -32-33-69))))
+
+(executable
+ (name probe_depth)
+ (modules probe_depth)
+ (libraries eta eta_eio eta_signal eio_main unix))
+
+(executable
+ (name probe_scale)
+ (modules probe_scale)
+ (libraries eta eta_eio eta_signal eio_main unix))

@@ -1,0 +1,5 @@
+nodes=    200 chains=   1 len=100 recomputed_after_one_var_set=    102 noop_stabilize_us=    225.3 change_stabilize_us=    207.1 idle_stabilize_us=    161.8
+nodes=   2000 chains=  10 len=100 recomputed_after_one_var_set=   1011 noop_stabilize_us=   1770.2 change_stabilize_us=   1956.8 idle_stabilize_us=   1725.1
+nodes=  10000 chains=  50 len=100 recomputed_after_one_var_set=   5051 noop_stabilize_us=  13068.3 change_stabilize_us=  14543.1 idle_stabilize_us=  13211.6
+nodes=  40000 chains= 200 len=100 recomputed_after_one_var_set=  20201 noop_stabilize_us=  82279.6 change_stabilize_us=  83767.4 idle_stabilize_us=  75234.9
+nodes= 100000 chains= 500 len=100 recomputed_after_one_var_set=  50501 noop_stabilize_us= 259003.6 change_stabilize_us= 275877.1 idle_stabilize_us= 261641.6
