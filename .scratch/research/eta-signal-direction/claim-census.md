@@ -485,18 +485,18 @@ value for a library interface.
 | N03-007 | 696 | `List.sort` requires a total order. | algorithm precondition | Ticket 04 | Standard library contract | Retain for executable reproduction. |
 | N03-008 | 696 | Sort output can violate dependency-before-parent order. | impact | Ticket 04 | Consequence of invalid comparator | Retain for executable reproduction. |
 | N03-009 | 696 | The output is not stable across implementations or input arrangements. | impact | Ticket 04 | Sorting-contract analysis | Retain for executable reproduction. |
-| N03-010 | 698 | The S9 claim that Eta is stronger is unsupported. | parity correction | Ticket 11 | Static counterexample | Assign to owner for observer contract. |
-| N03-011 | 702 | Callback order can be inconsistent on dynamic-bind graphs. | impact | Ticket 11 | Static counterexample | Assign to owner for observer contract. |
+| N03-010 | 698 | The S9 claim that Eta is stronger is unsupported. | parity correction | Ticket 11 | Static counterexample | Confirm for the current comparator. The desired topological plan restores a stronger contract after its gate passes. |
+| N03-011 | 702 | Callback order can be inconsistent on dynamic-bind graphs. | impact | Ticket 11 | Static counterexample | Confirm and replace pairwise sorting with one final-topology plan. |
 | N03-012 | 702 | Pairwise dependency searches also contribute to F1 cost. | complexity link | Ticket 05 | Static algorithm analysis | Retain for work-count evidence. |
-| N03-013 | 706-709 | Eta must choose identity order or one explicit topological order. | design fork | Ticket 11 | Proposed mutually exclusive choices | Assign to owner for design decision. |
-| N03-014 | 708 | Identity order needs documentation that callbacks have no dependency order. | conditional requirement | Ticket 11 | Proposed contract consequence | Assign to owner if it chooses identity order. |
-| N03-015 | 709 | Dependency order needs one topological plan with observer ID tie-breaking. | conditional requirement | Ticket 11 | Proposed contract consequence | Assign to owner if it chooses topological order. |
-| N03-016 | 709 | Dependency order must not use pairwise reachability comparisons. | requirement | Ticket 11 | Proposed algorithm constraint | Assign to owner for design decision. |
-| N03-017 | 711 | Callback ordering must be a deterministic total order. | invariant | Ticket 11 | Proposed public contract | Assign to owner for design decision. |
-| N03-018 | 711 | A topological promise requires every dependency before each transitive consumer. | conditional invariant | Ticket 11 | Proposed public contract | Assign to owner if it chooses topological order. |
+| N03-013 | 706-709 | Eta must choose identity order or one explicit topological order. | design fork | Ticket 11 | Proposed mutually exclusive choices | Choose one explicit topological order. |
+| N03-014 | 708 | Identity order needs documentation that callbacks have no dependency order. | conditional requirement | Ticket 11 | Proposed contract consequence | Reject because identity is only a ready-group tie-breaker. |
+| N03-015 | 709 | Dependency order needs one topological plan with observer ID tie-breaking. | conditional requirement | Ticket 11 | Proposed contract consequence | Accept over the final prospective topology. |
+| N03-016 | 709 | Dependency order must not use pairwise reachability comparisons. | requirement | Ticket 11 | Proposed algorithm constraint | Accept one union traversal and Kahn-style event plan. |
+| N03-017 | 711 | Callback ordering must be a deterministic total order. | invariant | Ticket 11 | Proposed public contract | Accept dependency order plus observer and signal identity tie-breakers. |
+| N03-018 | 711 | A topological promise requires every dependency before each transitive consumer. | conditional invariant | Ticket 11 | Proposed public contract | Accept as a public callback law. |
 | N03-019 | 715 | Tests need the exact dynamic graph across observer registration permutations. | test requirement | Ticket 04 | Proposed prototype matrix | Retain for executable reproduction. |
-| N03-020 | 719 | The observer-order decision must precede F1's scheduler rewrite. | sequencing | Ticket 11 | Proposed dependency order | Assign to owner for route planning. |
-| N03-021 | 719 | N3 can change observable traces, documentation, and model behavior. | blast radius | Ticket 11 | Preliminary impact estimate | Retain for planning. |
+| N03-020 | 719 | The observer-order decision must precede F1's scheduler rewrite. | sequencing | Ticket 11 | Proposed dependency order | Amend. Ticket 10 supplies final topology before ticket 11 builds delivery planning. |
+| N03-021 | 719 | N3 can change observable traces, documentation, and model behavior. | blast radius | Ticket 11 | Preliminary impact estimate | Retain as the implementation and migration impact. |
 
 ### N4
 
@@ -572,9 +572,9 @@ value for a library interface.
 | S06-002 | 818 | S6 does not cover N2's mixed keyed-removal and staged-bind case. | limitation | Ticket 03 | Static counterexample | Retain for executable reproduction. |
 | S07-001 | 819 | Retain S7 only for selector or validation failure before commit. | bounded parity assessment | Ticket 16 | Static support with an explicit boundary | Assign to owner for an executable law decision. |
 | S08-001 | 820 | Retain S8 parity for variable sets during stabilization. | parity assessment | Ticket 16 | Review conclusion without new qualification | Assign to owner for an executable law decision. |
-| S09-001 | 821 | Refute S9 because the observer comparator is non-total. | parity correction | Ticket 11 | Static N3 counterexample | Assign to owner for observer contract. |
-| S10-001 | 822 | Retain S10 richer delivery coalescing. | parity assessment | Ticket 11 | Static semantic review | Assign to owner for observer contract. |
-| S10-002 | 822 | S10 remains subject to documented at-least-once behavior after callback failure or interruption. | limitation | Ticket 11 | Public contract qualification | Assign to owner for observer contract. |
+| S09-001 | 821 | Refute S9 because the observer comparator is non-total. | parity correction | Ticket 11 | Static N3 counterexample | Retain for the current engine; replace it with the gated topological law. |
+| S10-001 | 822 | Retain S10 richer delivery coalescing. | parity assessment | Ticket 11 | Static semantic review | Retain latest-value coalescing against the last acknowledged value. |
+| S10-002 | 822 | S10 remains subject to documented at-least-once behavior after callback failure or interruption. | limitation | Ticket 11 | Public contract qualification | Retain and specify the success acknowledgement linearization point. |
 | S11-001 | 823 | Amend S11 because direct callbacks lack invalidation events but streams distinguish terminal outcomes. | parity assessment | Ticket 13 | Static interface and implementation trace | Assign to owner for lifecycle decision. |
 | S11-002 | 823 | `Unnecessary` has no valid meaning for an active Eta observer. | semantic claim | Ticket 13 | Demand and lifecycle reasoning | Assign to owner for lifecycle decision. |
 | S12-001 | 824 | Refute universal S12 rollback superiority because N1 and N2 expose boundary failures. | parity correction | Ticket 09 | Static counterexamples | Amend. The desired atomic-pass model restores the stronger contract; ticket 16 must prove it. |
@@ -635,10 +635,10 @@ value for a library interface.
 
 | ID | Review lines | Gist | Class | Owner | Evidence status | Ticket-01 disposition |
 |---|---:|---|---|---|---|---|
-| PLN-05-001 | 865-867 | Fifth, choose a deterministic total observer order. | ranked requirement | Ticket 11 | Proposed correction plan | Assign to owner for observer design. |
-| PLN-05-002 | 867 | A dependency promise requires one topological plan instead of pairwise searches. | ranked requirement | Ticket 11 | Proposed correction plan | Assign to owner for observer design. |
-| PLN-05-003 | 869 | Rank 5 needs a product decision and coordination with F1. | dependency | Ticket 11 | Proposed route | Assign to owner for route planning. |
-| PLN-05-004 | 870 | Rank 5 changes callback traces and documentation. | blast radius | Ticket 11 | Preliminary impact estimate | Retain for planning. |
+| PLN-05-001 | 865-867 | Fifth, choose a deterministic total observer order. | ranked requirement | Ticket 11 | Proposed correction plan | Accept deterministic topological delivery. |
+| PLN-05-002 | 867 | A dependency promise requires one topological plan instead of pairwise searches. | ranked requirement | Ticket 11 | Proposed correction plan | Accept the union traversal and ready-group plan. |
+| PLN-05-003 | 869 | Rank 5 needs a product decision and coordination with F1. | dependency | Ticket 11 | Proposed route | Amend. The product decision follows ticket 10's final topology contract. |
+| PLN-05-004 | 870 | Rank 5 changes callback traces and documentation. | blast radius | Ticket 11 | Preliminary impact estimate | Retain. |
 
 ### Rank 6: F1
 
@@ -736,8 +736,8 @@ value for a library interface.
 | Q01-001 | 945 | Which revision is authoritative, packed `4197be98` or probe baseline `5694938a`? | open question | Ticket 01 | Conflicting review metadata | Retain and answer from repository history and ticket scope. |
 | Q01-002 | 945 | Deterministic work-count gates need a rerun on the selected revision. | evidence request | Ticket 05 | Revision mismatch | Assign to owner for prototype evidence. |
 | Q02-001 | 946 | Which registry spans and named Signal tests settle F3 and repository-wide F6 use? | open question | Ticket 01 | Evidence omitted from pack | Retain and answer from the complete repository. |
-| Q03-001 | 947 | Is dependency-ordered callback delivery a public law? | open question | Ticket 11 | Public prose appears weaker than implementation intent | Assign to owner for observer decision. |
-| Q03-002 | 947 | The answer chooses topological scheduling or simple identity order for N3. | design consequence | Ticket 11 | Explicit design fork | Assign to owner for observer decision. |
+| Q03-001 | 947 | Is dependency-ordered callback delivery a public law? | open question | Ticket 11 | Public prose appears weaker than implementation intent | Yes. Dependency-before-consumer delivery is a public law. |
+| Q03-002 | 947 | The answer chooses topological scheduling or simple identity order for N3. | design consequence | Ticket 11 | Explicit design fork | Choose topological scheduling with observer identity tie-breaking. |
 | Q04-001 | 948 | Does a test combine nested bind switching with removal of the same keyed child? | open question | Ticket 03 | Packed tests omitted | Retain for executable evidence search. |
 | Q04-002 | 948 | Existing output-only assertions can miss retained invalid topology. | evidence warning | Ticket 03 | Static N2 trace | Retain for prototype observations. |
 | Q05-001 | 949 | Is `Keyed.Testing` intended for packages outside this repository? | open question | Ticket 12 | Package intent not established | Assign to owner for seam decision. |

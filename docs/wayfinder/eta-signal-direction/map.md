@@ -141,6 +141,12 @@ main Dune workspace.
   reference transitions, including timer demand. Static edge arrays and indexed
   dynamic vectors make wide construction, invalidation, and keyed removal
   linear in the affected edges.
+- [Observer delivery contract](issues/11-observer-delivery-contract.md) —
+  Callbacks follow one deterministic topological plan over the final committed
+  topology. Dependencies precede consumers. Observer identity orders ready
+  unrelated groups and same-signal callbacks. Delivery remains sequential,
+  fail-fast, and coalescing. It remains at least once while the observer is
+  active, until acknowledgement or lifecycle finish.
 
 ## Not yet specified
 
