@@ -105,6 +105,10 @@ let create () =
 
 let phase t = t.phase
 let is_planning t = t.phase = Planning
+let accepts_staging t =
+  match t.session with
+  | Some session -> session.sealed_transaction = None
+  | None -> false
 let counters t = t.counters
 let commit_counters t = t.commit_counters
 let fault_injector t = t.faults
@@ -183,13 +187,14 @@ type ('capability, 'pending, 'observer, 'event, 'hook, 'error, 'staging) ops = {
   rollback_staging : 'capability -> 'staging -> 'hook list;
   mark_observers_failed : 'capability -> 'observer list -> unit;
   requeue_pending : 'capability -> 'pending list -> unit;
+  rollback_observers : 'capability -> 'observer list;
 }
 
 let ops ~reentrant_error ~classify_graph_error ~advance_generation ~begin_staging
     ~drain_pending ~release_pending_marks ~observer_snapshot ~stage_pending
     ~plan_dynamic ~prepare_commit ~update_necessity
     ~clear_timer_refresh ~rollback_staging ~mark_observers_failed
-    ~requeue_pending =
+    ~requeue_pending ~rollback_observers =
   {
     reentrant_error;
     classify_graph_error;
@@ -206,6 +211,7 @@ let ops ~reentrant_error ~classify_graph_error ~advance_generation ~begin_stagin
     rollback_staging;
     mark_observers_failed;
     requeue_pending;
+    rollback_observers;
   }
 
 let return_idle t =
@@ -253,10 +259,12 @@ let run t capability ops =
          let pending_value = ops.drain_pending capability in
          pending := pending_value;
          ops.release_pending_marks capability pending_value;
+         observers := ops.rollback_observers capability;
+         ops.stage_pending capability pending_value;
+         let discovery_snapshot = ops.observer_snapshot capability in
+         ops.plan_dynamic capability discovery_snapshot.observers;
          let observer_snapshot = ops.observer_snapshot capability in
          observers := observer_snapshot.observers;
-         ops.stage_pending capability pending_value;
-         ops.plan_dynamic capability observer_snapshot.observers;
          check_fault t.faults After_dynamic_discovery;
          let events =
            observer_snapshot.collect_events capability observer_snapshot.observers

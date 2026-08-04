@@ -103,6 +103,46 @@ let test_keyed_mapi_preflight_failure_preserves_committed_snapshot () =
    | Some _ -> ());
   run_ok runtime (S.Observer.dispose observer)
 
+exception Injected
+
+let test_keyed_mapi_atomic_fault_rolls_back_topology () =
+  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  let input = S.Var.create (M.set 1 10 M.empty) in
+  let output = K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data -> data) in
+  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  run_ok runtime S.stabilize;
+  let before =
+    match T.entry_identity output 1 with
+    | Some identity -> identity
+    | None -> Alcotest.fail "missing committed entry"
+  in
+  T.set_atomic_fault
+    (Some
+       {
+         Eta_signal_atomic_pass.slot =
+           Eta_signal_atomic_pass.After_prospective_validation;
+         exn = Injected;
+       });
+  run_ok runtime (S.Var.set input (M.set 2 20 M.empty));
+  expect_defect "atomic fault" (run_exit runtime S.stabilize);
+  T.set_atomic_fault None;
+  Alcotest.(check bool) "rollback clears pending plan" false (T.pending output);
+  let after =
+    match T.entry_identity output 1 with
+    | Some identity -> identity
+    | None -> Alcotest.fail "committed entry disappeared"
+  in
+  Alcotest.(check bool) "committed scope token preserved" true
+    (before.keyed_scope_token == after.keyed_scope_token);
+  Alcotest.(check bool) "committed scope remains valid" true
+    (T.scope_valid before.keyed_scope_token);
+  Alcotest.(check (list (pair int int))) "rolled-back output preserved"
+    [ (1, 10) ] (run_ok runtime (S.Observer.read observer) |> M.to_list);
+  run_ok runtime S.stabilize;
+  Alcotest.(check (list (pair int int))) "retry commits after fault is cleared"
+    [ (2, 20) ] (run_ok runtime (S.Observer.read observer) |> M.to_list);
+  run_ok runtime (S.Observer.dispose observer)
+
 let () =
   Alcotest.run "eta_signal_map_keyed_private"
     [
@@ -113,5 +153,7 @@ let () =
           Alcotest.test_case
             "keyed_mapi_preflight_failure_preserves_committed_snapshot" `Quick
             test_keyed_mapi_preflight_failure_preserves_committed_snapshot;
+          Alcotest.test_case "keyed_mapi_atomic_fault_rolls_back_topology"
+            `Quick test_keyed_mapi_atomic_fault_rolls_back_topology;
         ] );
     ]

@@ -128,6 +128,8 @@ type ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle
 val node_lifecycle :
   validate_dependency:('dependency -> unit) ->
   create:(id:Eta_signal_id.signal -> scope:'scope option -> 'node) ->
+  reserve_dependencies:('node -> int -> unit) ->
+  reserve_dependents:('dependency -> unit) ->
   attach_dependency:(parent:'node -> child:'dependency -> unit) ->
   add_to_scope:('scope -> 'node -> unit) ->
   pack:('node -> 'packed_node) ->
@@ -143,8 +145,9 @@ val node_invalidation :
   tombstone:('node -> 'dead_node) ->
   tombstone_id:('dead_node -> Eta_signal_id.signal) ->
   observer_hooks:('node -> 'hook list) ->
+  detach_edges:('node -> 'node list) ->
   kind_hooks:
-    (invalidate_scope:(?prune:bool -> 'scope -> 'hook list) ->
+    (invalidate_scope:('scope -> 'hook list) ->
     'node ->
     'hook list) ->
   ('node, 'scope, 'hook, 'dead_node) node_invalidation
@@ -248,6 +251,15 @@ val restore_dirty :
   unit
 
 val generation : (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
+
+val atomic_pass_counters :
+  (_, _, _, _, _, _, _, _, _, _, _) t -> Eta_signal_atomic_pass.counters
+
+val atomic_pass_fault_injector :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  Eta_signal_atomic_pass.fault_injector
+
+val stabilization_idle : (_, _, _, _, _, _, _, _, _, _, _) t -> bool
 
 val set_generation :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
@@ -442,6 +454,7 @@ val staging_commit_plan :
   binds:('bind, 'hook) staging_bind_commit_plan ->
   signals:'node staging_signal_commit_plan ->
   timers:'timer staging_timer_commit_plan ->
+  finalize:(unit -> 'hook list) ->
   ('bind, 'node, 'hook, 'timer) staging_commit_plan
 
 val pure_snapshot_commit_count :
@@ -459,6 +472,13 @@ val stage_cell :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   staging ->
+  'a Eta_signal_transaction.staged ->
+  'a ->
+  unit
+
+val publish_or_stage :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  Eta_signal_transaction.current_writer ->
   'a Eta_signal_transaction.staged ->
   'a ->
   unit
@@ -853,9 +873,8 @@ val create_live_node :
 val invalidate_live_node :
   (_, _, _, _, _, _, _, _, 'dead_node, _, _) t ->
   lane_access ->
-  ('id, 'node) edge_ops ->
   ('node, 'scope, 'hook, 'dead_node) node_invalidation ->
-  invalidate_scope:(?prune:bool -> 'scope -> 'hook list) ->
+  invalidate_scope:('scope -> 'hook list) ->
   'node ->
   'hook list
 (** Invalidate one live node and any currently attached dependents. The graph
@@ -874,14 +893,8 @@ val live_nodes :
   (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
   lane_access ->
   ('node, 'weak_node) live_node_registry ->
-  'node list
-
-val prune_live_nodes :
-  (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
-  lane_access ->
-  ('node, 'weak_node) live_node_registry ->
   keep:('node -> bool) ->
-  unit
+  'node list
 
 type necessary_snapshot
 

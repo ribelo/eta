@@ -47,3 +47,53 @@ let note_quiescent_return counters =
 let note_work_class_zero_crossing counters =
   if counters.enabled then
     counters.work_class_zero_crossings <- succ counters.work_class_zero_crossings
+
+type class_ =
+  | Sources
+  | Scheduler
+  | Observer_delivery
+  | Timer_reconciliation
+  | Cleanup
+
+type t = {
+  counters : counters;
+  mutable total : int;
+  counts : int array;
+}
+
+let class_index = function
+  | Sources -> 0
+  | Scheduler -> 1
+  | Observer_delivery -> 2
+  | Timer_reconciliation -> 3
+  | Cleanup -> 4
+
+let create counters = { counters; total = 0; counts = Array.make 5 0 }
+let total work = work.total
+let quiescent work = work.total = 0
+let count work class_ = work.counts.(class_index class_)
+
+let admit work class_ =
+  note_admission_check work.counters;
+  let index = class_index class_ in
+  if work.counts.(index) = 0 then note_work_class_zero_crossing work.counters;
+  work.counts.(index) <- work.counts.(index) + 1;
+  work.total <- work.total + 1
+
+let release work class_ =
+  let index = class_index class_ in
+  if work.counts.(index) = 0 then
+    invalid_arg "Eta_signal_work.release: empty work class";
+  work.counts.(index) <- work.counts.(index) - 1;
+  work.total <- work.total - 1;
+  if work.counts.(index) = 0 then note_work_class_zero_crossing work.counters
+
+let note_quiescent work =
+  if quiescent work then note_quiescent_return work.counters
+
+let check_quiescent work =
+  note_admission_check work.counters;
+  if quiescent work then (
+    note_quiescent_return work.counters;
+    true)
+  else false

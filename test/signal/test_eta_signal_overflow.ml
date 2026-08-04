@@ -172,7 +172,10 @@ let test_var_create_counter_overflow_raises_graph_error () =
 let test_stabilization_generation_overflow_is_typed_failure () =
   let module Test_signal = Eta_signal_overflow_harness.Make (Observer_error) () in
   with_runtime @@ fun rt ->
+  let source = Test_signal.Var.create 1 in
   run_ok rt (Test_signal.Overflow.set_generation max_int);
+  run_ok rt Test_signal.stabilize;
+  run_ok rt (Test_signal.Var.set source 2);
   expect_fail "stabilization generation overflow"
     (counter_overflow "stabilization generation")
     (Eta_eio.Runtime.run rt (widen Test_signal.stabilize))
@@ -180,7 +183,10 @@ let test_stabilization_generation_overflow_is_typed_failure () =
 let test_timer_refresh_token_overflow_is_typed_failure () =
   let module Test_signal = Eta_signal_overflow_harness.Make (Observer_error) () in
   with_runtime @@ fun rt ->
+  let source = Test_signal.Var.create 1 in
   run_ok rt (Test_signal.Overflow.set_next_timer_refresh_token max_int);
+  run_ok rt Test_signal.stabilize;
+  run_ok rt (Test_signal.Var.set source 2);
   expect_fail "timer refresh token overflow"
     (counter_overflow "timer refresh token")
     (Eta_eio.Runtime.run rt (widen Test_signal.stabilize))

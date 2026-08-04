@@ -87,3 +87,208 @@ The final result must satisfy all of these gates:
 - Added `test/signal/atomic_pass/` with the N1 allocation boundary, all planning fault slots with retry, prepared-write-only commit, cleanup exactly-once transition, and one-way lifetime checks.
 - Focused Signal and Signal Map suites pass after the replacement.
 - Current production scope is 22,382 physical lines. This is 704 lines above the saved baseline because later engine-owner modules still coexist with the old scan scheduler. Slice 3 must delete those scans and recover the temporary delta; the final gate remains 21,678 lines.
+
+## 2026-08-04 - Slice 3 feasibility plateau
+
+- Replaced the graph-wide keyed pending-plan scan with a direct index.
+- Removed eager weak-registry pruning from stabilization.
+- The complete Signal and Signal Map suites pass with the indexed scheduler:
+
+```sh
+nix develop -c dune build @install
+nix develop -c dune runtest test/signal test/signal_map --force
+```
+
+- Measured isolated workloads after the scan removal. Each result is the median
+  of three samples from the source-linked comparison harness.
+
+| Workload | Jane Street | Eta | Eta / Jane Street | `1.20x` ceiling |
+| --- | ---: | ---: | ---: | ---: |
+| changed depth 1 | 33.805 ns | 10,626.569 ns | 314.35x | 40.566 ns |
+| changed depth 10 | 103.782 ns | 13,680.208 ns | 131.82x | 124.539 ns |
+| dynamic switch | 123.336 ns | 20,220.155 ns | 163.95x | 148.003 ns |
+
+- The depth-one Eta workload allocates approximately 8,232 words per
+  operation. Incremental allocates approximately zero words.
+- The remaining gap is not a graph-size scan. The isolated depth-one result
+  stayed near its earlier 9-11 microsecond range after the scan removal.
+- The accepted `1.20x` target requires a further 262x reduction for depth one.
+  This is a feasibility plateau in the current effectful API and runtime path.
+
+## 2026-08-05 - Slice 3: constructor-slot edges
+
+- Replaced static child-identity deduplication with one topology edge for each
+  constructor argument slot.
+- Kept the child index for dynamic edges only. Static edges do not use this
+  set-like index.
+- Updated DOT diagnostics to render parallel argument edges.
+- Added a public contract regression for `map2 base base`. The regression
+  failed before the implementation change and now verifies two dependency
+  edges, two dependent edges, and two rendered DOT edges.
+- The complete Signal and Signal Map suites pass:
+
+```sh
+nix develop -c dune runtest test/signal test/signal_map --force
+```
+
+## 2026-08-05 - Slice 3: atomic demand adjustment
+
+- Demand adjustment now records prospective count changes before it publishes
+  zero-boundary callbacks.
+- A later overflow or underflow restores every earlier count change.
+- Added a private invariant-owner regression that forces failure after the root
+  count changed. It verifies exact restoration for both overflow and underflow.
+- The complete Signal and Signal Map suites pass after the change.
+
+## 2026-08-05 - Slice 3: indexed scheduler removal
+
+- Changed the scheduler queue to an intrusive doubly linked FIFO.
+- Necessity loss now removes unclaimed scheduler work through the node's queue
+  links. It does not scan the queue.
+- Removing scheduler work also releases the matching work-ledger item.
+- Added owner-level queue tests and a kernel integration regression. The
+  integration test observes a dirty graph, disposes it before stabilization,
+  and verifies that the scheduler and work ledger are empty.
+- The complete Signal and Signal Map suites pass after the change.
+
+## 2026-08-05 - Slice 3: transactional scheduler attempts
+
+- Stabilization now reads the committed scheduler through an attempt cursor.
+  It does not unlink committed entries during planning.
+- New planning admissions use a separate attempt-local FIFO.
+- Rollback discards local admissions and preserves committed queue links and
+  FIFO order.
+- Commit clears committed and local scheduler state through the sealed commit
+  plan and releases the exact work-ledger count.
+- Attempt-local and pending-removal bits are stored on each node. Scheduler
+  removal and claim checks do not search an attempt list.
+- Added a scheduler-owner regression that claims committed work, admits local
+  work, rolls back, and verifies the original committed FIFO and queued bits.
+- The complete Signal and Signal Map suites pass after the change.
+
+## 2026-08-05 - Slice 3: guarded O(1) quiescent stabilization
+
+- `stabilize` now checks the work ledger before timer-refresh token creation,
+  phase installation, generation advancement, staging, observer collection, or
+  `Graph.run_stabilization`.
+- The quiescent check records exactly one work-admission check and one
+  quiescent return. It does not record an atomic-pass phase entry, commit,
+  rollback, or return-to-idle transition.
+- The fast path is conservative while timer reconciliation still uses the
+  legacy demanded-timer scan: graphs with timer nodes do not take it yet. This
+  preserves timer behavior until slice 7 replaces that scan with queued
+  timer-reconciliation work.
+- The fast path is also phase-guarded. A nested stabilization still reaches the
+  atomic pass and receives the typed reentrancy failure.
+- Observer candidates and pending deliveries now own `Observer_delivery` work
+  items. Registration or signal change admits a candidate item, event
+  collection releases it, pending delivery admits another item, and delivery
+  acknowledgement, disposal, or invalidation releases it.
+- Added a kernel regression proving that a quiescent call keeps the graph
+  generation unchanged and advances only the two work counters.
+- Updated the two overflow regressions to distinguish the new V1 semantics:
+  quiescent stabilization at `max_int` succeeds, while non-quiescent
+  stabilization still reports generation or timer-refresh-token overflow.
+- The complete Signal and Signal Map suites pass:
+
+```sh
+nix develop -c dune runtest test/signal test/signal_map --force
+```
+
+## 2026-08-05 - Slice 3: explicit dirty-dependency stack
+
+- Replaced the scheduler's direct claim-then-recursive-compute driver with an
+  explicit stack of dependency frames.
+- Each claimed consumer settles necessary dirty dependencies in edge-slot order
+  before evaluation. Shared dependencies evaluate once and later queue claims
+  observe the attempt's `Done` state.
+- Added generation-branded `Unseen`, `Visiting`, and `Done` scheduler marks.
+  A failed attempt cannot leak marks into the retry because the next attempt
+  uses a fresh stabilization generation. Reaching a current `Visiting` node
+  raises `` `Cycle`` before commit.
+- Dirty scheduling, timer-dirty scheduling, and demand-boundary scheduling now
+  suppress re-admission while the node is `Visiting` in the current attempt.
+- Dependency-edge instrumentation moved from recursive static evaluation to
+  stack edge inspection. Claims still count queue claims only; node evaluations
+  count nodes the stack submits to the evaluator.
+- Added a dirty-diamond regression proving dependency-first order, exact
+  claim/edge/evaluation counts, an empty scheduler after commit, and an empty
+  work ledger after commit.
+- Dynamic bind and keyed prospective-edge closure still use the existing
+  evaluator recursion. Closing that frontier is slice 4, not hidden inside this
+  scheduler change.
+- The complete Signal and Signal Map suites pass:
+
+```sh
+nix develop -c dune runtest test/signal test/signal_map --force
+```
+
+## 2026-08-05 - Slice 3: timer work enters the ledger
+
+- Demanded timer nodes now own one conservative `Timer_reconciliation` work
+  item. The item matches the current scan-based reconciler, which schedules
+  demanded timer nodes on every non-quiescent stabilization.
+- Demand loss releases that item. Timer-demand cleanup pending outside
+  stabilization owns one item; claiming it releases it, and failed cleanup
+  restores it exactly once.
+- Quiescent stabilization no longer checks the timer registry. It trusts the
+  work ledger: demanded or cleanup-pending timers enter a stabilization pass,
+  while stopped timers with no pending cleanup return in O(1).
+- Added a kernel regression proving that a demanded timer causes phase entry,
+  prevents a quiescent return, releases its work after observer disposal, and
+  then permits an O(1) quiescent call while the timer node remains registered.
+- Slice 7 must replace the conservative active-timer item with exact
+  desired/actual lifecycle mismatch work and delete the scan-based reconciler.
+- The complete Signal and Signal Map suites pass:
+
+```sh
+nix develop -c dune runtest test/signal test/signal_map --force
+```
+
+## 2026-08-05 - Slice 3: cleanup hooks enter the ledger
+
+- Pending observer disposal hooks now own one `Cleanup` work item from the
+  moment they are published. Running the hooks releases that item after the
+  finalizers, including failure and interruption exits.
+- Overwriting pending cleanup hooks is rejected loudly, so cleanup work cannot
+  be silently replaced or leaked.
+- A kernel regression observes the count inside an `on_finish` hook, proving
+  the hook runs while cleanup work is pending and that the ledger returns to
+  zero and quiescent O(1) behavior after the hook completes.
+- The complete Signal and Signal Map suites pass:
+
+```sh
+nix develop -c dune runtest test/signal test/signal_map --force
+```
+
+## 2026-08-05 - Slice 3: review fixes before commit
+
+- Scheduler rollback now clears `attempt_removed` on every committed FIFO
+  entry. A unit regression proves that a node removed during an aborted
+  attempt is claimable by the next attempt.
+- Keyed topology changes no longer publish during preflight. Keyed removals,
+  invalidations, additions, and pending-plan finalization run as a sealed
+  commit-plan write that returns its disposal hooks. A fault after prospective
+  validation now rolls back pending keyed topology and preserves the committed
+  child identity; clearing the fault retries and commits the replacement.
+- Observer registration and disposal adjust the observed signal and scope
+  owner through one compound demand journal. Overflow restores every touched
+  demand count and publishes no demand boundary.
+- Edge insertion now validates demand capacity and reserves both adjacency
+  vectors before publication. Dynamic-index insertion happens before the
+  non-allocating adjacency appends. Static node construction reserves all
+  dependency and dependent capacity before attaching constructor edges.
+- The full suite rejected lifecycle-only timer quiescence: active timers still
+  need the current scan-based on-demand refresh. Slice 3 therefore keeps the
+  conservative rule that each demanded timer owns one timer work item, plus
+  one pending cleanup item when disposal must force reconciliation. Slice 7
+  must replace the scan and then make timer work exact.
+- The second high-tier review run completed, but the agent-result channel
+  returned an internal decoding error before its final report could be read.
+  All findings from the first report are either fixed with regressions or, in
+  the timer case, explicitly deferred to slice 7 by full-suite evidence.
+- Verified with:
+
+```sh
+nix develop -c dune runtest test/signal test/signal_map --force
+```

@@ -107,6 +107,7 @@ module Delivery : sig
 
   type ('a, 'after_ack) t
 
+  val pending : ('a, 'after_ack) t -> bool
   val label : ('a, 'after_ack) t -> string
 end
 

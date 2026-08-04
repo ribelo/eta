@@ -53,6 +53,7 @@ let ops fixture =
     ~mark_observers_failed:(fun () _ -> ())
     ~requeue_pending:(fun () pending ->
       fixture.pending <- pending @ fixture.pending)
+    ~rollback_observers:(fun () -> [])
 
 let outcome result =
   Atomic.result result

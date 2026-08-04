@@ -557,6 +557,8 @@ type ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle =
   {
     node_validate_dependency : 'dependency -> unit;
     node_create : id:Eta_signal_id.signal -> scope:'scope option -> 'node;
+    node_reserve_dependencies : 'node -> int -> unit;
+    node_reserve_dependents : 'dependency -> unit;
     node_attach_dependency : parent:'node -> child:'dependency -> unit;
     node_add_to_scope : 'scope -> 'node -> unit;
     node_pack : 'node -> 'packed_node;
@@ -570,17 +572,20 @@ type ('node, 'scope, 'hook, 'dead_node) node_invalidation = {
   invalidation_tombstone : 'node -> 'dead_node;
   invalidation_tombstone_id : 'dead_node -> Eta_signal_id.signal;
   invalidation_observer_hooks : 'node -> 'hook list;
+  invalidation_detach_edges : 'node -> 'node list;
   invalidation_kind_hooks :
-    invalidate_scope:(?prune:bool -> 'scope -> 'hook list) ->
+    invalidate_scope:('scope -> 'hook list) ->
     'node ->
     'hook list;
 }
 
-let node_lifecycle ~validate_dependency ~create ~attach_dependency
-    ~add_to_scope ~pack ~create_weak =
+let node_lifecycle ~validate_dependency ~create ~reserve_dependencies
+    ~reserve_dependents ~attach_dependency ~add_to_scope ~pack ~create_weak =
   {
     node_validate_dependency = validate_dependency;
     node_create = create;
+    node_reserve_dependencies = reserve_dependencies;
+    node_reserve_dependents = reserve_dependents;
     node_attach_dependency = attach_dependency;
     node_add_to_scope = add_to_scope;
     node_pack = pack;
@@ -588,7 +593,7 @@ let node_lifecycle ~validate_dependency ~create ~attach_dependency
   }
 
 let node_invalidation ~valid ~set_invalid ~timer_hooks ~tombstone
-    ~tombstone_id ~observer_hooks ~kind_hooks =
+    ~tombstone_id ~observer_hooks ~detach_edges ~kind_hooks =
   {
     invalidation_valid = valid;
     invalidation_set_invalid = set_invalid;
@@ -596,6 +601,7 @@ let node_invalidation ~valid ~set_invalid ~timer_hooks ~tombstone
     invalidation_tombstone = tombstone;
     invalidation_tombstone_id = tombstone_id;
     invalidation_observer_hooks = observer_hooks;
+    invalidation_detach_edges = detach_edges;
     invalidation_kind_hooks = kind_hooks;
   }
 
@@ -728,6 +734,14 @@ let restore_dirty _t _lane ops entries =
   List.iter (fun (node, dirty) -> ops.dirty_set node dirty) entries
 
 let generation t _lane = State.generation t.state
+let atomic_pass_counters t = Eta_signal_atomic_pass.counters t.atomic_pass
+
+let atomic_pass_fault_injector t =
+  Eta_signal_atomic_pass.fault_injector t.atomic_pass
+
+let stabilization_idle t =
+  Eta_signal_atomic_pass.phase t.atomic_pass = Eta_signal_atomic_pass.Idle
+
 let set_generation t _lane generation =
   State.set_generation t.state generation
 
@@ -1006,8 +1020,11 @@ let reset_staging t _lane staging context =
       ~clear_timer_refresh_timer:(fun timer ->
         reset_staging_timer staging timer context)
   in
-  context.staging_reset_rollback_extensions staging
-  @ State.reset_staging t.state staging state_context
+  let extension_hooks =
+    context.staging_reset_rollback_extensions staging
+  in
+  let state_hooks = State.reset_staging t.state staging state_context in
+  extension_hooks @ state_hooks
 
 type 'hook staged_bind_commit =
   | Staged_bind_commit : {
@@ -1102,14 +1119,16 @@ type ('bind, 'node, 'hook, 'timer) staging_commit_plan = {
   staging_commit_binds : ('bind, 'hook) staging_bind_commit_plan;
   staging_commit_signals : 'node staging_signal_commit_plan;
   staging_commit_timers : 'timer staging_timer_commit_plan;
+  staging_commit_finalize : unit -> 'hook list;
 }
 
-let staging_commit_plan ~preflight ~binds ~signals ~timers =
+let staging_commit_plan ~preflight ~binds ~signals ~timers ~finalize =
   {
     staging_commit_preflight = preflight;
     staging_commit_binds = binds;
     staging_commit_signals = signals;
     staging_commit_timers = timers;
+    staging_commit_finalize = finalize;
   }
 
 let prepare_staging t _lane staging context =
@@ -1144,7 +1163,10 @@ let prepare_staging t _lane staging context =
   in
   try
     let plan = Eta_signal_atomic_pass.new_commit_plan t.atomic_pass in
-    Ok (State.prepare_staging t.state staging state_plan plan)
+    let plan = State.prepare_staging t.state staging state_plan plan in
+    Eta_signal_commit_plan.add_write plan (fun () ->
+        context.staging_commit_finalize ());
+    Ok plan
   with Commit_error err -> Error err
 
 let pure_snapshot_commit_count t _lane =
@@ -1163,6 +1185,11 @@ let read_effective t cell =
 
 let stage_cell t _lane _staging cell value =
   Eta_signal_transaction.stage (active_transaction t) cell value
+
+let publish_or_stage t writer cell value =
+  if Eta_signal_atomic_pass.accepts_staging t.atomic_pass then
+    Eta_signal_transaction.stage (active_transaction t) cell value
+  else Eta_signal_transaction.publish_current writer cell value
 
 let discard_cell t _lane _staging cell =
   Eta_signal_transaction.discard (active_transaction t) cell
@@ -1564,6 +1591,7 @@ let atomic_ops t timer_refresh ops =
     ~requeue_pending:(fun lane pending ->
       run_stabilization_pending_requeue lane pending
         ops.rollback.requeue_pending)
+    ~rollback_observers:(fun _lane -> t.observers)
 
 let run_stabilization t capability ~timer_refresh ops =
   Eta_signal_atomic_pass.run t.atomic_pass capability
@@ -1652,6 +1680,8 @@ let create_live_node t scope_ops lifecycle ~dependencies =
       | Error _ as error -> error
       | Ok scope ->
           let node = lifecycle.node_create ~id ~scope in
+          lifecycle.node_reserve_dependencies node (List.length dependencies);
+          List.iter lifecycle.node_reserve_dependents dependencies;
           List.iter
             (fun child ->
               lifecycle.node_attach_dependency ~parent:node ~child)
@@ -1662,17 +1692,17 @@ let create_live_node t scope_ops lifecycle ~dependencies =
             (lifecycle.node_pack node);
           Ok node)
 
-let rec invalidate_live_node t lane edge_ops lifecycle ~invalidate_scope node =
+let rec invalidate_live_node t lane lifecycle ~invalidate_scope node =
   if lifecycle.invalidation_valid node then (
     let timer_hooks = lifecycle.invalidation_timer_hooks node in
     lifecycle.invalidation_set_invalid node;
     let tombstone = lifecycle.invalidation_tombstone node in
     remember_dead_node t lane ~id:lifecycle.invalidation_tombstone_id tombstone;
     let observer_hooks = lifecycle.invalidation_observer_hooks node in
-    let _dependencies, dependents = detach_node_edges t lane edge_ops node in
+    let dependents = lifecycle.invalidation_detach_edges node in
     let dependent_hooks =
       List.concat_map
-        (invalidate_live_node t lane edge_ops lifecycle ~invalidate_scope)
+        (invalidate_live_node t lane lifecycle ~invalidate_scope)
         dependents
     in
     let kind_hooks =
@@ -1689,16 +1719,10 @@ type ('node, 'weak_node) live_node_registry = {
 let live_node_registry ~collect_live_nodes =
   { registry_collect_live_nodes = collect_live_nodes }
 
-let live_nodes t _lane registry =
+let live_nodes t _lane registry ~keep =
   collect_live_node_registry t
     ~collect_live_nodes:registry.registry_collect_live_nodes
-    ~keep:(fun _ -> true)
-
-let prune_live_nodes t _lane registry ~keep =
-  ignore
-    (collect_live_node_registry t
-       ~collect_live_nodes:registry.registry_collect_live_nodes ~keep
-      : _ list)
+    ~keep
 
 type necessary_snapshot = (Eta_signal_id.signal, unit) Hashtbl.t
 
@@ -1735,7 +1759,7 @@ let demand_root_nodes roots observers =
     observers
 
 let reachable_live_nodes t lane plan =
-  live_nodes t lane plan.reachable_plan_registry
+  live_nodes t lane plan.reachable_plan_registry ~keep:(fun _ -> true)
 
 let reachable_root_nodes t plan =
   demand_root_nodes plan.reachable_plan_roots t.observers

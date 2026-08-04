@@ -124,10 +124,13 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
         | Committed_removal_count
         | Reconciliation_rollback_count
 
+      type atomic_fault = Signal.Extension.atomic_fault
+
       let entry_identity = Signal.Extension.keyed_entry_identity
       let scope_valid = Signal.Extension.keyed_scope_valid
       let pending = Signal.Extension.keyed_pending
       let set_preflight = Signal.Extension.set_keyed_preflight
+      let set_atomic_fault = Signal.Extension.set_atomic_pass_fault
       let set_event_recorder = Signal.Extension.set_keyed_event_recorder
       let set_counter = Signal.Extension.set_keyed_counter
     end

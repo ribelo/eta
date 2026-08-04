@@ -15,7 +15,11 @@ module Observer_core = Eta_signal_observer
 module Observer_snapshot = Observer_core.Snapshot
 module Observer_lifecycle = Observer_core.Lifecycle
 module Node_lifetime = Eta_signal_node
+module Demand = Eta_signal_demand
+module Scheduler = Eta_signal_scheduler
 module Scope = Eta_signal_scope
+module Topology = Eta_signal_topology
+module Work = Eta_signal_work
 module Atomic_pass = Eta_signal_atomic_pass
 module Stream_bridge = struct
   module Effect = Eta.Effect
@@ -429,6 +433,14 @@ module Make (Observer_error : Observer_error) () = struct
 
   and packed_signal = P : 'a signal -> packed_signal
 
+  and edge = {
+    parent : packed_signal;
+    child : packed_signal;
+    mutable parent_slot : int;
+    mutable child_slot : int;
+    dynamic : bool;
+  }
+
   and 'a keyed_change =
     | Keyed_left of 'a
     | Keyed_right of 'a
@@ -459,14 +471,29 @@ module Make (Observer_error : Observer_error) () = struct
       'acc;
   }
 
+  and scheduler_visit_state =
+    | Scheduler_unseen
+    | Scheduler_visiting
+    | Scheduler_done
+
   and 'a signal = {
     id : signal_id;
     equal : 'a -> 'a -> bool;
     mutable kind : 'a kind;
     snapshot : (signal_id, 'a) Signal_snapshot.t Transaction.staged;
     mutable dirty : bool;
-    mutable dependencies : packed_signal list;
-    mutable dependents : packed_signal list;
+    dependencies : edge Topology.vector;
+    dependents : edge Topology.vector;
+    dependency_index : (int, edge) Hashtbl.t;
+    mutable demand : int;
+    mutable scheduled : bool;
+    mutable schedule_previous : packed_signal option;
+    mutable schedule_next : packed_signal option;
+    mutable schedule_attempt_local : bool;
+    mutable schedule_attempt_removed : bool;
+    mutable schedule_visit_generation : int;
+    mutable schedule_visit_state : scheduler_visit_state;
+    mutable signal_observers : packed_observer list;
     mutable dirty_listeners : (unit -> unit) list;
     mutable computing : bool;
     mutable seen_generation : int;
@@ -475,6 +502,11 @@ module Make (Observer_error : Observer_error) () = struct
     scope : scope option;
     lifetime : Node_lifetime.t;
     mutable timer : timer_node option;
+  }
+
+  and scheduler_frame = {
+    frame_node : packed_signal;
+    mutable frame_next_dependency : int;
   }
 
   and _ kind =
@@ -631,6 +663,7 @@ module Make (Observer_error : Observer_error) () = struct
       'a update ->
       (unit, observer_error) Effect.t;
     mutable obs_state : 'a observer_state;
+    mutable obs_candidate : bool;
   }
 
   and packed_observer = O : 'a observer -> packed_observer
@@ -676,6 +709,19 @@ module Make (Observer_error : Observer_error) () = struct
 
   let signal_valid signal = Node_lifetime.is_live signal.lifetime
 
+  let edge_parent edge = edge.parent
+  let edge_child edge = edge.child
+
+  let signal_dependencies signal =
+    Topology.fold signal.dependencies ~init:[] ~f:(fun dependencies edge ->
+        edge.child :: dependencies)
+    |> List.rev
+
+  let signal_dependents signal =
+    Topology.fold signal.dependents ~init:[] ~f:(fun dependents edge ->
+        edge.parent :: dependents)
+    |> List.rev
+
   let packed_signal_id (P signal) = signal.id
   let scope_owner_id scope = packed_signal_id (Scope.owner scope)
 
@@ -694,7 +740,7 @@ module Make (Observer_error : Observer_error) () = struct
       | Bind _ -> []
       | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
       | Map7 _ | Map8 _ | Map9 _ | All _ | Keyed _ ->
-          signal.dependencies
+          signal_dependencies signal
   end)
 
   module Graph_edge_node = struct
@@ -709,33 +755,6 @@ module Make (Observer_error : Observer_error) () = struct
   let graph_node_identity =
     Graph.node_identity ~id:(fun (P signal) -> signal.id)
       ~equal_id:(fun left right -> signal_id_int left = signal_id_int right)
-
-  let edge_ops =
-    Graph.edge_ops ~identity:graph_node_identity
-      ~dependencies:(fun (P signal) -> signal.dependencies)
-      ~set_dependencies:(fun (P signal) dependencies ->
-        signal.dependencies <- dependencies)
-      ~dependents:(fun (P signal) -> signal.dependents)
-      ~set_dependents:(fun (P signal) dependents ->
-        signal.dependents <- dependents)
-
-  module Initial_edges = Graph_algorithms.Make_edges (struct
-    type id = signal_id
-    type nonrec packed = packed_signal
-    type nonrec t = packed_signal
-
-    let pack packed = packed
-    let unpack packed = packed
-    let id = packed_signal_id
-    let equal_id left right = signal_id_int left = signal_id_int right
-    let dependencies (P signal) = signal.dependencies
-    let set_dependencies (P signal) dependencies =
-      signal.dependencies <- dependencies
-
-    let dependents (P signal) = signal.dependents
-    let set_dependents (P signal) dependents =
-      signal.dependents <- dependents
-  end)
 
   let dirty_ops =
     Graph.dirty_ops ~identity:graph_node_identity
@@ -796,6 +815,33 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.create ~create_scope_context:Scope.create_context
       ~create_stream_bridge_metrics:Stream_bridge.create_metrics ()
 
+  let topology_counters = Topology.create_counters ()
+  let demand_counters = Demand.create_counters ()
+  let scheduler_counters = Scheduler.create_counters ()
+  let work_counters = Work.create_counters ()
+  let scheduler = Scheduler.create scheduler_counters
+  let work = Work.create work_counters
+  let necessary_nodes = Hashtbl.create 16
+  let necessary_bind_nodes = Hashtbl.create 8
+  let timer_nodes = Hashtbl.create 8
+
+  let scheduler_access =
+    Scheduler.access
+      ~queued:(fun (P signal) -> signal.scheduled)
+      ~set_queued:(fun (P signal) scheduled -> signal.scheduled <- scheduled)
+      ~previous:(fun (P signal) -> signal.schedule_previous)
+      ~set_previous:(fun (P signal) previous ->
+        signal.schedule_previous <- previous)
+      ~next:(fun (P signal) -> signal.schedule_next)
+      ~set_next:(fun (P signal) next -> signal.schedule_next <- next)
+      ~attempt_local:(fun (P signal) -> signal.schedule_attempt_local)
+      ~set_attempt_local:(fun (P signal) local ->
+        signal.schedule_attempt_local <- local)
+      ~attempt_removed:(fun (P signal) -> signal.schedule_attempt_removed)
+      ~set_attempt_removed:(fun (P signal) removed ->
+        signal.schedule_attempt_removed <- removed)
+      ~pack:Fun.id ~unpack:Fun.id
+
   let graph_stream_bridge_metrics () = Graph.stream_bridge_metrics graph
 
   let scope_ops =
@@ -816,10 +862,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let all_nodes_unlocked lane =
     Graph.live_nodes graph lane live_signal_registry
-
-  let prune_all_nodes_unlocked lane =
-    Graph.prune_live_nodes graph lane live_signal_registry
-      ~keep:(fun _ -> true)
+      ~keep:(fun (P signal) -> signal_valid signal)
 
   let children_with_scope_owner signal children =
     Scope.children_with_scope_owner
@@ -831,7 +874,7 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.reachable_ops ~id:(fun (P signal) -> signal.id)
       ~valid:(fun (P signal) -> signal_valid signal)
       ~children:(fun (P signal) ->
-        children_with_scope_owner signal signal.dependencies)
+        children_with_scope_owner signal (signal_dependencies signal))
 
   let source_watchers_unlocked source =
     let cells, watchers =
@@ -905,24 +948,164 @@ module Make (Observer_error : Observer_error) () = struct
 
   let current_generation lane = Graph.generation graph lane
 
+  let scheduler_visiting lane signal =
+    signal.schedule_visit_generation = current_generation lane
+    && signal.schedule_visit_state = Scheduler_visiting
+
+  let schedule_signal packed =
+    if Scheduler.admit scheduler scheduler_access packed then
+      Work.admit work Work.Scheduler
+
+  let release_scheduler_work count =
+    for _ = 1 to count do
+      Work.release work Work.Scheduler
+    done
+
+  let demand_ops lane =
+    Demand.ops
+      ~demand:(fun (P signal) -> signal.demand)
+      ~set_demand:(fun (P signal) demand -> signal.demand <- demand)
+      ~iter_dependencies:(fun (P signal) visit ->
+        Topology.iter signal.dependencies visit)
+      ~dependency:edge_child
+      ~on_boundary:(fun (P signal as packed) ~necessary ->
+        if necessary then (
+          if Option.is_some signal.timer then
+            Work.admit work Work.Timer_reconciliation;
+          Hashtbl.replace necessary_nodes (signal_id_int signal.id) packed;
+          (match signal.kind with
+          | Bind _ ->
+              Hashtbl.replace necessary_bind_nodes
+                (signal_id_int signal.id) packed
+          | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+          | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Keyed _ ->
+              ());
+          if
+            signal.dirty
+            && not (scheduler_visiting lane signal)
+            && signal.computed_generation <> current_generation lane
+          then schedule_signal packed;
+          Graph.bump_counter graph lane Graph.Nodes_became_necessary)
+        else (
+          let attempt_active = Scheduler.attempt_active scheduler in
+          if
+            Scheduler.remove scheduler scheduler_access packed
+            && not attempt_active
+          then
+            Work.release work Work.Scheduler;
+          if Option.is_some signal.timer then
+            Work.release work Work.Timer_reconciliation;
+          Hashtbl.remove necessary_nodes (signal_id_int signal.id);
+          Hashtbl.remove necessary_bind_nodes (signal_id_int signal.id);
+          Graph.bump_counter graph lane Graph.Nodes_became_unnecessary))
+
+  let adjust_demand lane signal delta =
+    match Demand.adjust demand_counters (demand_ops lane) (P signal) delta with
+    | Ok () -> ()
+    | Error `Overflow -> counter_overflow "demand count"
+    | Error `Underflow ->
+        invalid_arg "Eta_signal: demand reference count underflow"
+
+  let adjust_demand_many lane roots delta =
+    match Demand.adjust_many demand_counters (demand_ops lane) roots delta with
+    | Ok () -> ()
+    | Error `Overflow -> counter_overflow "demand count"
+    | Error `Underflow ->
+        invalid_arg "Eta_signal: demand reference count underflow"
+
+  let check_demand lane signal delta =
+    match Demand.check (demand_ops lane) (P signal) delta with
+    | Ok () -> ()
+    | Error `Overflow -> counter_overflow "demand count"
+    | Error `Underflow ->
+        invalid_arg "Eta_signal: demand reference count underflow"
+
+  let attach_edge ?lane ~dynamic parent child =
+    let child_id = signal_id_int child.id in
+    match
+      if dynamic then Hashtbl.find_opt parent.dependency_index child_id
+      else None
+    with
+    | Some edge -> edge
+    | None ->
+        let edge =
+          {
+            parent = P parent;
+            child = P child;
+            parent_slot = -1;
+            child_slot = -1;
+            dynamic;
+          }
+        in
+        Topology.reserve_additional parent.dependencies 1;
+        Topology.reserve_additional child.dependents 1;
+        (match lane with
+         | Some lane when parent.demand > 0 -> check_demand lane child 1
+         | Some _ | None -> ());
+        if dynamic then Hashtbl.add parent.dependency_index child_id edge;
+        edge.parent_slot <- Topology.append parent.dependencies edge;
+        edge.child_slot <- Topology.append child.dependents edge;
+        if dynamic then Topology.note_dynamic_insert topology_counters
+        else Topology.note_static_insert topology_counters;
+        if parent.demand > 0 then (
+          match lane with
+          | Some lane -> adjust_demand lane child 1
+          | None ->
+              invalid_arg
+                "Eta_signal: necessary edge insertion requires graph lane");
+        edge
+
+  let remove_edge lane edge =
+    let (P parent) = edge.parent in
+    let (P child) = edge.child in
+    if parent.demand > 0 then adjust_demand lane child (-1);
+    let parent_slot = edge.parent_slot in
+    let _, moved_parent = Topology.remove parent.dependencies parent_slot in
+    Option.iter
+      (fun moved ->
+        moved.parent_slot <- parent_slot;
+        Topology.note_slot_repair topology_counters)
+      moved_parent;
+    let child_slot = edge.child_slot in
+    let _, moved_child = Topology.remove child.dependents child_slot in
+    Option.iter
+      (fun moved ->
+        moved.child_slot <- child_slot;
+        Topology.note_slot_repair topology_counters)
+      moved_child;
+    if edge.dynamic then
+      match Hashtbl.find_opt parent.dependency_index (signal_id_int child.id) with
+      | Some indexed when indexed == edge ->
+          Hashtbl.remove parent.dependency_index (signal_id_int child.id)
+      | None | Some _ -> ();
+    edge.parent_slot <- -1;
+    edge.child_slot <- -1;
+    Topology.note_indexed_removal topology_counters
+
   let detach_dependency lane parent child =
-    Graph.detach_dependency graph lane edge_ops ~parent:(P parent)
-      ~child:(P child)
+    match
+      Hashtbl.find_opt parent.dependency_index (signal_id_int child.id)
+    with
+    | None -> ()
+    | Some edge -> remove_edge lane edge
 
   let attach_dependency lane parent child =
-    Graph.attach_dependency graph lane edge_ops ~parent:(P parent)
-      ~child:(P child)
+    ignore (attach_edge ~lane ~dynamic:true parent child : edge)
 
-  let attach_new_keyed_dependency parent child =
-    (* A provisional child is new and has no keyed-owner edge. *)
-    child.dependents <- P parent :: child.dependents;
-    parent.dependencies <- P child :: parent.dependencies
+  let attach_new_keyed_dependency lane parent child =
+    ignore (attach_edge ~lane ~dynamic:true parent child : edge)
 
-  let attach_initial_packed_dependency parent child =
-    Initial_edges.attach_dependency ~parent:(P parent) ~child
+  let attach_initial_packed_dependency parent (P child) =
+    ignore (attach_edge ~dynamic:false parent child : edge)
 
-  let mark_self_dirty lane packed =
-    Graph.mark_dirty graph lane dirty_ops packed
+  let mark_self_dirty lane (P signal as packed) =
+    Graph.mark_dirty graph lane dirty_ops packed;
+    if
+      signal.demand > 0
+      && not signal.computing
+      && not (scheduler_visiting lane signal)
+      && signal.computed_generation <> current_generation lane
+    then schedule_signal packed
 
   let add_dirty_listener signal listener =
     signal.dirty_listeners <- listener :: signal.dirty_listeners
@@ -932,17 +1115,6 @@ module Make (Observer_error : Observer_error) () = struct
       List.filter (fun candidate -> candidate != listener)
         signal.dirty_listeners
 
-  let notify_dirty_frontier roots =
-    let seen = Hashtbl.create 16 in
-    let rec visit (P signal) =
-      let id = signal_id_int signal.id in
-      if signal_valid signal && not (Hashtbl.mem seen id) then (
-        Hashtbl.replace seen id ();
-        List.iter (fun notify -> notify ()) signal.dirty_listeners;
-        List.iter visit signal.dependents)
-    in
-    List.iter visit roots
-
   let mark_timer_refresh_dirty lane staging packed =
     Graph.mark_timer_refresh_dirty graph lane staging
       ~mark:(fun () -> Graph.mark_dirty graph lane dirty_ops packed)
@@ -951,7 +1123,13 @@ module Make (Observer_error : Observer_error) () = struct
           (Graph.mark_dirty_recording_previous graph lane dirty_ops
              (Timer_policy.refresh_dirty_items context)
              packed));
-    notify_dirty_frontier [ packed ]
+    let P signal = packed in
+    if
+      signal.demand > 0
+      && not signal.computing
+      && not (scheduler_visiting lane signal)
+      && signal.computed_generation <> current_generation lane
+    then schedule_signal packed
 
   let remove_var_watcher source signal =
     source.watchers <-
@@ -1029,11 +1207,30 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_effective_snapshot live =
     Graph.read_effective graph live.observer_snapshot
 
+  let observer_delivery_pending snapshot =
+    Observer_core.Delivery.pending (Observer_snapshot.delivery snapshot)
+
   let set_observer_current live snapshot =
-    publish_observer_current live.observer_snapshot snapshot
+    let was_pending =
+      observer_delivery_pending (observer_current_snapshot live)
+    in
+    let is_pending = observer_delivery_pending snapshot in
+    publish_observer_current live.observer_snapshot snapshot;
+    if was_pending <> is_pending then
+      if is_pending then Work.admit work Work.Observer_delivery
+      else Work.release work Work.Observer_delivery
 
   let observer_active (O observer) =
     Observer_lifecycle.active observer.obs_state
+
+  let observer_delivery_candidate (O observer) =
+    observer.obs_candidate
+    ||
+    match observer_active_live_state observer with
+    | None -> false
+    | Some live ->
+        Observer_core.Delivery.pending
+          (Observer_snapshot.delivery (observer_current_snapshot live))
 
   let observer_demands_signal (O observer) =
     Observer_lifecycle.demands observer.obs_state
@@ -1059,7 +1256,20 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.observer_identity ~same:(fun (O candidate) (O target) ->
         candidate.obs_id = target.obs_id)
 
+  let observer_reference_demand_roots signal =
+    P signal
+    :: (match signal.scope with
+       | None -> []
+       | Some scope ->
+           let (P owner) = Scope.owner scope in
+           [ P owner ])
+
   let remove_observer lane observer =
+    adjust_demand_many lane (observer_reference_demand_roots observer.obs_signal) (-1);
+    observer.obs_signal.signal_observers <-
+      List.filter
+        (fun (O candidate) -> candidate.obs_id <> observer.obs_id)
+        observer.obs_signal.signal_observers;
     Graph.remove_observer graph lane observer_identity (O observer)
 
   let observer_finish_hooks live reason =
@@ -1092,10 +1302,30 @@ module Make (Observer_error : Observer_error) () = struct
       ~run_after_ack:(fun (_lane : graph_lane) actions ->
         run_after_ack_actions_unlocked actions)
 
+  let mark_observer_candidate observer =
+    if not observer.obs_candidate then (
+      observer.obs_candidate <- true;
+      Work.admit work Work.Observer_delivery)
+
+  let clear_observer_candidate observer =
+    if observer.obs_candidate then (
+      observer.obs_candidate <- false;
+      Work.release work Work.Observer_delivery)
+
+  let release_observer_delivery_work observer =
+    clear_observer_candidate observer;
+    match observer_active_live_state observer with
+    | Some live
+      when observer_delivery_pending (observer_current_snapshot live) ->
+        Work.release work Work.Observer_delivery
+    | Some _ | None -> ()
+
   let dispose_observer_unlocked lane observer =
+    release_observer_delivery_work observer;
     Observer_core.dispose_observer (observer_lifecycle_port lane) observer
 
   let invalidate_observer_unlocked lane observer =
+    release_observer_delivery_work observer;
     Observer_core.invalidate_observer (observer_lifecycle_port lane) observer
 
   let dispose_signal_observers lane signal =
@@ -1117,7 +1347,8 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.read_effective graph (Timer.snapshot_cell timer)
 
   let set_timer_current_snapshot timer snapshot =
-    publish_timer_current (Timer.snapshot_cell timer) snapshot
+    Graph.publish_or_stage graph Transaction.timer_lifecycle
+      (Timer.snapshot_cell timer) snapshot
 
   let set_timer_current_state timer timer_state =
     let snapshot = timer_current_snapshot timer in
@@ -1191,6 +1422,17 @@ module Make (Observer_error : Observer_error) () = struct
       ~advance_generation:(checked_succ "timer generation")
       ~cancel_running timer_state_port timer
 
+  let timer_invalidation_hooks timer =
+    match
+      Timer_policy.stop ~advance_generation:(checked_succ "timer generation")
+        ~cancel_running:true (timer_current_state timer)
+    with
+    | None -> []
+    | Some plan ->
+        Timer_policy.stop_plan_result plan
+          ~plan:(fun ~state ~cancel_hooks ->
+            (fun () -> set_timer_current_state timer state) :: cancel_hooks)
+
   let node_lifecycle ?equal ~dirty kind =
     Graph.node_lifecycle ~validate_dependency
       ~create:(fun ~id ~scope ->
@@ -1200,8 +1442,18 @@ module Make (Observer_error : Observer_error) () = struct
           kind;
           snapshot = Transaction.create_staged Signal_snapshot.empty;
           dirty;
-          dependencies = [];
-          dependents = [];
+          dependencies = Topology.create_vector ();
+          dependents = Topology.create_vector ();
+          dependency_index = Hashtbl.create 4;
+          demand = 0;
+          scheduled = false;
+          schedule_previous = None;
+          schedule_next = None;
+          schedule_attempt_local = false;
+          schedule_attempt_removed = false;
+          schedule_visit_generation = -1;
+          schedule_visit_state = Scheduler_unseen;
+          signal_observers = [];
           dirty_listeners = [];
           computing = false;
           seen_generation = -1;
@@ -1211,6 +1463,10 @@ module Make (Observer_error : Observer_error) () = struct
           lifetime = Node_lifetime.create ();
           timer = None;
         })
+      ~reserve_dependencies:(fun signal count ->
+        Topology.reserve_additional signal.dependencies count)
+      ~reserve_dependents:(fun (P child) ->
+        Topology.reserve_additional child.dependents 1)
       ~attach_dependency:(fun ~parent ~child ->
         attach_initial_packed_dependency parent child)
       ~add_to_scope:(fun scope signal -> Scope.add_node scope (P signal))
@@ -1244,10 +1500,6 @@ module Make (Observer_error : Observer_error) () = struct
     publish_initial_current signal.snapshot
       (Signal_snapshot.initialized value);
     signal
-
-  let prune_invalid_nodes_unlocked lane =
-    Graph.prune_live_nodes graph lane live_signal_registry
-      ~keep:(fun (P signal) -> signal_valid signal)
 
   let timer_debug_snapshot timer =
     let snapshot = Timer_policy.debug_snapshot (timer_effective_state timer) in
@@ -1285,9 +1537,11 @@ module Make (Observer_error : Observer_error) () = struct
       dead_dirty = signal.dirty;
       dead_computing = signal.computing;
       dead_dependency_ids =
-        List.map (fun (P dependency) -> dependency.id) signal.dependencies;
-      dead_dependency_count = List.length signal.dependencies;
-      dead_dependent_count = List.length signal.dependents;
+        List.map
+          (fun (P dependency) -> dependency.id)
+          (signal_dependencies signal);
+      dead_dependency_count = Topology.length signal.dependencies;
+      dead_dependent_count = Topology.length signal.dependents;
       dead_scope_id;
       dead_scope_owner;
       dead_scope_parent;
@@ -1295,6 +1549,21 @@ module Make (Observer_error : Observer_error) () = struct
       dead_timer = Option.map timer_tombstone signal.timer;
       dead_keyed_child_count;
     }
+
+  let detach_node_edges lane signal =
+    let dependents = signal_dependents signal in
+    while Topology.length signal.dependencies > 0 do
+      remove_edge lane
+        (Topology.get signal.dependencies
+           (Topology.length signal.dependencies - 1))
+    done;
+    while Topology.length signal.dependents > 0 do
+      remove_edge lane
+        (Topology.get signal.dependents
+           (Topology.length signal.dependents - 1))
+    done;
+    Topology.note_invalidated_node topology_counters;
+    dependents
 
   let node_invalidation lane =
     Graph.node_invalidation
@@ -1304,10 +1573,13 @@ module Make (Observer_error : Observer_error) () = struct
       ~timer_hooks:(fun (P signal) ->
         match signal.timer with
         | None -> []
-        | Some timer -> timer_mark_unneeded_unlocked timer)
+        | Some timer ->
+            Hashtbl.remove timer_nodes signal.id;
+            timer_invalidation_hooks timer)
       ~tombstone:signal_tombstone
       ~tombstone_id:(fun tombstone -> tombstone.dead_id)
       ~observer_hooks:(fun (P signal) -> dispose_signal_observers lane signal)
+      ~detach_edges:(fun (P signal) -> detach_node_edges lane signal)
       ~kind_hooks:(fun ~invalidate_scope (P signal) ->
         signal.dirty_listeners <- [];
         match signal.kind with
@@ -1317,29 +1589,27 @@ module Make (Observer_error : Observer_error) () = struct
         | Bind bind -> (
             match Bind.inner_scope (Transaction.current bind.snapshot) with
             | None -> []
-            | Some scope -> invalidate_scope ~prune:false scope)
+            | Some scope -> invalidate_scope scope)
         | Keyed keyed ->
             keyed.keyed_child_ops.keyed_fold
               (fun _ child hooks ->
                 remove_dirty_listener child.keyed_child_output
                   child.keyed_child_listener;
-                invalidate_scope ~prune:false child.keyed_child_scope @ hooks)
+                invalidate_scope child.keyed_child_scope @ hooks)
               (Transaction.current keyed.keyed_children) []
         | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
         | Map7 _ | Map8 _ | Map9 _ | All _ ->
             [])
 
-  let rec invalidate_scope lane ?(prune = true) scope =
+  let rec invalidate_scope lane scope =
     match Scope.invalidate scope with
     | None -> []
     | Some nodes ->
         Graph.bump_counter graph lane Graph.Dynamic_scope_invalidations;
-        let hooks = List.concat_map (invalidate_node lane) nodes in
-        if prune then prune_invalid_nodes_unlocked lane;
-        hooks
+        List.concat_map (invalidate_node lane) nodes
 
   and invalidate_node lane packed =
-    Graph.invalidate_live_node graph lane edge_ops (node_invalidation lane)
+    Graph.invalidate_live_node graph lane (node_invalidation lane)
       ~invalidate_scope:(invalidate_scope lane) packed
 
   let make_bind ?equal source selector =
@@ -1382,7 +1652,7 @@ module Make (Observer_error : Observer_error) () = struct
     let node_id (P signal) = signal.id
     let equal_node_id left right = signal_id_int left = signal_id_int right
     let valid (P signal) = signal_valid signal
-    let dependents (P signal) = signal.dependents
+    let dependents (P signal) = signal_dependents signal
 
     let nested_scope (P signal) =
       match signal.kind with
@@ -1476,6 +1746,8 @@ module Make (Observer_error : Observer_error) () = struct
         * ('key, 'data, 'output, 'data_map, 'output_map, 'child_map) keyed
         -> packed_keyed
 
+  let pending_keyed = Hashtbl.create 16
+
   let packed_keyed_owner (Packed_keyed (owner, _)) = P owner
 
   let compare_keyed_owner_scope_then_id left right =
@@ -1485,30 +1757,23 @@ module Make (Observer_error : Observer_error) () = struct
     | 0 -> Int.compare (signal_id_int left.id) (signal_id_int right.id)
     | order -> order
 
-  let pending_keyed_nodes lane =
-    all_nodes_unlocked lane
-    |> List.filter_map (fun (P signal) ->
-           match signal.kind with
-           | Keyed keyed when Option.is_some keyed.keyed_pending ->
-               Some (Packed_keyed (signal, keyed))
-           | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
-           | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Bind _ | Keyed _ ->
-               None)
+  let pending_keyed_nodes _lane =
+    Hashtbl.fold (fun _ packed plans -> packed :: plans) pending_keyed []
     |> List.sort compare_keyed_owner_scope_then_id
 
-  let rollback_keyed_plan lane (Packed_keyed (_owner, keyed)) =
+  let rollback_keyed_plan lane (Packed_keyed (owner, keyed)) =
     match keyed.keyed_pending with
     | None -> []
     | Some plan ->
         bump_keyed_counter Reconciliation_rollback_count;
         keyed.keyed_pending <- None;
+        Hashtbl.remove pending_keyed owner.id;
         List.concat_map
-          (invalidate_scope lane ~prune:false)
+          (invalidate_scope lane)
           plan.keyed_plan_provisional_scopes
 
   let rollback_pending_keyed lane plans =
     let hooks = List.concat_map (rollback_keyed_plan lane) plans in
-    prune_invalid_nodes_unlocked lane;
     hooks
 
   let discard_keyed_plan lane staging
@@ -1575,9 +1840,9 @@ module Make (Observer_error : Observer_error) () = struct
   let record_keyed_event keyed event =
     try keyed.keyed_record_event event with _ -> ()
 
-  let commit_keyed_removals lane staging (Packed_keyed (owner, keyed)) =
+  let commit_keyed_removals lane (Packed_keyed (owner, keyed)) =
     match keyed.keyed_pending with
-    | None -> ()
+    | None -> []
     | Some plan ->
         let hooks = ref [] in
         List.rev plan.keyed_plan_removals
@@ -1589,24 +1854,24 @@ module Make (Observer_error : Observer_error) () = struct
                detach_dependency lane owner child.keyed_child_output;
                hooks :=
                  !hooks
-                 @ invalidate_scope lane ~prune:false child.keyed_child_scope;
+                 @ invalidate_scope lane child.keyed_child_scope;
                record_keyed_event keyed
                  (Keyed_invalidated child.keyed_child_scope));
-        Graph.remember_pure_disposal_hooks graph lane staging !hooks
+        !hooks
 
-  let commit_keyed_additions _lane (Packed_keyed (owner, keyed)) =
+  let commit_keyed_additions lane (Packed_keyed (owner, keyed)) =
     match keyed.keyed_pending with
     | None -> ()
     | Some plan ->
         List.rev plan.keyed_plan_additions
         |> List.iter (fun child ->
                bump_keyed_counter Committed_addition_count;
-               attach_new_keyed_dependency owner child.keyed_child_output;
+               attach_new_keyed_dependency lane owner child.keyed_child_output;
                add_dirty_listener child.keyed_child_output
                  child.keyed_child_listener;
                record_keyed_event keyed (Keyed_attached child.keyed_child_scope))
 
-  let finish_keyed_commit (Packed_keyed (_owner, keyed)) =
+  let finish_keyed_commit (Packed_keyed (owner, keyed)) =
     match keyed.keyed_pending with
     | None -> ()
     | Some plan ->
@@ -1618,18 +1883,21 @@ module Make (Observer_error : Observer_error) () = struct
                   keyed.keyed_child_ops.keyed_remove key affected
               | Some _ | None -> affected)
             plan.keyed_plan_processed keyed.keyed_affected;
-        keyed.keyed_pending <- None
+        keyed.keyed_pending <- None;
+        Hashtbl.remove pending_keyed owner.id
 
-  let commit_keyed_plans lane staging plans =
-    List.iter (commit_keyed_removals lane staging) plans;
+  let commit_keyed_plans lane plans =
+    let hooks = List.concat_map (commit_keyed_removals lane) plans in
     List.iter (commit_keyed_additions lane) plans;
     List.iter finish_keyed_commit plans;
-    prune_invalid_nodes_unlocked lane
+    hooks
 
   let signal_timer (P signal) =
     Option.map (fun timer -> (signal.id, timer)) signal.timer
 
   let collect_post_commit_necessary_timers lane invalidations =
+    if Hashtbl.length timer_nodes = 0 then Hashtbl.create 0
+    else
     let reachable_ops =
       Graph.reachable_ops ~id:(fun (P signal) -> signal.id)
         ~valid:(fun (P signal) ->
@@ -1644,7 +1912,7 @@ module Make (Observer_error : Observer_error) () = struct
                   (bind_effective_snapshot bind)
             | Keyed keyed -> (
                 match keyed.keyed_pending with
-                | None -> signal.dependencies
+                | None -> signal_dependencies signal
                 | Some keyed_plan ->
                     let children =
                       keyed.keyed_child_ops.keyed_fold
@@ -1656,7 +1924,7 @@ module Make (Observer_error : Observer_error) () = struct
                     P keyed.keyed_input :: children)
             | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
             | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
-                signal.dependencies
+                signal_dependencies signal
           in
           children_with_scope_owner signal signal_children)
     in
@@ -1669,16 +1937,15 @@ module Make (Observer_error : Observer_error) () = struct
       (Graph.timer_demand_source ~reachable:plan ~timer:signal_timer)
 
   let collect_current_necessary_timers lane =
-    Graph.timer_demand graph lane
-      (Graph.timer_demand_source ~reachable:(graph_reachable_plan ())
-         ~timer:signal_timer)
-    |> Graph.timer_demand_plan ~plan:(fun ~is_necessary ~timers ->
-           let necessary_timers = Hashtbl.create 8 in
-           List.iter
-             (fun (id, timer) ->
-               if is_necessary id then Hashtbl.replace necessary_timers id timer)
-             timers;
-           necessary_timers)
+    let necessary_timers = Hashtbl.create (Hashtbl.length timer_nodes) in
+    Hashtbl.iter
+      (fun id (P signal) ->
+        if signal.demand > 0 then
+          Option.iter
+            (fun timer -> Hashtbl.replace necessary_timers id timer)
+            signal.timer)
+      timer_nodes;
+    necessary_timers
 
   let preflight_post_commit_timer_starts post_commit_necessary =
     post_commit_necessary
@@ -1705,7 +1972,6 @@ module Make (Observer_error : Observer_error) () = struct
         in
         if excluded_hooks <> [] then
           Graph.remember_pure_disposal_hooks graph lane staging excluded_hooks;
-        prune_invalid_nodes_unlocked lane;
         List.iter preflight_keyed_plan active_keyed;
         let post_commit_necessary =
           collect_post_commit_necessary_timers lane invalidations
@@ -1717,8 +1983,7 @@ module Make (Observer_error : Observer_error) () = struct
         preflight_post_commit_timer_stops lane post_commit_necessary;
         Graph.iter_computed graph lane staging
           ~f:(preflight_signal_commit lane staging invalidations);
-        preflight_post_commit_timer_starts post_commit_necessary;
-        commit_keyed_plans lane staging active_keyed)
+        preflight_post_commit_timer_starts post_commit_necessary)
 
   let remember_pure_disposal_hooks lane staging hooks =
     Graph.remember_pure_disposal_hooks graph lane staging hooks
@@ -1729,6 +1994,7 @@ module Make (Observer_error : Observer_error) () = struct
   let queue_var_unlocked (type a) lane (source : a var) =
     if not source.queued then (
       source.queued <- true;
+      Work.admit work Work.Sources;
       Graph.enqueue_pending graph lane (V source))
 
   let set_var_source_unlocked (type a) lane (source : a var) value =
@@ -1784,9 +2050,12 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.staged_timer_commit ~commit:(fun () ->
         clear_timer_refresh_timer_staging timer)
 
-  let staging_reset_context lane _staging =
+  let staging_reset_context lane staging =
     Graph.staging_reset_context
       ~rollback_extensions:(fun _staging ->
+        if Scheduler.attempt_active scheduler then
+          Scheduler.rollback_attempt scheduler scheduler_access
+          |> release_scheduler_work;
         rollback_pending_keyed lane (pending_keyed_nodes lane))
       ~rollback_bind:(fun staging (B bind) ->
         Graph.staged_bind_rollback
@@ -1816,10 +2085,16 @@ module Make (Observer_error : Observer_error) () = struct
       ~timers:
         (Graph.staging_timer_commit_plan
            ~commit:(fun _staging timer -> timer_refresh_commit timer))
+      ~finalize:(fun () ->
+        let hooks = commit_keyed_plans lane (pending_keyed_nodes lane) in
+        Scheduler.commit_attempt scheduler scheduler_access
+        |> release_scheduler_work;
+        hooks)
 
   let requeue_if_needed lane (V var as packed) =
     if not var.queued then (
       var.queued <- true;
+      Work.admit work Work.Sources;
       Graph.enqueue_pending graph lane packed)
 
   let mark_failed_without_current (lane : graph_lane) (O observer) =
@@ -1835,8 +2110,7 @@ module Make (Observer_error : Observer_error) () = struct
     if not (var.var_equal graph_value source_value) then (
       stage_var_graph_value lane staging var source_value;
       let watchers = source_watchers_unlocked var in
-      List.iter (mark_self_dirty lane) watchers;
-      notify_dirty_frontier watchers)
+      List.iter (mark_self_dirty lane) watchers)
 
   let refresh_timer_source_for_compute lane staging signal =
     Graph.with_timer_refresh_timer graph lane signal.timer
@@ -1852,15 +2126,31 @@ module Make (Observer_error : Observer_error) () = struct
                stage_timer_refresh_operation lane staging timer now_ms operation)
              timer_refresh timer))
 
+  let notify_signal_changed lane staging signal =
+    List.iter (fun notify -> notify ()) signal.dirty_listeners;
+    List.iter
+      (fun (O observer) -> mark_observer_candidate observer)
+      signal.signal_observers;
+    Topology.iter signal.dependents (fun edge ->
+        Scheduler.note_propagation_edge_visit scheduler_counters;
+        mark_timer_refresh_dirty lane staging edge.parent)
+
   let rec compute : type a. graph_lane -> Graph.staging -> a signal -> a * bool
       =
    fun lane staging signal ->
     if not (signal_valid signal) then raise (Graph_error `Invalid_scope);
     refresh_timer_source_for_compute lane staging signal;
-    Graph.compute_cached graph lane compute_ops (P signal)
-      ~current:(fun _compute_node -> effective_signal_value signal)
-      ~cycle:(fun _compute_node -> raise (Graph_error `Cycle))
-      ~compute:(fun _compute_node -> compute_uncached lane staging signal)
+    let generation = current_generation lane in
+    let already_computed = signal.computed_generation = generation in
+    let ((_, changed) as result) =
+      Graph.compute_cached graph lane compute_ops (P signal)
+        ~current:(fun _compute_node -> effective_signal_value signal)
+        ~cycle:(fun _compute_node -> raise (Graph_error `Cycle))
+        ~compute:(fun _compute_node -> compute_uncached lane staging signal)
+    in
+    if changed && not already_computed then
+      notify_signal_changed lane staging signal;
+    result
 
   and compute_uncached :
       type a. graph_lane -> Graph.staging -> a signal -> a * bool =
@@ -1871,6 +2161,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let recompute value =
       Graph.bump_counter graph lane Graph.Recompute_count;
+      Scheduler.note_cutoff_call scheduler_counters;
       let snapshot = signal_effective_snapshot signal in
       let changed =
         Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
@@ -2028,6 +2319,7 @@ module Make (Observer_error : Observer_error) () = struct
       }
     in
     keyed.keyed_pending <- Some plan;
+    Hashtbl.replace pending_keyed signal.id (Packed_keyed (signal, keyed));
     let visited = ref child_ops.keyed_empty in
     let find_child key =
       match child_ops.keyed_find_opt key current_children with
@@ -2205,34 +2497,119 @@ module Make (Observer_error : Observer_error) () = struct
     | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
     | Ok result -> result
 
-  let collect_necessary_node_ids lane =
-    Graph.necessary_ids graph lane (graph_reachable_plan ())
+  let settle_scheduler lane staging =
+    let generation = current_generation lane in
+    let invalidations = collect_staged_bind_invalidations lane staging in
+    let visit_state (P signal) =
+      if signal.schedule_visit_generation = generation then
+        signal.schedule_visit_state
+      else Scheduler_unseen
+    in
+    let set_visit_state (P signal) state =
+      signal.schedule_visit_generation <- generation;
+      signal.schedule_visit_state <- state
+    in
+    let computable (P signal) =
+      signal_valid signal
+      && signal.demand > 0
+      && signal.computed_generation <> generation
+      && not (staged_bind_invalidates invalidations (P signal))
+    in
+    let dirty_dependency (P signal) = computable (P signal) && signal.dirty in
+    let settle_claimed packed =
+      match visit_state packed with
+      | Scheduler_done -> ()
+      | Scheduler_visiting -> raise (Graph_error `Cycle)
+      | Scheduler_unseen ->
+          set_visit_state packed Scheduler_visiting;
+          let stack = ref [ { frame_node = packed; frame_next_dependency = 0 } ] in
+          while !stack <> [] do
+            match !stack with
+            | [] -> ()
+            | frame :: rest ->
+                let (P signal) = frame.frame_node in
+                if not (computable frame.frame_node) then (
+                  stack := rest;
+                  set_visit_state frame.frame_node Scheduler_done)
+                else if
+                  frame.frame_next_dependency < Topology.length signal.dependencies
+                then (
+                  let edge =
+                    Topology.get signal.dependencies frame.frame_next_dependency
+                  in
+                  Scheduler.note_dependency_edge_visit scheduler_counters;
+                  frame.frame_next_dependency <- frame.frame_next_dependency + 1;
+                  let child = edge.child in
+                  if dirty_dependency child then
+                    match visit_state child with
+                    | Scheduler_done -> ()
+                    | Scheduler_visiting -> raise (Graph_error `Cycle)
+                    | Scheduler_unseen ->
+                        set_visit_state child Scheduler_visiting;
+                        stack :=
+                          { frame_node = child; frame_next_dependency = 0 }
+                          :: !stack)
+                else (
+                  stack := rest;
+                  if computable frame.frame_node then (
+                    Scheduler.note_node_evaluation scheduler_counters;
+                    ignore (compute lane staging signal : _ * bool));
+                  set_visit_state frame.frame_node Scheduler_done)
+          done
+    in
+    let rec loop () =
+      match Scheduler.claim scheduler scheduler_access with
+      | None -> ()
+      | Some packed ->
+          if computable packed then settle_claimed packed;
+          loop ()
+    in
+    loop ()
 
-  let update_necessity_counters_unlocked lane =
-    ignore
-      (Graph.update_necessity graph lane (graph_reachable_plan ())
-        : Graph.necessary_snapshot)
+  let update_necessity_counters_unlocked _lane = ()
 
-  let signal_timer_demand_source () =
-    Graph.timer_demand_source ~reachable:(graph_reachable_plan ())
-      ~timer:signal_timer
+  let set_pending_cleanup_hooks hooks_ref hooks =
+    if Cleanup.pending hooks_ref then
+      invalid_arg "Eta_signal: pending cleanup hooks overwritten";
+    hooks_ref := hooks;
+    match hooks with
+    | [] -> ()
+    | _ :: _ -> Work.admit work Work.Cleanup
+
+  let release_pending_cleanup_work pending =
+    if pending then Effect.sync (fun () -> Work.release work Work.Cleanup)
+    else Effect.unit
+
+  let run_pending_cleanup_as_finalizers hooks_ref =
+    let pending = Cleanup.pending hooks_ref in
+    Cleanup.run_pending_as_finalizers hooks_ref
+    |> Effect.on_exit (fun _ -> release_pending_cleanup_work pending)
 
   let fail_with_pending_disposal_hooks hooks_ref eff =
+    let pending = Cleanup.pending hooks_ref in
     Cleanup.fail_with_pending hooks_ref eff
+    |> Effect.on_exit (fun _ -> release_pending_cleanup_work pending)
 
   let graph_error_with_pending_disposal_hooks hooks_ref err =
     fail_with_pending_disposal_hooks hooks_ref
       (Effect.fail (err :> stabilize_error))
 
-  let timer_demand_unlocked lane =
-    Graph.timer_demand graph lane (signal_timer_demand_source ())
+  let timer_demand_unlocked _lane =
+    Hashtbl.fold
+      (fun id (P signal) timers ->
+        match signal.timer with
+        | None -> timers
+        | Some timer -> (id, timer) :: timers)
+      timer_nodes []
 
   let timer_demand_plan_unlocked lane =
-    let demand = timer_demand_unlocked lane in
-    Graph.timer_demand_plan demand ~plan:(fun ~is_necessary ~timers ->
-        Timer.node_demand_plan ~timers ~is_necessary
-          ~runtime_mismatch:timer_runtime_mismatch
-          ~state:timer_state_port)
+    Timer.node_demand_plan ~timers:(timer_demand_unlocked lane)
+      ~is_necessary:(fun id ->
+        match Hashtbl.find_opt timer_nodes id with
+        | Some (P signal) -> signal.demand > 0
+        | None -> false)
+      ~runtime_mismatch:timer_runtime_mismatch
+      ~state:timer_state_port
 
   let current_runtime_contract () =
     Spi.Expert.make ~leaf_name:"Eta_signal.current_runtime_contract"
@@ -2260,18 +2637,23 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_demand_cleanup_pending = ref false
 
   let mark_timer_demand_cleanup_pending_unlocked () =
-    timer_demand_cleanup_pending := true
+    if not !timer_demand_cleanup_pending then (
+      timer_demand_cleanup_pending := true;
+      Work.admit work Work.Timer_reconciliation)
 
   let claim_timer_demand_cleanup () =
     with_graph_lane_access (fun _lane ->
         if !timer_demand_cleanup_pending then (
           timer_demand_cleanup_pending := false;
+          Work.release work Work.Timer_reconciliation;
           true)
         else false)
 
   let restore_timer_demand_cleanup () =
     with_graph_lane_access (fun _lane ->
-        timer_demand_cleanup_pending := true)
+        if not !timer_demand_cleanup_pending then (
+          timer_demand_cleanup_pending := true;
+          Work.admit work Work.Timer_reconciliation))
 
   let run_pending_timer_demand_cleanup () =
     claim_timer_demand_cleanup ()
@@ -2294,14 +2676,14 @@ module Make (Observer_error : Observer_error) () = struct
               refresh_timer_demand ()
               |> Effect.map_error (fun err -> (err :> stabilize_error))
               |> Effect.bind (fun () ->
-                     Cleanup.run_pending_as_finalizers hooks_ref)))
+                     run_pending_cleanup_as_finalizers hooks_ref)))
       |> Effect.uninterruptible
-    else Cleanup.run_pending_as_finalizers hooks_ref
+    else run_pending_cleanup_as_finalizers hooks_ref
 
   let run_pending_dispose_cleanup hooks_ref =
     (run_pending_timer_demand_cleanup ()
     |> Effect.on_exit (fun _exit ->
-           Cleanup.run_pending_as_finalizers hooks_ref))
+           run_pending_cleanup_as_finalizers hooks_ref))
     |> Effect.uninterruptible
 
   let run_pending_registration_abort_cleanup hooks_ref refresh_timers =
@@ -2311,7 +2693,7 @@ module Make (Observer_error : Observer_error) () = struct
           |> Effect.bind (fun () -> refresh_timer_demand ())
         else Effect.unit)
        |> Effect.on_exit (fun _exit ->
-              Cleanup.run_pending_as_finalizers hooks_ref))
+              run_pending_cleanup_as_finalizers hooks_ref))
       |> Effect.uninterruptible
     else Effect.unit
 
@@ -2331,7 +2713,7 @@ module Make (Observer_error : Observer_error) () = struct
          | Observer_lifecycle.Registering _ | Observer_lifecycle.Active _
          | Observer_lifecycle.Invalid_scope _ ->
           let hooks = dispose_observer_unlocked lane observer in
-          hooks_ref := hooks;
+          set_pending_cleanup_hooks hooks_ref hooks;
           mark_timer_demand_cleanup_pending_unlocked ();
           update_necessity_counters_unlocked lane))
     |> Effect.bind (fun () -> run_cleanup ())
@@ -2357,7 +2739,7 @@ module Make (Observer_error : Observer_error) () = struct
         | Observer_lifecycle.Registering _ | Observer_lifecycle.Active _
         | Observer_lifecycle.Invalid_scope _ ->
             let hooks = dispose_observer_unlocked lane observer in
-            hooks_ref := hooks;
+            set_pending_cleanup_hooks hooks_ref hooks;
             refresh_timers := true;
             update_necessity_counters_unlocked lane;
             cleanup_needed := true;
@@ -2411,7 +2793,7 @@ module Make (Observer_error : Observer_error) () = struct
           (bind_effective_snapshot bind)
     | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
     | Map7 _ | Map8 _ | Map9 _ | All _ | Keyed _ ->
-        signal.dependencies
+        signal_dependencies signal
 
   let order_ops =
     Graph.order_ops ~identity:graph_node_identity
@@ -2427,19 +2809,10 @@ module Make (Observer_error : Observer_error) () = struct
     if signal_order = 0 then compare_observer_id left.obs_id right.obs_id
     else signal_order
 
-  let collect_observed_bind_nodes lane observers =
-    prune_all_nodes_unlocked lane;
-    let bind_selection =
-      Graph.bind_node_selection ~bind:(fun (P signal as packed) ->
-          match signal.kind with
-          | Bind _ -> Some packed
-          | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
-          | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Keyed _ ->
-              None)
-    in
-    Graph.collect_reachable_bind_nodes graph lane reachable_ops
-      ~roots:(observer_active_roots observers)
-      bind_selection
+  let collect_observed_bind_nodes _lane _observers =
+    Hashtbl.fold
+      (fun _ packed binds -> packed :: binds)
+      necessary_bind_nodes []
     |> List.sort compare_signal_scope_then_id
 
   let plan_staged_bind_switches lane staging observers =
@@ -2548,7 +2921,9 @@ module Make (Observer_error : Observer_error) () = struct
       Observer_core.delivery_event_source context
         (observer_update_collection_port staging invalidations)
     in
-    Observer_core.collect_delivery_event source lane observer
+    let event = Observer_core.collect_delivery_event source lane observer in
+    clear_observer_candidate observer;
+    event
 
   let observer_delivery_event_source staging =
     Observer_core.delivery_event_source_of_collect_event
@@ -2561,11 +2936,23 @@ module Make (Observer_error : Observer_error) () = struct
       events
 
   let begin_stabilize lane timer_refresh =
+    Option.iter
+      (fun _ ->
+        Hashtbl.iter
+          (fun _ (P signal as packed) ->
+            if signal.demand > 0 then schedule_signal packed)
+          timer_nodes)
+      timer_refresh;
     let pending =
       Graph.stabilization_pending_plan
         ~release_marks:(fun (_lane : graph_lane) pending ->
           Graph.stabilization_pending_mark_release ~release:(fun () ->
-              List.iter (fun (V var) -> var.queued <- false) pending))
+              Scheduler.begin_attempt scheduler;
+              List.iter
+                (fun (V var) ->
+                  var.queued <- false;
+                  Work.release work Work.Sources)
+                pending))
         ~stage:(fun lane staging pending ->
           Graph.stabilization_pending_stage ~stage:(fun () ->
               List.iter (stage_pending_var lane staging) pending))
@@ -2574,14 +2961,18 @@ module Make (Observer_error : Observer_error) () = struct
       Graph.stabilization_observer_plan
         ~delivery:(fun lane staging ->
           let selection =
-            Observer_core.delivery_selection_plan ~active:observer_active
+            Observer_core.delivery_selection_plan
+              ~active:(fun observer ->
+                observer_active observer
+                && observer_delivery_candidate observer)
               ~compare:(compare_observer_graph_order lane)
           in
           Observer_core.delivery_event_collection ~selection
             (observer_delivery_event_source staging))
         ~plan_staged_binds:(fun lane staging observers ->
           Graph.staged_bind_planning ~plan:(fun () ->
-              plan_staged_bind_switches lane staging observers))
+              plan_staged_bind_switches lane staging observers;
+              settle_scheduler lane staging))
     in
     let commit =
       Graph.stabilization_commit_plan
@@ -2617,7 +3008,7 @@ module Make (Observer_error : Observer_error) () = struct
     let hooks =
       Graph.record_stabilization_result stabilization_finish lane result
     in
-    hooks_ref := hooks;
+    set_pending_cleanup_hooks hooks_ref hooks;
     result
 
   let stabilization_delivery_ops hooks_ref refresh_timers stabilization_finish =
@@ -2639,33 +3030,44 @@ module Make (Observer_error : Observer_error) () = struct
            in
            (current_runtime_contract ()
             |> Effect.bind (fun runtime_contract ->
-                   with_graph_lane_access (fun lane ->
-                       try
-                         let timer_refresh =
-                           Some
-                             (Timer_policy.create_refresh_context
-                                ~token:(next_timer_refresh_token_unlocked lane)
-                                ~runtime_contract
-                                ~now_ms:runtime_contract.Runtime_contract.now_ms)
-                         in
-                         begin_stabilize_with_pending_hooks lane timer_refresh
-                           hooks_ref stabilization_finish
-                       with Graph_error err ->
-                         Atomic_pass.graph_error ~hooks:[] err)
-                   |> Effect.bind (fun result ->
-                          Atomic_pass.result result
-                            ~graph_error:(fun ~hooks:_ err ->
-                              graph_error_with_pending_disposal_hooks hooks_ref
-                                err)
-                            ~defect:(fun ~hooks:_ exn backtrace ->
-                              defect_with_pending_disposal_hooks hooks_ref exn
-                                backtrace)
-                            ~planning_ok:
-                              (fun ~hooks:_ ~events ->
-                                refresh_timers := true;
-                                Atomic_pass.deliver delivery_ops events)))
+                   let stabilization_result =
+                     with_graph_lane_access (fun lane ->
+                         try
+                           if
+                             Graph.stabilization_idle graph
+                             && Work.check_quiescent work
+                           then None
+                           else
+                             let timer_refresh =
+                               Some
+                                 (Timer_policy.create_refresh_context
+                                    ~token:(next_timer_refresh_token_unlocked lane)
+                                    ~runtime_contract
+                                    ~now_ms:runtime_contract.Runtime_contract.now_ms)
+                             in
+                             Some
+                               (begin_stabilize_with_pending_hooks lane
+                                  timer_refresh hooks_ref stabilization_finish)
+                         with Graph_error err ->
+                           Some (Atomic_pass.graph_error ~hooks:[] err))
+                   in
+                   stabilization_result
+                   |> Effect.bind (function
+                        | None -> Effect.unit
+                        | Some result ->
+                            Atomic_pass.result result
+                              ~graph_error:(fun ~hooks:_ err ->
+                                graph_error_with_pending_disposal_hooks hooks_ref
+                                  err)
+                              ~defect:(fun ~hooks:_ exn backtrace ->
+                                defect_with_pending_disposal_hooks hooks_ref exn
+                                  backtrace)
+                              ~planning_ok:
+                                (fun ~hooks:_ ~events ->
+                                  refresh_timers := true;
+                                  Atomic_pass.deliver delivery_ops events))))
            |> Effect.on_exit (fun _exit ->
-                  Atomic_pass.finish_delivery delivery_ops)))
+                  Atomic_pass.finish_delivery delivery_ops))
 
   module Var = struct
     type 'a t = 'a var
@@ -2773,8 +3175,13 @@ module Make (Observer_error : Observer_error) () = struct
                      obs_callback =
                        (fun token update -> callback observer token update);
                      obs_state = Observer_lifecycle.Registering live;
+                     obs_candidate = false;
                    }
                  in
+                 adjust_demand_many lane (observer_reference_demand_roots signal) 1;
+                 mark_observer_candidate observer;
+                 signal.signal_observers <-
+                   O observer :: signal.signal_observers;
                  Graph.add_observer graph lane (O observer);
                  registered := Some (O observer);
                  update_necessity_counters_unlocked lane;
@@ -2859,8 +3266,7 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_counts lane =
     Graph.observer_counts graph lane observer_count_plan
 
-  let necessary_node_count lane =
-    Graph.necessary_count (collect_necessary_node_ids lane)
+  let necessary_node_count _lane = Hashtbl.length necessary_nodes
 
   let dead_node_count lane = Graph.dead_node_count graph lane
 
@@ -2982,10 +3388,10 @@ module Make (Observer_error : Observer_error) () = struct
     |> Effect.flatten_result
 
   let signal_selected :
-      type a. dot_options -> Graph.necessary_snapshot -> a signal -> bool =
+      type a. dot_options -> (int, packed_signal) Hashtbl.t -> a signal -> bool =
    fun options necessary signal ->
     match options.dot_scope with
-    | `Necessary -> Graph.necessary_mem necessary signal.id
+    | `Necessary -> Hashtbl.mem necessary (signal_id_int signal.id)
     | `All_valid -> signal_valid signal
     | `All_including_invalid -> true
 
@@ -3010,8 +3416,8 @@ module Make (Observer_error : Observer_error) () = struct
       signal_initialized = Signal_snapshot.is_initialized snapshot;
       signal_dirty = signal.dirty;
       signal_computing = signal.computing;
-      signal_dependency_count = List.length signal.dependencies;
-      signal_dependent_count = List.length signal.dependents;
+      signal_dependency_count = Topology.length signal.dependencies;
+      signal_dependent_count = Topology.length signal.dependents;
       signal_var;
     }
 
@@ -3195,7 +3601,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let to_dot ?(options = default_dot_options) () =
     with_graph_lane_access @@ fun lane ->
-    let necessary = collect_necessary_node_ids lane in
+    let necessary = necessary_nodes in
     let all_nodes = all_nodes_unlocked lane in
     let selected signal = signal_selected options necessary signal in
     let include_dead_nodes =
@@ -3238,7 +3644,7 @@ module Make (Observer_error : Observer_error) () = struct
                          if selected_id dependency.id then
                            Some (dot_signal_id dependency.id)
                          else None)
-                       signal.dependencies;
+                       (signal_dependencies signal);
                  }
              else None)
     in
@@ -3368,6 +3774,7 @@ module Make (Observer_error : Observer_error) () = struct
           ~catch_up_policy:update.timer_catch_up_policy
       in
       signal.timer <- Some timer;
+      Hashtbl.replace timer_nodes signal.id (P signal);
       signal
 
     let timer_refresh_operation source spec =
@@ -3593,6 +4000,35 @@ module Make (Observer_error : Observer_error) () = struct
     type nonrec 'a signal = 'a signal
     type dirty_listener = unit -> unit
 
+    let scheduler_empty () = Scheduler.is_empty scheduler
+    let actionable_work_count () = Work.total work
+
+    let timer_reconciliation_work_count () =
+      Work.count work Work.Timer_reconciliation
+
+    let cleanup_work_count () = Work.count work Work.Cleanup
+
+    type atomic_fault = Atomic_pass.fault
+
+    let set_atomic_pass_fault fault =
+      Atomic_pass.set_fault (Graph.atomic_pass_fault_injector graph) fault
+
+    let reset_counters () =
+      Atomic_pass.reset_counters (Graph.atomic_pass_counters graph);
+      Scheduler.reset_counters scheduler_counters;
+      Work.reset_counters work_counters
+
+    let atomic_pass_counter_snapshot () =
+      Atomic_pass.counter_snapshot (Graph.atomic_pass_counters graph)
+
+    let scheduler_counter_snapshot () =
+      Scheduler.counter_snapshot scheduler_counters
+
+    let work_counter_snapshot () = Work.counter_snapshot work_counters
+
+    let generation () =
+      with_graph_lane_access (fun lane -> Graph.generation graph lane)
+
     type nonrec 'a keyed_change = 'a keyed_change =
       | Keyed_left of 'a
       | Keyed_right of 'a
@@ -3666,10 +4102,8 @@ module Make (Observer_error : Observer_error) () = struct
                   keyed_data_signal_token = Obj.repr child.keyed_child_data;
                   keyed_child_signal_token = Obj.repr child.keyed_child_output;
                   keyed_edge_attached =
-                    List.exists
-                      (fun (P dependency) ->
-                        dependency.id = child.keyed_child_output.id)
-                      owner.dependencies;
+                    Hashtbl.mem owner.dependency_index
+                      (signal_id_int child.keyed_child_output.id);
                 })
       | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
       | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ | Bind _ ->

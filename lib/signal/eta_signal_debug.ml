@@ -172,13 +172,9 @@ type dot_observer = {
 let render_node formatter node =
   Format.fprintf formatter "  %s [label=%S];@." node.dot_node_id
     node.dot_node_label;
-  let emitted_edges = Hashtbl.create 8 in
   List.iter
     (fun dependency_id ->
-      if not (Hashtbl.mem emitted_edges dependency_id) then (
-        Hashtbl.add emitted_edges dependency_id ();
-        Format.fprintf formatter "  %s -> %s;@." dependency_id
-          node.dot_node_id))
+      Format.fprintf formatter "  %s -> %s;@." dependency_id node.dot_node_id)
     node.dot_node_dependency_ids
 
 let render_observer formatter observer =

@@ -435,7 +435,7 @@ let test_map_invariants_repeated_children_cutoff_and_final_values () =
     (after_final_dispose.S.necessary_node_count
      < after_partial_dispose.S.necessary_node_count)
 
-let test_repeated_dependencies_are_deduplicated_in_diagnostics () =
+let test_repeated_constructor_slots_are_distinct_edges () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let source = S.Var.create 1 in
@@ -455,16 +455,12 @@ let test_repeated_dependencies_are_deduplicated_in_diagnostics () =
     }
   in
   let diagnostic_dot = run_ok runtime (S.to_dot ~options ()) in
-  Alcotest.(check int) "map2 stores one dependency" 1
-    (count_occurrences diagnostic_dot "dependencies=1");
-  Alcotest.(check int) "source stores one dependent" 1
-    (count_occurrences diagnostic_dot "dependents=1");
-  Alcotest.(check int) "map2 does not store duplicate dependencies" 0
+  Alcotest.(check int) "map2 stores both argument edges" 1
     (count_occurrences diagnostic_dot "dependencies=2");
-  Alcotest.(check int) "source does not store duplicate dependents" 0
+  Alcotest.(check int) "source stores both dependent edges" 1
     (count_occurrences diagnostic_dot "dependents=2");
   let necessary_dot = run_ok runtime (S.to_dot ()) in
-  Alcotest.(check int) "to_dot renders repeated dependency edge once" 1
+  Alcotest.(check int) "to_dot renders both argument edges" 2
     (count_occurrences necessary_dot " -> ");
   run_ok runtime (S.Observer.dispose observer)
 
@@ -2252,8 +2248,8 @@ let () =
             `Quick test_map_arity_matrix_initializes_and_coalesces;
           Alcotest.test_case "map invariants repeated children and cutoff"
             `Quick test_map_invariants_repeated_children_cutoff_and_final_values;
-          Alcotest.test_case "repeated dependencies deduplicate diagnostics"
-            `Quick test_repeated_dependencies_are_deduplicated_in_diagnostics;
+          Alcotest.test_case "repeated constructor slots are distinct edges"
+            `Quick test_repeated_constructor_slots_are_distinct_edges;
           Alcotest.test_case "explicit stabilization boundary" `Quick
             test_explicit_stabilization_boundary;
           Alcotest.test_case "functor instances stabilize independently" `Quick

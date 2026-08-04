@@ -42,6 +42,7 @@ type ('owner, 'error) t
 val create : unit -> ('owner, 'error) t
 val phase : (_, _) t -> phase
 val is_planning : (_, _) t -> bool
+val accepts_staging : (_, _) t -> bool
 val counters : (_, _) t -> counters
 val commit_counters : (_, _) t -> Eta_signal_commit_plan.counters
 val fault_injector : (_, _) t -> fault_injector
@@ -99,6 +100,7 @@ val ops :
   rollback_staging:('capability -> 'staging -> 'hook list) ->
   mark_observers_failed:('capability -> 'observer list -> unit) ->
   requeue_pending:('capability -> 'pending list -> unit) ->
+  rollback_observers:('capability -> 'observer list) ->
   ('capability, 'pending, 'observer, 'event, 'hook, 'error, 'staging) ops
 
 val run :
