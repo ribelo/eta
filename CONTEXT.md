@@ -229,6 +229,16 @@ application output.
 Opaque work that belongs to one committed advancement. Starting it acknowledges
 output delivery and admits lifecycle and transition effects.
 
+## Test handle
+
+A test-owned shell connection that drives one root through the production driver
+protocol. The handle has exclusive protocol ownership during its lifetime.
+
+## Test frame
+
+One test operation that performs at most one root advancement through output
+delivery and complete post-commit admission.
+
 ## Active child
 
 A child computation that is present in the current application structure.
