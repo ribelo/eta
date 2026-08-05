@@ -1,8 +1,21 @@
 (dirs :standard \ .scratch)
 
+; Release optimizer flags are deliberately just -O3. See
+; docs/adrs/0005-release-profile-optimizer-flags.md before adding any.
+;
+; Do not re-add -unbox-closures, -unbox-closures-factor or -rounds: this
+; compiler is Flambda 2, those are Flambda 1 flags, and Flambda-specific flags
+; are silently accepted while doing nothing. Removing them was proven to produce
+; a byte-identical executable.
+;
+; -flambda2-reaper does measurably help one queue row, and is still off on
+; purpose: it is default-off on 5.2.0+ox and later OxCaml releases carry ~10
+; reaper correctness fixes, one of which prevents unboxing the first parameter
+; of exception handlers. Eta routes every typed failure and cancellation through
+; exceptions, so that is a risk to core semantics, not a peripheral one.
 (env
  (release
-  (ocamlopt_flags -O3 -unbox-closures -unbox-closures-factor 20 -rounds 2))
+  (ocamlopt_flags -O3))
  (asan
   (c_flags
    (:standard
