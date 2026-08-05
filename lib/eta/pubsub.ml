@@ -222,7 +222,7 @@ let find_entry t seq =
     t.entries;
   !found
 
-let rec admit_value_locked wakeups t value =
+let admit_value_without_wake_locked t value =
   let subscriber_count = active_subscriber_count t in
   if subscriber_count = 0 then { subscriber_count = 0; dropped = 0 }
   else (
@@ -233,8 +233,12 @@ let rec admit_value_locked wakeups t value =
     Stdlib.Queue.add entry t.entries;
     t.depth <- t.depth + 1;
     t.published <- t.published + 1;
-    wake_all_receivers wakeups t;
     { subscriber_count; dropped = 0 })
+
+let rec admit_value_locked wakeups t value =
+  let result = admit_value_without_wake_locked t value in
+  if result.subscriber_count > 0 then wake_all_receivers wakeups t;
+  result
 
 and admit_waiting_publishers_locked wakeups t =
   match t.overflow with
@@ -274,7 +278,7 @@ let cancel_publisher wakeups t (publisher : ('a, 'err) publisher) =
     compact_cancelled_publishers_locked t;
     admit_waiting_publishers_locked wakeups t)
 
-let publish_sync contract t value =
+let publish_sync_slow contract t value =
   let wakeups = ref [] in
   match
     with_lock t @@ fun () ->
@@ -304,6 +308,26 @@ let publish_sync contract t value =
           (fun () -> cancel_publisher cancel_wakeups t publisher);
         resolve_wakeups !cancel_wakeups;
         raise exn)
+
+let publish_sync contract t value =
+  match t.overflow with
+  | Drop_new _ | Backpressure _ -> publish_sync_slow contract t value
+  | Unbounded -> (
+      match
+        with_lock t @@ fun () ->
+        match t.closed with
+        | Some reason -> `Ready (close_result reason)
+        | None when t.waiting_receivers = 0 ->
+            `Ready (`Published (admit_value_without_wake_locked t value))
+        | None ->
+            let wakeups = ref [] in
+            let result = `Published (admit_value_locked wakeups t value) in
+            `Wake (result, !wakeups)
+      with
+      | `Ready result -> result
+      | `Wake (result, wakeups) ->
+          resolve_wakeups wakeups;
+          result)
 
 let publish t value =
   Effect_erasure.public_sync2 ~leaf_name:"Pubsub.publish" t value publish_sync
