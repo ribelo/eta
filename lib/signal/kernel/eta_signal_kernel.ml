@@ -5605,12 +5605,18 @@ module Make (Observer_error : Observer_error) () = struct
                              && Work.check_quiescent work
                            then None
                            else
+                             let timer_refresh_token =
+                               next_timer_refresh_token_unlocked lane
+                             in
                              let timer_refresh =
-                               Some
-                                 (Timer_policy.create_refresh_context
-                                    ~token:(next_timer_refresh_token_unlocked lane)
-                                    ~runtime_contract
-                                    ~now_ms:runtime_contract.Runtime_contract.now_ms)
+                               if Hashtbl.length timer_nodes = 0 then None
+                               else
+                                 Some
+                                   (Timer_policy.create_refresh_context
+                                      ~token:timer_refresh_token
+                                      ~runtime_contract
+                                      ~now_ms:
+                                        runtime_contract.Runtime_contract.now_ms)
                              in
                              Some
                                (begin_stabilize_with_pending_hooks lane
@@ -5631,7 +5637,8 @@ module Make (Observer_error : Observer_error) () = struct
                                   backtrace)
                               ~planning_ok:
                                 (fun ~hooks:_ ~events ->
-                                  refresh_timers := true;
+                                  if Hashtbl.length timer_nodes > 0 then
+                                    refresh_timers := true;
                                   Atomic_pass.deliver delivery_ops events))))
            |> Effect.on_exit (fun _exit ->
                   Atomic_pass.finish_delivery delivery_ops))
