@@ -258,6 +258,7 @@ let yield = sync_frame (fun frame -> fiber_yield frame)
 
 type ('a, 'err) async_state =
   | Async_pending
+  | Async_registered of (unit, 'err) t option
   | Async_resolved of ('a, 'err) Exit.t
   | Async_interrupt_claimed
   | Async_closed
@@ -290,61 +291,81 @@ let async ~register =
   let promise, resolver = contract.Runtime_contract.create_promise () in
   let state = Atomic.make Async_pending in
   let resume exit =
-    if
-      Atomic.compare_and_set state Async_pending (Async_resolved exit)
-    then contract.Runtime_contract.resolve_promise resolver exit
+    let resolved = Async_resolved exit in
+    let rec claim () =
+      let observed = Atomic.get state in
+      match observed with
+      | Async_pending | Async_registered _ ->
+          if Atomic.compare_and_set state observed resolved then
+            contract.Runtime_contract.resolve_promise resolver exit
+          else claim ()
+      | Async_resolved _ | Async_interrupt_claimed | Async_closed -> ()
+    in
+    claim ()
   in
-  let close () =
-    ignore (Atomic.compare_and_set state Async_pending Async_closed)
+  let rec close () =
+    let observed = Atomic.get state in
+    match observed with
+    | Async_pending | Async_registered _ ->
+        if not (Atomic.compare_and_set state observed Async_closed) then close ()
+    | Async_resolved _ | Async_interrupt_claimed | Async_closed -> ()
   in
-  let on_interruption canceler exn =
-    if
-      Atomic.compare_and_set state Async_pending Async_interrupt_claimed
-    then
-      match canceler with
-      | None -> raise exn
-      | Some canceler -> (
-          match run_async_canceler frame canceler with
+  let rec on_interruption exn =
+    let observed = Atomic.get state in
+    match observed with
+    | Async_pending ->
+        if
+          Atomic.compare_and_set state observed Async_interrupt_claimed
+        then raise exn
+        else on_interruption exn
+    | Async_registered canceler ->
+        if
+          Atomic.compare_and_set state observed Async_interrupt_claimed
+        then
+          match canceler with
           | None -> raise exn
-          | Some finalizer ->
-              let reason =
-                match Runtime_core.cancellation_reason contract exn with
-                | Some reason -> reason
-                | None -> assert false
-              in
-              error
-                (Cause.suppressed
-                   ~primary:(frame.interrupt_of_cancel reason)
-                   ~finalizer))
-    else
-      match Atomic.get state with
-      | Async_resolved exit -> exit
-      | Async_interrupt_claimed | Async_closed -> raise exn
-      | Async_pending -> assert false
+          | Some canceler -> (
+              match run_async_canceler frame canceler with
+              | None -> raise exn
+              | Some finalizer ->
+                  let reason =
+                    match Runtime_core.cancellation_reason contract exn with
+                    | Some reason -> reason
+                    | None -> assert false
+                  in
+                  error
+                    (Cause.suppressed
+                       ~primary:(frame.interrupt_of_cancel reason)
+                       ~finalizer))
+        else on_interruption exn
+    | Async_resolved exit -> exit
+    | Async_interrupt_claimed | Async_closed -> raise exn
   in
-  let registered = ref None in
   try
     contract.Runtime_contract.cancel_sub @@ fun _cancel_context ->
     let interrupted_during_register =
       try
         contract.Runtime_contract.protect (fun () ->
-            registered := Some (register resume));
+            let canceler = register resume in
+            let observed = Atomic.get state in
+            match observed with
+            | Async_pending ->
+                ignore
+                  (Atomic.compare_and_set state observed
+                     (Async_registered canceler))
+            | Async_resolved _ -> ()
+            | Async_registered _ | Async_interrupt_claimed | Async_closed ->
+                assert false);
         None
       with exn when Runtime_core.is_cancellation contract exn ->
-        let canceler = Option.join !registered in
-        Some (on_interruption canceler exn)
+        Some (on_interruption exn)
     in
     match interrupted_during_register with
     | Some exit -> exit
     | None ->
-        let canceler =
-          match !registered with
-          | Some canceler -> canceler
-          | None -> invalid_arg "Effect.async: register returned no outcome"
-        in
         (try contract.Runtime_contract.await_promise promise with
         | exn when Runtime_core.is_cancellation contract exn ->
-            on_interruption canceler exn)
+            on_interruption exn)
   with
   | exn when Runtime_core.is_cancellation contract exn -> raise exn
   | exn ->
