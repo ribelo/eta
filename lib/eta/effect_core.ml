@@ -78,6 +78,12 @@ type ('a, +'err) t =
      block to carry an always-[None] [leaf_name]; interpreting [Sync] directly in
      [eval] costs one 2-word block and no closure. *)
   | Sync : (unit -> 'a) -> ('a, 'err) t
+  | Async :
+      {
+        register :
+          (('a, 'err) Exit.t -> unit) -> (unit, 'err) t option;
+      }
+      -> ('a, 'err) t
   | Map :
       {
         inner : ('a, 'err) t;
@@ -102,12 +108,14 @@ type ('a, +'err) t =
       -> ('a, 'err2) t
 
 let bind_error_leaf_name = "Effect.bind_error"
+let async_leaf_name = "Effect.async"
 
 let leaf_name : type a err. (a, err) t -> string option = function
   | Custom { leaf_name; _ } -> leaf_name
   (* [bind_error] was a named [Custom], and the name is observable through
      [Effect.name] and [describe], so it is reported unchanged. *)
   | Bind_error _ -> Some bind_error_leaf_name
+  | Async _ -> Some async_leaf_name
   | Pure _ | Fail _ | Map _ | Bind _ | Sync _ -> None
 
 let make ?leaf_name eval =
@@ -158,42 +166,6 @@ let rec first_typed_failure : type err. err Cause.t -> err option = function
   | Cause.Suppressed { primary; _ } -> first_typed_failure primary
   | Cause.Die _ | Cause.Interrupt _ | Cause.Finalizer _ -> None
 
-let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
- fun frame -> function
-  | Pure value -> ok value
-  | Fail err -> error (Cause.Fail err)
-  | Custom { eval; _ } -> eval frame
-  | Sync f -> (
-      try ok (f ()) with
-      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
-          raise exn
-      | exn -> exit_of_exn frame exn)
-  | Map { inner; f; _ } -> (
-      match eval frame inner with
-      | Exit.Ok value -> ok (f value)
-      | Exit.Error _ as err -> err)
-  | Bind { inner; k; _ } -> (
-      match eval frame inner with
-      | Exit.Ok value -> eval frame (k value)
-      | Exit.Error _ as err -> err)
-  | Bind_error { inner; handler } -> (
-      match eval frame inner with
-      | Exit.Ok value -> ok value
-      | Exit.Error cause -> (
-          match stripped_uncatchable cause with
-          | Some cause -> error cause
-          | None -> (
-              match first_typed_failure cause with
-              | Some err -> eval frame (handler err)
-              | None -> invalid_arg "Effect.bind_error: empty composite cause")))
-
-let run_to_exit frame eff =
-  try eval frame eff with
-  | exn when Runtime_core.is_cancellation frame.runtime.contract exn -> raise exn
-  | exn -> exit_of_exn frame exn
-
-let run_to_value frame eff = exit_to_value frame (run_to_exit frame eff)
-
 type internal_cancel = {
   interrupt_id : Cause.interrupt_id;
   matches_cancel : exn -> bool;
@@ -228,34 +200,6 @@ let run_scope_body ?sw ?internal_cancel frame (body) =
       | Some reason -> error (interrupt_of_cancel reason)
       | None -> exit_of_exn child_frame exn)
 
-let run_scope ?sw ?internal_cancel frame eff =
-  run_scope_body ?sw ?internal_cancel frame (fun child_frame ->
-      run_to_value child_frame eff)
-
-let run_scope_value ?sw frame eff = exit_to_value frame (run_scope ?sw frame eff)
-
-let run_scope_body_value ?sw frame body =
-  exit_to_value frame (run_scope_body ?sw frame body)
-
-let pure value = Pure value
-let fail err = Fail err
-let unit = pure ()
-let from_result = function Stdlib.Ok value -> pure value | Stdlib.Error err -> fail err
-let from_option ~if_none = function Some value -> pure value | None -> fail if_none
-
-let sync_frame ?leaf_name f =
-  make ?leaf_name (fun frame ->
-      try ok (f frame) with
-      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
-          raise exn
-      | exn -> exit_of_exn frame exn)
-
-(* Interpreted by [eval]'s [Sync] branch, which carries the same exception
-   handling this used to install in a per-construction closure. *)
-let sync f = Sync f
-
-let yield = sync_frame (fun frame -> fiber_yield frame)
-
 type ('a, 'err) async_state =
   | Async_pending
   | Async_registered of (unit, 'err) t option
@@ -263,13 +207,17 @@ type ('a, 'err) async_state =
   | Async_interrupt_claimed
   | Async_closed
 
-let run_async_canceler frame canceler =
+let run_async_canceler eval frame canceler =
   let outcome = ref None in
   let raised = ref None in
   (try
      Runtime_core.with_restoration_forbidden frame.runtime (fun () ->
          frame.runtime.contract.Runtime_contract.protect (fun () ->
-             outcome := Some (run_scope frame canceler)))
+             outcome :=
+               Some
+                 (run_scope_body frame (fun child_frame ->
+                      exit_to_value child_frame
+                        (eval child_frame canceler)))))
    with exn ->
      match !outcome with
      | Some _ when Runtime_core.is_cancellation frame.runtime.contract exn -> ()
@@ -285,8 +233,40 @@ let run_async_canceler frame canceler =
   | None, None ->
       invalid_arg "Effect.async: canceler protection returned no outcome"
 
-let async ~register =
-  make ~leaf_name:"Effect.async" @@ fun frame ->
+let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
+ fun frame -> function
+  | Pure value -> ok value
+  | Fail err -> error (Cause.Fail err)
+  | Custom { eval; _ } -> eval frame
+  | Sync f -> (
+      try ok (f ()) with
+      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+          raise exn
+      | exn -> exit_of_exn frame exn)
+  | Async { register } -> eval_async frame register
+  | Map { inner; f; _ } -> (
+      match eval frame inner with
+      | Exit.Ok value -> ok (f value)
+      | Exit.Error _ as err -> err)
+  | Bind { inner; k; _ } -> (
+      match eval frame inner with
+      | Exit.Ok value -> eval frame (k value)
+      | Exit.Error _ as err -> err)
+  | Bind_error { inner; handler } -> (
+      match eval frame inner with
+      | Exit.Ok value -> ok value
+      | Exit.Error cause -> (
+          match stripped_uncatchable cause with
+          | Some cause -> error cause
+          | None -> (
+              match first_typed_failure cause with
+              | Some err -> eval frame (handler err)
+              | None -> invalid_arg "Effect.bind_error: empty composite cause")))
+and eval_async : type a err.
+    frame ->
+    (((a, err) Exit.t -> unit) -> (unit, err) t option) ->
+    (a, err) Exit.t =
+ fun frame register ->
   let contract = frame.runtime.contract in
   let promise, resolver = contract.Runtime_contract.create_promise () in
   let state = Atomic.make Async_pending in
@@ -325,7 +305,7 @@ let async ~register =
           match canceler with
           | None -> raise exn
           | Some canceler -> (
-              match run_async_canceler frame canceler with
+              match run_async_canceler eval frame canceler with
               | None -> raise exn
               | Some finalizer ->
                   let reason =
@@ -371,6 +351,43 @@ let async ~register =
   | exn ->
       close ();
       exit_of_exn frame exn
+
+let run_to_exit frame eff =
+  try eval frame eff with
+  | exn when Runtime_core.is_cancellation frame.runtime.contract exn -> raise exn
+  | exn -> exit_of_exn frame exn
+
+let run_to_value frame eff = exit_to_value frame (run_to_exit frame eff)
+
+let run_scope ?sw ?internal_cancel frame eff =
+  run_scope_body ?sw ?internal_cancel frame (fun child_frame ->
+      run_to_value child_frame eff)
+
+let run_scope_value ?sw frame eff = exit_to_value frame (run_scope ?sw frame eff)
+
+let run_scope_body_value ?sw frame body =
+  exit_to_value frame (run_scope_body ?sw frame body)
+
+let pure value = Pure value
+let fail err = Fail err
+let unit = pure ()
+let from_result = function Stdlib.Ok value -> pure value | Stdlib.Error err -> fail err
+let from_option ~if_none = function Some value -> pure value | None -> fail if_none
+
+let sync_frame ?leaf_name f =
+  make ?leaf_name (fun frame ->
+      try ok (f frame) with
+      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+          raise exn
+      | exn -> exit_of_exn frame exn)
+
+(* Interpreted by [eval]'s [Sync] branch, which carries the same exception
+   handling this used to install in a per-construction closure. *)
+let sync f = Sync f
+
+let yield = sync_frame (fun frame -> fiber_yield frame)
+
+let async ~register = Async { register }
 
 let never : 'a 'err. ('a, 'err) t =
   Custom
@@ -650,6 +667,7 @@ let describe eff =
        constructor, and [describe] is public output, so it keeps rendering the
        same. Renaming it to "Sync" would be a user-visible change. *)
     | Sync _ -> line depth "Custom"
+    | Async _ -> line depth (Printf.sprintf "Custom(%S)" async_leaf_name)
     (* Was a named [Custom]; render identically, and as before do not walk the
        inner effect, which a [Custom] never exposed. *)
     | Bind_error _ -> line depth (Printf.sprintf "Custom(%S)" bind_error_leaf_name)
