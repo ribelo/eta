@@ -294,14 +294,14 @@ let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
       let access = enter ~hooks contract lane in
       access_ref := Some access;
       lane.owner_fiber_id <- Some current_fiber_id;
-      let release_lane =
-        Effect.sync (fun () -> release_sync lane access_ref)
-      in
       contract.Runtime_contract.local_with_binding depth_local 1 (fun () ->
-          Spi.Expert.eval context
-            (after_acquired ()
-            |> Effect.bind (fun () -> Effect.sync (fun () -> f access))
-            |> Effect.on_exit (fun _exit -> release_lane)))
+          let exit =
+            match Spi.Expert.eval context (after_acquired ()) with
+            | Eta.Exit.Ok () -> Eta.Exit.Ok (f access)
+            | Eta.Exit.Error cause -> Eta.Exit.Error cause
+          in
+          release_sync lane access_ref;
+          exit)
     with
     | exn when Option.is_some (contract.Runtime_contract.cancellation_reason exn)
       ->
