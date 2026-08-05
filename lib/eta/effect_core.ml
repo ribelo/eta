@@ -99,6 +99,13 @@ type ('a, +'err) t =
         leaf_name : string option;
       }
       -> ('a, 'err) t
+  | Eval_contract :
+      {
+        value : 'value;
+        run : Runtime_contract.t -> 'value -> ('a, 'err) Exit.t;
+        leaf_name : string option;
+      }
+      -> ('a, 'err) t
   | Async :
       {
         register :
@@ -140,6 +147,7 @@ let leaf_name : type a err. (a, err) t -> string option = function
   | Sync_frame { leaf_name; _ } -> leaf_name
   | Sync_contract { leaf_name; _ } -> leaf_name
   | Sync_contract2 { leaf_name; _ } -> leaf_name
+  | Eval_contract { leaf_name; _ } -> leaf_name
   | Pure _ | Fail _ | Map _ | Bind _ | Sync _ -> None
 
 let make ?leaf_name eval =
@@ -286,6 +294,8 @@ let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
       | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
           raise exn
       | exn -> exit_of_exn frame exn)
+  | Eval_contract { value; run; _ } ->
+      run frame.runtime.contract value
   | Async { register } -> eval_async frame register
   | Map { inner; f; _ } -> (
       match eval frame inner with
@@ -434,6 +444,9 @@ let sync_contract ?leaf_name value run =
 
 let sync_contract2 ?leaf_name value1 value2 run =
   Sync_contract2 { value1; value2; run; leaf_name }
+
+let eval_contract ?leaf_name value run =
+  Eval_contract { value; run; leaf_name }
 
 (* Interpreted by [eval]'s [Sync] branch, which carries the same exception
    handling this used to install in a per-construction closure. *)
@@ -729,6 +742,9 @@ let describe eff =
         line depth (Printf.sprintf "Custom(%S)" name)
     | Sync_contract2 { leaf_name = None; _ } -> line depth "Custom"
     | Sync_contract2 { leaf_name = Some name; _ } ->
+        line depth (Printf.sprintf "Custom(%S)" name)
+    | Eval_contract { leaf_name = None; _ } -> line depth "Custom"
+    | Eval_contract { leaf_name = Some name; _ } ->
         line depth (Printf.sprintf "Custom(%S)" name)
     | Async _ -> line depth (Printf.sprintf "Custom(%S)" async_leaf_name)
     (* Was a named [Custom]; render identically, and as before do not walk the

@@ -90,5 +90,4 @@ let public_sync2 ~leaf_name value1 value2 sync_fn =
 
 let public_runtime ~leaf_name t run =
   effect_to_public
-    (Effect_core.make ~leaf_name (fun frame ->
-         run frame.Effect_core.runtime.Runtime_core.contract t))
+    (Effect_core.eval_contract ~leaf_name t run)
