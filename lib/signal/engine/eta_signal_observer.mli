@@ -190,8 +190,7 @@ type 'capability delivery_runner = {
   run_delivery : 'a 'error. ('capability -> 'a) -> ('a, 'error) Eta.Effect.t;
 }
 (** Polymorphic delivery runner for {!delivery_event_access}. The record
-    form is the standard-OCaml spelling of a rank-2 argument; it keeps this
-    interface buildable on both OxCaml and mainline OCaml. *)
+    form keeps the rank-2 argument explicit in the delivery protocol. *)
 
 type 'capability delivery_event_access
 

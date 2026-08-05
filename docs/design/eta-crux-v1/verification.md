@@ -252,16 +252,13 @@ driver waits create no telemetry.
 ## Performance gates
 
 Performance compares fresh baseline and candidate runs in the same environment.
-OxCaml and upstream OCaml use separate baselines. Generated measurements remain
-local and checked-in numbers never control a gate.
+Generated measurements remain local. Checked-in numbers never control a gate.
 
 Use these commands:
 
 ```sh
 nix develop -c bash bench/run.sh --quick --filter '^eta_crux\.'
 nix develop -c bash bench/run.sh --filter '^eta_crux\.'
-nix develop .#mainline -c bash bench/run.sh --quick --filter '^eta_crux\.'
-nix develop .#mainline -c bash bench/run.sh --filter '^eta_crux\.'
 ```
 
 Run three complete baseline and candidate pairs through the benchmark gate:

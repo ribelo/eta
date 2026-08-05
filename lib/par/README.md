@@ -115,8 +115,11 @@ entry point so offloaded callbacks keep their worker-domain semantics.
 nix develop -c dune runtest test/par --force
 ```
 
-Use the default OxCaml shell (`nix develop`). `nix develop .#mainline` is an
-upstream-OCaml comparison shell, not the primary development target.
+Use the OxCaml shell:
+
+```bash
+nix develop
+```
 
 The test suite covers pool lifecycle, fork-join, nested joins, exception
 propagation, par_for/par_map/par_reduce/par_sort, heartbeat fanout, and iterator

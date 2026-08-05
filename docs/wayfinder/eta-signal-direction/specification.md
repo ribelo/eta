@@ -885,8 +885,8 @@ The repository provides:
 `@signal-gates` depends on generated laws, defect regressions, deterministic
 economics, stream laws, and Signal Map complexity gates.
 
-OxCaml and mainline shipped gates run `@signal-gates`. Wall-time benchmarks
-remain under `@bench`.
+The OxCaml shipped gate runs `@signal-gates`. Wall-time benchmarks remain under
+`@bench`.
 
 ## 15. Implementation route
 
@@ -906,7 +906,7 @@ Implement these slices in order. Each slice deletes its old behavior path.
 9. Publish `eta_signal_stream` and delete the core stream bridge.
 10. Migrate Eta Crux to one private Signal graph and one Signal Map adapter.
 11. Delete obsolete libraries, protocols, tests, requirements, and registry rows.
-12. Run `@signal-gates`, full OxCaml tests, mainline tests, and shipped gates.
+12. Run `@signal-gates`, full OxCaml tests, and the shipped gate.
 
 No slice keeps a compatibility path, fallback backend, or silent default.
 
@@ -918,7 +918,7 @@ Implementation is complete only when:
 - effectful teardown cases end with an empty fiber census
 - no deleted API or obsolete private protocol remains
 - Eta Crux uses only the final public Signal and Signal Map contracts
-- `@signal-gates` passes on OxCaml and mainline
+- `@signal-gates` passes on OxCaml
 
 ## 16. Design sources
 

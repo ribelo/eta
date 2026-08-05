@@ -107,8 +107,8 @@ surface.
     graph and `Owner_transaction`.
 11. Delete empty support libraries, forwarding wrappers, copied private tests,
     stale requirements, and stale registry rows.
-12. Run `@signal-gates`, full OxCaml tests, mainline tests, shipped-package gates,
-    and the existing benchmark as non-gating evidence.
+12. Run `@signal-gates`, full OxCaml tests, the shipped-package gate, and the
+    existing benchmark as non-gating evidence.
 
 Every slice is buildable and carries its replacement tests. Churn and migration
 cost do not justify a temporary path.
@@ -133,7 +133,7 @@ The implementation route is complete only when:
 - all N1 through N5 regressions pass
 - every applicable effectful law ends with an available empty fiber census
 - `@signal-economics` passes at 1,000, 10,000, and 100,000 nodes or edges
-- `@signal-gates` passes in OxCaml and mainline shipped gates
+- `@signal-gates` passes in the OxCaml shipped gate
 - no deleted API, private protocol, unsafe token, second factory, or fallback
   bridge remains
 - Eta Crux uses only the final Signal and Signal Map contracts

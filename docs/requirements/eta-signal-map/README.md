@@ -25,7 +25,7 @@ and keyed operator make work proportional to a small change frontier.
 - The `eta_signal_map` package shall depend on the exact same release version of `eta_signal`. ^smpkg-kt5y
 - The `eta_signal_map` runtime shall not depend on Base, Core, Incremental, or `Incr_map`. ^smpkg-e8ac
 - The `eta_signal_map` package shall expose one public map module and one public keyed signal operator in V1. ^smpkg-w9da
-- The `eta_signal_map` package shall pass the native OxCaml gate and the full upstream OCaml gate. ^smpkg-x2n6
+- The `eta_signal_map` package shall pass the native OxCaml gate. ^smpkg-x2n6
 - The generated `eta_signal_map.opam` file shall declare test-only Alcotest and QCheck dependencies. ^smpkg-1y2y
 
 ## Requirement Notes

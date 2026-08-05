@@ -227,15 +227,9 @@ nix develop -c dune build @install
 nix develop -c dune runtest --force
 nix develop -c dune build @signal-map-complexity
 nix develop -c eta-oxcaml-test-shipped
-nix develop .#mainline -c eta-mainline-test-shipped
 ```
 
-The mainline script already builds `@install`, runs all tests, and builds
-`@bench`. Extend it to build `@signal-map-complexity` explicitly.
-
-The focused `eta-ocaml54-test-erg` gate stays unchanged until an Erg-owned
-package consumes `eta_signal_map`. There is no JavaScript-specific package or
-gate in V1.
+There is no JavaScript-specific package or gate in V1.
 
 ### Executable-law registry
 

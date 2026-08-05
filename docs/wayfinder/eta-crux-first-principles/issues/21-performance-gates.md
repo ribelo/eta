@@ -34,14 +34,11 @@ has no absolute latency target.
 
 A Git commit or tag identifies the baseline code. A comparison uses fresh runs
 of that revision and the candidate in the same environment. The environment
-includes the machine, compiler track, Dune profile, and benchmark configuration.
+includes the machine, OxCaml version, Dune profile, and benchmark configuration.
 
 Generated measurements remain local. Eta Crux does not use a checked-in numeric
 result as a baseline. Historical reports can record evidence, but they never
 control a gate.
-
-OxCaml and upstream OCaml use separate comparisons. A result from one compiler
-track cannot serve as the baseline for the other track.
 
 ### Benchmark location and commands
 
@@ -54,13 +51,6 @@ standard commands:
 ```sh
 nix develop -c bash bench/run.sh --quick --filter '^eta_crux\.'
 nix develop -c bash bench/run.sh --filter '^eta_crux\.'
-```
-
-The upstream comparison uses the same commands in the mainline shell:
-
-```sh
-nix develop .#mainline -c bash bench/run.sh --quick --filter '^eta_crux\.'
-nix develop .#mainline -c bash bench/run.sh --filter '^eta_crux\.'
 ```
 
 `dune runtest` does not run these benchmarks. A developer runs the selected

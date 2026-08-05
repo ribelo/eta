@@ -568,11 +568,7 @@ Add `lib/signal_stream` and `test/signal_stream` to the OxCaml shipped build and
 test lists. Replace its final `dune build @signal-map-complexity` command with
 `dune build @signal-gates`.
 
-Add `dune build @signal-gates` after `dune runtest --force` in the mainline
-shipped script. Its existing `@bench` command remains separate.
-
-The focused OCaml 5.4 Erg script stays unchanged. Its package list does not
-contain `eta_signal`, `eta_signal_map`, or `eta_signal_stream`.
+Keep `@bench` separate from the shipped gate.
 
 ### Resolution spans
 

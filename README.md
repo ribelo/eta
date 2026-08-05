@@ -620,22 +620,12 @@ The handoff gate is:
 nix develop -c dune runtest --force
 ```
 
-The full upstream OCaml 5.4 gate builds every installable package and runs the
-native, js_of_ocaml, and benchmark suites:
+Eta targets OxCaml `5.2.0+ox` only. Eta source can use OxCaml modes, stack
+allocation, unboxed layouts, zero-allocation checks, and other OxCaml
+extensions. Eta does not provide an upstream OCaml compatibility gate.
 
-```sh
-nix develop .#mainline -c eta-mainline-test-shipped
-```
-
-Erg consumes Eta through the pinned upstream OCaml 5.4 native track:
-
-```sh
-nix develop .#ocaml54 -c eta-ocaml54-test-erg
-```
-
-That focused gate covers Eta core, Eio, native HTTP/TLS, schema/test support,
-and OpenRouter without pulling unrelated database and observability packages
-into Erg's dependency contract.
+The active OxCaml toolchain does not build the js_of_ocaml packages. The native
+gates do not verify those adapters.
 
 Build all installable packages without running tests:
 
@@ -667,10 +657,6 @@ Footguns:
 - `dune build` without an alias also builds tests, examples, and benchmark
   executables. Use `dune build @install` when you only need installable
   packages.
-- `nix develop .#mainline` is the full upstream OCaml 5.4 and js_of_ocaml gate,
-  not the primary development shell.
-- `nix develop .#ocaml54` is the pinned upstream OCaml 5.4 native shell for the
-  package subset consumed by Erg.
 - `test/http` is the low-level protocol test target. `test/http_eio` is the
   green Eio transport gate.
 

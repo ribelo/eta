@@ -263,17 +263,9 @@ from `eta_eio`) and usually an `eta_http_eio` client to send data.
 | `eta_js_test` | `Eta_js_test` | test helpers for `eta_js` | `eta_js`, `js_of_ocaml` |
 | `eta_http_js` | `Eta_http_js` | Fetch client adapter for eta-http | `eta_http`, `eta_jsoo`, `js_of_ocaml` |
 
-> Footgun: the JS packages are disabled in the `5.2.0+ox` switch used by the
-> default Nix/OxCaml shell (`enabled_if (<> %{ocaml_version} 5.2.0+ox)`). Build
-> every installable package and run the native and JS suites on upstream OCaml
-> 5.4 through the flake's mainline gate:
-> `nix develop .#mainline -c eta-mainline-test-shipped`.
-
-> Erg pins Eta's native upstream-compiler surface through
-> `nix develop .#ocaml54 -c eta-ocaml54-test-erg`. That gate covers Eta core,
-> Eio, native HTTP/TLS, schemas, test support, and OpenRouter on OCaml 5.4.1;
-> it does not claim coverage for optional SQL, observability, driver, or JS
-> packages.
+> Footgun: the active OxCaml toolchain disables the JS packages with
+> `enabled_if (<> %{ocaml_version} 5.2.0+ox)`. The repository has no active
+> build or test gate for these packages.
 
 ## How OCaml's tree-shaking actually works
 

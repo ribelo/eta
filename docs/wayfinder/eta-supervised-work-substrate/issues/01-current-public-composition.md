@@ -23,7 +23,7 @@ The prototype must supply visible evidence for these requirements:
   them deactivation, activation, and transition.
 - Sibling work runs concurrently after release.
 - Outcome races keep the first terminal outcome and the complete `Eta.Cause`.
-- OxCaml and upstream OCaml expose the same semantic surface.
+- The prototype uses the repository OxCaml surface.
 
 Use adversarial order and failure cases. Give the prototype one command that
 runs all gates. Use a compiler rejection when the type system supplies the

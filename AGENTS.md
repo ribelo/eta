@@ -100,33 +100,21 @@ Build and test gates:
 nix develop -c dune build @install         # all installable packages
 nix develop -c dune runtest --force        # full test suite
 nix develop -c eta-oxcaml-test-shipped     # shipped-package subset gate
-nix develop .#mainline -c eta-mainline-test-shipped # full upstream OCaml 5.4 gate
-nix develop .#ocaml54 -c eta-ocaml54-test-erg # Erg's native OCaml 5.4 dependency gate
 ```
 
 Agents must run repository verification through the Nix flake, not through the
 ambient system OCaml or opam switch. Use `nix develop -c ...` for the OxCaml
-gate, `nix develop .#mainline -c ...` for the full upstream OCaml 5.4 and
-js_of_ocaml gate, and `nix develop .#ocaml54 -c ...` for Erg's focused native
-dependency gate.
+gate.
 Ambient/system opam results are not valid handoff evidence unless the user
 explicitly asks for a non-Nix reproduction.
 
-OxCaml and upstream OCaml 5.4 are separate build tracks. The `mainline` track
-builds every installable package and runs the full native and js_of_ocaml test
-surface on OCaml 5.4. The smaller `ocaml54` track covers the Eta packages
-consumed natively by Erg, including the Eio HTTP/TLS transport and OpenRouter.
-The OxCaml `5.2.0+ox`
-switch cannot build or run js_of_ocaml libraries/tests, and the existing JS
-stanzas are disabled under that compiler with `enabled_if`. Native Nix/OxCaml
-gates therefore do not verify `eta_jsoo`, `eta_js`, `eta_js_stream`,
-`eta_http_js`, `eta_js_test`, or their JS tests. When changing js_of_ocaml
-code, use the flake's mainline shell and run the relevant JS targets there; do
-not report OxCaml gate success as JS adapter verification.
+Eta targets OxCaml `5.2.0+ox` only. Production source can use OxCaml modes,
+stack allocation, unboxed layouts, zero-allocation checks, and other OxCaml
+extensions. Upstream OCaml compatibility is not a project requirement.
 
-```sh
-nix develop .#mainline -c dune runtest test/http_js --force
-```
+The active toolchain cannot build the js_of_ocaml packages. The native OxCaml
+gates do not verify `eta_jsoo`, `eta_js`, `eta_js_stream`, `eta_http_js`,
+`eta_js_test`, or their JS tests.
 
 Without Nix, use an OCaml 5.2.0+ox switch, install dependencies, then run the
 same Dune targets:

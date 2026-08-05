@@ -183,10 +183,11 @@ Focused eta_http checks:
 
 ```sh
 nix develop -c dune build eta_http.install eta_http_eio.install
-nix develop .#mainline -c dune runtest test/http_js --force
 nix develop -c dune runtest test/http_eio --force
 nix develop -c bash lib/http/audit/run.sh
 ```
+
+The active OxCaml toolchain does not build `eta_http_js`.
 
 `test/http` is currently not part of the green gate (see Evidence above).
 

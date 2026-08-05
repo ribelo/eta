@@ -45,8 +45,7 @@ type 'operation node_runner = {
   run_node : 'err. 'operation node -> (unit, 'err) Eta.Effect.t;
 }
 (** Polymorphic node runner for {!start}. The record form is the
-    standard-OCaml spelling of a rank-2 argument; it keeps this interface
-    buildable on both OxCaml and mainline OCaml. *)
+    explicit rank-2 boundary for timer operations. *)
 
 type 'operation start
 

@@ -353,11 +353,8 @@ nix develop -c dune runtest --force
 nix develop -c eta-oxcaml-test-shipped
 ```
 
-Run the JS adapter tests under Node after adding `eta_http_js`:
-
-```sh
-nix develop .#mainline -c dune runtest test/http_js --force
-```
+The active OxCaml toolchain does not build `eta_http_js`. This ADR does not
+define an active JS adapter gate.
 
 Run the HTTP package audit after every boundary move:
 

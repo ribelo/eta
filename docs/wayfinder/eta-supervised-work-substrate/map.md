@@ -26,8 +26,8 @@ Keep Eta Crux graph identity, advancement state, and typed output out of Eta.
 Do not expose Eio switches, runtime-contract tokens, or an unscoped detach
 operation.
 
-Run prototype gates through the repository Nix shells. Use both the OxCaml and
-upstream OCaml tracks. Preserve complete `Eta.Cause` values in failure evidence.
+Run prototype gates through the repository OxCaml Nix shell. Preserve complete
+`Eta.Cause` values in failure evidence.
 
 Use `$prototype`, `$eio`, `$codebase-design`, `$oxcaml`, and `$simple-english`
 when they apply. Do not use a research subagent without explicit approval.

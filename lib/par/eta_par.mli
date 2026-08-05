@@ -250,9 +250,8 @@ module Island : sig
       {!Eta.Effect.sync}; the reverse is deliberately false because [run]
       crosses a worker-domain boundary. No timeout, cancellation, preemption,
       streaming/online queueing, worker-safe AST, or OTel behavior is implied by
-      this primitive. Upstream OCaml does not enforce cross-domain payload
-      safety here; callers must keep callbacks bounded and avoid sharing mutable
-      state unsafely. *)
+      this primitive. This API does not certify payload portability. Callers
+      must keep callbacks bounded and avoid unsafe shared mutable state. *)
 
   val map :
     ?name:string ->

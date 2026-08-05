@@ -110,8 +110,8 @@ let current_user auth =
 ```
 
 If a leaf must run in a native island, make the pool, input, and callback
-explicit. Under upstream OCaml, tests must cover cross-domain safety because the
-compiler does not reject non-portable captures for this API.
+explicit. The island API does not certify payload portability. Tests must cover
+cross-domain safety for each callback.
 
 ```ocaml
 let decode bytes = Schema.decode bytes

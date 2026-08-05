@@ -23,8 +23,8 @@ The selected design must meet these constraints:
 - The interface exposes no Eio switch or runtime-contract token.
 - The interface provides no unscoped detach operation.
 
-Compile the public type sketch under the OxCaml and upstream OCaml tracks. Use
-adversarial behavior probes for ordering, cancellation, failure, and shutdown.
+Compile the public type sketch under OxCaml. Use adversarial behavior probes for
+ordering, cancellation, failure, and shutdown.
 
 Select one design and state why the other designs fail the contract or add
 unnecessary surface. Identify the public laws and backend obligations that the

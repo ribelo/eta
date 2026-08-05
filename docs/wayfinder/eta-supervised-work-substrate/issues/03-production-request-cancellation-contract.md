@@ -211,7 +211,6 @@ Run the focused gates first:
 
 ```sh
 nix develop -c dune runtest test/core_eio test/laws test/type_errors --force
-nix develop .#mainline -c dune runtest test/core_eio test/laws test/js_jsoo --force
 ```
 
 Then run every repository gate required for this core change:
@@ -220,9 +219,7 @@ Then run every repository gate required for this core change:
 nix develop -c dune build @install
 nix develop -c dune runtest --force
 nix develop -c eta-oxcaml-test-shipped
-nix develop .#mainline -c eta-mainline-test-shipped
-nix develop .#ocaml54 -c eta-ocaml54-test-erg
 ```
 
 The production handoff must record each command, compiler version, exit status,
-and final commit. A passing OxCaml gate is not JavaScript evidence.
+and final commit.
