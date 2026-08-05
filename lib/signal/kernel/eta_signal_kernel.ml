@@ -4916,12 +4916,18 @@ module Make (Observer_error : Observer_error) () = struct
             | [] -> ()
             | frame :: rest ->
                 let (P signal) = frame.frame_node in
+                let dependency_count =
+                  match signal.kind with
+                  | Keyed _ -> 0
+                  | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _
+                  | Map5 _ | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _
+                  | Bind _ ->
+                      Topology.length signal.dependencies
+                in
                 if not (computable frame.frame_node) then (
                   stack := rest;
                   set_visit_state frame.frame_node Scheduler_done)
-                else if
-                  frame.frame_next_dependency < Topology.length signal.dependencies
-                then (
+                else if frame.frame_next_dependency < dependency_count then (
                   let edge =
                     Topology.get signal.dependencies frame.frame_next_dependency
                   in
