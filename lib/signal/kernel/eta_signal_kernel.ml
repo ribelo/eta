@@ -3463,20 +3463,22 @@ module Make (Observer_error : Observer_error) () = struct
     | [] | _ :: _ :: _ -> true
 
   let stage_single_dependency_version lane staging signal child =
-    update_signal_staging lane staging signal (fun snapshot ->
-        Signal_snapshot.with_dependency_versions snapshot
-          [ (child.id, effective_signal_version child) ])
+    let snapshot = signal_effective_snapshot signal in
+    Graph.stage_cell graph lane staging signal.snapshot
+      (Signal_snapshot.with_dependency_versions snapshot
+         [ (child.id, effective_signal_version child) ])
 
   let stage_map_value_and_dependency lane staging signal child value =
-    update_signal_staging lane staging signal (fun snapshot ->
-        let current = signal_current_snapshot signal in
-        let published =
-          Signal_snapshot.publish
-            ~advance_version:(checked_succ "signal version")
-            ~current snapshot value
-        in
-        Signal_snapshot.with_dependency_versions published
-          [ (child.id, effective_signal_version child) ])
+    let snapshot = signal_effective_snapshot signal in
+    let current = signal_current_snapshot signal in
+    let published =
+      Signal_snapshot.publish
+        ~advance_version:(checked_succ "signal version")
+        ~current snapshot value
+    in
+    Graph.stage_cell graph lane staging signal.snapshot
+      (Signal_snapshot.with_dependency_versions published
+         [ (child.id, effective_signal_version child) ])
 
   let effective_signal_value signal =
     match Signal_snapshot.value (signal_effective_snapshot signal) with
@@ -4554,18 +4556,22 @@ module Make (Observer_error : Observer_error) () = struct
       List.iter (mark_self_dirty lane) watchers)
 
   let refresh_timer_source_for_compute lane staging signal =
-    Graph.with_timer_refresh_timer graph lane signal.timer
-      ~none:(fun () -> ())
-      ~some:(fun timer_refresh timer ->
-        graph_result_or_raise
-          (Timer.refresh_node_on_demand
-             ~runtime_mismatch:timer_runtime_mismatch
-             ~current_snapshot:timer_current_snapshot
-             ~effective_state:timer_effective_state
-             ~remember:(remember_timer_refresh_timer lane staging)
-             ~run_operation:(fun timer ~now_ms operation ->
-               stage_timer_refresh_operation lane staging timer now_ms operation)
-             timer_refresh timer))
+    match signal.timer with
+    | None -> ()
+    | Some _ ->
+        Graph.with_timer_refresh_timer graph lane signal.timer
+          ~none:(fun () -> ())
+          ~some:(fun timer_refresh timer ->
+            graph_result_or_raise
+              (Timer.refresh_node_on_demand
+                 ~runtime_mismatch:timer_runtime_mismatch
+                 ~current_snapshot:timer_current_snapshot
+                 ~effective_state:timer_effective_state
+                 ~remember:(remember_timer_refresh_timer lane staging)
+                 ~run_operation:(fun timer ~now_ms operation ->
+                   stage_timer_refresh_operation lane staging timer now_ms
+                     operation)
+                 timer_refresh timer))
 
   let notify_signal_changed lane staging signal =
     List.iter (fun notify -> notify ()) signal.dirty_listeners;
@@ -4584,10 +4590,21 @@ module Make (Observer_error : Observer_error) () = struct
     let generation = current_generation lane in
     let already_computed = signal.computed_generation = generation in
     let ((_, changed) as result) =
-      Graph.compute_cached graph lane compute_ops (P signal)
-        ~current:(fun _compute_node -> effective_signal_value signal)
-        ~cycle:(fun _compute_node -> raise (Graph_error `Cycle))
-        ~compute:(fun _compute_node -> compute_uncached lane staging signal)
+      if signal.seen_generation = generation then
+        (effective_signal_value signal, signal.changed_seen)
+      else if signal.computing then raise (Graph_error `Cycle)
+      else (
+        signal.computing <- true;
+        match compute_uncached lane staging signal with
+        | value, changed ->
+            signal.computing <- false;
+            signal.seen_generation <- generation;
+            signal.changed_seen <- changed;
+            (value, changed)
+        | exception exn ->
+            let backtrace = Printexc.get_raw_backtrace () in
+            signal.computing <- false;
+            Printexc.raise_with_backtrace exn backtrace)
     in
     if changed && not already_computed then
       notify_signal_changed lane staging signal;
