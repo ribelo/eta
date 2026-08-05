@@ -10,7 +10,7 @@ val hooks :
   note_waiter_compaction:(unit -> unit) ->
   hooks
 
-val create : unit -> t
+val create : ?single_domain:bool -> unit -> t
 
 val enter : hooks:hooks -> Eta.Runtime_contract.t -> t -> access
 val leave : t -> access -> unit

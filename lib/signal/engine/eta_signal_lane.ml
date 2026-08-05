@@ -22,7 +22,7 @@ type waiter = {
 }
 
 type t = {
-  lock : Sync_lock.t;
+  lock : Sync_lock.t option;
   waiters : waiter Stdlib.Queue.t;
   mutable busy : bool;
   mutable waiting : int;
@@ -40,9 +40,9 @@ type hooks = {
 let hooks ~note_waiter_enqueued ~note_waiter_compaction =
   { note_waiter_enqueued; note_waiter_compaction }
 
-let create () =
+let create ?(single_domain = false) () =
   {
-    lock = Sync_lock.create ();
+    lock = if single_domain then None else Some (Sync_lock.create ());
     waiters = Stdlib.Queue.create ();
     busy = false;
     waiting = 0;
@@ -65,7 +65,10 @@ let can_reenter ~lane_depth ~owner_fiber_id ~current_fiber_id =
   | Some owner_fiber_id -> owner_fiber_id = current_fiber_id
   | None -> false
 
-let use_lock lane f = Sync_lock.use lane.lock f
+let use_lock lane f =
+  match lane.lock with
+  | None -> f ()
+  | Some lock -> Sync_lock.use lock f
 
 let invariant_failed message =
   invalid_arg ("Eta_signal lane invariant failed: " ^ message)
