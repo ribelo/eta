@@ -2151,11 +2151,7 @@ let test_time_invalid_intervals_fail_cleanly () =
     (run runtime
        (S.Time.deadline ~every:Eta.Duration.zero future_deadline));
   expect_fail "invalid interval" (( = ) `Invalid_interval)
-    (run runtime (S.Time.interval Eta.Duration.zero));
-  expect_fail "invalid step cadence" (( = ) `Invalid_interval)
-    (run runtime
-       (S.Time.step ~every:Eta.Duration.zero ~initial:0
-          (fun ~missed value -> value + missed)))
+    (run runtime (S.Time.interval Eta.Duration.zero))
 
 let test_time_deadline_validation_errors () =
   let module S = Eta_signal.Make (Observer_error) () in

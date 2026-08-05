@@ -316,37 +316,17 @@ module Adapter = struct
         let* () = run_pending_cancel_hooks effects cancel_hooks_ref in
         effects.run_start_attempts start_attempts)
 
-  let rec run_update_batch updates generation remaining ~missed =
+  let run_update updates generation ~missed =
     let open Syntax in
-    if remaining <= 0 then Effect.pure `Continue
-    else
-      let* status = updates.after_update_state ~generation in
-      match status with
-      | `Stop -> Effect.pure `Stop
-      | `Continue ->
-          let* update =
-            Effect.sync (fun () ->
-                updates.construct_update ~generation ~missed)
-          in
-          let* () = updates.after_update_constructed_before_run () in
-          let* () = update in
-          run_update_batch updates generation (remaining - 1) ~missed
-
-  let rec run_updates updates generation remaining ~missed =
-    let open Syntax in
-    match Timer_policy.update_batch ~remaining with
-    | None -> Effect.unit
-    | Some batch ->
-        Timer_policy.update_batch_result batch
-          ~plan:(fun ~count ~remaining ~yield ->
-            let* status = run_update_batch updates generation count ~missed in
-            match status with
-            | `Stop -> Effect.unit
-            | `Continue ->
-                if not yield then Effect.unit
-                else
-                  let* () = Effect.yield in
-                  run_updates updates generation remaining ~missed)
+    let* status = updates.after_update_state ~generation in
+    match status with
+    | `Stop -> Effect.unit
+    | `Continue ->
+        let* update =
+          Effect.sync (fun () -> updates.construct_update ~generation ~missed)
+        in
+        let* () = updates.after_update_constructed_before_run () in
+        update
 
   let rec run_loop plan ~generation ~interval_ms ~next_due_ms
       ~catch_up_policy =
@@ -388,8 +368,9 @@ module Adapter = struct
                   | `Stale -> continue ()
                   | `Advanced ->
                       let* () =
-                        run_updates updates generation update_count
-                          ~missed:update_missed
+                        if update_count <= 0 then Effect.unit
+                        else
+                          run_update updates generation ~missed:update_missed
                       in
                       let* () =
                         if saturated_due then

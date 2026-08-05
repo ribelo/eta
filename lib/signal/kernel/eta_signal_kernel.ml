@@ -476,7 +476,6 @@ module Make (Observer_error : Observer_error) () = struct
   type weak_packed_signal = Graph_algorithms.Weak_cell.t
 
   type timer_catch_up_policy = Timer_policy.catch_up_policy =
-    | Catch_up_every_cadence
     | Catch_up_once_per_wake
     | Catch_up_coalesced
 
@@ -4084,22 +4083,6 @@ module Make (Observer_error : Observer_error) () = struct
     let validate_positive_duration duration =
       Timer_policy.validate_positive_duration_ms (Duration.to_ms duration)
 
-    let timer_continue_after_update timer generation =
-      with_graph_lane_sync (fun () ->
-          Timer.after_update_state timer_state_port timer ~generation)
-
-    let timer_run_user_update_if_continuing timer generation user_update =
-      timer_continue_after_update timer generation
-      |> Effect.bind (function
-           | `Stop -> Effect.unit
-           | `Continue ->
-               (* Close the demand-drop window between daemon admission and
-                  caller code. *)
-               timer_continue_after_update timer generation
-               |> Effect.bind (function
-                    | `Stop -> Effect.unit
-                    | `Continue -> user_update ()))
-
     let timer_set_source timer generation (source : 'a var) value =
       with_graph_lane_access (fun lane ->
           Timer.publish_if_running timer_state_port timer ~generation
@@ -4287,58 +4270,6 @@ module Make (Observer_error : Observer_error) () = struct
                                        |> Effect.map (fun _ -> ())));
                           })))
 
-    let step ~every ~initial f =
-      Effect.sync (fun () -> validate_interval every)
-      |> Effect.flatten_result
-      |> Effect.bind (fun () ->
-             current_runtime_contract ()
-             |> Effect.bind (fun runtime_contract ->
-                    construct_timer_signal (fun () ->
-                        make_timer_signal initial every ~runtime_contract
-                          (Timer_policy.step_source_policy ())
-                          {
-                            source_timer_update =
-                              (fun timer generation ~missed source ->
-                                timer_run_user_update_if_continuing timer
-                                  generation (fun () ->
-                                    Effect.sync (fun () ->
-                                        f ~missed (Var.value source))
-                                    |> Eta_observability.annotate
-                                         ~key:"eta_signal.timer.kind"
-                                         ~value:"step"
-                                    |> Eta_observability.named
-                                         "eta_signal.time.step"
-                                    |> Effect.bind (fun next ->
-                                           timer_set_source timer generation
-                                             source next
-                                           |> Effect.map (fun _ -> ()))));
-                          })))
-
-    let step_replay ~every ~initial f =
-      Effect.sync (fun () -> validate_interval every)
-      |> Effect.flatten_result
-      |> Effect.bind (fun () ->
-             current_runtime_contract ()
-             |> Effect.bind (fun runtime_contract ->
-                    construct_timer_signal (fun () ->
-                        make_timer_signal initial every ~runtime_contract
-                          (Timer_policy.step_replay_source_policy ())
-                          {
-                            source_timer_update =
-                              (fun timer generation ~missed:_ source ->
-                                timer_run_user_update_if_continuing timer
-                                  generation (fun () ->
-                                    Effect.sync (fun () -> f (Var.value source))
-                                    |> Eta_observability.annotate
-                                         ~key:"eta_signal.timer.kind"
-                                         ~value:"step_replay"
-                                    |> Eta_observability.named
-                                         "eta_signal.time.step_replay"
-                                    |> Effect.bind (fun next ->
-                                           timer_set_source timer generation
-                                             source next
-                                           |> Effect.map (fun _ -> ()))));
-                          })))
   end
 
   module Stream = struct

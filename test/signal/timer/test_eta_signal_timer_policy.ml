@@ -81,10 +81,6 @@ let refresh_plan_finish plan =
   Timer_policy.refresh_plan_result plan
     ~plan:(fun ~value:_ ~next_due_ms:_ ~finish -> finish)
 
-let update_batch_values batch =
-  Timer_policy.update_batch_result batch
-    ~plan:(fun ~count ~remaining ~yield -> (count, remaining, yield))
-
 let wake_plan_values wake =
   Timer_policy.wake_plan_result wake
     ~plan:(fun ~next_due_ms ~saturated_due ~update_count ~update_missed ->
@@ -200,7 +196,6 @@ let test_runtime_validation_policy () =
     [ (1, 2) ] !calls
 
 let catch_up_policy_label = function
-  | Timer_policy.Catch_up_every_cadence -> "every"
   | Timer_policy.Catch_up_once_per_wake -> "once"
   | Timer_policy.Catch_up_coalesced -> "coalesced"
 
@@ -235,50 +230,26 @@ let test_source_policy_defaults () =
     (source_policy_label (Timer_policy.deadline_source_policy ~deadline_ms:100));
   Alcotest.(check string)
     "interval policy" "false:coalesced:false:interval:10"
-    (source_policy_label (Timer_policy.interval_source_policy ~interval_ms:10));
-  Alcotest.(check string)
-    "step policy" "false:coalesced:false:none"
-    (source_policy_label (Timer_policy.step_source_policy ()));
-  Alcotest.(check string)
-    "step replay policy" "false:every:false:none"
-    (source_policy_label (Timer_policy.step_replay_source_policy ()))
+    (source_policy_label (Timer_policy.interval_source_policy ~interval_ms:10))
 
 let test_catch_up_policy () =
-  Alcotest.(check int) "every count" 3
-    (Timer_policy.catch_up_update_count Catch_up_every_cadence 3);
   Alcotest.(check int) "once count" 1
     (Timer_policy.catch_up_update_count Catch_up_once_per_wake 3);
   Alcotest.(check int) "coalesced count" 1
     (Timer_policy.catch_up_update_count Catch_up_coalesced 3);
-  Alcotest.(check int) "every missed" 1
-    (Timer_policy.catch_up_update_missed Catch_up_every_cadence 3);
+  Alcotest.(check int) "once missed" 1
+    (Timer_policy.catch_up_update_missed Catch_up_once_per_wake 3);
   Alcotest.(check int) "coalesced missed" 3
     (Timer_policy.catch_up_update_missed Catch_up_coalesced 3)
 
-let test_update_batch_policy () =
-  Alcotest.(check bool) "no remaining work" true
-    (Option.is_none (Timer_policy.update_batch ~remaining:0));
-  (match Timer_policy.update_batch ~remaining:3 with
-  | Some batch ->
-      Alcotest.(check (triple int int bool))
-        "small batch" (3, 0, false)
-        (update_batch_values batch)
-  | None -> Alcotest.fail "expected small batch");
-  (match Timer_policy.update_batch ~remaining:65 with
-  | Some batch ->
-      Alcotest.(check (triple int int bool))
-        "large batch" (64, 1, true)
-        (update_batch_values batch)
-  | None -> Alcotest.fail "expected large batch")
-
 let test_daemon_wake_plan () =
-  let every =
-    Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_every_cadence
+  let once =
+    Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_once_per_wake
       ~interval_ms:10 ~next_due_ms:50 ~now_ms:85
   in
   Alcotest.(check wake_plan_values_test)
-    "every wake" (90, false, 4, 1)
-    (wake_plan_values every);
+    "once wake" (90, false, 1, 1)
+    (wake_plan_values once);
   let coalesced =
     Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_coalesced
       ~interval_ms:10 ~next_due_ms:50 ~now_ms:85
@@ -287,7 +258,7 @@ let test_daemon_wake_plan () =
     "coalesced wake" (90, false, 1, 4)
     (wake_plan_values coalesced);
   let not_due =
-    Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_every_cadence
+    Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_once_per_wake
       ~interval_ms:10 ~next_due_ms:50 ~now_ms:49
   in
   Alcotest.(check wake_plan_values_test)
@@ -1219,8 +1190,6 @@ let () =
           Alcotest.test_case "source policy defaults" `Quick
             test_source_policy_defaults;
           Alcotest.test_case "catch up policy" `Quick test_catch_up_policy;
-          Alcotest.test_case "update batch policy" `Quick
-            test_update_batch_policy;
           Alcotest.test_case "daemon wake plan" `Quick
             test_daemon_wake_plan;
           Alcotest.test_case "state helpers" `Quick test_state_helpers;

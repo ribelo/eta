@@ -368,53 +368,6 @@ let test_generated_deadlines_preserve_runtime_provenance () =
          (widen (S.Time.deadline ~every:(Eta.Duration.ms 1) deadline)))
   done
 
-let with_late_timer_wake ?(jump_ms = 1_000_000) f =
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  let now_ms = ref 0 in
-  let sleep_calls = ref 0 in
-  let hold, hold_resolver = Eio.Promise.create () in
-  let released = ref false in
-  let sleep _duration =
-    incr sleep_calls;
-    if !sleep_calls = 1 then now_ms := jump_ms
-    else Eio.Promise.await hold
-  in
-  let release () =
-    if not !released then (
-      released := true;
-      Eio.Promise.resolve hold_resolver ())
-  in
-  let runtime =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~sleep
-      ~now_ms:(fun () -> !now_ms)
-      ()
-  in
-  Fun.protect ~finally:release (fun () -> f runtime sleep_calls)
-
-let test_step_bounds_large_late_wake () =
-  with_late_timer_wake @@ fun runtime sleep_calls ->
-  let applied = ref 0 in
-  let missed_seen = ref None in
-  let step =
-    run_ok runtime
-      (Signal.Time.step ~every:(Eta.Duration.ms 1) ~initial:0 (fun ~missed value ->
-           incr applied;
-           missed_seen := Some missed;
-           value + missed))
-  in
-  let observer =
-    run_ok runtime (Signal.Observer.observe step ~on_update:(fun _ -> E.unit))
-  in
-  wait_until "step late wake" (fun () -> !sleep_calls >= 2);
-  Alcotest.(check int) "step update calls" 1 !applied;
-  Alcotest.(check (option int))
-    "step missed count" (Some 1_000_000) !missed_seen;
-  run_ok runtime Signal.stabilize;
-  Alcotest.(check int) "step value" 1_000_000
-    (run_ok runtime (Signal.Observer.read observer));
-  run_ok runtime (Signal.Observer.dispose observer)
-
 let test_timer_runtime_mismatch_on_observe () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
@@ -451,13 +404,7 @@ let test_timer_runtime_mismatch_on_observe () =
              (widen (S.Observer.observe timer ~on_update:(fun _ -> E.unit)))))
   in
   let interval = run_ok rt_a (S.Time.interval (Eta.Duration.ms 10)) in
-  check_mismatch "interval timer" interval;
-  let step =
-    run_ok rt_a
-      (S.Time.step ~every:(Eta.Duration.ms 10) ~initial:0
-         (fun ~missed:_ value -> value + 1))
-  in
-  check_mismatch "step timer" step
+  check_mismatch "interval timer" interval
 
 let test_mixed_runtime_mismatch_does_not_poison_same_runtime_timer () =
   let module S = Eta_signal.Make (Observer_error) () in
@@ -731,8 +678,6 @@ let () =
             test_deadline_rejects_foreign_monotonic_time;
           Alcotest.test_case "generated deadlines preserve runtime provenance"
             `Quick test_generated_deadlines_preserve_runtime_provenance;
-          Alcotest.test_case "step bounds large late wake" `Quick
-            test_step_bounds_large_late_wake;
           Alcotest.test_case "timer runtime mismatch on observe" `Quick
             test_timer_runtime_mismatch_on_observe;
           Alcotest.test_case "mixed runtime timer mismatch recovery" `Quick

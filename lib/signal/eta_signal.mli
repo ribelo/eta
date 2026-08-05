@@ -684,13 +684,7 @@ module Make (Observer_error : Observer_error) () : sig
         stabilization. Before stabilization observes time nodes, [now] and
         [deadline] nodes coalesce to that clock-derived value, and [interval]
         nodes advance the counter arithmetically to the final saturated value
-        for the same sample.
-
-        [step] and [step_replay] keep user code out of stabilization: [f]
-        runs only in the demand-owned timer daemon. A stabilization that runs
-        before the daemon resumes can therefore observe the last
-        daemon-published step value while [interval] has already caught up for
-        the same clock sample. *)
+        for the same sample. *)
 
     type monotonic_time
     (** Runtime monotonic timestamp. Values are comparable only inside the Eta
@@ -742,47 +736,6 @@ module Make (Observer_error : Observer_error) () : sig
         replaying every internal increment. The counter saturates at
         [max_int]. *)
 
-    val step :
-      every:Eta.Duration.t ->
-      initial:'a ->
-      (missed:int -> 'a -> 'a) ->
-      ('a signal, time_error) Eta.Effect.t
-    (** Step a value once per timer-daemon wake, passing the number of elapsed
-        cadences as [missed].
-
-        Clock-jump catch-up is bounded: a large clock jump runs [f] once with a
-        large [missed] value instead of replaying [f] once per cadence.
-        [missed] saturates at [max_int].
-        Unlike [now], [deadline], and [interval], [step] does not run catch-up
-        from stabilization; a
-        stabilization that runs before the daemon resumes observes the last
-        daemon-published step value.
-
-        [f] runs in the demand-owned timer daemon, not during stabilization. If
-        [f] raises, Eta reports the defect through daemon diagnostics with
-        [eta_signal.time.step] context; it is not delivered as a [stabilize]
-        failure. The failed daemon cleans up timer state so later demand can
-        restart it. *)
-
-    val step_replay :
-      every:Eta.Duration.t ->
-      initial:'a ->
-      ('a -> 'a) ->
-      ('a signal, time_error) Eta.Effect.t
-    (** Step a value with a pure total function after each [every] interval
-        while necessary.
-
-        Clock-jump catch-up replays [f] once per awakened cadence after the
-        timer daemon wakes. This is exact replay, not a coalescing policy, so a
-        very large clock jump or long process suspension can perform
-        correspondingly large cooperative catch-up work. Prefer {!step} for
-        virtual-clock tests and production timers unless exact per-cadence
-        replay is explicitly required.
-
-        Like [step], [f] runs in the demand-owned timer daemon, not during
-        stabilization. If [f] raises, Eta reports the defect through daemon
-        diagnostics with [eta_signal.time.step_replay] context; it is not
-        delivered as a [stabilize] failure. *)
   end
 
   module Stream : sig

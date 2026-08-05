@@ -1,5 +1,4 @@
 type catch_up_policy =
-  | Catch_up_every_cadence
   | Catch_up_once_per_wake
   | Catch_up_coalesced
 
@@ -43,12 +42,6 @@ type wake_plan = {
   wake_saturated_due : bool;
   wake_update_count : int;
   wake_update_missed : int;
-}
-
-type update_batch = {
-  update_batch_count : int;
-  update_batch_remaining : int;
-  update_batch_yield : bool;
 }
 
 type deadline_refresh = {
@@ -254,16 +247,6 @@ let interval_source_policy ~interval_ms =
     ~refresh_when_inactive:false
     ~refresh_on_demand:(Some (Refresh_interval interval_ms))
 
-let step_source_policy () =
-  source_policy ~update_on_start:false
-    ~catch_up_policy:Catch_up_coalesced
-    ~refresh_when_inactive:false ~refresh_on_demand:None
-
-let step_replay_source_policy () =
-  source_policy ~update_on_start:false
-    ~catch_up_policy:Catch_up_every_cadence
-    ~refresh_when_inactive:false ~refresh_on_demand:None
-
 let source_policy_result policy ~plan =
   plan ~update_on_start:policy.source_update_on_start
     ~catch_up_policy:policy.source_catch_up_policy
@@ -272,32 +255,13 @@ let source_policy_result policy ~plan =
 
 let catch_up_update_count policy missed =
   match policy with
-  | Catch_up_every_cadence -> missed
   | Catch_up_once_per_wake -> if missed <= 0 then 0 else 1
   | Catch_up_coalesced -> if missed <= 0 then 0 else 1
 
 let catch_up_update_missed policy missed =
   match policy with
-  | Catch_up_every_cadence | Catch_up_once_per_wake -> 1
+  | Catch_up_once_per_wake -> 1
   | Catch_up_coalesced -> missed
-
-let update_batch_size = 64
-
-let update_batch ~remaining =
-  if remaining <= 0 then None
-  else
-    let update_batch_count = min remaining update_batch_size in
-    let update_batch_remaining = remaining - update_batch_count in
-    Some
-      {
-        update_batch_count;
-        update_batch_remaining;
-        update_batch_yield = update_batch_remaining > 0;
-      }
-
-let update_batch_result batch ~plan =
-  plan ~count:batch.update_batch_count
-    ~remaining:batch.update_batch_remaining ~yield:batch.update_batch_yield
 
 let daemon_wake_plan ~catch_up_policy ~interval_ms ~next_due_ms ~now_ms =
   let missed = missed_cadences ~interval_ms ~next_due_ms ~now_ms in

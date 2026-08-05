@@ -646,3 +646,44 @@ nix develop -c dune runtest test/signal/economics --force
 - `test/signal_jsoo` call sites were migrated but remain unverified on this
   track; the OxCaml switch does not build js_of_ocaml targets. Mainline
   verification is scheduled in slice 12.
+
+## 2026-08-06 - Slice 7a: delete Time.step and Time.step_replay
+
+- Specification 9 deletes `Time.step`, `Time.step_replay`, and polling
+  arguments on one-shot timers. This increment removes the step APIs and
+  every path that only they could reach.
+- Deleted the public `Time.step`/`Time.step_replay` declarations and docs,
+  the kernel constructors, and the kernel helper
+  `timer_run_user_update_if_continuing` (with its orphaned
+  `timer_continue_after_update`). Only step constructors could run user
+  code inside the timer daemon, so the demand-drop re-check window went
+  with them.
+- Deleted `Timer_policy.step_source_policy` and
+  `step_replay_source_policy`. `Catch_up_every_cadence` lost its last
+  producer, so the constructor, the daemon `update_batch` machinery
+  (batch size 64, inter-batch `Effect.yield`), and the policy `update_batch`
+  type and functions are deleted too. The daemon now applies at most one
+  source update per wake for every remaining constructor; interval
+  catch-up stays arithmetic and saturated.
+- Deleted the 14 step-focused tests whose claims only existed through the
+  step APIs. The surviving claims keep independent coverage: interval
+  catch-up without daemon progress (`time interval catches up
+  arithmetically without daemon yield`, `time active interval refreshes
+  before daemon runs`), saturated coalescing, and runtime-mismatch timer
+  validation (interval case).
+- Stale pre-V1 PRD and research documents still mention `Time.step`;
+  their wholesale drift (including the "active implementation target"
+  status in `docs/prds/0002-eta-signal-frp.md`) is slice-11 documentation
+  debt, not something to patch row by row in historical documents.
+- Verified with:
+
+```sh
+nix develop -c dune build @install @signal-economics
+nix develop -c dune runtest test/signal test/signal_map test/laws --force
+nix develop -c dune runtest test/signal/economics --force
+```
+
+- Remaining slice-7 work: delete `~every` polling arguments and the
+  `unit` argument on `now` (one-shot timers schedule one exact deadline),
+  then replace the per-commit `timer_nodes`/reachability scans with queued
+  timer reconciliation and generation fencing.
