@@ -4028,7 +4028,9 @@ module Make (Observer_error : Observer_error) () = struct
   }
 
   let staged_bind_invalidates view (P signal) =
-    Hashtbl.mem view.invalidated_ids signal.id
+    match view.invalidated_nodes with
+    | [] -> false
+    | _ :: _ -> Hashtbl.mem view.invalidated_ids signal.id
 
   let preflight_signal_commit lane staging invalidations (P signal) =
     if
