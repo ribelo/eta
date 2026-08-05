@@ -53,6 +53,7 @@ main Dune workspace.
 
 ## Decisions so far
 
+- [Binding Signal behavior](issues/01-binding-signal-behavior.md) — preserve 32 public observation rows while reopening every private execution representation.
 - [Incremental layered baseline](issues/02-incremental-layered-baseline.md) — use the zero-allocation raw static core and measure each adapter as a separate baseline layer.
 
 ## Not yet specified
