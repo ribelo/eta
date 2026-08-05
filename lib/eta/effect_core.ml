@@ -78,6 +78,12 @@ type ('a, +'err) t =
      block to carry an always-[None] [leaf_name]; interpreting [Sync] directly in
      [eval] costs one 2-word block and no closure. *)
   | Sync : (unit -> 'a) -> ('a, 'err) t
+  | Sync_frame :
+      {
+        run : frame -> 'a;
+        leaf_name : string option;
+      }
+      -> ('a, 'err) t
   | Async :
       {
         register :
@@ -116,6 +122,7 @@ let leaf_name : type a err. (a, err) t -> string option = function
      [Effect.name] and [describe], so it is reported unchanged. *)
   | Bind_error _ -> Some bind_error_leaf_name
   | Async _ -> Some async_leaf_name
+  | Sync_frame { leaf_name; _ } -> leaf_name
   | Pure _ | Fail _ | Map _ | Bind _ | Sync _ -> None
 
 let make ?leaf_name eval =
@@ -244,6 +251,11 @@ let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
   | Custom { eval; _ } -> eval frame
   | Sync f -> (
       try ok (f ()) with
+      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+          raise exn
+      | exn -> exit_of_exn frame exn)
+  | Sync_frame { run; _ } -> (
+      try ok (run frame) with
       | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
           raise exn
       | exn -> exit_of_exn frame exn)
@@ -387,12 +399,8 @@ let unit = pure ()
 let from_result = function Stdlib.Ok value -> pure value | Stdlib.Error err -> fail err
 let from_option ~if_none = function Some value -> pure value | None -> fail if_none
 
-let sync_frame ?leaf_name f =
-  make ?leaf_name (fun frame ->
-      try ok (f frame) with
-      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
-          raise exn
-      | exn -> exit_of_exn frame exn)
+let sync_frame ?leaf_name run =
+  Sync_frame { run; leaf_name }
 
 (* Interpreted by [eval]'s [Sync] branch, which carries the same exception
    handling this used to install in a per-construction closure. *)
@@ -680,6 +688,9 @@ let describe eff =
        constructor, and [describe] is public output, so it keeps rendering the
        same. Renaming it to "Sync" would be a user-visible change. *)
     | Sync _ -> line depth "Custom"
+    | Sync_frame { leaf_name = None; _ } -> line depth "Custom"
+    | Sync_frame { leaf_name = Some name; _ } ->
+        line depth (Printf.sprintf "Custom(%S)" name)
     | Async _ -> line depth (Printf.sprintf "Custom(%S)" async_leaf_name)
     (* Was a named [Custom]; render identically, and as before do not walk the
        inner effect, which a [Custom] never exposed. *)
