@@ -328,7 +328,7 @@ module Adapter = struct
         let* () = updates.after_update_constructed_before_run () in
         update
 
-  let rec run_loop plan ~generation ~interval_ms ~next_due_ms
+  let rec run_loop plan ~generation ~schedule ~next_due_ms
       ~catch_up_policy =
     let open Syntax in
     let due = plan.loop_due_plan in
@@ -347,7 +347,7 @@ module Adapter = struct
         | Some due_ms ->
             let* now_ms = Effect.now_ms in
             let wake =
-              Timer_policy.daemon_wake_plan ~catch_up_policy ~interval_ms
+              Timer_policy.daemon_wake_plan ~catch_up_policy ~schedule
                 ~next_due_ms:due_ms ~now_ms
             in
             Timer_policy.wake_plan_result wake
@@ -355,7 +355,7 @@ module Adapter = struct
                 (fun ~next_due_ms ~saturated_due ~update_count
                      ~update_missed ->
                   let continue () =
-                    run_loop plan ~generation ~interval_ms ~next_due_ms
+                    run_loop plan ~generation ~schedule ~next_due_ms
                       ~catch_up_policy
                   in
                   let* () = due.after_due_read_before_commit () in
@@ -382,7 +382,7 @@ module Adapter = struct
                       | `Continue -> continue ()
                       | `Stop -> Effect.unit))
 
-  let start plan loop_plan ~generation ~interval_ms
+  let start plan loop_plan ~generation ~schedule
       ~update_on_start ~catch_up_policy =
     let open Syntax in
     let gate = plan.start_gate_plan in
@@ -391,7 +391,7 @@ module Adapter = struct
     let start_loop () =
       let* now_ms = Effect.now_ms in
       let next_due_ms =
-        Timer_policy.initial_next_due_ms ~now_ms ~interval_ms
+        Timer_policy.initial_next_due_ms ~now_ms ~schedule
       in
       let* status = gate.set_next_due ~generation ~next_due_ms in
       match status with
@@ -402,7 +402,7 @@ module Adapter = struct
                ~install_cancel:(fun ~cancel ->
                  daemon.install_cancel ~generation ~cancel)
                ~loop:
-                 (run_loop loop_plan ~generation ~interval_ms ~next_due_ms
+                 (run_loop loop_plan ~generation ~schedule ~next_due_ms
                     ~catch_up_policy
                  |> Effect.on_exit
                       (daemon.cleanup_after_exit ~generation)))
@@ -947,7 +947,7 @@ let daemon_exit = function
   | Eta.Exit.Ok _ -> Eta_signal_timer_policy.Daemon_ok
   | Eta.Exit.Error _ -> Eta_signal_timer_policy.Daemon_error
 
-let start_daemon context timer ~generation ~interval_ms ~update_on_start
+let start_daemon context timer ~generation ~schedule ~update_on_start
     ~catch_up_policy =
   let advance_generation = context.daemon_advance_generation in
   let port = context.daemon_state in
@@ -1021,10 +1021,10 @@ let start_daemon context timer ~generation ~interval_ms ~update_on_start
       ~update:start_update ~daemon:start_daemon
   in
   Adapter.start start_plan loop_plan ~generation
-    ~interval_ms ~update_on_start ~catch_up_policy
+    ~schedule ~update_on_start ~catch_up_policy
 
 let create_daemon_node ~runtime_contract ~refresh_when_inactive
-    ~refresh_operation context ~interval_ms ~update_on_start
+    ~refresh_operation context ~schedule ~update_on_start
     ~catch_up_policy =
   create_node ~runtime_contract ~refresh_when_inactive ~refresh_operation
     ~start:
@@ -1036,6 +1036,6 @@ let create_daemon_node ~runtime_contract ~refresh_when_inactive
                  Eta_signal_timer_policy.state_generation
                    (context.daemon_state.state_current timer)
                in
-               start_daemon context timer ~generation ~interval_ms
+               start_daemon context timer ~generation ~schedule
                  ~update_on_start ~catch_up_policy)
            })

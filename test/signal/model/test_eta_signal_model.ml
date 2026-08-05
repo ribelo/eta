@@ -407,12 +407,12 @@ let run_timer_model_trace name ~seed =
   Eta_test.with_test_clock @@ fun _sw clock runtime ->
   let clock_ms = ref 0 in
   let now_signal =
-    run_ok runtime (Signal.Time.now ~every:(Eta.Duration.ms 5) ())
+    run_ok runtime (Signal.Time.now ~every:(Eta.Duration.ms 5))
     |> Signal.map Signal.Time.to_ms
   in
   let after_signal =
     run_ok runtime
-      (Signal.Time.after ~every:(Eta.Duration.ms 5) (Eta.Duration.ms 10))
+      (Signal.Time.after (Eta.Duration.ms 10))
   in
   let interval_signal =
     run_ok runtime (Signal.Time.interval (Eta.Duration.ms 10))
@@ -594,12 +594,12 @@ let run_timer_bind_model_trace name ~seed =
   let observer_current = ref None in
   let timer_choice = Signal.Var.create Bind_inactive in
   let now_timer =
-    run_ok runtime (Signal.Time.now ~every:(Eta.Duration.ms 5) ())
+    run_ok runtime (Signal.Time.now ~every:(Eta.Duration.ms 5))
     |> Signal.map Signal.Time.to_ms
   in
   let after_timer =
     run_ok runtime
-      (Signal.Time.after ~every:(Eta.Duration.ms 5) (Eta.Duration.ms 10))
+      (Signal.Time.after (Eta.Duration.ms 10))
     |> Signal.map (fun due ->
            if !clock_ms >= 10 && not due then
              failwith "stale deadline reached model";

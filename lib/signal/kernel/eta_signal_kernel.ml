@@ -4097,7 +4097,7 @@ module Make (Observer_error : Observer_error) () = struct
       |> Result.map (fun ms -> { timestamp with ms })
 
     let attach_timer ?(update_on_start = false) ?(refresh_when_inactive = true)
-        ?refresh_operation ~runtime_contract signal interval update =
+        ?refresh_operation ~runtime_contract signal schedule update =
       let timer =
         Timer.create_daemon_node ~runtime_contract ~refresh_when_inactive
           ~refresh_operation
@@ -4118,7 +4118,7 @@ module Make (Observer_error : Observer_error) () = struct
                (Timer.daemon_hooks
                   ~after_due_read_before_commit:{ run_hook = (fun () -> Effect.unit) }
                   ~after_update_constructed_before_run:{ run_hook = (fun () -> Effect.unit) }))
-          ~interval_ms:(Duration.to_ms interval) ~update_on_start
+          ~schedule ~update_on_start
           ~catch_up_policy:update.timer_catch_up_policy
       in
       signal.timer <- Some timer;
@@ -4128,7 +4128,7 @@ module Make (Observer_error : Observer_error) () = struct
     let timer_refresh_operation source spec =
       Refresh_operation (source, spec)
 
-    let make_timer_signal ?(cutoff = Cutoff.phys_equal) initial interval
+    let make_timer_signal ?(cutoff = Cutoff.phys_equal) initial schedule
         ~runtime_contract source_policy update =
       let source = Var.create ~cutoff initial in
       let signal = Var.watch source in
@@ -4140,7 +4140,7 @@ module Make (Observer_error : Observer_error) () = struct
               Option.map (timer_refresh_operation source) refresh_on_demand
             in
             attach_timer ~update_on_start ~refresh_when_inactive
-              ?refresh_operation ~runtime_contract signal interval
+              ?refresh_operation ~runtime_contract signal schedule
               {
                 timer_catch_up_policy = catch_up_policy;
                 timer_update =
@@ -4157,7 +4157,7 @@ module Make (Observer_error : Observer_error) () = struct
           with Graph_error err -> Error (err :> time_error))
       |> Effect.flatten_result
 
-    let now ~every () =
+    let now ~every =
       Effect.sync (fun () -> validate_interval every)
       |> Effect.flatten_result
       |> Effect.bind (fun () ->
@@ -4169,7 +4169,10 @@ module Make (Observer_error : Observer_error) () = struct
                                let now_ms_signal =
                                  make_timer_signal
                                    ~cutoff:(Cutoff.of_equal Int.equal)
-                                   initial_ms every ~runtime_contract
+                                   initial_ms
+                                   (Timer_policy.Periodic
+                                      (Duration.to_ms every))
+                                   ~runtime_contract
                                    (Timer_policy.current_time_source_policy ())
                                    {
                                      source_timer_update =
@@ -4185,10 +4188,10 @@ module Make (Observer_error : Observer_error) () = struct
                                  (fun ms -> { runtime_contract; ms })
                                  now_ms_signal))))
 
-    let construct_deadline_signal every deadline_ms ~runtime_contract =
+    let construct_deadline_signal deadline_ms ~runtime_contract =
       construct_timer_signal (fun () ->
-          make_timer_signal ~cutoff:(Cutoff.of_equal Bool.equal) false every
-            ~runtime_contract
+          make_timer_signal ~cutoff:(Cutoff.of_equal Bool.equal) false
+            (Timer_policy.One_shot deadline_ms) ~runtime_contract
             (Timer_policy.deadline_source_policy ~deadline_ms)
             {
               source_timer_update =
@@ -4207,29 +4210,23 @@ module Make (Observer_error : Observer_error) () = struct
                            |> Effect.map (fun _ -> ())));
             })
 
-    let deadline ~every deadline =
+    let deadline deadline =
       let deadline_ms = to_ms deadline in
-      Effect.sync (fun () -> validate_interval every)
-      |> Effect.flatten_result
-      |> Effect.bind (fun () ->
-             current_runtime_contract ()
-             |> Effect.bind (fun runtime_contract ->
-                    Effect.from_result
-                      (validate_timestamp_runtime runtime_contract deadline)
-                    |> Effect.bind (fun () ->
-                           Effect.now_ms
-                           |> Effect.bind (fun now_ms ->
-                                  Effect.from_result
-                                    (validate_future now_ms deadline_ms)
-                                  |> Effect.bind (fun () ->
-                                         construct_deadline_signal every
-                                           deadline_ms ~runtime_contract)))))
+      current_runtime_contract ()
+      |> Effect.bind (fun runtime_contract ->
+             Effect.from_result
+               (validate_timestamp_runtime runtime_contract deadline)
+             |> Effect.bind (fun () ->
+                    Effect.now_ms
+                    |> Effect.bind (fun now_ms ->
+                           Effect.from_result
+                             (validate_future now_ms deadline_ms)
+                           |> Effect.bind (fun () ->
+                                  construct_deadline_signal deadline_ms
+                                    ~runtime_contract))))
 
-    let after ~every duration =
-      Effect.sync (fun () ->
-          match validate_interval every with
-          | Error _ as error -> error
-          | Ok () -> validate_positive_duration duration)
+    let after duration =
+      Effect.sync (fun () -> validate_positive_duration duration)
       |> Effect.flatten_result
       |> Effect.bind (fun () ->
              current_runtime_contract ()
@@ -4240,7 +4237,7 @@ module Make (Observer_error : Observer_error) () = struct
                              (add_relative_deadline now_ms
                                 (Duration.to_ms duration))
                            |> Effect.bind (fun deadline_ms ->
-                                  construct_deadline_signal every deadline_ms
+                                  construct_deadline_signal deadline_ms
                                     ~runtime_contract))))
 
     let interval interval =
@@ -4252,7 +4249,8 @@ module Make (Observer_error : Observer_error) () = struct
                     construct_timer_signal (fun () ->
                         let interval_ms = Duration.to_ms interval in
                         make_timer_signal ~cutoff:(Cutoff.of_equal Int.equal) 0
-                          interval ~runtime_contract
+                          (Timer_policy.Periodic interval_ms)
+                          ~runtime_contract
                           (Timer_policy.interval_source_policy ~interval_ms)
                           {
                             source_timer_update =

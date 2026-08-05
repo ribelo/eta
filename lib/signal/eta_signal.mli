@@ -705,7 +705,6 @@ module Make (Observer_error : Observer_error) () : sig
 
     val now :
       every:Eta.Duration.t ->
-      unit ->
       (monotonic_time signal, time_error) Eta.Effect.t
     (** Signal containing the runtime monotonic timestamp. The timer source
         updates the signal at [every] while the signal is necessary. It does
@@ -713,22 +712,18 @@ module Make (Observer_error : Observer_error) () : sig
         is needed at the edge. *)
 
     val deadline :
-      every:Eta.Duration.t ->
-      monotonic_time ->
-      (bool signal, time_error) Eta.Effect.t
-    (** [deadline ~every timestamp] becomes [true] after the monotonic runtime
-        clock reaches [timestamp]. [timestamp] must be in the future on that
-        clock when the signal is created. It fails with [`Runtime_mismatch] if
-        [timestamp] came from a different Eta runtime. Prefer {!after} for
-        ordinary relative one-shot deadlines. *)
+      monotonic_time -> (bool signal, time_error) Eta.Effect.t
+    (** [deadline timestamp] becomes [true] after the monotonic runtime clock
+        reaches [timestamp]. One-shot timers schedule one exact deadline.
+        [timestamp] must be in the future on that clock when the signal is
+        created. It fails with [`Runtime_mismatch] if [timestamp] came from a
+        different Eta runtime. Prefer {!after} for ordinary relative one-shot
+        deadlines. *)
 
-    val after :
-      every:Eta.Duration.t ->
-      Eta.Duration.t ->
-      (bool signal, time_error) Eta.Effect.t
-    (** [after ~every duration] is a relative one-shot deadline. It fails with
-        [`Deadline_overflow] when the current runtime time plus [duration]
-        cannot be represented. *)
+    val after : Eta.Duration.t -> (bool signal, time_error) Eta.Effect.t
+    (** [after duration] is a relative one-shot deadline scheduled at one
+        exact deadline. It fails with [`Deadline_overflow] when the current
+        runtime time plus [duration] cannot be represented. *)
 
     val interval : Eta.Duration.t -> (int signal, time_error) Eta.Effect.t
     (** Tick counter that increments after each [interval] while necessary.

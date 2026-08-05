@@ -845,7 +845,7 @@ let test_start_daemon_wires_start_update_through_timer_port () =
                         ^ string_of_int missed)))
                }))
        timer
-       ~generation:3 ~interval_ms:10 ~update_on_start:true
+       ~generation:3 ~schedule:(Timer_policy.Periodic 10) ~update_on_start:true
        ~catch_up_policy:Timer_policy.Catch_up_coalesced);
   Alcotest.(check (list string))
     "events"
@@ -890,7 +890,7 @@ let test_create_daemon_node_owns_start_effect_generation () =
                           ("update:" ^ string_of_int generation ^ ":"
                          ^ string_of_int missed)))
                 }))
-        ~interval_ms:10 ~update_on_start:true
+        ~schedule:(Timer_policy.Periodic 10) ~update_on_start:true
         ~catch_up_policy:Timer_policy.Catch_up_coalesced
     in
     Alcotest.(check bool)

@@ -2130,50 +2130,29 @@ let test_demand_boundary_for_derived_nodes_and_timers () =
 let test_time_invalid_intervals_fail_cleanly () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
-  let now_signal = run_ok runtime (S.Time.now ~every:(Eta.Duration.ms 1) ()) in
-  let now_observer =
-    run_ok runtime (S.Observer.observe now_signal ~on_update:(fun _ -> E.unit))
-  in
-  run_ok runtime S.stabilize;
-  let future_deadline =
-    match
-      S.Time.add
-        (run_ok runtime (S.Observer.read now_observer))
-        (Eta.Duration.ms 1)
-    with
-    | Ok timestamp -> timestamp
-    | Error _ -> Alcotest.fail "expected future monotonic timestamp"
-  in
-  run_ok runtime (S.Observer.dispose now_observer);
   expect_fail "invalid now cadence" (( = ) `Invalid_interval)
-    (run runtime (S.Time.now ~every:Eta.Duration.zero ()));
-  expect_fail "invalid deadline cadence" (( = ) `Invalid_interval)
-    (run runtime
-       (S.Time.deadline ~every:Eta.Duration.zero future_deadline));
+    (run runtime (S.Time.now ~every:Eta.Duration.zero));
   expect_fail "invalid interval" (( = ) `Invalid_interval)
     (run runtime (S.Time.interval Eta.Duration.zero))
 
 let test_time_deadline_validation_errors () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
-  let now_signal = run_ok runtime (S.Time.now ~every:(Eta.Duration.ms 1) ()) in
+  let now_signal = run_ok runtime (S.Time.now ~every:(Eta.Duration.ms 1)) in
   let now_observer =
     run_ok runtime (S.Observer.observe now_signal ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   let now = run_ok runtime (S.Observer.read now_observer) in
   run_ok runtime (S.Observer.dispose now_observer);
-  expect_fail "invalid after interval" (( = ) `Invalid_interval)
-    (run runtime
-       (S.Time.after ~every:Eta.Duration.zero (Eta.Duration.ms 1)));
   expect_fail "past after duration" (( = ) `Past_deadline)
     (run runtime
-       (S.Time.after ~every:(Eta.Duration.ms 1) Eta.Duration.zero));
+       (S.Time.after Eta.Duration.zero));
   expect_fail "clamped past after duration" (( = ) `Past_deadline)
     (run runtime
-       (S.Time.after ~every:(Eta.Duration.ms 1) (Eta.Duration.ms (-1))));
+       (S.Time.after (Eta.Duration.ms (-1))));
   expect_fail "past deadline" (( = ) `Past_deadline)
-    (run runtime (S.Time.deadline ~every:(Eta.Duration.ms 1) now))
+    (run runtime (S.Time.deadline now))
 
 let test_time_now_uses_single_clock_snapshot_per_stabilization () =
   let module S = Eta_signal.Make (Observer_error) () in
@@ -2191,11 +2170,11 @@ let test_time_now_uses_single_clock_snapshot_per_stabilization () =
       ~sleep:(Eta_test.Test_clock.sleep clock) ~now_ms ()
   in
   let left =
-    run_ok runtime (S.Time.now ~every:(Eta.Duration.ms 10) ())
+    run_ok runtime (S.Time.now ~every:(Eta.Duration.ms 10))
     |> S.map S.Time.to_ms
   in
   let right =
-    run_ok runtime (S.Time.now ~every:(Eta.Duration.ms 10) ())
+    run_ok runtime (S.Time.now ~every:(Eta.Duration.ms 10))
     |> S.map S.Time.to_ms
   in
   let pair = S.map2 (fun left right -> (left, right)) left right in
@@ -2224,7 +2203,7 @@ let test_time_after_positive_duration_tolerates_advancing_clock () =
   in
   ignore
     (run_ok runtime
-       (S.Time.after ~every:(Eta.Duration.ms 1) (Eta.Duration.ms 1)))
+       (S.Time.after (Eta.Duration.ms 1)))
 
 let test_time_after_overflow_fails_with_deadline_overflow () =
   let module S = Eta_signal.Make (Observer_error) () in
@@ -2232,7 +2211,7 @@ let test_time_after_overflow_fails_with_deadline_overflow () =
   Eta_test.Test_clock.set_time clock (max_int - 1);
   expect_fail "overflowing relative deadline" (( = ) `Deadline_overflow)
     (run runtime
-       (S.Time.after ~every:(Eta.Duration.ms 1) (Eta.Duration.ms 10)))
+       (S.Time.after (Eta.Duration.ms 10)))
 
 let test_stream_bridge_is_observer_plus_queue () =
   let module S = Eta_signal.Make (Observer_error) () in

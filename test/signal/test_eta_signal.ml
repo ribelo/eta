@@ -1693,7 +1693,7 @@ let test_stream_observe_failure_during_timer_start_does_not_leak () =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
       ~sleep:(Eta_test.Test_clock.sleep clock) ~now_ms ()
   in
-  let signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ()) in
+  let signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 10)) in
   let before = run_ok rt (Signal.stats ()) in
   expect_die "stream observe timer start failure"
     (Eta_eio.Runtime.run rt
@@ -2499,7 +2499,7 @@ let test_time_deadline_saturated_catch_up_does_not_overflow () =
   with_cooperative_timer_host ~initial_ms:(-1) ~jump_ms:max_int
   @@ fun rt sleep_calls _yield_calls logger ->
   let signal =
-    run_ok rt (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 2))
+    run_ok rt (Signal.Time.after (Duration.ms 2))
   in
   let observer =
     run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
@@ -2620,7 +2620,7 @@ let test_time_now_update_on_start_demand_drop_does_not_queue_source () =
   rt_ref := Some rt;
   let use_timer = Signal.Var.create false in
   let now_signal =
-    run_ok rt (Signal.Time.now ~every:(Duration.days 1) ())
+    run_ok rt (Signal.Time.now ~every:(Duration.days 1))
     |> Signal.map Signal.Time.to_ms
   in
   let selected =
@@ -2692,6 +2692,44 @@ let test_time_timer_dispose_cancels_sleeping_daemon () =
     "disposed long-interval timer daemon drains without clock advance" true
     (Eio.Promise.is_resolved drained);
   Eio.Promise.await_exn drained
+
+let test_time_after_daemon_sleeps_until_exact_deadline () =
+  let module Signal = Eta_signal.Make (Observer_error) () in
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let sleep_calls = ref 0 in
+  let sleep duration =
+    incr sleep_calls;
+    Eta_test.Test_clock.sleep clock duration
+  in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~sleep
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
+      ()
+  in
+  let signal = run_ok rt (Signal.Time.after (Duration.ms 50)) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check bool) "one-shot timer starts false" false
+    (run_ok rt (Signal.Observer.read observer));
+  Eta_test.Test_clock.adjust clock (Duration.ms 30);
+  Eta_test.Async.yield ();
+  Alcotest.(check int) "one-shot daemon did not poll before the deadline" 1
+    !sleep_calls;
+  Alcotest.(check bool) "still pending before the exact deadline" false
+    (run_ok rt (Signal.Observer.read observer));
+  Eta_test.Test_clock.adjust clock (Duration.ms 30);
+  wait_until "one-shot daemon finished at the exact deadline" (fun () ->
+      !sleep_calls = 1 && Eta_test.Test_clock.sleeper_count clock = 0);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check bool) "one-shot timer fired at the exact deadline" true
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "one-shot daemon slept exactly once" 1 !sleep_calls;
+  run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_timer_wrong_runtime_dispose_cleanup_is_retryable () =
   let module Signal = Eta_signal.Make (Observer_error) () in
@@ -2959,7 +2997,7 @@ let test_time_now_backward_clock_refresh_overrides_pending_update () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal =
-    run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ())
+    run_ok rt (Signal.Time.now ~every:(Duration.ms 10))
     |> Signal.map Signal.Time.to_ms
   in
   let observer =
@@ -3004,7 +3042,7 @@ let test_time_deadline_catches_up_without_daemon_yield () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal =
-    run_ok rt (Signal.Time.after ~every:(Duration.ms 10) (Duration.ms 100))
+    run_ok rt (Signal.Time.after (Duration.ms 100))
   in
   let observer =
     run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
@@ -3070,7 +3108,7 @@ let test_time_deadline_refresh_retries_after_downstream_defect () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let deadline =
-    run_ok rt (Signal.Time.after ~every:(Duration.ms 10) (Duration.ms 100))
+    run_ok rt (Signal.Time.after (Duration.ms 100))
   in
   let raised = ref false in
   let checked =
@@ -3145,7 +3183,7 @@ let test_time_active_deadline_refreshes_before_daemon_runs () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal =
-    run_ok rt (Signal.Time.after ~every:(Duration.ms 5) (Duration.ms 10))
+    run_ok rt (Signal.Time.after (Duration.ms 10))
   in
   let observer =
     run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
@@ -3170,7 +3208,7 @@ let test_time_deadline_on_demand_finish_cancels_running_daemon () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun sw clock rt ->
   let signal =
-    run_ok rt (Signal.Time.after ~every:(Duration.days 1) (Duration.ms 5))
+    run_ok rt (Signal.Time.after (Duration.ms 5))
   in
   let observer =
     run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
@@ -3236,7 +3274,7 @@ let test_time_active_timer_refresh_does_not_restart_pure_pass () =
            value)
   in
   let deadline =
-    run_ok rt (Signal.Time.after ~every:(Duration.ms 5) (Duration.ms 10))
+    run_ok rt (Signal.Time.after (Duration.ms 10))
   in
   let combined =
     Signal.map2 (fun value due -> if due then value else 0) mapped deadline
@@ -3876,6 +3914,8 @@ let () =
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time timer dispose cancels sleeping daemon" `Quick
             test_time_timer_dispose_cancels_sleeping_daemon;
+          Alcotest.test_case "time after daemon sleeps until exact deadline"
+            `Quick test_time_after_daemon_sleeps_until_exact_deadline;
           Alcotest.test_case
             "time timer wrong-runtime dispose cleanup is retryable" `Quick
             test_time_timer_wrong_runtime_dispose_cleanup_is_retryable;

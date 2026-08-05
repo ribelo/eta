@@ -2,6 +2,10 @@ type catch_up_policy =
   | Catch_up_once_per_wake
   | Catch_up_coalesced
 
+type schedule =
+  | Periodic of int
+  | One_shot of int
+
 type state =
   | Timer_inactive of int
   | Timer_starting of int
@@ -195,8 +199,10 @@ let missed_cadences ~interval_ms ~next_due_ms ~now_ms =
 let advance_due next_due_ms interval_ms missed =
   add_ms_capped next_due_ms (mul_ms_capped interval_ms missed)
 
-let initial_next_due_ms ~now_ms ~interval_ms =
-  add_ms_capped now_ms interval_ms
+let initial_next_due_ms ~now_ms ~schedule =
+  match schedule with
+  | Periodic interval_ms -> add_ms_capped now_ms interval_ms
+  | One_shot deadline_ms -> deadline_ms
 
 let sleep_delay_ms ~now_ms ~next_due_ms =
   if next_due_ms <= now_ms then 0
@@ -263,9 +269,14 @@ let catch_up_update_missed policy missed =
   | Catch_up_once_per_wake -> 1
   | Catch_up_coalesced -> missed
 
-let daemon_wake_plan ~catch_up_policy ~interval_ms ~next_due_ms ~now_ms =
-  let missed = missed_cadences ~interval_ms ~next_due_ms ~now_ms in
-  let wake_next_due_ms = advance_due next_due_ms interval_ms missed in
+let daemon_wake_plan ~catch_up_policy ~schedule ~next_due_ms ~now_ms =
+  let missed, wake_next_due_ms =
+    match schedule with
+    | Periodic interval_ms ->
+        let missed = missed_cadences ~interval_ms ~next_due_ms ~now_ms in
+        (missed, advance_due next_due_ms interval_ms missed)
+    | One_shot _ -> ((if now_ms >= next_due_ms then 1 else 0), next_due_ms)
+  in
   let wake_update_count = catch_up_update_count catch_up_policy missed in
   {
     wake_next_due_ms;

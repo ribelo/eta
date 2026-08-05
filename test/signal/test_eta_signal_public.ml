@@ -255,7 +255,7 @@ let test_interval_catches_up_with_test_clock () =
 let test_deadline_uses_monotonic_time () =
   Eta_test.with_test_clock @@ fun _sw clock runtime ->
   let now_signal =
-    run_ok runtime (Signal.Time.now ~every:(Eta.Duration.ms 1) ())
+    run_ok runtime (Signal.Time.now ~every:(Eta.Duration.ms 1))
   in
   let now_observer =
     run_ok runtime (Signal.Observer.observe now_signal ~on_update:(fun _ -> E.unit))
@@ -269,7 +269,7 @@ let test_deadline_uses_monotonic_time () =
     | Error _ -> Alcotest.fail "expected future monotonic deadline"
   in
   let due =
-    run_ok runtime (Signal.Time.deadline ~every:(Eta.Duration.ms 1) deadline)
+    run_ok runtime (Signal.Time.deadline deadline)
   in
   let due_observer =
     run_ok runtime (Signal.Observer.observe due ~on_update:(fun _ -> E.unit))
@@ -307,7 +307,7 @@ let test_deadline_rejects_foreign_monotonic_time () =
       ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_b)
       ()
   in
-  let now_signal = run_ok rt_a (S.Time.now ~every:(Eta.Duration.ms 1) ()) in
+  let now_signal = run_ok rt_a (S.Time.now ~every:(Eta.Duration.ms 1)) in
   let now_observer =
     run_ok rt_a (S.Observer.observe now_signal ~on_update:(fun _ -> E.unit))
   in
@@ -322,7 +322,7 @@ let test_deadline_rejects_foreign_monotonic_time () =
   expect_exact_runtime_mismatch "deadline timestamp runtime provenance"
     (Eta.Runtime.run rt_b
        (widen
-          (S.Time.deadline ~every:(Eta.Duration.ms 1) foreign_deadline)))
+          (S.Time.deadline foreign_deadline)))
 
 let test_generated_deadlines_preserve_runtime_provenance () =
   let module S = Eta_signal.Make (Observer_error) () in
@@ -347,7 +347,7 @@ let test_generated_deadlines_preserve_runtime_provenance () =
     let now_ms = 100 + (case * 100) + Random.State.int random 50 in
     let duration_ms = 1 + Random.State.int random 80 in
     Eta_test.Test_clock.set_time clock_a now_ms;
-    let now_signal = run_ok rt_a (S.Time.now ~every:(Eta.Duration.days 1) ()) in
+    let now_signal = run_ok rt_a (S.Time.now ~every:(Eta.Duration.days 1)) in
     let observer =
       run_ok rt_a (S.Observer.observe now_signal ~on_update:(fun _ -> E.unit))
     in
@@ -360,12 +360,12 @@ let test_generated_deadlines_preserve_runtime_provenance () =
       | Error _ -> Alcotest.failf "case %d: expected future timestamp" case
     in
     ignore
-      (run_ok rt_a (S.Time.deadline ~every:(Eta.Duration.ms 1) deadline)
+      (run_ok rt_a (S.Time.deadline deadline)
         : bool S.signal);
     expect_exact_runtime_mismatch
       (Format.asprintf "generated timestamp provenance case %d" case)
       (Eta.Runtime.run rt_b
-         (widen (S.Time.deadline ~every:(Eta.Duration.ms 1) deadline)))
+         (widen (S.Time.deadline deadline)))
   done
 
 let test_timer_runtime_mismatch_on_observe () =

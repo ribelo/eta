@@ -288,7 +288,7 @@ val start_daemon :
   'timer daemon_context ->
   'timer ->
   generation:int ->
-  interval_ms:int ->
+  schedule:Eta_signal_timer_policy.schedule ->
   update_on_start:bool ->
   catch_up_policy:Eta_signal_timer_policy.catch_up_policy ->
   (unit, 'error) Eta.Effect.t
@@ -298,7 +298,7 @@ val create_daemon_node :
   refresh_when_inactive:bool ->
   refresh_operation:'operation option ->
   'operation node daemon_context ->
-  interval_ms:int ->
+  schedule:Eta_signal_timer_policy.schedule ->
   update_on_start:bool ->
   catch_up_policy:Eta_signal_timer_policy.catch_up_policy ->
   'operation node

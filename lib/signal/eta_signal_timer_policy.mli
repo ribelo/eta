@@ -7,6 +7,10 @@ type catch_up_policy =
   | Catch_up_once_per_wake
   | Catch_up_coalesced
 
+type schedule =
+  | Periodic of int
+  | One_shot of int
+
 type state
 
 type snapshot
@@ -70,7 +74,7 @@ val mul_ms_capped : int -> int -> int
 val add_int_capped : int -> int -> int
 val missed_cadences : interval_ms:int -> next_due_ms:int -> now_ms:int -> int
 val advance_due : int -> int -> int -> int
-val initial_next_due_ms : now_ms:int -> interval_ms:int -> int
+val initial_next_due_ms : now_ms:int -> schedule:schedule -> int
 val sleep_delay_ms : now_ms:int -> next_due_ms:int -> int
 
 val add_relative_deadline :
@@ -108,7 +112,7 @@ val catch_up_update_missed : catch_up_policy -> int -> int
 
 val daemon_wake_plan :
   catch_up_policy:catch_up_policy ->
-  interval_ms:int ->
+  schedule:schedule ->
   next_due_ms:int ->
   now_ms:int ->
   wake_plan

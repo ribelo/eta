@@ -289,6 +289,7 @@ scope validity, dependency attachment, structural events, and pending-plan state
 | SC12 | Disposal skips collected callbacks and clears pending delivery before the finish hook runs. | `lib/signal/eta_signal.mli:411-414,449-453` | `observer dispose skips collected event`; `observer finish hook runs exactly once`; `observer failure commits snapshot and retries delivery` |
 | SC13 | Observer callbacks follow one deterministic total topological plan: dependencies precede transitive consumers, same-signal observers use ascending observer identity, and ready unrelated groups use their smallest observer identity. | `lib/signal/eta_signal.mli:434-437` | `observer graph delivery order is deterministic`; `observer plan orders A/C/B counterexample all registrations`; `observer graph order uses staged bind switch` |
 | SC14 | An observer without `?on_update` still owns demand and current committed state. | `lib/signal/eta_signal.mli:410-411` | `observer without on_update owns demand` |
+| SC15 | One-shot timers schedule one exact deadline; the daemon does not poll a cadence. | `lib/signal/eta_signal.mli:716-717,723-725` | `time after daemon sleeps until exact deadline`; `daemon wake plan`; `due arithmetic` |
 
 ### Eta Signal keyed diagnostics laws
 

@@ -298,7 +298,7 @@ let test_time_nodes_require_explicit_stabilization done_ =
   in
   let eff =
     let* interval = Signal.Time.interval (Eta.Duration.ms 1) in
-    let* now = Signal.Time.now ~every:(Eta.Duration.ms 1) () in
+    let* now = Signal.Time.now ~every:(Eta.Duration.ms 1) in
     let combined =
       Signal.map2 (fun interval now -> (interval, now)) interval now
     in

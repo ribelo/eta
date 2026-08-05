@@ -687,3 +687,40 @@ nix develop -c dune runtest test/signal/economics --force
   `unit` argument on `now` (one-shot timers schedule one exact deadline),
   then replace the per-commit `timer_nodes`/reachability scans with queued
   timer reconciliation and generation fencing.
+
+## 2026-08-06 - Slice 7b: one-shot timers schedule one exact deadline
+
+- Deleted the `~every` polling arguments from `Time.deadline` and
+  `Time.after` and the `unit` argument from `Time.now`, matching
+  specification 9. One-shot timers no longer validate or carry a polling
+  cadence; `after` still validates a positive duration and deadline
+  provenance/overflow checks are unchanged.
+- Added `Timer_policy.schedule = Periodic of int | One_shot of int` and
+  threaded it through the daemon (`Timer.start`, `run_loop`,
+  `start_daemon`, `create_daemon_node`) in place of a bare `interval_ms`.
+  `initial_next_due_ms` returns the exact deadline for one-shot timers;
+  `daemon_wake_plan` fires at most one update when the clock reaches the
+  deadline and never advances the due point. Periodic timers keep the
+  existing missed-cadence arithmetic. The on-demand refresh path was
+  already deadline-exact and is unchanged.
+- Discriminating evidence: `time after daemon sleeps until exact deadline`
+  proves the daemon requests exactly one sleep across its whole lifecycle,
+  does not poll before the deadline, and fires once when the clock crosses
+  it. Policy tests gained one-shot wake-plan and initial-due cases.
+- Deleted the now-meaningless invalid-cadence cases for one-shot timers
+  (`invalid deadline cadence`, `invalid after interval`) and simplified
+  their scaffolding. Migrated all 36 call sites in eight test files.
+- LAWS.md gained SC15 (one exact deadline, no cadence polling) with the
+  new discriminating tests as named evidence.
+- Verified with:
+
+```sh
+nix develop -c dune build @install @signal-economics
+nix develop -c dune runtest test/signal test/signal_map test/laws --force
+nix develop -c dune runtest test/signal/economics --force
+```
+
+- Remaining slice-7 work: replace the per-commit `timer_nodes` and
+  reachability scans (`collect_current_necessary_timers`,
+  `collect_post_commit_necessary_timers`) with queued timer reconciliation
+  and generation fencing.

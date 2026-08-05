@@ -126,9 +126,14 @@ let test_due_arithmetic () =
     (Timer_policy.missed_cadences ~interval_ms:10 ~next_due_ms:50 ~now_ms:85);
   Alcotest.(check int) "advance" 90 (Timer_policy.advance_due 50 10 4);
   Alcotest.(check int) "initial next due" 60
-    (Timer_policy.initial_next_due_ms ~now_ms:50 ~interval_ms:10);
+    (Timer_policy.initial_next_due_ms ~now_ms:50
+       ~schedule:(Timer_policy.Periodic 10));
   Alcotest.(check int) "initial next due caps" max_int
-    (Timer_policy.initial_next_due_ms ~now_ms:max_int ~interval_ms:10);
+    (Timer_policy.initial_next_due_ms ~now_ms:max_int
+       ~schedule:(Timer_policy.Periodic 10));
+  Alcotest.(check int) "one-shot initial next due is the exact deadline" 70
+    (Timer_policy.initial_next_due_ms ~now_ms:50
+       ~schedule:(Timer_policy.One_shot 70));
   Alcotest.(check int) "future sleep delay" 10
     (Timer_policy.sleep_delay_ms ~now_ms:50 ~next_due_ms:60);
   Alcotest.(check int) "due sleep delay" 0
@@ -245,28 +250,43 @@ let test_catch_up_policy () =
 let test_daemon_wake_plan () =
   let once =
     Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_once_per_wake
-      ~interval_ms:10 ~next_due_ms:50 ~now_ms:85
+      ~schedule:(Timer_policy.Periodic 10) ~next_due_ms:50 ~now_ms:85
   in
   Alcotest.(check wake_plan_values_test)
     "once wake" (90, false, 1, 1)
     (wake_plan_values once);
   let coalesced =
     Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_coalesced
-      ~interval_ms:10 ~next_due_ms:50 ~now_ms:85
+      ~schedule:(Timer_policy.Periodic 10) ~next_due_ms:50 ~now_ms:85
   in
   Alcotest.(check wake_plan_values_test)
     "coalesced wake" (90, false, 1, 4)
     (wake_plan_values coalesced);
   let not_due =
     Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_once_per_wake
-      ~interval_ms:10 ~next_due_ms:50 ~now_ms:49
+      ~schedule:(Timer_policy.Periodic 10) ~next_due_ms:50 ~now_ms:49
   in
   Alcotest.(check wake_plan_values_test)
     "not due wake" (50, false, 0, 0)
     (wake_plan_values not_due);
+  let one_shot =
+    Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_once_per_wake
+      ~schedule:(Timer_policy.One_shot 50) ~next_due_ms:50 ~now_ms:85
+  in
+  Alcotest.(check wake_plan_values_test)
+    "one-shot fired wake keeps the exact deadline" (50, false, 1, 1)
+    (wake_plan_values one_shot);
+  let one_shot_not_due =
+    Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_once_per_wake
+      ~schedule:(Timer_policy.One_shot 50) ~next_due_ms:50 ~now_ms:49
+  in
+  Alcotest.(check wake_plan_values_test)
+    "one-shot pending wake applies no update" (50, false, 0, 0)
+    (wake_plan_values one_shot_not_due);
   let saturated =
     Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_once_per_wake
-      ~interval_ms:10 ~next_due_ms:max_int ~now_ms:max_int
+      ~schedule:(Timer_policy.Periodic max_int) ~next_due_ms:max_int
+      ~now_ms:max_int
   in
   Alcotest.(check wake_plan_values_test)
     "saturated wake" (max_int, true, 1, 1)

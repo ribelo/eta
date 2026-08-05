@@ -33,4 +33,4 @@ let _stats () = A.stats ()
 
 let _now :
     (A.Time.monotonic_time A.signal, A.time_error) Eta.Effect.t =
-  A.Time.now ~every:(Eta.Duration.ms 1) ()
+  A.Time.now ~every:(Eta.Duration.ms 1)
