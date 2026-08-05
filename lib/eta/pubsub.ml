@@ -313,25 +313,36 @@ let publish_sync_slow contract t value =
         resolve_wakeups !cancel_wakeups;
         raise exn)
 
-let publish_sync contract t value =
-  match t.overflow with
-  | Drop_new _ | Backpressure _ -> publish_sync_slow contract t value
-  | Unbounded -> (
-      match
-        with_lock t @@ fun () ->
-        match t.closed with
-        | Some reason -> Publish_ready (close_result reason)
-        | None when t.waiting_receivers = 0 ->
+let publish_nonblocking_sync t value =
+  match
+    with_lock t @@ fun () ->
+    match t.closed with
+    | Some reason -> Publish_ready (close_result reason)
+    | None ->
+        let subscriber_count = active_subscriber_count t in
+        match t.overflow with
+        | Drop_new _ when subscriber_count > 0 && not (capacity_available t) ->
+            t.dropped <- t.dropped + subscriber_count;
+            Publish_ready
+              (`Published { subscriber_count; dropped = subscriber_count })
+        | Unbounded | Drop_new _ when t.waiting_receivers = 0 ->
             Publish_ready (`Published (admit_value_without_wake_locked t value))
-        | None ->
+        | Unbounded | Drop_new _ ->
             let wakeups = ref [] in
             let result = `Published (admit_value_locked wakeups t value) in
             Publish_wake (result, !wakeups)
-      with
-      | Publish_ready result -> result
-      | Publish_wake (result, wakeups) ->
-          resolve_wakeups wakeups;
-          result)
+        | Backpressure _ ->
+            invalid_arg "Eta.Pubsub: nonblocking publish used for Backpressure"
+  with
+  | Publish_ready result -> result
+  | Publish_wake (result, wakeups) ->
+      resolve_wakeups wakeups;
+      result
+
+let publish_sync contract t value =
+  match t.overflow with
+  | Backpressure _ -> publish_sync_slow contract t value
+  | Unbounded | Drop_new _ -> publish_nonblocking_sync t value
 
 let publish t value =
   Effect_erasure.public_sync2 ~leaf_name:"Pubsub.publish" t value publish_sync
