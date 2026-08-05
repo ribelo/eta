@@ -15,6 +15,7 @@ type counter_snapshot = {
 val create_counters : unit -> counters
 val reset_counters : counters -> unit
 val disable_counters : counters -> unit
+val counters_enabled : counters -> bool
 val counter_snapshot : counters -> counter_snapshot
 val note_candidate_visit : counters -> unit
 val note_union_node_visit : counters -> unit

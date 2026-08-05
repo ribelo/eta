@@ -5240,9 +5240,15 @@ module Make (Observer_error : Observer_error) () = struct
       ~observed:(fun (O observer) -> P observer.obs_signal)
 
   let plan_observer_delivery_order observers =
-    Observer_plan.plan observer_plan_counters observer_plan_access
-      ~cycle:(fun () -> raise (Graph_error `Cycle))
-      observers
+    match observers with
+    | [] -> []
+    | [ observer ] when not (Observer_plan.counters_enabled observer_plan_counters)
+      ->
+        [ observer ]
+    | _ ->
+        Observer_plan.plan observer_plan_counters observer_plan_access
+          ~cycle:(fun () -> raise (Graph_error `Cycle))
+          observers
 
   let collect_observed_bind_nodes _lane _observers =
     Hashtbl.fold

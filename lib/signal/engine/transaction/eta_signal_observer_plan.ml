@@ -42,6 +42,7 @@ let reset_counters counters =
   counters.pairwise_search_visits <- 0
 
 let disable_counters counters = counters.enabled <- false
+let counters_enabled counters = counters.enabled
 
 let counter_snapshot (counters : counters) =
   {
