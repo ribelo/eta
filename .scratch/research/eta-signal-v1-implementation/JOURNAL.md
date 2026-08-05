@@ -401,3 +401,24 @@ nix develop -c dune runtest test/signal test/signal_map --force
 ```sh
 nix develop -c dune runtest test/signal test/signal_map --force
 ```
+
+## 2026-08-05 - Slice 4: public Package factory shape
+
+- Public Signal Map construction now has the required shape:
+  `Eta_signal_map.Make (Signal.Package)`. The functor no longer takes a
+  graph-producing `()` argument and no longer returns or re-exports the graph
+  module; its only argument is the graph-branded package endpoint.
+- Added public `Eta_signal.Package_graph` as the shared module type. The
+  factory's `PACKAGE` argument aliases that public type, avoiding a Signal
+  Map-local package signature that would hide `Signal.Package` type
+  equalities from callers.
+- Migrated public keyed tests, compile-negative fixtures, and the Signal Map
+  bench to construct `Signal` explicitly and pass `Signal.Package`. The
+  graph-returning private factory remains only under
+  `Eta_signal_map_api.Make`, where the keyed-private tests use the internal
+  testing seam.
+- Verified with:
+
+```sh
+nix develop -c dune runtest test/signal test/signal_map --force
+```

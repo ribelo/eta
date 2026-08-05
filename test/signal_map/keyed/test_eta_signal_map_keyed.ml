@@ -1,5 +1,7 @@
 module E = Eta.Effect
-module S = Eta_signal_map.Make (Eta_signal.No_observer_error) ()
+module Signal = Eta_signal.Make (Eta_signal.No_observer_error) ()
+module Signal_map = Eta_signal_map.Make (Signal.Package)
+module S = Signal
 
 module Order = struct
   type t = int
@@ -8,7 +10,7 @@ module Order = struct
 end
 
 module M = Eta_signal_map.Map.Make (Order)
-module K = S.Keyed (Order)
+module K = Signal_map.Keyed (Order)
 
 type test_error = [ S.graph_error | S.observer_read_error | S.stabilize_error ]
 

@@ -251,6 +251,46 @@ module No_observer_error = struct
   let pp _ppf (error : t) = match error with _ -> .
 end
 
+module type Package_graph = sig
+  type 'a signal
+  type 'a plan
+
+  type 'a change =
+    | Left of 'a
+    | Right of 'a
+    | Changed of 'a * 'a
+
+  type ('key, 'data, 'map) input_ops = {
+    empty : 'map;
+    compare_key : 'key -> 'key -> int;
+    fold_symmetric_diff :
+      'acc.
+      'map ->
+      'map ->
+      on_compare:(unit -> unit) ->
+      init:'acc ->
+      f:('acc -> 'key -> 'data change -> 'acc) ->
+      'acc;
+  }
+
+  type ('key, 'output, 'map) output_ops = {
+    empty : 'map;
+    set : 'key -> 'output -> 'map -> 'map;
+    remove : 'key -> 'map -> 'map;
+  }
+
+  val stable_family :
+    ?data_cutoff:(published:'data -> candidate:'data -> bool) ->
+    input:'data_map signal ->
+    input_ops:('key, 'data, 'data_map) input_ops ->
+    output_ops:('key, 'output, 'output_map) output_ops ->
+    build:(key:'key -> data:'data signal -> 'output signal) ->
+    unit ->
+    'output_map plan
+
+  val install : 'a plan -> 'a signal
+end
+
 module Make (Observer_error : Observer_error) () = struct
   type observer_error = Observer_error.t
 

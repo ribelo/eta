@@ -137,15 +137,15 @@ module Keyed_map (M : Stdlib.Map.S) : sig
     ('data, 'child) entry M.t -> 'child M.t
 end
 
-module Make (Observer_error : Eta_signal.Observer_error) () : sig
-  include module type of Eta_signal.Make (Observer_error) ()
+module type PACKAGE = Eta_signal.Package_graph
 
+module Make (Package : PACKAGE) : sig
   module Keyed (Order : Map.Ordered_type) : sig
     val mapi :
       ?data_cutoff:(published:'data -> candidate:'data -> bool) ->
-      'data Map.Make(Order).t signal ->
-      f:(key:Order.t -> data:'data signal -> 'output signal) ->
-      'output Map.Make(Order).t signal
+      'data Map.Make(Order).t Package.signal ->
+      f:(key:Order.t -> data:'data Package.signal -> 'output Package.signal) ->
+      'output Map.Make(Order).t Package.signal
     (** Creates one stable child for each present key. The builder receives the
         stored key and one stable data signal. It runs only for provisional
         additions. [smkey-9b8i] [smkey-445b]

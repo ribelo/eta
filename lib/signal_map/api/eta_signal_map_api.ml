@@ -67,37 +67,41 @@ module Keyed_map (M : Stdlib.Map.S) = struct
     M.map (fun entry -> entry.child) entries
 end
 
+module type PACKAGE = Eta_signal.Package_graph
+
+module Keyed_adapter (Package : PACKAGE) (Order : Map.Ordered_type) = struct
+  module M = Map.Make (Order)
+  module Kernel_map = Eta_signal_map_kernel.Make (Order)
+
+  let mapi ?data_cutoff input ~f =
+    let input_ops : (_, _, _) Package.input_ops =
+      {
+        Package.empty = M.empty;
+        compare_key = Order.compare;
+        fold_symmetric_diff =
+          (fun left right ~on_compare ~init ~f:emit ->
+          Kernel_map.fold_symmetric_diff_counted left right ~on_compare ~init
+            ~f:(fun acc key -> function
+              | Map.Left value -> emit acc key (Package.Left value)
+              | Map.Right value -> emit acc key (Package.Right value)
+              | Map.Changed (old_value, new_value) ->
+                  emit acc key (Package.Changed (old_value, new_value))));
+      }
+    in
+    let output_ops : (_, _, _) Package.output_ops =
+      { Package.empty = M.empty; set = M.set; remove = M.remove }
+    in
+    Package.install
+      (Package.stable_family ?data_cutoff ~input ~input_ops ~output_ops
+         ~build:f ())
+end
+
 module Make (Observer_error : Eta_signal.Observer_error) () = struct
   module Signal = Eta_signal_kernel.Make (Observer_error) ()
   include Signal
 
   module Keyed (Order : Map.Ordered_type) = struct
-    module M = Map.Make (Order)
-    module Kernel_map = Eta_signal_map_kernel.Make (Order)
-
-    let mapi ?data_cutoff input ~f =
-      let input_ops : (_, _, _) Signal.Package.input_ops =
-        {
-          Signal.Package.empty = M.empty;
-          compare_key = Order.compare;
-          fold_symmetric_diff =
-            (fun left right ~on_compare ~init ~f:emit ->
-            Kernel_map.fold_symmetric_diff_counted left right ~on_compare ~init
-              ~f:(fun acc key -> function
-                | Map.Left value -> emit acc key (Signal.Package.Left value)
-                | Map.Right value ->
-                    emit acc key (Signal.Package.Right value)
-                | Map.Changed (old_value, new_value) ->
-                    emit acc key
-                      (Signal.Package.Changed (old_value, new_value))));
-        }
-      in
-      let output_ops : (_, _, _) Signal.Package.output_ops =
-        { Signal.Package.empty = M.empty; set = M.set; remove = M.remove }
-      in
-      Signal.Package.install
-        (Signal.Package.stable_family ?data_cutoff ~input ~input_ops
-           ~output_ops ~build:f ())
+    include Keyed_adapter (Signal.Package) (Order)
 
     module Testing = struct
       type token = Signal.Extension.token
@@ -153,4 +157,8 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
       let set_counter = Signal.Extension.set_keyed_counter
     end
   end
+end
+
+module Make_package (Package : PACKAGE) = struct
+  module Keyed (Order : Map.Ordered_type) = Keyed_adapter (Package) (Order)
 end

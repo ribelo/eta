@@ -18,8 +18,10 @@ module Counting_order = struct
 end
 
 module M = Eta_signal_map.Map.Make (Counting_order)
-module S = Eta_signal_map.Make (Eta_signal.No_observer_error) ()
-module K = S.Keyed (Counting_order)
+module Signal = Eta_signal.Make (Eta_signal.No_observer_error) ()
+module Signal_map = Eta_signal_map.Make (Signal.Package)
+module S = Signal
+module K = Signal_map.Keyed (Counting_order)
 
 type error = [ S.graph_error | S.observer_read_error | S.stabilize_error ]
 
