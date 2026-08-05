@@ -29,13 +29,13 @@ type promise_token
 type resolver_token
 type stream_token
 
-type scope = Scope of (scope_token, unit) Erased_token.t
+type scope = Scope of (scope_token, unit) Erased_token.t [@@unboxed]
 type cancel_context =
-  Cancel_context of (cancel_context_token, unit) Erased_token.t
+  Cancel_context of (cancel_context_token, unit) Erased_token.t [@@unboxed]
 
-type 'a promise = Promise of (promise_token, 'a) Erased_token.t
-type 'a resolver = Resolver of (resolver_token, 'a) Erased_token.t
-type 'a stream = Stream of (stream_token, 'a) Erased_token.t
+type 'a promise = Promise of (promise_token, 'a) Erased_token.t [@@unboxed]
+type 'a resolver = Resolver of (resolver_token, 'a) Erased_token.t [@@unboxed]
+type 'a stream = Stream of (stream_token, 'a) Erased_token.t [@@unboxed]
 type local_inheritance = Inherit | Fiber_local
 type 'a local = {
   local_key : 'a Type.Id.t;
