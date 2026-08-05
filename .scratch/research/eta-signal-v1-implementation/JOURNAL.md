@@ -838,3 +838,69 @@ nix develop -c dune runtest --force
 ```
 
 - Full suite: 76 test executables green.
+
+## 2026-08-06 - Slice 7 checkpoint: LOC and benchmark vs saved baseline
+
+Measured at slice-7 completion (`46a28692`) plus the uncommitted slice-8a
+tombstone-ring change. Counting method per BASELINE.md (physical lines).
+
+### Codebase size
+
+| Scope | Baseline | Current | Delta |
+|---|---:|---:|---:|
+| Complete production (`lib/signal`, `lib/signal_map`, `lib/crux`, no bench) | 21,678 / 57 files | 24,108 / 79 files | +2,430 (+11.2%) |
+| Full scoped source (production + bench + signal/signal_map/crux tests) | 50,388 / 126 files | 53,205 / 149 files | +2,817 (+5.6%) |
+
+The production overage is expected mid-route: obsolete surfaces (Crux custom
+graph, core stream bridge, stale protocols) are deleted in slices 10-11, and
+the perf-loc gate owns final reduction toward 21,678.
+
+### Benchmark method
+
+The canonical harness (`.scratch/research/evidence/eta_incremental_performance/signal/compare.ml`)
+was ported to the current API (`~on_update`, typed `Observer.read`,
+`Signal.Package` seam, labeled `bind`). It builds inside a worktree copy of
+the current tree so Dune links current sources. One full run (9 samples,
+pinned to CPU 2) plus isolated per-workload runs in fresh processes. Raw CSVs:
+`benchmark/slice7-checkpoint/`.
+
+### Full shared-graph harness vs saved baseline (medians)
+
+The baseline numbers are the saved 2026-08-04 full-harness runs (same shared
+runtime/graph conflation, including the ~GB keyed heaps that dominate GC).
+
+| Workload | Baseline | Current | Speedup |
+|---|---:|---:|---:|
+| changed scalar depth 1 | 2.716 s | 47.35 ms | 57x |
+| changed scalar depth 10 | 2.733 s | 47.20 ms | 58x |
+| changed scalar depth 100 | 2.806 s | 46.69 ms | 60x |
+| cutoff depth 10 | 5.998 s | 46.66 ms | 129x |
+| dynamic branch switch | 2.710 s | 46.33 ms | 58x |
+| data change 10k keys | 2.930 s | 54.16 ms | 54x |
+| data change 100k keys | 2.674 s | 131.27 ms | 20x |
+| child change 10k keys | 2.689 s | 65.64 ms | 41x |
+| child change 100k keys | 2.716 s | 374.27 ms | 7.3x |
+
+Every workload improved over the saved baseline by 7-130x.
+
+### Isolated workloads (fresh process per workload, medians)
+
+| Workload | Slice-3 smoke | Current |
+|---|---:|---:|
+| changed scalar depth 1 | 10,627 ns | 12,255 ns / 9,160 words |
+| changed scalar depth 10 | 13,680 ns | 15,412 ns / 11,994 words |
+| dynamic branch switch | 20,220 ns | 13,579 ns / 10,391 words |
+| data change 10k keys | n/a | 4.51 ms / 655k words |
+| child change 10k keys | n/a | 18.83 ms / 1.60M words |
+
+Scalar isolated costs are flat versus the slice-3 smoke (dynamic switch
+improved 1.5x). The remaining shared-harness cost is GC pressure from the
+shared ~GB heap, not graph-wide scans; the final gate uses the accepted
+graph factory API per the baseline notes. Keyed reconciliation remains the
+largest correctness-era cost center and is the primary perf-gate target.
+
+### Reading
+
+Direction is confirmed: per-stabilization work is no longer graph-wide.
+The 1.20x Jane Street evaluation is unchanged and remains deferred to the
+perf-loc gate with the recorded edge-effects feasibility investigation.

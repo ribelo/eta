@@ -1886,7 +1886,6 @@ module Make (Observer_error : Observer_error) () = struct
             unlink_timer_reconcile packed;
             timer_invalidation_hooks timer)
       ~tombstone:signal_tombstone
-      ~tombstone_id:(fun tombstone -> tombstone.dead_id)
       ~observer_hooks:(fun (P signal) -> dispose_signal_observers lane signal)
       ~detach_edges:(fun (P signal) -> detach_node_edges lane signal)
       ~kind_hooks:(fun ~invalidate_scope (P signal) ->
@@ -4480,7 +4479,12 @@ module Make (Observer_error : Observer_error) () = struct
       Topology.reset_counters topology_counters;
       Work.reset_counters work_counters;
       Observer_plan.reset_counters observer_plan_counters;
-      Observer_delivery_counters.reset_counters observer_delivery_counters
+      Observer_delivery_counters.reset_counters observer_delivery_counters;
+      Eta_signal_tombstone_index.reset_counters (Graph.tombstone_counters graph)
+
+    let tombstone_counter_snapshot () =
+      Eta_signal_tombstone_index.counter_snapshot
+        (Graph.tombstone_counters graph)
 
     let atomic_pass_counter_snapshot () =
       Atomic_pass.counter_snapshot (Graph.atomic_pass_counters graph)

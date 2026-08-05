@@ -5,14 +5,6 @@ val stats_counter :
 
 val bool_field : string -> bool -> string
 
-val remember_latest :
-  max_count:int ->
-  id:('entry -> 'id) ->
-  equal_id:('id -> 'id -> bool) ->
-  'entry ->
-  'entry list ->
-  'entry list
-
 type timer_snapshot = {
   timer_active : bool;
   timer_running_generation : int option;

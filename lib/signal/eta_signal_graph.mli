@@ -135,7 +135,6 @@ val node_invalidation :
   set_invalid:('node -> unit) ->
   timer_hooks:('node -> 'hook list) ->
   tombstone:('node -> 'dead_node) ->
-  tombstone_id:('dead_node -> Eta_signal_id.signal) ->
   observer_hooks:('node -> 'hook list) ->
   detach_edges:('node -> 'node list) ->
   kind_hooks:
@@ -933,6 +932,10 @@ val update_necessity :
 
 val dead_node_count :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
+
+val tombstone_counters :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  Eta_signal_tombstone_index.counters
 
 val iter_dead_nodes :
   (_, _, _, _, _, _, _, _, 'dead_node, _, _) t ->

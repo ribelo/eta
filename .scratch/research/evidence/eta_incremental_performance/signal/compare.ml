@@ -1,6 +1,7 @@
 module E = Eta.Effect
 
-module S = Eta_signal_map.Make (Eta_signal.No_observer_error) ()
+module Signal = Eta_signal.Make (Eta_signal.No_observer_error) ()
+module Signal_map = Eta_signal_map.Make (Signal.Package)
 
 module Eta_order = struct
   type t = int
@@ -9,7 +10,7 @@ module Eta_order = struct
 end
 
 module Eta_map = Eta_signal_map.Map.Make (Eta_order)
-module Eta_keyed = S.Keyed (Eta_order)
+module Eta_keyed = Signal_map.Keyed (Eta_order)
 
 type workload = {
   name : string;
@@ -17,7 +18,7 @@ type workload = {
   check : unit -> unit;
 }
 
-type error = [ S.graph_error | S.observer_read_error | S.stabilize_error ]
+type error = [ Signal.graph_error | Signal.observer_read_error | Signal.stabilize_error ]
 
 let failf format = Printf.ksprintf failwith format
 
@@ -32,12 +33,12 @@ let run_ok runtime effect =
 
 let observe_eta runtime signal =
   run_ok runtime
-    (S.Observer.observe signal (fun _ -> Eta.Effect.unit))
+    (Signal.Observer.observe signal ~on_update:(fun _ -> Eta.Effect.unit))
 
 let eta_step source next_value =
   E.bind
     (fun value ->
-      E.bind (fun () -> S.stabilize) (S.Var.set source value))
+      E.bind (fun () -> Signal.stabilize) (Signal.Var.set source value))
     (E.sync next_value)
 
 let run_eta_batch runtime step operations =
@@ -48,26 +49,25 @@ let run_eta_batch runtime step operations =
   run_ok runtime (loop operations)
 
 let make_eta_changed runtime depth =
-  let source = S.Var.create 0 in
+  let source = Signal.Var.create 0 in
   let rec chain remaining signal =
     if remaining = 0 then signal
-    else chain (remaining - 1) (S.map (( + ) 1) signal)
+    else chain (remaining - 1) (Signal.map (( + ) 1) signal)
   in
-  let output = chain depth (S.Var.watch source) in
+  let output = chain depth (Signal.Var.watch source) in
   let observer = observe_eta runtime output in
-  run_ok runtime S.stabilize;
+  run_ok runtime Signal.stabilize;
   let next = ref 0 in
   let step =
     eta_step source (fun () ->
         incr next;
         !next)
   in
-  let observed = ref (S.Observer.unsafe_read_exn observer) in
-  let run_batch operations =
-    run_eta_batch runtime step operations;
-    observed := S.Observer.unsafe_read_exn observer
-  in
+  let read_observed () = run_ok runtime (Signal.Observer.read observer) in
+  let observed = ref (read_observed ()) in
+  let run_batch operations = run_eta_batch runtime step operations in
   let check () =
+    observed := read_observed ();
     let expected = !next + depth in
     if !observed <> expected then
       failf "Eta Signal depth %d: expected %d, observed %d"
@@ -112,32 +112,31 @@ let make_incremental_changed depth =
   }
 
 let make_eta_cutoff runtime depth =
-  let source = S.Var.create 0 in
-  let constant = S.map (fun _ -> 0) (S.Var.watch source) in
+  let source = Signal.Var.create 0 in
+  let constant = Signal.map (fun _ -> 0) (Signal.Var.watch source) in
   let rec depend remaining signal =
     if remaining = 0 then signal
-    else depend (remaining - 1) (S.map (( + ) 1) signal)
+    else depend (remaining - 1) (Signal.map (( + ) 1) signal)
   in
   let output = depend depth constant in
   let observer = observe_eta runtime output in
-  run_ok runtime S.stabilize;
+  run_ok runtime Signal.stabilize;
   let next = ref 0 in
   let step =
     eta_step source (fun () ->
         incr next;
         !next)
   in
-  let observed = ref (S.Observer.unsafe_read_exn observer) in
-  let run_batch operations =
-    run_eta_batch runtime step operations;
-    observed := S.Observer.unsafe_read_exn observer
-  in
-  let recomputes_before = (run_ok runtime (S.stats ())).recompute_count in
+  let read_observed () = run_ok runtime (Signal.Observer.read observer) in
+  let observed = ref (read_observed ()) in
+  let run_batch operations = run_eta_batch runtime step operations in
+  let recomputes_before = (run_ok runtime (Signal.stats ())).recompute_count in
   run_batch 1;
-  let recomputes_after = (run_ok runtime (S.stats ())).recompute_count in
+  let recomputes_after = (run_ok runtime (Signal.stats ())).recompute_count in
   if recomputes_after - recomputes_before >= depth + 2 then
     failwith "Eta Signal cutoff did not stop dependent recomputation";
   let check () =
+    observed := read_observed ();
     if !observed <> depth then
       failf "Eta Signal cutoff: expected %d, observed %d"
         depth !observed
@@ -190,25 +189,25 @@ let make_incremental_cutoff depth =
   }
 
 let make_eta_dynamic runtime =
-  let selector = S.Var.create false in
+  let selector = Signal.Var.create false in
   let selected =
-    S.bind (S.Var.watch selector) (fun active ->
-        S.const (if active then 1 else 0))
+    Signal.bind
+      ~f:(fun active -> Signal.const (if active then 1 else 0))
+      (Signal.Var.watch selector)
   in
   let observer = observe_eta runtime selected in
-  run_ok runtime S.stabilize;
+  run_ok runtime Signal.stabilize;
   let expected = ref 0 in
   let step =
     eta_step selector (fun () ->
         expected := 1 - !expected;
         !expected <> 0)
   in
-  let observed = ref (S.Observer.unsafe_read_exn observer) in
-  let run_batch operations =
-    run_eta_batch runtime step operations;
-    observed := S.Observer.unsafe_read_exn observer
-  in
+  let read_observed () = run_ok runtime (Signal.Observer.read observer) in
+  let observed = ref (read_observed ()) in
+  let run_batch operations = run_eta_batch runtime step operations in
   let check () =
+    observed := read_observed ();
     if !observed <> !expected then
       failf "Eta Signal dynamic: expected %d, observed %d"
         !expected !observed
@@ -250,14 +249,14 @@ let core_base_map size =
   |> Core.Map.of_alist_exn (module Core.Int)
 
 let make_eta_keyed_data runtime size =
-  let input = S.Var.create (eta_base_map size) in
+  let input = Signal.Var.create (eta_base_map size) in
   let output =
-    Eta_keyed.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data -> data)
+    Eta_keyed.mapi (Signal.Var.watch input) ~f:(fun ~key:_ ~data -> data)
   in
   let observer = observe_eta runtime output in
-  run_ok runtime S.stabilize;
+  run_ok runtime Signal.stabilize;
   let key = size / 2 in
-  let current = ref (S.Var.value input) in
+  let current = ref (Signal.Var.value input) in
   let expected = ref 0 in
   let step =
     eta_step input (fun () ->
@@ -266,21 +265,20 @@ let make_eta_keyed_data runtime size =
         current := next;
         next)
   in
-  let observed = ref (S.Observer.unsafe_read_exn observer) in
-  let run_batch operations =
-    run_eta_batch runtime step operations;
-    observed := S.Observer.unsafe_read_exn observer
-  in
+  let read_observed () = run_ok runtime (Signal.Observer.read observer) in
+  let observed = ref (read_observed ()) in
+  let run_batch operations = run_eta_batch runtime step operations in
   let visits_before =
-    (run_ok runtime (S.stats ())).keyed.child_visit_count
+    (run_ok runtime (Signal.stats ())).keyed.child_visit_count
   in
   run_batch 1;
   let visits_after =
-    (run_ok runtime (S.stats ())).keyed.child_visit_count
+    (run_ok runtime (Signal.stats ())).keyed.child_visit_count
   in
   if visits_after - visits_before <> 1 then
     failwith "Eta Signal Map data change did not visit exactly one child";
   let check () =
+    observed := read_observed ();
     if Eta_map.cardinal !observed <> size then
       failwith "Eta Signal Map changed cardinality";
     if Eta_map.find_opt key !observed <> Some !expected then
@@ -337,15 +335,15 @@ let make_incr_map_data size =
   }
 
 let make_eta_keyed_child runtime size =
-  let input = S.Var.create (eta_base_map size) in
-  let children = Array.init size (fun _ -> S.Var.create 0) in
+  let input = Signal.Var.create (eta_base_map size) in
+  let children = Array.init size (fun _ -> Signal.Var.create 0) in
   let output =
-    Eta_keyed.mapi (S.Var.watch input) ~f:(fun ~key ~data ->
-        S.map2 (fun _ child -> child) data
-          (S.Var.watch children.(key)))
+    Eta_keyed.mapi (Signal.Var.watch input) ~f:(fun ~key ~data ->
+        Signal.map2 (fun _ child -> child) data
+          (Signal.Var.watch children.(key)))
   in
   let observer = observe_eta runtime output in
-  run_ok runtime S.stabilize;
+  run_ok runtime Signal.stabilize;
   let key = size / 2 in
   let expected = ref 0 in
   let step =
@@ -353,21 +351,20 @@ let make_eta_keyed_child runtime size =
         expected := 1 - !expected;
         !expected)
   in
-  let observed = ref (S.Observer.unsafe_read_exn observer) in
-  let run_batch operations =
-    run_eta_batch runtime step operations;
-    observed := S.Observer.unsafe_read_exn observer
-  in
+  let read_observed () = run_ok runtime (Signal.Observer.read observer) in
+  let observed = ref (read_observed ()) in
+  let run_batch operations = run_eta_batch runtime step operations in
   let visits_before =
-    (run_ok runtime (S.stats ())).keyed.child_visit_count
+    (run_ok runtime (Signal.stats ())).keyed.child_visit_count
   in
   run_batch 1;
   let visits_after =
-    (run_ok runtime (S.stats ())).keyed.child_visit_count
+    (run_ok runtime (Signal.stats ())).keyed.child_visit_count
   in
   if visits_after - visits_before <> 1 then
     failwith "Eta Signal Map child change did not visit exactly one child";
   let check () =
+    observed := read_observed ();
     if Eta_map.cardinal !observed <> size then
       failwith "Eta Signal Map child update changed cardinality";
     if Eta_map.find_opt key !observed <> Some !expected then

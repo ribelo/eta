@@ -411,7 +411,8 @@ type
       State.t;
     mutable observers : 'observer list;
     mutable all_nodes : 'weak_node list;
-    mutable dead_nodes : 'dead_node list;
+    dead_nodes : 'dead_node Eta_signal_tombstone_index.t;
+    tombstone_counters : Eta_signal_tombstone_index.counters;
     current_scope : 'scope_context;
     mutable stream_bridge_metrics : 'stream_metrics;
   }
@@ -557,7 +558,6 @@ type ('node, 'scope, 'hook, 'dead_node) node_invalidation = {
   invalidation_set_invalid : 'node -> unit;
   invalidation_timer_hooks : 'node -> 'hook list;
   invalidation_tombstone : 'node -> 'dead_node;
-  invalidation_tombstone_id : 'dead_node -> Eta_signal_id.signal;
   invalidation_observer_hooks : 'node -> 'hook list;
   invalidation_detach_edges : 'node -> 'node list;
   invalidation_kind_hooks :
@@ -580,13 +580,12 @@ let node_lifecycle ~validate_dependency ~create ~reserve_dependencies
   }
 
 let node_invalidation ~valid ~set_invalid ~timer_hooks ~tombstone
-    ~tombstone_id ~observer_hooks ~detach_edges ~kind_hooks =
+    ~observer_hooks ~detach_edges ~kind_hooks =
   {
     invalidation_valid = valid;
     invalidation_set_invalid = set_invalid;
     invalidation_timer_hooks = timer_hooks;
     invalidation_tombstone = tombstone;
-    invalidation_tombstone_id = tombstone_id;
     invalidation_observer_hooks = observer_hooks;
     invalidation_detach_edges = detach_edges;
     invalidation_kind_hooks = kind_hooks;
@@ -606,7 +605,8 @@ let create ~create_scope_context ~create_stream_bridge_metrics () =
     state = State.create ();
     observers = [];
     all_nodes = [];
-    dead_nodes = [];
+    dead_nodes = Eta_signal_tombstone_index.create ();
+    tombstone_counters = Eta_signal_tombstone_index.create_counters ();
     current_scope = create_scope_context ();
     stream_bridge_metrics = create_stream_bridge_metrics ();
   }
@@ -1616,16 +1616,11 @@ let stabilization_delivery_ops t finish context =
     ~finish:(fun () ->
       finish_recorded_stabilization_effect t finish context)
 
-let max_dead_node_tombstones = 1024
+let remember_dead_node t _lane dead_node =
+  Eta_signal_tombstone_index.insert t.tombstone_counters dead_node
+    t.dead_nodes
 
-let same_signal_id left right =
-  Eta_signal_id.signal_int left = Eta_signal_id.signal_int right
-
-let remember_dead_node t _lane ~id dead_node =
-  t.dead_nodes <-
-    Eta_signal_debug.remember_latest
-      ~max_count:max_dead_node_tombstones
-      ~id ~equal_id:same_signal_id dead_node t.dead_nodes
+let tombstone_counters t = t.tombstone_counters
 
 let collect_live_node_registry t ~collect_live_nodes ~keep =
   let cells, nodes = collect_live_nodes keep t.all_nodes in
@@ -1662,7 +1657,7 @@ let rec invalidate_live_node t lane lifecycle ~invalidate_scope node =
     let timer_hooks = lifecycle.invalidation_timer_hooks node in
     lifecycle.invalidation_set_invalid node;
     let tombstone = lifecycle.invalidation_tombstone node in
-    remember_dead_node t lane ~id:lifecycle.invalidation_tombstone_id tombstone;
+    remember_dead_node t lane tombstone;
     let observer_hooks = lifecycle.invalidation_observer_hooks node in
     let dependents = lifecycle.invalidation_detach_edges node in
     let dependent_hooks =
@@ -1739,6 +1734,10 @@ let update_necessity t lane plan =
   Core.update_necessary_ids t.core lane next;
   next
 
-let dead_node_count t _lane = List.length t.dead_nodes
-let iter_dead_nodes t _lane ~f = List.iter f t.dead_nodes
-let map_dead_nodes t _lane ~f = List.map f t.dead_nodes
+let dead_node_count t _lane = Eta_signal_tombstone_index.length t.dead_nodes
+
+let iter_dead_nodes t _lane ~f =
+  Eta_signal_tombstone_index.iter t.tombstone_counters ~f t.dead_nodes
+
+let map_dead_nodes t _lane ~f =
+  Eta_signal_tombstone_index.map t.tombstone_counters ~f t.dead_nodes

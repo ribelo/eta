@@ -54,3 +54,37 @@ let note_iteration_visit counters =
 let note_duplicate_scan_step counters =
   if counters.enabled then
     counters.duplicate_scan_steps <- succ counters.duplicate_scan_steps
+
+let capacity = 1024
+
+type 'a t = {
+  slots : 'a option array;
+  mutable next : int;
+  mutable length : int;
+}
+
+let create () = { slots = Array.make capacity None; next = 0; length = 0 }
+
+let insert counters entry ring =
+  note_slot_write counters;
+  if ring.length = capacity then note_eviction counters
+  else ring.length <- ring.length + 1;
+  ring.slots.(ring.next) <- Some entry;
+  ring.next <- (ring.next + 1) mod capacity
+
+let length ring = ring.length
+
+let iter counters ~f ring =
+  for index = 0 to ring.length - 1 do
+    let slot = (ring.next - 1 - index + capacity) mod capacity in
+    match ring.slots.(slot) with
+    | Some entry ->
+        note_iteration_visit counters;
+        f entry
+    | None -> ()
+  done
+
+let map counters ~f ring =
+  let mapped = ref [] in
+  iter counters ~f:(fun entry -> mapped := f entry :: !mapped) ring;
+  List.rev !mapped
