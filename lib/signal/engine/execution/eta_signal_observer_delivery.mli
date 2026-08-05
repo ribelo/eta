@@ -21,3 +21,20 @@ val note_acknowledgement_attempt : counters -> unit
 val note_acknowledgement_success : counters -> unit
 val note_release : counters -> unit
 val note_terminal_skip : counters -> unit
+
+type ('event, 'callback, 'error) runner
+
+val create :
+  active:('event -> (bool, 'error) Eta.Effect.t) ->
+  claim:('event -> (bool, 'error) Eta.Effect.t) ->
+  after_claim:(unit -> (unit, 'error) Eta.Effect.t) ->
+  construct:('event -> ('callback option, 'error) Eta.Effect.t) ->
+  run_callback:('event -> 'callback -> (unit, 'error) Eta.Effect.t) ->
+  acknowledge:('event -> (unit, 'error) Eta.Effect.t) ->
+  finish_error:('event -> delivered:bool -> (unit, 'error) Eta.Effect.t) ->
+  ('event, 'callback, 'error) runner
+
+val run :
+  ('event, 'callback, 'error) runner ->
+  'event list ->
+  (unit, 'error) Eta.Effect.t

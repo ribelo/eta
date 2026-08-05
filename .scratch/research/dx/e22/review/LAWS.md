@@ -279,12 +279,15 @@ scope validity, dependency attachment, structural events, and pending-plan state
 | SC02 | `of_equal` suppresses exactly when its predicate returns true. | `lib/signal/eta_signal.mli:127-142` | `cutoff constructors observe published then candidate` |
 | SC03 | `of_compare` suppresses exactly when its comparator returns zero. | `lib/signal/eta_signal.mli:127-142` | `cutoff constructors observe published then candidate` |
 | SC04 | Cutoff predicates receive the published value before the candidate. | `lib/signal/eta_signal.mli:127-142` | `cutoff constructors observe published then candidate`; `keyed_mapi_data_cutoff_receives_published_then_candidate` |
-| SC05 | Producer and observer cutoffs have distinct authority: producer suppression preserves the committed source, while observer suppression still advances the observer snapshot. | `lib/signal/eta_signal.mli:340-348,409-413` | `producer and observer cutoffs have distinct authority` |
-| SC06 | Balanced reduction copies the input array and preserves array order. | `lib/signal/eta_signal.mli:575-587` | `balanced reduction copies input and preserves order` |
-| SC07 | Empty balanced reduction publishes `identity` without combination work. | `lib/signal/eta_signal.mli:575-587` | `balanced reduction empty and final cutoff` |
-| SC08 | Initial balanced reduction combines every tree edge, while one changed child follows only its logarithmic path. | `lib/signal/eta_signal.mli:575-587` | `balanced reduction copies input and preserves order`; `balanced reduction internal cells never suppress` |
-| SC09 | Only the aggregate cell applies the final cutoff; internal cells never suppress candidates. | `lib/signal/eta_signal.mli:575-587` | `balanced reduction internal cells never suppress`; `balanced reduction empty and final cutoff` |
-| SC10 | `bind` exposes one labeled selector argument before its signal argument. | `lib/signal/eta_signal.mli:602-620` | `bind switch detaches stale dependency`; `bind selects initialized external bind`; public boundary positive typecheck |
+| SC05 | Producer and observer cutoffs have distinct authority: producer suppression preserves the committed source, while observer suppression still advances the observer snapshot. | `lib/signal/eta_signal.mli:341-349,415-419` | `producer and observer cutoffs have distinct authority` |
+| SC06 | Balanced reduction copies the input array and preserves array order. | `lib/signal/eta_signal.mli:585-600` | `balanced reduction copies input and preserves order` |
+| SC07 | Empty balanced reduction publishes `identity` without combination work. | `lib/signal/eta_signal.mli:585-600` | `balanced reduction empty and final cutoff` |
+| SC08 | Initial balanced reduction combines every tree edge, while one changed child follows only its logarithmic path. | `lib/signal/eta_signal.mli:585-600` | `balanced reduction copies input and preserves order`; `balanced reduction internal cells never suppress` |
+| SC09 | Only the aggregate cell applies the final cutoff; internal cells never suppress candidates. | `lib/signal/eta_signal.mli:585-600` | `balanced reduction internal cells never suppress`; `balanced reduction empty and final cutoff` |
+| SC10 | `bind` exposes one labeled selector argument before its signal argument. | `lib/signal/eta_signal.mli:612-630` | `bind switch detaches stale dependency`; `bind selects initialized external bind`; public boundary positive typecheck |
+| SC11 | `on_finish` runs exactly once after disposal or dynamic-scope invalidation. | `lib/signal/eta_signal.mli:407-413` | `observer finish hook runs exactly once`; `observer finish runs exactly once` |
+| SC12 | Disposal skips collected callbacks and clears pending delivery before the finish hook runs. | `lib/signal/eta_signal.mli:407-413,450-453` | `observer dispose skips collected event`; `observer finish hook runs exactly once`; `observer failure commits snapshot and retries delivery` |
+| SC13 | Observer callbacks follow one deterministic total topological plan: dependencies precede transitive consumers, same-signal observers use ascending observer identity, and ready unrelated groups use their smallest observer identity. | `lib/signal/eta_signal.mli:433-436` | `observer graph delivery order is deterministic`; `observer plan orders A/C/B counterexample all registrations`; `observer graph order uses staged bind switch` |
 
 ### Eta Signal keyed diagnostics laws
 
@@ -301,10 +304,10 @@ scope validity, dependency attachment, structural events, and pending-plan state
 | SD09 | Committed structural counts change only at commit. | `lib/signal/eta_signal.mli:249-280` | `test_keyed_stats_commit_transitions_only_after_commit`; `test_keyed_stats_live_gauges_follow_committed_state` |
 | SD10 | Completed keyed-plan rollbacks are counted. | `lib/signal/eta_signal.mli:249-280` | `test_keyed_stats_count_failed_attempt_and_rollback` |
 | SD11 | Saturated keyed counters produce `Counter_overflow`. | `lib/signal/eta_signal.mli:249-280,314-316`; `docs/requirements/eta-signal-map/keyed-map.md:126` | `test_keyed_stats_saturation_does_not_change_transaction` |
-| SD12 | DOT scope selection applies to keyed owners and children. | `lib/signal/eta_signal.mli:648-665`; `docs/requirements/eta-signal-map/keyed-map.md:127` | `test_keyed_dot_scope_selection_shows_keyed_nodes` |
-| SD13 | DOT state identifies keyed owners and committed-child scope metadata. | `lib/signal/eta_signal.mli:648-665`; `docs/requirements/eta-signal-map/keyed-map.md:128` | `test_keyed_dot_dynamic_scopes_show_committed_children` |
-| SD14 | Invalid keyed DOT state stays bounded and value-free. | `lib/signal/eta_signal.mli:648-665`; `docs/requirements/eta-signal-map/keyed-map.md:129` | `test_keyed_dot_invalid_tombstones_are_bounded_and_value_free` |
-| SD15 | Diagnostic reads do not alter keyed semantics or ownership. | `lib/signal/eta_signal.mli:648-665`; `docs/requirements/eta-signal-map/keyed-map.md:130` | `test_keyed_diagnostics_are_read_only` |
+| SD12 | DOT scope selection applies to keyed owners and children. | `lib/signal/eta_signal.mli:658-676`; `docs/requirements/eta-signal-map/keyed-map.md:127` | `test_keyed_dot_scope_selection_shows_keyed_nodes` |
+| SD13 | DOT state identifies keyed owners and committed-child scope metadata. | `lib/signal/eta_signal.mli:658-676`; `docs/requirements/eta-signal-map/keyed-map.md:128` | `test_keyed_dot_dynamic_scopes_show_committed_children` |
+| SD14 | Invalid keyed DOT state stays bounded and value-free. | `lib/signal/eta_signal.mli:658-676`; `docs/requirements/eta-signal-map/keyed-map.md:129` | `test_keyed_dot_invalid_tombstones_are_bounded_and_value_free` |
+| SD15 | Diagnostic reads do not alter keyed semantics or ownership. | `lib/signal/eta_signal.mli:658-676`; `docs/requirements/eta-signal-map/keyed-map.md:130` | `test_keyed_diagnostics_are_read_only` |
 
 ### Eta Signal Map complexity laws
 

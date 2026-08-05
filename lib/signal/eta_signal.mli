@@ -396,8 +396,11 @@ module Make (Observer_error : Observer_error) () : sig
   module Observer : sig
     type 'a t = 'a observer
 
+    type observer_finish = [ `Disposed | `Invalid_scope ]
+
     val observe :
       ?cutoff:'a Cutoff.t ->
+      ?on_finish:(observer_finish -> unit) list ->
       'a signal ->
       ('a update -> (unit, observer_error) Eta.Effect.t) ->
       ('a t, graph_error) Eta.Effect.t
@@ -405,7 +408,9 @@ module Make (Observer_error : Observer_error) () : sig
         observer does not run its callback; the first explicit stabilization
         initializes observed values and callbacks run after a consistent
         snapshot is published. If an observer is disposed before its callback is
-        delivered, the collected callback is skipped.
+        delivered, the collected callback is skipped. [?on_finish] runs exactly
+        once after disposal or dynamic-scope invalidation. Disposal clears
+        pending delivery before the hook runs.
 
         Without [?cutoff], observer callback emission uses {!Cutoff.phys_equal}.
         The observer's current value still advances to the latest stabilized
@@ -423,7 +428,12 @@ module Make (Observer_error : Observer_error) () : sig
         {!stabilize} as [`Observer_error err]. Ordinary exceptions raised while
         constructing the callback effect, or defects raised by the returned
         effect, are Eta defects, not typed observer errors. [Graph_error]
-        raised from graph APIs remains a typed graph failure. *)
+        raised from graph APIs remains a typed graph failure.
+
+        Callbacks collected for one stabilization follow one deterministic total
+        plan. Dependency observers run before transitive consumers. Observers on
+        the same signal run by ascending observer identity, and ready unrelated
+        groups run by their smallest observer identity. *)
 
     val read : 'a t -> ('a, observer_read_error) Eta.Effect.t
     (** Read the last stabilized observed value. This is the primary value-read

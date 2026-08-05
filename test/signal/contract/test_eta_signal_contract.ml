@@ -675,7 +675,7 @@ let test_observer_graph_delivery_order_is_deterministic () =
       (fun observer -> run_ok runtime (S.Observer.dispose observer))
       observers
   in
-  let check_dependency_order label registration_order =
+  let check_dependency_order label registration_order expected =
     let source = S.Var.create 1 in
     let upstream =
       S.Var.watch source |> S.map (fun value -> value + 1)
@@ -700,7 +700,6 @@ let test_observer_graph_delivery_order_is_deterministic () =
     let observers =
       List.map (fun name -> run_ok runtime (observe name)) registration_order
     in
-    let expected = [ "upstream"; "downstream"; "independent" ] in
     run_ok runtime S.stabilize;
     check_events (label ^ " initial dependency order") expected events;
     run_ok runtime (S.Var.set source 2);
@@ -709,11 +708,23 @@ let test_observer_graph_delivery_order_is_deterministic () =
     dispose_all observers
   in
   check_dependency_order "creation registration"
+    [ "upstream"; "downstream"; "independent" ]
     [ "upstream"; "downstream"; "independent" ];
+  check_dependency_order "independent middle registration"
+    [ "upstream"; "independent"; "downstream" ]
+    [ "upstream"; "independent"; "downstream" ];
   check_dependency_order "reverse dependency registration"
-    [ "downstream"; "upstream"; "independent" ];
+    [ "downstream"; "upstream"; "independent" ]
+    [ "upstream"; "downstream"; "independent" ];
+  check_dependency_order "ready independent registration"
+    [ "downstream"; "independent"; "upstream" ]
+    [ "independent"; "upstream"; "downstream" ];
   check_dependency_order "reverse registration"
-    [ "independent"; "downstream"; "upstream" ];
+    [ "independent"; "downstream"; "upstream" ]
+    [ "independent"; "upstream"; "downstream" ];
+  check_dependency_order "ready independent middle registration"
+    [ "independent"; "upstream"; "downstream" ]
+    [ "independent"; "upstream"; "downstream" ];
 
   let check_independent_order label registration_order =
     let source = S.Var.create 1 in
@@ -736,7 +747,7 @@ let test_observer_graph_delivery_order_is_deterministic () =
     let observers =
       List.map (fun name -> run_ok runtime (observe name)) registration_order
     in
-    let expected = [ "left"; "middle"; "right" ] in
+    let expected = registration_order in
     run_ok runtime S.stabilize;
     check_events (label ^ " initial independent order") expected events;
     run_ok runtime (S.Var.set source 2);
@@ -777,6 +788,64 @@ let test_observer_graph_delivery_order_is_deterministic () =
   run_ok runtime S.stabilize;
   check_events "same-signal changed observer order" expected events;
   dispose_all observers
+
+let test_observer_plan_orders_a_c_b_counterexample_all_registrations () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let check_case registration_order expected =
+    let selector = S.Var.create false in
+    let data = S.Var.create 1 in
+    let new_inner = ref None in
+    let owner =
+      S.bind (S.Var.watch selector) ~f:(fun use_new_inner ->
+          if use_new_inner then
+            match !new_inner with
+            | Some signal -> signal
+            | None -> Alcotest.fail "new inner signal was not installed"
+          else S.const 0)
+    in
+    let unrelated =
+      S.Var.watch data |> S.map (fun value -> value * 10)
+    in
+    let selected =
+      S.Var.watch data |> S.map (fun value -> value + 1)
+    in
+    new_inner := Some selected;
+    let events = ref [] in
+    let record label _update =
+      E.sync (fun () -> events := label :: !events)
+    in
+    let observe = function
+      | "A" -> S.Observer.observe owner (record "A")
+      | "B" -> S.Observer.observe selected (record "B")
+      | "C" -> S.Observer.observe unrelated (record "C")
+      | unexpected -> Alcotest.failf "unexpected observer label %S" unexpected
+    in
+    let observers =
+      List.map (fun label -> run_ok runtime (observe label)) registration_order
+    in
+    run_ok runtime S.stabilize;
+    events := [];
+    run_ok runtime (S.Var.set data 2);
+    run_ok runtime (S.Var.set selector true);
+    run_ok runtime S.stabilize;
+    Alcotest.(check (list string))
+      (String.concat "," registration_order ^ " keeps B before A")
+      expected (List.rev !events);
+    List.iter
+      (fun observer -> run_ok runtime (S.Observer.dispose observer))
+      observers
+  in
+  List.iter
+    (fun (registration_order, expected) -> check_case registration_order expected)
+    [
+      ([ "A"; "B"; "C" ], [ "B"; "A"; "C" ]);
+      ([ "A"; "C"; "B" ], [ "C"; "B"; "A" ]);
+      ([ "B"; "A"; "C" ], [ "B"; "A"; "C" ]);
+      ([ "B"; "C"; "A" ], [ "B"; "C"; "A" ]);
+      ([ "C"; "A"; "B" ], [ "C"; "B"; "A" ]);
+      ([ "C"; "B"; "A" ], [ "C"; "B"; "A" ]);
+    ]
 
 let test_observer_unsafe_read_exn_reports_invalid_state () =
   let module S = Eta_signal.Make (Observer_error) () in
@@ -1734,6 +1803,35 @@ let test_observer_dispose_skips_collected_event () =
     (List.rev !events);
   run_ok runtime (S.Observer.dispose first_observer)
 
+let test_observer_finish_hook_runs_exactly_once () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let signal = S.Var.watch source in
+  let finish_reasons = ref [] in
+  let callback_count = ref 0 in
+  let observer =
+    run_ok runtime
+      (S.Observer.observe
+         ~on_finish:
+           [ (fun reason -> finish_reasons := reason :: !finish_reasons) ]
+         signal
+         (fun _update ->
+           incr callback_count;
+           E.unit))
+  in
+  run_ok runtime (S.Observer.dispose observer);
+  run_ok runtime (S.Observer.dispose observer);
+  run_ok runtime S.stabilize;
+  Alcotest.(check (list string)) "finish hook runs once with disposal reason"
+    [ "disposed" ]
+    (List.map
+       (function
+         | `Disposed -> "disposed"
+         | `Invalid_scope -> "invalid_scope")
+       !finish_reasons);
+  Alcotest.(check int) "disposed observer skips callback" 0 !callback_count
+
 let test_observer_callbacks_read_consistent_published_snapshot () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -2465,6 +2563,10 @@ let () =
             test_observer_read_does_not_force_recompute;
           Alcotest.test_case "observer graph delivery order is deterministic"
             `Quick test_observer_graph_delivery_order_is_deterministic;
+          Alcotest.test_case
+            "observer plan orders A/C/B counterexample all registrations"
+            `Quick
+            test_observer_plan_orders_a_c_b_counterexample_all_registrations;
           Alcotest.test_case "observer unsafe read reports invalid state"
             `Quick test_observer_unsafe_read_exn_reports_invalid_state;
           Alcotest.test_case "diagnostics track observation and disposal"
@@ -2511,6 +2613,8 @@ let () =
             `Quick test_observer_lifecycle_changes_inside_callback;
           Alcotest.test_case "observer dispose skips collected event" `Quick
             test_observer_dispose_skips_collected_event;
+          Alcotest.test_case "observer finish hook runs exactly once" `Quick
+            test_observer_finish_hook_runs_exactly_once;
           Alcotest.test_case "observer callbacks read consistent snapshot"
             `Quick test_observer_callbacks_read_consistent_published_snapshot;
           Alcotest.test_case

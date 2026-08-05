@@ -129,6 +129,9 @@ module Snapshot : sig
 
   val value : ('a, 'after_ack) t -> 'a Value.t
   val delivery : ('a, 'after_ack) t -> ('a, 'after_ack) Delivery.t
+
+  val clear_pending_delivery :
+    ('a, 'after_ack) t -> ('a, 'after_ack) t
 end
 
 type ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port
@@ -139,6 +142,9 @@ val delivery_port :
   set_snapshot:
     ('capability -> 'live -> ('a, 'after_ack) Snapshot.t -> unit) ->
   run_after_ack:('capability -> 'after_ack list -> unit) ->
+  acknowledgement_attempt:('capability -> unit) ->
+  acknowledgement_success:('capability -> unit) ->
+  release:('capability -> unit) ->
   ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port
 
 val mark_failed_without_current :
@@ -232,7 +238,7 @@ type 'observer delivery_selection_plan
 
 val delivery_selection_plan :
   active:('observer -> bool) ->
-  compare:('observer -> 'observer -> int) ->
+  plan:('observer list -> 'observer list) ->
   'observer delivery_selection_plan
 
 type ('capability, 'observer, 'callback, 'error) delivery_event_source
@@ -249,6 +255,7 @@ val delivery_event_source_of_collect_event :
     ('capability ->
     'observer ->
     ('capability, 'callback, 'error) Delivery_event.t option) ->
+  finish_collection:('capability -> unit) ->
   ('capability, 'observer, 'callback, 'error) delivery_event_source
 
 val collect_delivery_event :

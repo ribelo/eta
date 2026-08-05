@@ -91,14 +91,6 @@ val version_ops :
   version:('node -> int) ->
   ('id, 'node) version_ops
 
-type ('id, 'node) order_ops
-
-val order_ops :
-  identity:('id, 'node) node_identity ->
-  compare_id:('id -> 'id -> int) ->
-  children:('node -> 'node list) ->
-  ('id, 'node) order_ops
-
 type ('id, 'node) reachable_ops
 
 val reachable_ops :
@@ -309,14 +301,6 @@ val versions_changed :
   current:('id * int) list ->
   'node list ->
   bool
-
-val compare_order :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
-  lane_access ->
-  ('id, 'node) order_ops ->
-  'node ->
-  'node ->
-  int
 
 type ('node, 'bind_node) bind_node_selection
 
@@ -679,6 +663,7 @@ type staged_bind_planning
 val staged_bind_planning : plan:(unit -> unit) -> staged_bind_planning
 
 val stabilization_observer_plan :
+  candidates:(lane_access -> 'observer list) ->
   delivery:
     (lane_access ->
     staging ->
@@ -686,10 +671,11 @@ val stabilization_observer_plan :
   plan_staged_binds:
     (lane_access -> staging -> 'observer list -> staged_bind_planning) ->
   ('observer, 'event) stabilization_observer_plan
-(** Capture active observers and defer graph-ordered delivery event collection
-    until the stabilization pass reaches the event collection phase. The graph
-    owns registry traversal; the observer subsystem owns active filtering,
-    delivery ordering, event collection, and pending-state marking. *)
+(** Capture the observer-work set and defer graph-ordered delivery event
+    collection until the stabilization pass reaches the event collection phase.
+    The kernel owns candidate admission and removal; the observer subsystem owns
+    active filtering, delivery ordering, event collection, and pending-state
+    marking. *)
 
 type ('bind, 'node, 'hook, 'timer) stabilization_commit_plan
 

@@ -554,3 +554,55 @@ nix develop -c dune build @install @signal-economics
   then failed in pre-existing non-Signal sources that use `effect` as an
   identifier. The Signal documentation emitted only existing ambiguity
   warnings.
+
+## 2026-08-06 - Slice 6 checkpoint: topological observer delivery engine
+
+- Replaced the O(n^2) pairwise observer comparator with one deterministic
+  total topological plan. `Eta_signal_observer_plan` (transaction engine)
+  builds the candidate union closure, runs Kahn-style traversal with an
+  array-backed binary min-heap, and owns candidate dedupe by observer
+  identity. Deleted `Graph.compare_order`, `Make_order`, `ORDER_NODE`,
+  `order_ops`, and `Id.compare_observer` in the same slice.
+- Replaced the delivery registry scan with an intrusive doubly-linked
+  candidate work set (`obs_candidate_previous/next` +
+  `observer_candidate_head`). Candidate admission on signal change and
+  observer registration is O(1); both delivery planning and atomic-pass
+  rollback iterate the candidate set instead of `t.observers`.
+- Candidate flags survive planning and collection until commit succeeds.
+  `delivery_event_source` gained `finish_collection`, invoked only after
+  `mark_pending` succeeds inside the sealed commit plan; rollback leaves
+  candidates intact so failed commits preserve retryable delivery work.
+  Work-ledger admit/release pairs the link transition, never double
+  releasing on acknowledge.
+- Moved the fail-fast sequential delivery runner into
+  `Eta_signal_observer_delivery` (`create`/`run`/`run_claimed`) so the
+  ownership table matches the specification: delivery termination lives in
+  the execution engine, not the kernel.
+- Exactly-once finish: `Snapshot.clear_pending_delivery` runs before the
+  `on_finish` hook, disposal/invalidation skip collected callbacks, and the
+  public `Observer.observe` gained `?on_finish`. Kernel tests prove
+  exactly-once finish on both disposal and dynamic-scope invalidation.
+- Wired `Eta_signal_observer_plan` and `Eta_signal_observer_delivery`
+  counters into the kernel `Extension` (snapshots plus reset). The kernel
+  counter test proves the planner visits only union members (no pairwise
+  reachability) for an unrelated-observer scenario.
+- Contract tests now cover all six registration orders of the A/C/B
+  counterexample and the dependent/independent scenario. Ready unrelated
+  groups select by smallest observer identity, then signal identity;
+  expectations are explicit per registration order.
+- LAWS.md gained SC11-SC13 (exactly-once finish, pending-clear/disposal
+  skip, deterministic total topological delivery order) with the normative
+  source span in `eta_signal.mli` observer docs.
+- Verified with:
+
+```sh
+nix develop -c dune build @install
+nix develop -c dune runtest test/signal test/signal_map test/laws --force
+nix develop -c dune build @signal-economics
+nix develop -c dune runtest test/signal/economics --force
+```
+
+- Remaining slice-6 work: align the public `Observer.observe` signature
+  with specification 8.1 (single `?on_finish`, labeled optional
+  `?on_update`, delete `Observer.unsafe_read_exn`), then final gates and
+  slice completion.

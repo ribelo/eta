@@ -51,9 +51,11 @@ module Make (Observer_error : Observer_error) () : sig
 
   module Observer : sig
     type 'a t = 'a observer
+    type observer_finish = [ `Disposed | `Invalid_scope ]
 
     val observe :
       ?cutoff:'a Eta_signal_cutoff.t ->
+      ?on_finish:(observer_finish -> unit) list ->
       'a signal ->
       ('a update -> (unit, observer_error) Eta.Effect.t) ->
       ('a t, graph_error) Eta.Effect.t

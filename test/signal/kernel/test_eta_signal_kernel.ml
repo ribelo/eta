@@ -197,6 +197,89 @@ let test_cleanup_hooks_own_pending_work () =
   Alcotest.(check int) "no cleanup means no phase entry" 0 atomic.phase_entries;
   Alcotest.(check int) "no cleanup is quiescent" 1 work.quiescent_returns
 
+let test_observer_delivery_counters_cover_plan_and_delivery () =
+  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  let source = S.Var.create 1 in
+  let signal = S.Var.watch source |> S.map succ in
+  let unrelated_source = S.Var.create 10 in
+  let unrelated_signal =
+    S.Var.watch unrelated_source |> S.map (fun value -> value + 10)
+  in
+  let observer = run_ok runtime (S.Observer.observe signal (fun _ -> E.unit)) in
+  let unrelated_observer =
+    run_ok runtime (S.Observer.observe unrelated_signal (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  S.Extension.reset_counters ();
+  run_ok runtime (S.Var.set source 2);
+  run_ok runtime S.stabilize;
+  let plan = S.Extension.observer_plan_counter_snapshot () in
+  let delivery = S.Extension.observer_delivery_counter_snapshot () in
+  Alcotest.(check int) "one candidate visit" 1 plan.candidate_visits;
+  Alcotest.(check int) "two union node visits" 2 plan.union_node_visits;
+  Alcotest.(check int) "one union edge visit" 1 plan.union_edge_visits;
+  Alcotest.(check int) "one ready push" 1 plan.ready_pushes;
+  Alcotest.(check int) "one ready pop" 1 plan.ready_pops;
+  Alcotest.(check int) "no pairwise search" 0 plan.pairwise_search_visits;
+  Alcotest.(check int) "one lifecycle check" 1 delivery.lifecycle_checks;
+  Alcotest.(check int) "one callback attempt" 1 delivery.callback_attempts;
+  Alcotest.(check int) "one acknowledgement attempt" 1
+    delivery.acknowledgement_attempts;
+  Alcotest.(check int) "one acknowledgement success" 1
+    delivery.acknowledgement_successes;
+  Alcotest.(check int) "no delivery release" 0 delivery.releases;
+  Alcotest.(check int) "no terminal skip" 0 delivery.terminal_skips;
+  run_ok runtime (S.Observer.dispose observer);
+  run_ok runtime (S.Observer.dispose unrelated_observer)
+
+let test_observer_finish_runs_exactly_once () =
+  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  let idle_source = S.Var.create 1 in
+  let idle_signal = S.Var.watch idle_source in
+  let idle_finish_count = ref 0 in
+  let idle_callback_count = ref 0 in
+  let idle_observer =
+    run_ok runtime
+      (S.Observer.observe_delivery
+         ~on_finish:[ (fun _reason -> incr idle_finish_count) ]
+         idle_signal
+         (fun _delivery ->
+           incr idle_callback_count;
+           E.unit))
+  in
+  run_ok runtime (S.Observer.dispose idle_observer);
+  run_ok runtime (S.Observer.dispose idle_observer);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "idle finish runs once" 1 !idle_finish_count;
+  Alcotest.(check int) "idle disposal skips callback" 0 !idle_callback_count;
+
+  let running_source = S.Var.create 1 in
+  let running_signal = S.Var.watch running_source in
+  let running_finish_count = ref 0 in
+  let running_callback_count = ref 0 in
+  let running_observer = ref None in
+  let observer =
+    run_ok runtime
+      (S.Observer.observe_delivery
+         ~on_finish:[ (fun _reason -> incr running_finish_count) ]
+         running_signal
+         (fun _delivery ->
+           incr running_callback_count;
+           match !running_observer with
+           | Some observer ->
+               S.Observer.dispose observer
+               |> E.or_die (fun error -> S.Graph_error error)
+           | None -> E.unit))
+  in
+  running_observer := Some observer;
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Observer.dispose observer);
+  run_ok runtime (S.Var.set running_source 2);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "running finish runs once" 1 !running_finish_count;
+  Alcotest.(check int) "running callback completed once" 1
+    !running_callback_count
+
 let () =
   Alcotest.run "eta_signal_kernel"
     [
@@ -216,5 +299,9 @@ let () =
             test_timer_work_blocks_quiescent_stabilize;
           Alcotest.test_case "cleanup hooks own pending work" `Quick
             test_cleanup_hooks_own_pending_work;
+          Alcotest.test_case "observer delivery counters cover plan and delivery"
+            `Quick test_observer_delivery_counters_cover_plan_and_delivery;
+          Alcotest.test_case "observer finish runs exactly once" `Quick
+            test_observer_finish_runs_exactly_once;
         ] );
     ]

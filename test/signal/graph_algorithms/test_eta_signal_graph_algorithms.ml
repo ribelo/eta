@@ -39,16 +39,6 @@ module Reachable = Graph_algorithms.Make_reachable (struct
   let children (P node) = node.dependencies
 end)
 
-module Order = Graph_algorithms.Make_order (struct
-  type id = int
-  type t = node
-
-  let id node = node.id
-  let equal_id = Int.equal
-  let compare_id = Int.compare
-  let children node = List.map (fun (P child) -> child) node.dependencies
-end)
-
 module Versions = Graph_algorithms.Make_versions (struct
   type id = int
   type nonrec packed = packed
@@ -280,35 +270,6 @@ let test_demand_classification_preserves_resource_order () =
     (Graph_algorithms.Demand.classify_resources ~necessary:(id_table [ 2 ])
        resources
     |> demand_resource_states)
-
-let test_order_dependencies_precede_dependents () =
-  let dependent = node 3 in
-  let dependency = node 1 in
-  dependent.dependencies <- [ P dependency ];
-  Alcotest.(check bool) "depends on" true
-    (Order.depends_on dependent dependency);
-  Alcotest.(check int) "dependent after dependency" 1
-    (Order.compare dependent dependency);
-  Alcotest.(check int) "dependency before dependent" (-1)
-    (Order.compare dependency dependent)
-
-let test_order_independent_nodes_use_id_order () =
-  let left = node 1 in
-  let right = node 3 in
-  Alcotest.(check int) "left before right" (-1) (Order.compare left right);
-  Alcotest.(check int) "right after left" 1 (Order.compare right left);
-  Alcotest.(check int) "same node" 0 (Order.compare left left)
-
-let test_order_handles_cycles_and_repeated_children () =
-  let first = node 1 in
-  let second = node 2 in
-  let missing = node 3 in
-  first.dependencies <- [ P second; P second ];
-  second.dependencies <- [ P first ];
-  Alcotest.(check bool) "cycle dependency" true
-    (Order.depends_on first second);
-  Alcotest.(check bool) "cycle terminates" false
-    (Order.depends_on first missing)
 
 let test_versions_snapshot_preserves_order () =
   let left = node ~version:10 1 in
@@ -641,15 +602,6 @@ let () =
             test_demand_classifies_resources;
           Alcotest.test_case "classification preserves resource order" `Quick
             test_demand_classification_preserves_resource_order;
-        ] );
-      ( "order",
-        [
-          Alcotest.test_case "dependencies precede dependents" `Quick
-            test_order_dependencies_precede_dependents;
-          Alcotest.test_case "independent nodes use id order" `Quick
-            test_order_independent_nodes_use_id_order;
-          Alcotest.test_case "handles cycles and repeated children" `Quick
-            test_order_handles_cycles_and_repeated_children;
         ] );
       ( "versions",
         [

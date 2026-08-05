@@ -81,21 +81,6 @@ module Demand : sig
   val resource_state_necessary : _ resource_state -> bool
 end
 
-module type ORDER_NODE = sig
-  type id
-  type t
-
-  val id : t -> id
-  val equal_id : id -> id -> bool
-  val compare_id : id -> id -> int
-  val children : t -> t list
-end
-
-module Make_order (Node : ORDER_NODE) : sig
-  val depends_on : Node.t -> Node.t -> bool
-  val compare : Node.t -> Node.t -> int
-end
-
 module type VERSION_NODE = sig
   type id
   type packed

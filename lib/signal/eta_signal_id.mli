@@ -21,4 +21,3 @@ val scope_label : scope -> string
 val var_label : var -> string
 val observer_label : observer -> string
 
-val compare_observer : observer -> observer -> int

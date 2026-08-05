@@ -14,6 +14,8 @@ module Signal_snapshot = Graph_algorithms.Snapshot
 module Observer_core = Eta_signal_observer
 module Observer_snapshot = Observer_core.Snapshot
 module Observer_lifecycle = Observer_core.Lifecycle
+module Observer_plan = Eta_signal_observer_plan
+module Observer_delivery_counters = Eta_signal_observer_delivery
 module Node_lifetime = Eta_signal_node
 module Demand = Eta_signal_demand
 module Scheduler = Eta_signal_scheduler
@@ -444,6 +446,9 @@ module Make (Observer_error : Observer_error) () = struct
     | Reconciliation_rollback_count ->
         keyed_counters.reconciliation_rollback_count <- value
 
+  let observer_plan_counters = Observer_plan.create_counters ()
+  let observer_delivery_counters = Observer_delivery_counters.create_counters ()
+
   let bump_keyed_counter counter =
     set_keyed_counter counter (saturating_succ (keyed_counter_value counter))
 
@@ -467,7 +472,6 @@ module Make (Observer_error : Observer_error) () = struct
   let scope_id_label = Id.scope_label
   let var_id_label = Id.var_label
   let observer_id_label = Id.observer_label
-  let compare_observer_id = Id.compare_observer
 
   type weak_packed_signal = Graph_algorithms.Weak_cell.t
 
@@ -702,6 +706,7 @@ module Make (Observer_error : Observer_error) () = struct
     observer_snapshot :
       ('a, observer_after_ack_action) Observer_snapshot.t
       Transaction.staged;
+    mutable obs_owner : packed_observer option;
     mutable obs_on_finish : (Observer_lifecycle.finish_reason -> unit) list;
   }
 
@@ -718,6 +723,8 @@ module Make (Observer_error : Observer_error) () = struct
       (unit, observer_error) Effect.t;
     mutable obs_state : 'a observer_state;
     mutable obs_candidate : bool;
+    mutable obs_candidate_previous : packed_observer option;
+    mutable obs_candidate_next : packed_observer option;
   }
 
   and packed_observer = O : 'a observer -> packed_observer
@@ -1399,15 +1406,83 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_delivery_pending snapshot =
     Observer_core.Delivery.pending (Observer_snapshot.delivery snapshot)
 
+  let observer_candidate_head = ref None
+
+  let link_observer_candidate observer =
+    if observer.obs_candidate then false
+    else (
+      observer.obs_candidate <- true;
+      observer.obs_candidate_previous <- None;
+      observer.obs_candidate_next <- !observer_candidate_head;
+      (match !observer_candidate_head with
+       | Some (O head) ->
+           head.obs_candidate_previous <- Some (O observer)
+       | None -> ());
+      observer_candidate_head := Some (O observer);
+      true)
+
+  let unlink_observer_candidate observer =
+    if not observer.obs_candidate then false
+    else (
+      observer.obs_candidate <- false;
+      let previous = observer.obs_candidate_previous in
+      let next = observer.obs_candidate_next in
+      (match previous with
+       | Some (O previous_observer) ->
+           previous_observer.obs_candidate_next <- next
+       | None -> observer_candidate_head := next);
+      (match next with
+       | Some (O next_observer) ->
+           next_observer.obs_candidate_previous <- previous
+       | None -> ());
+      observer.obs_candidate_previous <- None;
+      observer.obs_candidate_next <- None;
+      true)
+
+  let observer_candidates () =
+    let rec collect candidates = function
+      | Some (O observer as packed) ->
+          collect (packed :: candidates) observer.obs_candidate_next
+      | None -> List.rev candidates
+    in
+    collect [] !observer_candidate_head
+
+  let observer_has_pending_delivery (O observer) =
+    match observer_active_live_state observer with
+    | Some live
+      when observer_delivery_pending (observer_current_snapshot live) ->
+        true
+    | Some _ | None -> false
+
+  let mark_observer_candidate observer =
+    if link_observer_candidate observer then
+      Work.admit work Work.Observer_delivery
+
+  let clear_observer_candidate observer =
+    if unlink_observer_candidate observer
+       && not (observer_has_pending_delivery (O observer))
+    then Work.release work Work.Observer_delivery
+
+  let finish_observer_candidate observer =
+    if not (observer_has_pending_delivery (O observer)) then
+      clear_observer_candidate observer
+
   let set_observer_current live snapshot =
     let was_pending =
       observer_delivery_pending (observer_current_snapshot live)
     in
     let is_pending = observer_delivery_pending snapshot in
     publish_observer_current live.observer_snapshot snapshot;
-    if was_pending <> is_pending then
-      if is_pending then Work.admit work Work.Observer_delivery
-      else Work.release work Work.Observer_delivery
+    if (not was_pending) && is_pending then (
+      match live.obs_owner with
+      | Some (O observer) -> mark_observer_candidate observer
+      | None -> Work.admit work Work.Observer_delivery)
+    else if was_pending && not is_pending then (
+      match live.obs_owner with
+      | Some (O observer) when observer.obs_candidate ->
+          ignore (unlink_observer_candidate observer);
+          Work.release work Work.Observer_delivery
+      | Some _ | None -> Work.release work Work.Observer_delivery)
 
   let observer_active (O observer) =
     Observer_lifecycle.active observer.obs_state
@@ -1490,23 +1565,26 @@ module Make (Observer_error : Observer_error) () = struct
         set_observer_current live snapshot)
       ~run_after_ack:(fun (_lane : graph_lane) actions ->
         run_after_ack_actions_unlocked actions)
-
-  let mark_observer_candidate observer =
-    if not observer.obs_candidate then (
-      observer.obs_candidate <- true;
-      Work.admit work Work.Observer_delivery)
-
-  let clear_observer_candidate observer =
-    if observer.obs_candidate then (
-      observer.obs_candidate <- false;
-      Work.release work Work.Observer_delivery)
+      ~acknowledgement_attempt:(fun _lane ->
+        Observer_delivery_counters.note_acknowledgement_attempt
+          observer_delivery_counters)
+      ~acknowledgement_success:(fun _lane ->
+        Observer_delivery_counters.note_acknowledgement_success
+          observer_delivery_counters)
+      ~release:(fun _lane ->
+        Observer_delivery_counters.note_release observer_delivery_counters)
 
   let release_observer_delivery_work observer =
-    clear_observer_candidate observer;
+    let had_candidate = observer.obs_candidate in
+    let had_pending = observer_has_pending_delivery (O observer) in
+    ignore (unlink_observer_candidate observer);
+    if had_candidate || had_pending then
+      Work.release work Work.Observer_delivery;
     match observer_active_live_state observer with
-    | Some live
-      when observer_delivery_pending (observer_current_snapshot live) ->
-        Work.release work Work.Observer_delivery
+    | Some live when had_pending ->
+        publish_observer_current live.observer_snapshot
+          (Observer_snapshot.clear_pending_delivery
+             (observer_current_snapshot live))
     | Some _ | None -> ()
 
   let dispose_observer_unlocked lane observer =
@@ -3029,19 +3107,17 @@ module Make (Observer_error : Observer_error) () = struct
     | Map7 _ | Map8 _ | Map9 _ | All _ | Keyed _ ->
         signal_dependencies signal
 
-  let order_ops =
-    Graph.order_ops ~identity:graph_node_identity
-      ~compare_id:(fun left right ->
-        Int.compare (signal_id_int left) (signal_id_int right))
-      ~children:(fun (P signal) -> observer_order_dependencies signal)
+  let observer_plan_access =
+    Observer_plan.access
+      ~node_id:(fun (P signal) -> signal_id_int signal.id)
+      ~dependencies:(fun (P signal) -> observer_order_dependencies signal)
+      ~observer_id:(fun (O observer) -> observer_id_int observer.obs_id)
+      ~observed:(fun (O observer) -> P observer.obs_signal)
 
-  let compare_observer_graph_order lane (O left) (O right) =
-    let signal_order =
-      Graph.compare_order graph lane order_ops (P left.obs_signal)
-        (P right.obs_signal)
-    in
-    if signal_order = 0 then compare_observer_id left.obs_id right.obs_id
-    else signal_order
+  let plan_observer_delivery_order observers =
+    Observer_plan.plan observer_plan_counters observer_plan_access
+      ~cycle:(fun () -> raise (Graph_error `Cycle))
+      observers
 
   let collect_observed_bind_nodes _lane _observers =
     Hashtbl.fold
@@ -3102,7 +3178,11 @@ module Make (Observer_error : Observer_error) () = struct
         Eta.Exit.Error (Eta.Cause.Fail (err :> stabilize_error))
 
   let event_observer_active (_lane : graph_lane) observer =
-    observer_active (O observer)
+    Observer_delivery_counters.note_lifecycle_check observer_delivery_counters;
+    let active = observer_active (O observer) in
+    if not active then
+      Observer_delivery_counters.note_terminal_skip observer_delivery_counters;
+    active
 
   let construct_observer_effect (_lane : graph_lane) observer token update =
     try Ok (Some (observer.obs_callback token update))
@@ -3117,6 +3197,8 @@ module Make (Observer_error : Observer_error) () = struct
       Observer_core.delivery_event_callback_plan
         ~construct:construct_observer_effect
         ~run_callback:(fun observer token observer_eff ->
+          Observer_delivery_counters.note_callback_attempt
+            observer_delivery_counters;
           run_observer_effect observer token observer_eff)
     in
     Observer_core.delivery_event_port ~activation ~callback
@@ -3156,13 +3238,20 @@ module Make (Observer_error : Observer_error) () = struct
         (observer_update_collection_port staging invalidations)
     in
     let event = Observer_core.collect_delivery_event source lane observer in
-    clear_observer_candidate observer;
     event
 
   let observer_delivery_event_source staging =
+    let collected_observers = ref [] in
     Observer_core.delivery_event_source_of_collect_event
-      ~collect_event:(fun lane (O observer) ->
-        collect_typed_observer_event staging lane observer)
+      ~collect_event:(fun lane (O observer as packed) ->
+        let event = collect_typed_observer_event staging lane observer in
+        collected_observers := packed :: !collected_observers;
+        event)
+      ~finish_collection:(fun _lane ->
+        List.iter
+          (fun (O observer) -> finish_observer_candidate observer)
+          !collected_observers;
+        collected_observers := [])
 
   let run_events events =
     Observer_core.Delivery_event.run
@@ -3193,13 +3282,14 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let observers =
       Graph.stabilization_observer_plan
+        ~candidates:(fun _lane -> observer_candidates ())
         ~delivery:(fun lane staging ->
           let selection =
             Observer_core.delivery_selection_plan
               ~active:(fun observer ->
                 observer_active observer
                 && observer_delivery_candidate observer)
-              ~compare:(compare_observer_graph_order lane)
+              ~plan:plan_observer_delivery_order
           in
           Observer_core.delivery_event_collection ~selection
             (observer_delivery_event_source staging))
@@ -3362,7 +3452,12 @@ module Make (Observer_error : Observer_error) () = struct
 
   module Observer = struct
     type 'a t = 'a observer
+    type observer_finish = [ `Disposed | `Invalid_scope ]
     type delivery_token = Observer_core.Delivery.token
+
+    let finish_of_lifecycle = function
+      | Observer_lifecycle.Finish_disposed -> `Disposed
+      | Observer_lifecycle.Finish_invalid_scope -> `Invalid_scope
 
     type 'a delivery =
       (delivery_token, 'a update, observer_after_ack_action)
@@ -3400,6 +3495,7 @@ module Make (Observer_error : Observer_error) () = struct
                    {
                      observer_snapshot =
                        Transaction.create_staged Observer_snapshot.initial;
+                     obs_owner = None;
                      obs_on_finish = on_finish;
                    }
                  in
@@ -3412,8 +3508,11 @@ module Make (Observer_error : Observer_error) () = struct
                        (fun token update -> callback observer token update);
                      obs_state = Observer_lifecycle.Registering live;
                      obs_candidate = false;
+                     obs_candidate_previous = None;
+                     obs_candidate_next = None;
                    }
                  in
+                 live.obs_owner <- Some (O observer);
                  adjust_demand_many lane (observer_reference_demand_roots signal) 1;
                  mark_observer_candidate observer;
                  signal.signal_observers <-
@@ -3435,9 +3534,14 @@ module Make (Observer_error : Observer_error) () = struct
         (fun observer token update ->
           callback (delivery observer token update))
 
-    let observe ?cutoff signal callback =
-      observe_delivery_callback ?cutoff signal (fun _observer _token update ->
-          callback update)
+    let observe ?cutoff ?(on_finish = []) signal callback =
+      let on_finish =
+        List.map
+          (fun hook reason -> hook (finish_of_lifecycle reason))
+          on_finish
+      in
+      observe_delivery_callback ?cutoff ~on_finish signal
+        (fun _observer _token update -> callback update)
 
     let read observer =
       with_graph_lane_sync (fun () ->
@@ -4332,7 +4436,9 @@ module Make (Observer_error : Observer_error) () = struct
       Demand.reset_counters demand_counters;
       Scheduler.reset_counters scheduler_counters;
       Topology.reset_counters topology_counters;
-      Work.reset_counters work_counters
+      Work.reset_counters work_counters;
+      Observer_plan.reset_counters observer_plan_counters;
+      Observer_delivery_counters.reset_counters observer_delivery_counters
 
     let atomic_pass_counter_snapshot () =
       Atomic_pass.counter_snapshot (Graph.atomic_pass_counters graph)
@@ -4344,6 +4450,12 @@ module Make (Observer_error : Observer_error) () = struct
       Topology.counter_snapshot topology_counters
 
     let work_counter_snapshot () = Work.counter_snapshot work_counters
+
+    let observer_plan_counter_snapshot () =
+      Observer_plan.counter_snapshot observer_plan_counters
+
+    let observer_delivery_counter_snapshot () =
+      Observer_delivery_counters.counter_snapshot observer_delivery_counters
 
     let generation () =
       with_graph_lane_access (fun lane -> Graph.generation graph lane)

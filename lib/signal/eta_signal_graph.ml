@@ -475,12 +475,6 @@ type ('id, 'node) version_ops = {
   version : 'node -> int;
 }
 
-type ('id, 'node) order_ops = {
-  order_identity : ('id, 'node) node_identity;
-  order_compare_id : 'id -> 'id -> int;
-  order_children : 'node -> 'node list;
-}
-
 type ('id, 'node) reachable_ops = {
   reachable_id : 'node -> 'id;
   reachable_valid : 'node -> bool;
@@ -542,13 +536,6 @@ let compute_ops ~node ~pack ~seen_generation ~set_seen_generation
   }
 
 let version_ops ~identity ~version = { version_identity = identity; version }
-
-let order_ops ~identity ~compare_id ~children =
-  {
-    order_identity = identity;
-    order_compare_id = compare_id;
-    order_children = children;
-  }
 
 let reachable_ops ~id ~valid ~children =
   { reachable_id = id; reachable_valid = valid; reachable_children = children }
@@ -668,10 +655,6 @@ let dirty_equal_id ops left right =
 let version_id ops node = identity_id ops.version_identity node
 let version_equal_id ops left right =
   identity_equal ops.version_identity left right
-
-let order_id ops node = identity_id ops.order_identity node
-let order_equal_id ops left right =
-  identity_equal ops.order_identity left right
 
 let remove_by_id ops id node = not (edge_equal_id ops (edge_id ops node) id)
 
@@ -824,28 +807,6 @@ let rec same_version_snapshot ops left right =
 let versions_changed t lane ops ~current nodes =
   not
     (same_version_snapshot ops current (version_snapshot t lane ops nodes))
-
-let same_order_node ops left right =
-  order_equal_id ops (order_id ops left) (order_id ops right)
-
-let order_depends_on ops node dependency =
-  let target_id = order_id ops dependency in
-  let seen = Hashtbl.create 16 in
-  let rec visit candidate =
-    let candidate_id = order_id ops candidate in
-    if order_equal_id ops candidate_id target_id then true
-    else if Hashtbl.mem seen candidate_id then false
-    else (
-      Hashtbl.add seen candidate_id ();
-      List.exists visit (ops.order_children candidate))
-  in
-  List.exists visit (ops.order_children node)
-
-let compare_order _t _lane ops left right =
-  if same_order_node ops left right then 0
-  else if order_depends_on ops left right then 1
-  else if order_depends_on ops right left then -1
-  else ops.order_compare_id (order_id ops left) (order_id ops right)
 
 let fold_reachable _t _lane ops ~roots ~init ~f =
   let seen = Hashtbl.create 16 in
@@ -1356,11 +1317,6 @@ let collect_observer_diagnostics t _lane diagnostics =
       else None)
     t.observers
 
-let observer_delivery_plan t _lane delivery =
-  Eta_signal_observer.delivery_plan delivery ~observers:t.observers
-    ~capability:Fun.id
-    ~make_plan:Eta_signal_atomic_pass.observer_snapshot
-
 type 'pending stabilization_pending_plan = {
   pending_release_marks :
     lane_access -> 'pending list -> stabilization_pending_mark_release;
@@ -1395,6 +1351,7 @@ let run_stabilization_pending_stage lane staging pending plan =
   | Stabilization_pending_stage { stage_pending } -> stage_pending ()
 
 type ('observer, 'event) stabilization_observer_plan = {
+  observer_candidates : lane_access -> 'observer list;
   observer_delivery :
     lane_access ->
     staging ->
@@ -1409,8 +1366,9 @@ and staged_bind_planning =
 let staged_bind_planning ~plan =
   Staged_bind_planning { plan_staged_binds = plan }
 
-let stabilization_observer_plan ~delivery ~plan_staged_binds =
+let stabilization_observer_plan ~candidates ~delivery ~plan_staged_binds =
   {
+    observer_candidates = candidates;
     observer_delivery = delivery;
     observer_plan_staged_binds = plan_staged_binds;
   }
@@ -1567,7 +1525,9 @@ let atomic_ops t timer_refresh ops =
     ~observer_snapshot:(fun lane ->
       let staging = require_active_staging t in
       let delivery = ops.pure.observer_plan.observer_delivery lane staging in
-      observer_delivery_plan t lane delivery)
+      let observers = ops.pure.observer_plan.observer_candidates lane in
+      Eta_signal_observer.delivery_plan delivery ~observers ~capability:Fun.id
+        ~make_plan:Eta_signal_atomic_pass.observer_snapshot)
     ~stage_pending:(fun lane pending ->
       run_stabilization_pending_stage lane (require_active_staging t) pending
         ops.pure.pending_plan.pending_stage)
@@ -1595,7 +1555,8 @@ let atomic_ops t timer_refresh ops =
     ~requeue_pending:(fun lane pending ->
       run_stabilization_pending_requeue lane pending
         ops.rollback.requeue_pending)
-    ~rollback_observers:(fun _lane -> t.observers)
+    ~rollback_observers:(fun lane ->
+      ops.pure.observer_plan.observer_candidates lane)
 
 let run_stabilization t capability ~timer_refresh ops =
   Eta_signal_atomic_pass.run t.atomic_pass capability

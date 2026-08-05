@@ -75,3 +75,57 @@ let note_release counters =
 let note_terminal_skip counters =
   if counters.enabled then
     counters.terminal_skips <- succ counters.terminal_skips
+
+type ('event, 'callback, 'error) runner = {
+  active : 'event -> (bool, 'error) Eta.Effect.t;
+  claim : 'event -> (bool, 'error) Eta.Effect.t;
+  after_claim : unit -> (unit, 'error) Eta.Effect.t;
+  construct : 'event -> ('callback option, 'error) Eta.Effect.t;
+  run_callback : 'event -> 'callback -> (unit, 'error) Eta.Effect.t;
+  acknowledge : 'event -> (unit, 'error) Eta.Effect.t;
+  finish_error : 'event -> delivered:bool -> (unit, 'error) Eta.Effect.t;
+}
+
+let create ~active ~claim ~after_claim ~construct ~run_callback ~acknowledge
+    ~finish_error =
+  {
+    active;
+    claim;
+    after_claim;
+    construct;
+    run_callback;
+    acknowledge;
+    finish_error;
+  }
+
+let run_claimed runner event =
+  let open Eta.Syntax in
+  let delivered = ref false in
+  let delivery =
+    let* () = runner.after_claim () in
+    let* callback = runner.construct event in
+    match callback with
+    | None -> Eta.Effect.unit
+    | Some callback ->
+        let* () = runner.run_callback event callback in
+        let* () = Eta.Effect.sync (fun () -> delivered := true) in
+        runner.acknowledge event
+  in
+  Eta.Effect.on_exit
+    (function
+      | Eta.Exit.Ok _ -> Eta.Effect.unit
+      | Eta.Exit.Error _ -> runner.finish_error event ~delivered:!delivered)
+    delivery
+
+let rec run runner = function
+  | [] -> Eta.Effect.unit
+  | event :: rest ->
+      let open Eta.Syntax in
+      let* active = runner.active event in
+      if not active then run runner rest
+      else
+        let* claimed = runner.claim event in
+        if not claimed then run runner rest
+        else
+          let* () = run_claimed runner event in
+          run runner rest

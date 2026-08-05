@@ -18,6 +18,3 @@ let dead_signal_label id = "dead_" ^ signal_label id
 let scope_label id = "sc" ^ string_of_int (scope_int id)
 let var_label id = "v" ^ string_of_int (var_int id)
 let observer_label id = "o" ^ string_of_int (observer_int id)
-
-let compare_observer left right =
-  Int.compare (observer_int left) (observer_int right)
