@@ -138,7 +138,8 @@ let sliding ~capacity () =
 let enqueue t = Enqueue t
 let dequeue t = Dequeue t
 
-let with_lock (t : ('a, 'err) t) f = Sync_lock.use t.mutex f
+let with_lock (t : ('a, 'err) t) (f @ local once) =
+  Sync_lock.use t.mutex f
 
 let with_lock_during_cancel contract t f =
   contract.Runtime_contract.protect (fun () -> with_lock t f)
@@ -147,7 +148,16 @@ let close_result = function
   | Clean -> `Closed
   | Error error -> `Closed_with_error error
 
-let add_wakeup wakeups wakeup = Stdlib.Queue.add wakeup wakeups
+let add_wakeup (pending @ local) wakeup =
+  let wakeups =
+    match !pending with
+    | Some wakeups -> wakeups
+    | None ->
+        let wakeups = Stdlib.Queue.create () in
+        pending := Some wakeups;
+        wakeups
+  in
+  Stdlib.Queue.add wakeup wakeups
 
 let resolve_sender
     (sender : ('a, 'err) sender)
@@ -195,25 +205,37 @@ let rec resolve_wakeup_best_effort remaining wakeup =
     wakeup_notified wakeup
     || (remaining > 0 && resolve_wakeup_best_effort (remaining - 1) wakeup)
 
-let resolve_pending_wakeups pending =
-  let rec loop () =
-    if not (Stdlib.Queue.is_empty pending) then (
-      let wakeup = Stdlib.Queue.take pending in
-      ignore (resolve_wakeup_best_effort 1 wakeup : bool);
-      loop ())
-  in
-  loop ()
+let resolve_pending_wakeups = function
+  | None -> ()
+  | Some pending ->
+      let rec loop () =
+        if not (Stdlib.Queue.is_empty pending) then (
+          let wakeup = Stdlib.Queue.take pending in
+          ignore (resolve_wakeup_best_effort 1 wakeup : bool);
+          loop ())
+      in
+      loop ()
 
 let with_committed_wakeups_locked lock f =
-  let pending_wakeups = Stdlib.Queue.create () in
+  let pending_wakeups = ref None in
   Fun.protect
-    ~finally:(fun () -> resolve_pending_wakeups pending_wakeups)
+    ~finally:(fun () -> resolve_pending_wakeups !pending_wakeups)
     (fun () ->
       let result = lock (fun () -> f pending_wakeups) in
-      resolve_pending_wakeups pending_wakeups;
+      resolve_pending_wakeups !pending_wakeups;
       result)
 
-let with_committed_wakeups_sync t f =
+let with_committed_wakeups_sync t (f @ local once) =
+  let local_ pending_wakeups = ref None in
+  try
+    let result = with_lock t (fun () -> f pending_wakeups) in
+    resolve_pending_wakeups !pending_wakeups;
+    result
+  with exn ->
+    resolve_pending_wakeups !pending_wakeups;
+    raise exn
+
+let with_committed_wakeups_sync_global t f =
   with_committed_wakeups_locked (with_lock t) f
 
 let with_committed_wakeups_during_cancel contract t f =
@@ -700,7 +722,7 @@ let take t =
        | `Closed_with_error error -> Effect.fail (`Closed_with_error error))
 
 let close_with reason t =
-  with_committed_wakeups_sync t
+  with_committed_wakeups_sync_global t
     (fun wakeups ->
       match (t.shutdown, t.closed) with
       | true, _ | false, Some _ -> ()
@@ -713,7 +735,7 @@ let close t = close_with Clean t
 let close_with_error t error = close_with (Error error) t
 
 let shutdown t =
-  with_committed_wakeups_sync t
+  with_committed_wakeups_sync_global t
     (fun wakeups ->
       if not t.shutdown then (
         t.shutdown <- true;
