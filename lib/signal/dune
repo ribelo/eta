@@ -1,22 +1,4 @@
 (library
- (name eta_signal_support)
- (package eta_signal)
- (wrapped false)
- (modules
-  eta_signal_bind
-  eta_signal_cutoff
-  eta_signal_debug
-  eta_signal_error
-  eta_signal_graph
-  eta_signal_id
-  eta_signal_graph_algorithms
-  eta_signal_lane
-  eta_signal_observer
-  eta_signal_timer
-  eta_signal_timer_policy)
- (libraries eta eta_signal_engine))
-
-(library
  (name eta_signal)
  (public_name eta_signal)
  (modules eta_signal)

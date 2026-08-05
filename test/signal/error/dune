@@ -1,12 +1,12 @@
 (rule
  (target eta_signal_error.ml)
- (deps ../../../lib/signal/eta_signal_error.ml)
+ (deps ../../../lib/signal/engine/eta_signal_error.ml)
  (action
   (copy %{deps} %{target})))
 
 (rule
  (target eta_signal_error.mli)
- (deps ../../../lib/signal/eta_signal_error.mli)
+ (deps ../../../lib/signal/engine/eta_signal_error.mli)
  (action
   (copy %{deps} %{target})))
 

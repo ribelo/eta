@@ -1040,3 +1040,31 @@ nix develop -c dune runtest test/crux --force
 nix develop -c dune runtest test/signal test/signal_map test/signal_stream test/laws --force
 grep -rn "Owner_transaction" lib/ test/  # empty
 ```
+
+## 2026-05-21 — Slice 11: obsolete surfaces deleted
+
+- `eta_signal_support` library deleted. Its nine live modules
+  (bind, cutoff, debug, error, id, lane, observer, timer, timer_policy)
+  moved into `lib/signal/engine/` under the single private
+  `eta_signal_engine` library.
+- `Eta_signal_graph` and `Eta_signal_graph_algorithms` deleted as named
+  ports. Both were single-consumer: the kernel inlines them as internal
+  `Graph` and `Graph_algorithms` submodules. The kernel is the composition
+  root per spec section 13. Test copy seams retargeted to
+  `lib/signal/engine/`; the direct functor test
+  `test/signal/graph_algorithms/` is deleted (the algorithms execute
+  through the kernel suites).
+- Blanket registry debt `D-E22-004` replaced by claim-level dated rows
+  SDD-01..SDD-09 (exact spans, owner, 2026-08-31 follow-up).
+- Forbidden-name sweep: no `Eta_signal_graph`,
+  `Eta_signal_graph_algorithms`, `eta_signal_support`, `Owner_transaction`,
+  `Stream_bridge`, or `crux_graph` reference remains in lib/, test/, or
+  drivers/.
+- Production LOC: 24,019 -> TBD after this slice's consolidation (see
+  commit stat).
+- Verified with:
+
+```sh
+nix develop -c dune build @install
+nix develop -c dune runtest test/signal test/signal_map test/signal_stream test/laws test/crux --force
+```

@@ -724,7 +724,7 @@ No new or changed prose may use this table as an escape from same-change testing
 | D-E22-001 | Core interfaces `lib/eta/{capabilities,cause,duration,exit,mutable_ref,pool,portable_queue,promise,pubsub,random,runtime,runtime_contract,runtime_supervisor,sampler,string_helpers,supervisor,sync_lock,syntax}.mli`. | **DATED COVERAGE DEBT** — owner: Eta core maintainers; follow-up: claim-by-claim core registry by **2026-08-15**. |
 | D-E22-002 | HTTP interfaces under `lib/http/`, `lib/http_eio/`, `lib/http_js/`, `lib/http_service/`, `lib/http_service_eio/`, and `lib/http_tls_openssl/`. | **DATED COVERAGE DEBT** — owner: Eta HTTP maintainers; follow-up: HTTP registry linked to interop/conformance suites by **2026-08-31**. |
 | D-E22-003 | AI/integration interfaces under `lib/ai/`, `lib/exa/`, `lib/otel/`, and `lib/redacted/`. | **DATED COVERAGE DEBT** — owner: Eta integration maintainers; follow-up: integration registry by **2026-09-15**. |
-| D-E22-004 | Signal interfaces under `lib/signal/`. | **DATED COVERAGE DEBT** — owner: Eta signal maintainers; follow-up: signal law registry by **2026-08-31**. |
+| D-E22-004 | Signal interfaces under `lib/signal/`. | **CLOSED** — replaced by claim-level rows SDD-01 through SDD-09 (slice 11). |
 | D-E22-005 | Remaining extension interfaces under `lib/{blocking,cache,eio,js,js_stream,js_test,jsoo,linux_input,observability,par,router,schema,schema_test,sql,sql_driver,sql_dsl,stream,test,utop}/`. | **DATED COVERAGE DEBT** — owner: owning Eta package maintainers; follow-up: package-by-package registry by **2026-09-30**. |
 
 ## Eta AI provider-error laws (prospective claims in this change)
@@ -862,6 +862,26 @@ additional algebraic laws.
 | OACHAT-22 | The OpenRouter Responses codec keeps OpenRouter input-audio behavior without a provider parameter. | `lib/ai/openai_codec/eta_ai_openai_codec.mli:237-238` | `test/ai/openrouter/test_audio_laws.ml` `oachat-22 generated arbitrary bytes and base64 preserve exact OpenRouter audio wire through dedicated codec and provider`; public signature has no provider argument |
 | OACHAT-23 | Chat moderation category scores are finite numbers from 0.0 through 1.0, inclusive. | `lib/ai/openai/eta_ai_openai.mli:281-282` | `test_chat_audio_laws` `oachat generated moderation score representation and inclusive range classes preserve exact decode bodies` |
 | OACHAT-24 | Every public Chat request encoder applies input-audio validation before schema callbacks or wire encoding. | `lib/ai/openai_codec/eta_ai_openai_codec.mli:199-200` | `test_chat_audio_laws` `oachat generated role-format classes share canonical validation across nominal neutral and every public Chat codec path` (rejected classes execute zero schema callbacks; accepted classes execute every encoder callback) |
+
+### Eta Signal remaining claim-level dated debt (replaces blanket D-E22-004)
+
+Each row names one law-bearing claim that predates the V1 implementation and
+still lacks named executable coverage. Owner: Eta signal maintainers.
+Follow-up: **2026-08-31**. Claims whose V1 slices added or changed normative
+prose are already covered by the SC/SD/SX rows above and are not repeated
+here.
+
+| ID | Exact normative claim | Exact normative span |
+| --- | --- | --- |
+| SDD-01 | `Var.set` from observer callbacks is accepted but publishes by a later explicit stabilization; it fails with `Reentrant_update` while an effectful update owns the variable. | `lib/signal/eta_signal.mli:397-404` |
+| SDD-02 | `Var.update_effect` threads the current value through one typed effectful update and shares the `Reentrant_update` ownership contract. | `lib/signal/eta_signal.mli:405-409` |
+| SDD-03 | `Observer.read` returns the last stabilized observed value and reports dynamic-scope invalidation as typed `Invalid_scope`. | `lib/signal/eta_signal.mli:454-460` |
+| SDD-04 | `Observer.dispose` is idempotent, refreshes demand-owned timer cleanup before returning, preserves `Runtime_mismatch` in the typed channel, changes lifecycle state before cleanup runs, and keeps disposal-hook defects as defects. (The skip-collected-callbacks half is covered by SC12.) | `lib/signal/eta_signal.mli:462-470` |
+| SDD-05 | `bind` invalidates nodes of a replaced branch (`Invalid_scope` on capture), runs selectors as pure total functions with rollback closures outside the signal contract, and defaults the selected output cutoff to `phys_equal`. | `lib/signal/eta_signal.mli:631-651` |
+| SDD-06 | `stabilize` is transactional for pure recomputation, publishes observer currents and pending deliveries before timer refresh, disposal cleanup, and callbacks, and treats monotonic counter overflow as a pre-publication graph failure. | `lib/signal/eta_signal.mli:653-680` |
+| SDD-07 | `map` through `map9` propagate with a default `phys_equal` cutoff per arity. | `lib/signal/eta_signal.mli:490-604` |
+| SDD-08 | `Time.interval` publishes a monotonically increasing tick per cadence and reports `Deadline_overflow`/`Invalid_interval`/`Past_deadline` through `time_error`. | `lib/signal/eta_signal.mli:715-765` |
+| SDD-09 | General (non-keyed) stats fields are committed snapshots and noninterfering; SC17 registers the experiment for diagnostics as a whole but the per-field census predates it. | `lib/signal/eta_signal.mli:249-280` |
 
 ### Eta Signal stream laws
 
