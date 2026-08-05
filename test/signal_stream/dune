@@ -1,0 +1,17 @@
+(test
+ (name test_eta_signal_stream)
+ (modules test_eta_signal_stream)
+ (libraries
+  eta
+  eta_signal
+  eta_signal_stream
+  eta_signal_test_support
+  eta_stream
+  eta_eio
+  eta_test
+  alcotest
+  eio_main
+  unix)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

@@ -2,7 +2,9 @@
 set -u
 
 eta_signal_cma="$1"
+eta_signal_stream_cma="$2"
 eta_signal_dir="$(dirname "$eta_signal_cma")"
+eta_signal_stream_dir="$(dirname "$eta_signal_stream_cma")"
 build_root="$eta_signal_dir/../.."
 fixture_dir="$(dirname "$0")"
 tmp_dir="${TMPDIR:-/tmp}/eta-signal-negative-$$"
@@ -20,6 +22,8 @@ compile_fixture() {
     -I "$build_root/lib/eta/.eta.objs/byte" \
     -I "$build_root/lib/stream/.eta_stream.objs/byte" \
     -I "$eta_signal_dir/.eta_signal.objs/byte" \
+    -I "$eta_signal_stream_dir/.eta_signal_stream.objs/byte" \
+    -I "$eta_signal_stream_dir/private/.eta_signal_stream_bridge.objs/byte" \
     -c "$src" -o "$obj" >"$log" 2>&1
 }
 
@@ -114,7 +118,7 @@ for src in "$fixture_dir"/*_negative.ml; do
       expected_substrings=('Unbound value "Signal.Observer.dispose_checked"')
       ;;
     stream_to_signal_negative.ml)
-      expected_substrings=('Unbound value "Signal.Stream.to_signal"')
+      expected_substrings=('Unbound value "Signal_stream.to_signal"')
       ;;
     time_deadline_raw_int_negative.ml)
       expected_substrings=(

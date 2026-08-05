@@ -17,6 +17,9 @@ module Delivery_handle : sig
     unit ->
     (('token * 'update) option, 'error) Eta.Effect.t
 
+  val token : ('token, _, _) t -> 'token
+  val update : (_, 'update, _) t -> 'update
+
   val acknowledge_sent :
     ('token, 'update, _) t ->
     'token ->

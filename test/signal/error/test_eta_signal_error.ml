@@ -67,10 +67,7 @@ let test_time_and_stream_error_rendering () =
   Alcotest.(check string) "deadline overflow" "deadline arithmetic overflow"
     (render Error.pp_time_error `Deadline_overflow);
   Alcotest.(check string) "invalid interval" "invalid interval"
-    (render Error.pp_time_error `Invalid_interval);
-  Alcotest.(check string) "invalid capacity"
-    "stream bridge capacity must be positive"
-    (render Error.pp_stream_error `Invalid_capacity)
+    (render Error.pp_time_error `Invalid_interval)
 
 let test_observer_cause_maps_typed_failures () =
   let actual =

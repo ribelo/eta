@@ -63,7 +63,6 @@ module Make (Observer_error : Observer_error) () = struct
       | Dynamic_scope_invalidations
       | Nodes_became_necessary
       | Nodes_became_unnecessary
-      | Stream_bridge_drop_count
 
     let lane_depth_local : int Eta.Runtime_contract.local =
       Eta.Runtime_contract.create_local ()
@@ -123,10 +122,7 @@ module Make (Observer_error : Observer_error) () = struct
                 Impl.Graph.Nodes_became_necessary value
           | Nodes_became_unnecessary ->
               Impl.Graph.set_counter S.graph lane
-                Impl.Graph.Nodes_became_unnecessary value
-          | Stream_bridge_drop_count ->
-              Impl.Graph.set_stream_bridge_metrics S.graph lane
-                (Impl.Stream_bridge.create_metrics ~drop_count:value ()))
+                Impl.Graph.Nodes_became_unnecessary value)
 
     let registration_cleanup_on_error ~cleanup eff =
       S.cleanup_observer_registration_on_error cleanup eff

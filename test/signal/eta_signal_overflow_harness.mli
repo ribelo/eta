@@ -87,7 +87,6 @@ module Make (Observer_error : Observer_error) () : sig
       | Dynamic_scope_invalidations
       | Nodes_became_necessary
       | Nodes_became_unnecessary
-      | Stream_bridge_drop_count
 
     val stats_counter :
       name:string -> int -> (int, [> `Counter_overflow of string ]) result

@@ -14,8 +14,7 @@ type test_error =
   [ Signal.graph_error
   | Signal.observer_read_error
   | Signal.stabilize_error
-  | Signal.time_error
-  | Signal.stream_error ]
+  | Signal.time_error ]
 
 type no_error_test_error =
   [ No_error_signal.graph_error
@@ -213,29 +212,6 @@ let test_bind_can_select_initialized_external_bind () =
   Alcotest.(check int) "selected follows external bind switch" 26
     (run_ok runtime (S.Observer.read selected_observer));
   run_ok runtime (S.Observer.dispose selected_observer)
-
-let test_stream_bridge_emits_and_closes () =
-  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  let observer, stream = run_ok runtime (Signal.Stream.observe signal) in
-  run_ok runtime Signal.stabilize;
-  let first =
-    run_ok runtime (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
-  in
-  run_ok runtime (Signal.Var.set source 2);
-  run_ok runtime Signal.stabilize;
-  let second =
-    run_ok runtime (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
-  in
-  run_ok runtime (Signal.Observer.dispose observer);
-  let rest = run_ok runtime (Eta_stream.run_collect stream) in
-  match (first, second, rest) with
-  | ( [ Signal.Initialized 1 ],
-      [ Signal.Changed { old_value = 1; new_value = 2 } ],
-      [] ) ->
-      ()
-  | _ -> Alcotest.fail "unexpected stream updates"
 
 let test_interval_catches_up_with_test_clock () =
   Eta_test.with_test_clock @@ fun _sw clock runtime ->
@@ -613,48 +589,6 @@ let test_observer_failure_retries_pending_delivery () =
    | _ -> Alcotest.fail "expected pending delivery to retry");
   run_ok runtime (S.Observer.dispose observer)
 
-let test_stream_overflow_does_not_block_graph_progress () =
-  let module S = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun sw _clock runtime ->
-  let source = S.Var.create 0 in
-  let signal = S.Var.watch source in
-  let stream_observer, stream =
-    run_ok runtime (S.Stream.observe ~capacity:1 signal)
-  in
-  let observer_updates = ref [] in
-  let ordinary_observer =
-    run_ok runtime (S.Observer.observe signal ~on_update:(record observer_updates))
-  in
-  run_ok runtime S.stabilize;
-  let before_drop = run_ok runtime (S.stats ()) in
-  let progress =
-    Eio.Fiber.fork_promise ~sw (fun () ->
-        run_ok runtime (S.Var.set source 1);
-        run_ok runtime S.stabilize;
-        let after_drop = run_ok runtime (S.stats ()) in
-        let after_first_updates = List.length !observer_updates in
-        run_ok runtime (S.Var.set source 2);
-        run_ok runtime S.stabilize;
-        (after_drop, after_first_updates))
-  in
-  wait_until "full stream bridge stabilization" (fun () ->
-      Eio.Promise.is_resolved progress);
-  let after_drop, after_first_updates = Eio.Promise.await_exn progress in
-  Alcotest.(check int) "ordinary observer progressed" 2
-    after_first_updates;
-  Alcotest.(check int) "full bridge dropped one update"
-    (before_drop.S.stream_bridge_drop_count + 1)
-    after_drop.S.stream_bridge_drop_count;
-  Alcotest.(check int) "ordinary observer still progresses" 3
-    (List.length !observer_updates);
-  (match
-     run_ok runtime (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
-   with
-   | [ S.Initialized 0 ] -> ()
-   | _ -> Alcotest.fail "expected buffered initialized stream update");
-  run_ok runtime (S.Observer.dispose ordinary_observer);
-  run_ok runtime (S.Observer.dispose stream_observer)
-
 let () =
   Alcotest.run "eta_signal_public"
     [
@@ -668,8 +602,6 @@ let () =
             test_bind_switch_detaches_stale_dependency;
           Alcotest.test_case "bind selects initialized external bind" `Quick
             test_bind_can_select_initialized_external_bind;
-          Alcotest.test_case "stream bridge emits and closes" `Quick
-            test_stream_bridge_emits_and_closes;
           Alcotest.test_case "interval catches up with test clock" `Quick
             test_interval_catches_up_with_test_clock;
           Alcotest.test_case "deadline uses monotonic time" `Quick
@@ -690,7 +622,5 @@ let () =
             `Quick test_captured_branch_observer_invalidates_after_owner_gc;
           Alcotest.test_case "observer failure retries pending delivery" `Quick
             test_observer_failure_retries_pending_delivery;
-          Alcotest.test_case "stream overflow does not block graph progress"
-            `Quick test_stream_overflow_does_not_block_graph_progress;
         ] );
     ]

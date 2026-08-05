@@ -8,6 +8,7 @@ module Observer_error = struct
 end
 
 module Signal = Eta_signal.Make (Observer_error) ()
+module Signal_stream = Eta_signal_stream.Make (Signal.For_stream)
 
 type test_error =
   [ `Timeout
@@ -15,7 +16,7 @@ type test_error =
   | Signal.observer_read_error
   | Signal.stabilize_error
   | Signal.time_error
-  | Signal.stream_error ]
+  | Eta_signal_stream.stream_error ]
 
 let pp_hidden formatter _ = Format.pp_print_string formatter "<signal-jsoo-error>"
 
@@ -331,7 +332,8 @@ let test_stream_bridge_emits_and_closes done_ =
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
   let eff =
-    let* observer, stream = Signal.Stream.observe signal ~on_update:in    let* () = Signal.stabilize in
+    let* observer, stream = Signal_stream.observe signal in
+    let* () = Signal.stabilize in
     let* first = Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect in
     let* () = Signal.Var.set source 2 in
     let* () = Signal.stabilize in
@@ -351,7 +353,8 @@ let test_stream_bridge_full_queue_drops_without_blocking done_ =
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
   let eff =
-    let* observer, stream = Signal.Stream.observe ~capacity:1 signal ~on_update:in    let* () = Signal.stabilize in
+    let* observer, stream = Signal_stream.observe ~capacity:1 signal in
+    let* () = Signal.stabilize in
     let* () = Signal.Var.set source 2 in
     let* stabilize_exit =
       E.to_exit
@@ -519,7 +522,7 @@ let test_stream_invalid_scope_closes_with_error done_ =
           fail "stream invalid scope" "expected captured branch signal"
     in
     let* branch_observer, stream =
-      Signal.Stream.observe ~capacity:4 branch
+      Signal_stream.observe ~capacity:4 branch
     in
     let* () = Signal.stabilize in
     let* () = Signal.Var.set branch_source 1 in

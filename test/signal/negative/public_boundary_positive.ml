@@ -1,4 +1,5 @@
 module A = Eta_signal.Make_no_error ()
+module A_stream = Eta_signal_stream.Make (A.For_stream)
 module B = Eta_signal.Make_no_error ()
 
 let a_source = A.Var.create 1
@@ -28,7 +29,7 @@ let _read
   A.Observer.read observer
 
 let _dispose observer = A.Observer.dispose observer
-let _stream = A.Stream.observe a_signal
+let _stream = A_stream.observe a_signal
 let _stats () = A.stats ()
 
 let _now :

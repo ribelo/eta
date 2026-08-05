@@ -3,7 +3,7 @@
  (enabled_if
   (<> %{ocaml_version} 5.2.0+ox))
  (modes js)
- (libraries eta eta_signal eta_stream eta_jsoo eta_js_test js_of_ocaml)
+ (libraries eta eta_signal eta_signal_stream eta_stream eta_jsoo eta_js_test js_of_ocaml)
  (js_of_ocaml
   (flags --effects=cps)))
 

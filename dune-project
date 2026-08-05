@@ -44,8 +44,7 @@
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
-  eta_observability
-  eta_stream))
+  eta_observability))
 
 (package
  (name eta_signal_map)
@@ -56,6 +55,20 @@
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   (eta_signal (= :version))
+  (alcotest :with-test)
+  (qcheck :with-test)))
+
+(package
+ (name eta_signal_stream)
+ (synopsis "Stream bridge for Eta Signal observers")
+ (description
+  "eta_signal_stream publishes a bounded nonblocking stream view of eta_signal observer updates through the sealed Signal.For_stream capability.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  (eta_signal (= :version))
+  (eta_stream (= :version))
+  (eta_observability (= :version))
   (alcotest :with-test)
   (qcheck :with-test)))
 

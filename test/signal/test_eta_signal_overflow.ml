@@ -223,9 +223,7 @@ let test_stats_counter_saturation_is_typed_failure () =
   check "stats nodes_became_necessary"
     Test_signal.Overflow.Nodes_became_necessary;
   check "stats nodes_became_unnecessary"
-    Test_signal.Overflow.Nodes_became_unnecessary;
-  check "stats stream_bridge_drop_count"
-    Test_signal.Overflow.Stream_bridge_drop_count
+    Test_signal.Overflow.Nodes_became_unnecessary
 
 let test_registration_abort_cleanup_failure_is_suppressed () =
   let module Test_signal = Eta_signal_overflow_harness.Make (Observer_error) () in

@@ -19,7 +19,6 @@ type 'observer_error stabilize_error =
 type time_error =
   [ graph_error | `Deadline_overflow | `Invalid_interval | `Past_deadline ]
 
-type stream_error = [ graph_error | `Invalid_capacity ]
 
 let pp_graph_error ppf = function
   | `Ambiguous_scope -> Format.pp_print_string ppf "ambiguous dynamic scope"
@@ -78,8 +77,3 @@ let pp_time_error ppf = function
       Format.pp_print_string ppf "deadline arithmetic overflow"
   | `Invalid_interval -> Format.pp_print_string ppf "invalid interval"
   | `Past_deadline -> Format.pp_print_string ppf "deadline is in the past"
-
-let pp_stream_error ppf = function
-  | #graph_error as err -> pp_graph_error ppf err
-  | `Invalid_capacity ->
-      Format.pp_print_string ppf "stream bridge capacity must be positive"

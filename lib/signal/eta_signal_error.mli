@@ -21,7 +21,6 @@ type 'observer_error stabilize_error =
 type time_error =
   [ graph_error | `Deadline_overflow | `Invalid_interval | `Past_deadline ]
 
-type stream_error = [ graph_error | `Invalid_capacity ]
 
 val pp_graph_error : Format.formatter -> graph_error -> unit
 val pp_observer_read_error : Format.formatter -> observer_read_error -> unit
@@ -38,4 +37,3 @@ val observer_cause_to_stabilize :
   'observer_error stabilize_error Eta.Cause.t
 
 val pp_time_error : Format.formatter -> time_error -> unit
-val pp_stream_error : Format.formatter -> stream_error -> unit

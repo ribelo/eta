@@ -23,201 +23,6 @@ module Scope = Eta_signal_scope
 module Topology = Eta_signal_topology
 module Work = Eta_signal_work
 module Atomic_pass = Eta_signal_atomic_pass
-module Stream_bridge = struct
-  module Effect = Eta.Effect
-  module Queue = Eta.Queue
-  module Delivery_handle = Eta_signal_observer.Delivery_handle
-  module Observer_lifecycle = Eta_signal_observer.Lifecycle
-
-  let default_capacity = 1024
-
-  type metrics = { mutable drop_count : int }
-
-  let create_metrics ?(drop_count = 0) () = { drop_count }
-  let drop_count metrics = metrics.drop_count
-
-  let record_drop metrics =
-    if metrics.drop_count < max_int then
-      metrics.drop_count <- metrics.drop_count + 1
-
-  let create_queue ~capacity =
-    if capacity <= 0 then Error `Invalid_capacity
-    else Ok (Queue.dropping ~capacity ())
-
-  let create_stream ~capacity =
-    create_queue ~capacity
-    |> Result.map (fun queue -> (queue, Eta_stream.Stream.from_queue queue))
-
-  type ('token, 'update, 'error) observer_delivery =
-    ('token, 'update, unit -> unit) Delivery_handle.t
-
-  type ('queue_error, 'error) hooks = {
-    after_try_offer_before_ack : unit -> (unit, 'error) Effect.t;
-    after_drop_before_ack : unit -> (unit, 'error) Effect.t;
-    after_drop_acknowledged : unit -> unit;
-    on_closed_with_error : 'queue_error -> (unit, 'error) Effect.t;
-  }
-
-  let hooks ~metrics
-      ?(after_try_offer_before_ack = fun () -> Effect.unit)
-      ?(after_drop_before_ack = fun () -> Effect.unit)
-      ?(after_drop_acknowledged = fun () -> ())
-      ~on_closed_with_error () =
-    {
-      after_try_offer_before_ack;
-      after_drop_before_ack;
-      after_drop_acknowledged =
-        (fun () ->
-          record_drop metrics;
-          after_drop_acknowledged ());
-      on_closed_with_error;
-    }
-
-  type ('finish_reason, 'queue_error) finish_policy = {
-    is_invalid_scope : 'finish_reason -> bool;
-    invalid_scope_error : 'queue_error;
-  }
-
-  let finish_policy ~is_invalid_scope ~invalid_scope_error =
-    { is_invalid_scope; invalid_scope_error }
-
-  let observer_finish_policy =
-    finish_policy
-      ~is_invalid_scope:(function
-        | Observer_lifecycle.Finish_disposed -> false
-        | Observer_lifecycle.Finish_invalid_scope -> true)
-      ~invalid_scope_error:`Invalid_scope
-
-  let finish_hook ~queue ~policy reason =
-    if policy.is_invalid_scope reason then
-      Queue.close_with_error queue policy.invalid_scope_error
-    else Queue.close queue
-
-  let observer_finish_hook ~queue reason =
-    finish_hook ~queue ~policy:observer_finish_policy reason
-
-  let acknowledge_once acknowledged acknowledge =
-    if !acknowledged then Effect.unit
-    else
-      let open Eta.Syntax in
-      let* () = acknowledge () in
-      Effect.sync (fun () -> acknowledged := true)
-
-  let acknowledge_after_published ~published ~acknowledged acknowledge =
-    if !acknowledged || not !published then Effect.unit
-    else acknowledge_once acknowledged acknowledge
-
-  let report_dropped_update ~on_drop ~after_drop_before_ack
-      ~after_drop_acknowledged ~acknowledge_drop update =
-    let drop_published = ref false in
-    let drop_acknowledged = ref false in
-    let acknowledge_published_drop () =
-      acknowledge_after_published ~published:drop_published
-        ~acknowledged:drop_acknowledged (fun () ->
-          acknowledge_drop ~after_ack:[ after_drop_acknowledged ] update)
-    in
-    let report_on_drop_failure exn =
-      Eta_observability.log_error
-        ~attrs:[ ("exception.message", Printexc.to_string exn) ]
-        "eta_signal.stream.on_drop_failure"
-    in
-    let open Eta.Syntax in
-    (let* on_drop_failure =
-       Effect.sync (fun () ->
-           let on_drop_failure =
-             match on_drop with
-             | None -> None
-             | Some on_drop -> (
-                 try
-                   on_drop update;
-                   None
-                 with exn -> Some exn)
-           in
-           drop_published := true;
-           on_drop_failure)
-     in
-     let* () =
-       match on_drop_failure with
-       | None -> Effect.unit
-       | Some exn -> report_on_drop_failure exn
-     in
-     let* () = after_drop_before_ack () in
-     acknowledge_published_drop ())
-    |> Effect.on_exit (fun _exit -> acknowledge_published_drop ())
-
-  let acknowledge_sent_after_published ~queue ~sent_before ~sent_published
-      ~sent_acknowledged ~acknowledge_sent_once =
-    let open Eta.Syntax in
-    let* () =
-      if !sent_published then Effect.unit
-      else
-        Effect.sync (fun () ->
-            if
-              not
-                (Queue.same_sent_token
-                   (Queue.sent_token queue)
-                   sent_before)
-            then sent_published := true)
-    in
-    acknowledge_after_published ~published:sent_published
-      ~acknowledged:sent_acknowledged acknowledge_sent_once
-
-  let offer ~queue ~observer_delivery ~hooks ~on_drop =
-    let open Eta.Syntax in
-    let* current = Delivery_handle.current observer_delivery () in
-    match current with
-    | None -> Effect.unit
-    | Some (token, update) ->
-        let* sent_before =
-          Effect.sync (fun () -> Queue.sent_token queue)
-        in
-        let sent_published = ref false in
-        let sent_acknowledged = ref false in
-        let acknowledge_sent_once () =
-          Delivery_handle.acknowledge_sent observer_delivery token update
-        in
-        let acknowledge_published_sent () =
-          acknowledge_sent_after_published ~queue ~sent_before
-            ~sent_published ~sent_acknowledged ~acknowledge_sent_once
-        in
-        (let* send_result = Queue.try_offer queue update in
-         match send_result with
-         | `Sent ->
-             let* () = hooks.after_try_offer_before_ack () in
-             let* () =
-               Effect.sync (fun () -> sent_published := true)
-             in
-             acknowledge_published_sent ()
-         | `Closed -> Effect.unit
-         | `Dropped | `Full ->
-             report_dropped_update ~on_drop
-               ~after_drop_before_ack:hooks.after_drop_before_ack
-               ~after_drop_acknowledged:hooks.after_drop_acknowledged
-               ~acknowledge_drop:(fun ~after_ack update ->
-                 Delivery_handle.acknowledge_drop observer_delivery ~after_ack
-                   token update)
-               update
-         | `Closed_with_error err -> hooks.on_closed_with_error err)
-        |> Effect.on_exit (fun _exit -> acknowledge_published_sent ())
-
-  let observe ~capacity ?on_drop ?equal ~metrics ~on_closed_with_error
-      ~map_observe_error ~observe_delivery signal =
-    let open Eta.Syntax in
-    let hooks = hooks ~metrics ~on_closed_with_error () in
-    let* queue, stream =
-      Effect.sync (fun () -> create_stream ~capacity)
-      |> Effect.flatten_result
-    in
-    let+ observer =
-      observe_delivery ?equal
-        ~on_finish:[ observer_finish_hook ~queue ]
-        signal
-        (fun observer_delivery ->
-          offer ~queue ~observer_delivery ~hooks ~on_drop)
-      |> Effect.map_error map_observe_error
-    in
-    (observer, stream)
-end
 module Timer = Eta_signal_timer
 module Timer_policy = Eta_signal_timer_policy
 module Transaction = Eta_signal_transaction
@@ -311,7 +116,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   type stabilize_error = observer_error Error.stabilize_error
   type time_error = Error.time_error
-  type stream_error = Error.stream_error
 
   type 'a update = 'a Observer_core.Update.t =
     | Initialized of 'a
@@ -346,7 +150,6 @@ module Make (Observer_error : Observer_error) () = struct
     dynamic_scope_invalidations : int;
     nodes_became_necessary : int;
     nodes_became_unnecessary : int;
-    stream_bridge_drop_count : int;
     lane_waiter_count : int;
     lane_cancelled_waiter_count : int;
     keyed : keyed_stats;
@@ -377,7 +180,6 @@ module Make (Observer_error : Observer_error) () = struct
     Error.pp_stabilize_error Observer_error.pp ppf err
 
   let pp_time_error = Error.pp_time_error
-  let pp_stream_error = Error.pp_stream_error
 
   let default_equal a b = a == b
 
@@ -871,8 +673,7 @@ module Make (Observer_error : Observer_error) () = struct
       packed_observer,
       weak_packed_signal,
       dead_signal,
-      (scope_id, packed_signal, packed_signal) Scope.context,
-      Stream_bridge.metrics )
+      (scope_id, packed_signal, packed_signal) Scope.context )
     Graph.t
 
   type ('key, 'value) keyed_child_tree =
@@ -1011,8 +812,7 @@ module Make (Observer_error : Observer_error) () = struct
     }
 
   let graph =
-    Graph.create ~create_scope_context:Scope.create_context
-      ~create_stream_bridge_metrics:Stream_bridge.create_metrics ()
+    Graph.create ~create_scope_context:Scope.create_context ()
 
   let topology_counters = Topology.create_counters ()
   let demand_counters = Demand.create_counters ()
@@ -1075,8 +875,6 @@ module Make (Observer_error : Observer_error) () = struct
       ~set_attempt_removed:(fun (P signal) removed ->
         signal.schedule_attempt_removed <- removed)
       ~pack:Fun.id ~unpack:Fun.id
-
-  let graph_stream_bridge_metrics () = Graph.stream_bridge_metrics graph
 
   let scope_ops =
     Graph.scope_ops ~current:Scope.current
@@ -3668,6 +3466,35 @@ module Make (Observer_error : Observer_error) () = struct
     let dispose observer = dispose_observer_effect observer
   end
 
+  module For_stream = struct
+    type nonrec 'a signal = 'a signal
+    type nonrec 'a observer = 'a observer
+    type nonrec 'a update = 'a update
+    type nonrec observer_error = observer_error
+    type observer_finish = Observer.observer_finish
+    type 'a delivery = 'a Observer.delivery
+
+    let observe_delivery ?cutoff ?on_finish signal callback =
+      let on_finish =
+        match on_finish with
+        | None -> []
+        | Some hook ->
+            [ (fun reason -> hook (Observer.finish_of_lifecycle reason)) ]
+      in
+      Observer.observe_delivery ?cutoff ~on_finish signal callback
+
+    let current handle =
+      Observer_core.Delivery_handle.current handle ()
+      |> Effect.map (fun current -> Option.map snd current)
+
+    let acknowledge handle =
+      let token = Observer_core.Delivery_handle.token handle in
+      let update = Observer_core.Delivery_handle.update handle in
+      Observer_core.Delivery_handle.acknowledge_sent handle token update
+
+    let dispose = Observer.dispose
+  end
+
   let const value = new_const value
 
   let map ?(cutoff = Cutoff.phys_equal) f a =
@@ -3820,9 +3647,6 @@ module Make (Observer_error : Observer_error) () = struct
               nodes_became_unnecessary =
                 stats_counter "stats nodes_became_unnecessary"
                   (Graph.counter graph lane Graph.Nodes_became_unnecessary);
-              stream_bridge_drop_count =
-                stats_counter "stats stream_bridge_drop_count"
-                  (Stream_bridge.drop_count (graph_stream_bridge_metrics ()));
               lane_waiter_count =
                 stats_counter "stats lane_waiter_count"
                   (Graph.lane_waiting_count graph lane);
@@ -4386,34 +4210,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   end
 
-  module Stream = struct
-    let default_capacity = Stream_bridge.default_capacity
-
-    let observe ?(capacity = default_capacity) ?on_drop
-        ?(cutoff = Cutoff.phys_equal) signal =
-      let equal = cutoff_equal cutoff in
-      Stream_bridge.observe ~capacity ?on_drop ~equal
-        ~metrics:(graph_stream_bridge_metrics ())
-        ~on_closed_with_error:(fun err ->
-          Effect.sync (fun () -> raise (Graph_error err)))
-        ~map_observe_error:(fun err -> (err :> stream_error))
-        ~observe_delivery:
-          (fun ?equal ~on_finish signal callback ->
-            let cutoff =
-              match equal with
-              | None -> Cutoff.phys_equal
-              | Some equal -> Cutoff.of_equal equal
-            in
-            Observer.observe_delivery ~cutoff ~on_finish signal callback)
-        signal
-
-    let with_observed ?capacity ?on_drop ?cutoff signal f =
-      Effect.with_resource
-        ~acquire:(observe ?capacity ?on_drop ?cutoff signal)
-        ~release:(fun (observer, _stream) ->
-          Observer.dispose observer)
-        (fun (_observer, stream) -> f stream)
-  end
 
   module Extension = struct
     type nonrec 'a signal = 'a signal

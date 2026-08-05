@@ -22,8 +22,7 @@ type
     'observer,
     'weak_node,
     'dead_node,
-    'scope_context,
-    'stream_metrics )
+    'scope_context )
   t
 
 type lane_access
@@ -145,7 +144,6 @@ val node_invalidation :
 
 val create :
   create_scope_context:(unit -> 'scope_context) ->
-  create_stream_bridge_metrics:(unit -> 'stream_metrics) ->
   unit ->
   ( 'pending,
     'bind,
@@ -156,16 +154,15 @@ val create :
     'observer,
     'weak_node,
     'dead_node,
-    'scope_context,
-    'stream_metrics )
+    'scope_context )
   t
 
 val context_error_message : string
 
-val ensure_context : (_, _, _, _, _, _, _, _, _, _, _) t -> unit
+val ensure_context : (_, _, _, _, _, _, _, _, _, _) t -> unit
 
 val with_lane_access :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   leaf_name:string ->
   depth_local:int Eta.Runtime_contract.local ->
   hooks:lane_hooks ->
@@ -174,37 +171,37 @@ val with_lane_access :
   ('a, 'error) Eta.Effect.t
 
 val lane_waiting_count :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
+  (_, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
 
 val lane_cancelled_count :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
+  (_, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
 
 val next_var_id :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   (Eta_signal_id.var, Eta_signal_error.graph_error) result
 
 val next_observer_id :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   (Eta_signal_id.observer, Eta_signal_error.graph_error) result
 
 val next_scope_id :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   (Eta_signal_id.scope, Eta_signal_error.graph_error) result
 
 val set_next_node_id :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
+  (_, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
 
 val counter :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> counter -> int
+  (_, _, _, _, _, _, _, _, _, _) t -> lane_access -> counter -> int
 
 val set_counter :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> counter -> int -> unit
+  (_, _, _, _, _, _, _, _, _, _) t -> lane_access -> counter -> int -> unit
 
 val bump_counter :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> counter -> unit
+  (_, _, _, _, _, _, _, _, _, _) t -> lane_access -> counter -> unit
 
 val detach_dependency :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   ('id, 'node) edge_ops ->
   parent:'node ->
@@ -212,7 +209,7 @@ val detach_dependency :
   unit
 
 val attach_dependency :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   ('id, 'node) edge_ops ->
   parent:'node ->
@@ -220,14 +217,14 @@ val attach_dependency :
   unit
 
 val mark_dirty :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   ('id, 'node) dirty_ops ->
   'node ->
   unit
 
 val mark_dirty_recording_previous :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   ('id, 'node) dirty_ops ->
   ('node * bool) list ->
@@ -235,34 +232,34 @@ val mark_dirty_recording_previous :
   ('node * bool) list
 
 val restore_dirty :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   ('id, 'node) dirty_ops ->
   ('node * bool) list ->
   unit
 
-val generation : (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
+val generation : (_, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
 
 val atomic_pass_counters :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> Eta_signal_atomic_pass.counters
+  (_, _, _, _, _, _, _, _, _, _) t -> Eta_signal_atomic_pass.counters
 
 val atomic_pass_fault_injector :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   Eta_signal_atomic_pass.fault_injector
 
-val stabilization_idle : (_, _, _, _, _, _, _, _, _, _, _) t -> bool
+val stabilization_idle : (_, _, _, _, _, _, _, _, _, _) t -> bool
 
 val set_generation :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
+  (_, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
 
 val enqueue_pending :
-  ('pending, _, _, _, _, _, _, _, _, _, _) t ->
+  ('pending, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   'pending ->
   unit
 
 val remember_computed :
-  (_, _, 'node, _, _, _, _, _, _, _, _) t ->
+  (_, _, 'node, _, _, _, _, _, _, _) t ->
   lane_access ->
   staging ->
   ('node, 'compute_node) compute_ops ->
@@ -270,14 +267,14 @@ val remember_computed :
   unit
 
 val iter_computed :
-  (_, _, 'node, _, _, _, _, _, _, _, _) t ->
+  (_, _, 'node, _, _, _, _, _, _, _) t ->
   lane_access ->
   staging ->
   f:('node -> unit) ->
   unit
 
 val compute_cached :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   ('node, 'compute_node) compute_ops ->
   'node ->
@@ -287,14 +284,14 @@ val compute_cached :
   'a * bool
 
 val version_snapshot :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   ('id, 'node) version_ops ->
   'node list ->
   ('id * int) list
 
 val versions_changed :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   ('id, 'node) version_ops ->
   current:('id * int) list ->
@@ -307,7 +304,7 @@ val bind_node_selection :
   bind:('node -> 'bind_node option) -> ('node, 'bind_node) bind_node_selection
 
 val collect_reachable_bind_nodes :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   ('id, 'node) reachable_ops ->
   roots:'node list ->
@@ -317,14 +314,14 @@ val collect_reachable_bind_nodes :
     return bind nodes selected by the caller's concrete node representation. *)
 
 val iter_staged_binds :
-  (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
+  (_, 'bind, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   staging ->
   f:('bind -> unit) ->
   unit
 
 val stage_bind_switch :
-  (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
+  (_, 'bind, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   staging ->
   'bind ->
@@ -345,21 +342,21 @@ val staged_bind_invalidation_plan :
   ('bind, 'scope, 'owner, 'acc) staged_bind_invalidation_plan
 
 val collect_staged_bind_switch_invalidations :
-  (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
+  (_, 'bind, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   staging ->
   ('bind, 'scope, 'owner, 'acc) staged_bind_invalidation_plan ->
   ('acc, Eta_signal_error.graph_error) result
 
 val remember_pure_disposal_hooks :
-  (_, _, _, 'hook, _, _, _, _, _, _, _) t ->
+  (_, _, _, 'hook, _, _, _, _, _, _) t ->
   lane_access ->
   staging ->
   'hook list ->
   unit
 
 val remember_timer_refresh_disposal_hooks :
-  (_, _, _, 'hook, _, _, _, _, _, _, _) t ->
+  (_, _, _, 'hook, _, _, _, _, _, _) t ->
   lane_access ->
   staging ->
   'hook list ->
@@ -448,18 +445,18 @@ val staging_commit_plan :
   ('bind, 'node, 'hook, 'timer) staging_commit_plan
 
 val pure_snapshot_commit_count :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
+  (_, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
 
 val set_pure_snapshot_commit_count :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
+  (_, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
 
 val read_effective :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   'a Eta_signal_transaction.staged ->
   'a
 
 val stage_cell :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   staging ->
   'a Eta_signal_transaction.staged ->
@@ -467,21 +464,21 @@ val stage_cell :
   unit
 
 val publish_or_stage :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   Eta_signal_transaction.current_writer ->
   'a Eta_signal_transaction.staged ->
   'a ->
   unit
 
 val discard_cell :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   staging ->
   'a Eta_signal_transaction.staged ->
   unit
 
 val update_cell :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   staging ->
   'a Eta_signal_transaction.staged ->
@@ -489,29 +486,29 @@ val update_cell :
   unit
 
 val staged_in_active_transaction :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   staging ->
   'a Eta_signal_transaction.staged ->
   bool
 
 val staged_value :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   staging ->
   'a Eta_signal_transaction.staged ->
   'a option
 
 val next_timer_refresh_token :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   (int, Eta_signal_error.graph_error) result
 
 val set_next_timer_refresh_token :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
+  (_, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
 
 val mark_timer_refresh_dirty :
-  (_, _, _, _, _, 'refresh, _, _, _, _, _) t ->
+  (_, _, _, _, _, 'refresh, _, _, _, _) t ->
   lane_access ->
   staging ->
   mark:(unit -> unit) ->
@@ -519,14 +516,14 @@ val mark_timer_refresh_dirty :
   unit
 
 val timer_has_staged_refresh :
-  (_, _, _, _, _, 'refresh, _, _, _, _, _) t ->
+  (_, _, _, _, _, 'refresh, _, _, _, _) t ->
   'timer ->
   refresh_token:('refresh -> int) ->
   staged_token:('timer -> int) ->
   bool
 
 val remember_timer_refresh_timer :
-  (_, _, _, _, 'timer, 'refresh, _, _, _, _, _) t ->
+  (_, _, _, _, 'timer, 'refresh, _, _, _, _) t ->
   lane_access ->
   staging ->
   'timer ->
@@ -537,7 +534,7 @@ val remember_timer_refresh_timer :
   unit
 
 val with_timer_refresh_timer :
-  (_, _, _, _, _, 'refresh, _, _, _, _, _) t ->
+  (_, _, _, _, _, 'refresh, _, _, _, _) t ->
   lane_access ->
   'timer option ->
   none:(unit -> 'a) ->
@@ -545,32 +542,23 @@ val with_timer_refresh_timer :
   'a
 
 val allocation_scope :
-  (_, _, _, _, _, _, _, _, _, 'scope_context, _) t ->
+  (_, _, _, _, _, _, _, _, _, 'scope_context) t ->
   ('scope_context, 'scope) scope_ops ->
   ('scope option, Eta_signal_error.graph_error) result
 
 val with_current_scope :
-  (_, _, _, _, _, _, _, _, _, 'scope_context, _) t ->
+  (_, _, _, _, _, _, _, _, _, 'scope_context) t ->
   ('scope_context, 'scope) scope_ops ->
   'scope ->
   (unit -> 'a) ->
   'a
 
 val ensure_not_pure :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   (unit, Eta_signal_error.graph_error) result
 
-val stream_bridge_metrics :
-  (_, _, _, _, _, _, _, _, _, _, 'stream_metrics) t -> 'stream_metrics
-
-val set_stream_bridge_metrics :
-  (_, _, _, _, _, _, _, _, _, _, 'stream_metrics) t ->
-  lane_access ->
-  'stream_metrics ->
-  unit
-
 val add_observer :
-  (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  (_, _, _, _, _, _, 'observer, _, _, _) t ->
   lane_access ->
   'observer ->
   unit
@@ -581,7 +569,7 @@ val observer_identity :
   same:('observer -> 'observer -> bool) -> 'observer observer_identity
 
 val remove_observer :
-  (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  (_, _, _, _, _, _, 'observer, _, _, _) t ->
   lane_access ->
   'observer observer_identity ->
   'observer ->
@@ -595,7 +583,7 @@ val observer_cleanup :
   ('observer, 'hook) observer_cleanup
 
 val collect_observer_cleanup_hooks :
-  (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  (_, _, _, _, _, _, 'observer, _, _, _) t ->
   lane_access ->
   ('observer, 'hook) observer_cleanup ->
   'hook list
@@ -613,7 +601,7 @@ val observer_count_plan :
   'observer observer_count_plan
 
 val observer_counts :
-  (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  (_, _, _, _, _, _, 'observer, _, _, _) t ->
   lane_access ->
   'observer observer_count_plan ->
   observer_counts
@@ -629,7 +617,7 @@ val observer_diagnostics :
   ('observer, 'diagnostic) observer_diagnostics
 
 val collect_observer_diagnostics :
-  (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  (_, _, _, _, _, _, 'observer, _, _, _) t ->
   lane_access ->
   ('observer, 'diagnostic) observer_diagnostics ->
   'diagnostic list
@@ -799,8 +787,7 @@ val run_stabilization :
     'observer,
     'weak_node,
     'dead_node,
-    'scope_context,
-    'stream_metrics )
+    'scope_context )
   t ->
   lane_access ->
   timer_refresh:'refresh option ->
@@ -848,22 +835,21 @@ val stabilization_delivery_ops :
     'observer,
     'weak_node,
     'dead_node,
-    'scope_context,
-    'stream_metrics )
+    'scope_context )
   t ->
   stabilization_finish ->
   ('event, 'error) stabilization_delivery_context ->
   ('event, 'error) Eta_signal_atomic_pass.delivery
 
 val create_live_node :
-  (_, _, _, _, _, _, _, 'weak_node, _, 'scope_context, _) t ->
+  (_, _, _, _, _, _, _, 'weak_node, _, 'scope_context) t ->
   ('scope_context, 'scope) scope_ops ->
   ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle ->
   dependencies:'dependency list ->
   ('node, Eta_signal_error.graph_error) result
 
 val invalidate_live_node :
-  (_, _, _, _, _, _, _, _, 'dead_node, _, _) t ->
+  (_, _, _, _, _, _, _, _, 'dead_node, _) t ->
   lane_access ->
   ('node, 'scope, 'hook, 'dead_node) node_invalidation ->
   invalidate_scope:('scope -> 'hook list) ->
@@ -882,7 +868,7 @@ val live_node_registry :
   ('node, 'weak_node) live_node_registry
 
 val live_nodes :
-  (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
+  (_, _, _, _, _, _, _, 'weak_node, _, _) t ->
   lane_access ->
   ('node, 'weak_node) live_node_registry ->
   keep:('node -> bool) ->
@@ -914,7 +900,7 @@ val reachable_plan :
     projection so demand snapshots use one assembled traversal plan. *)
 
 val necessary_ids :
-  (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
+  (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _) t ->
   lane_access ->
   ('observer, 'node, 'weak_node) reachable_plan ->
   necessary_snapshot
@@ -923,7 +909,7 @@ val necessary_ids :
     caller supplies graph-shape projection and reachability. *)
 
 val update_necessity :
-  (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
+  (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _) t ->
   lane_access ->
   ('observer, 'node, 'weak_node) reachable_plan ->
   necessary_snapshot
@@ -931,20 +917,20 @@ val update_necessity :
     the same snapshot. *)
 
 val dead_node_count :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
+  (_, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
 
 val tombstone_counters :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, _, _, _, _, _, _, _, _, _) t ->
   Eta_signal_tombstone_index.counters
 
 val iter_dead_nodes :
-  (_, _, _, _, _, _, _, _, 'dead_node, _, _) t ->
+  (_, _, _, _, _, _, _, _, 'dead_node, _) t ->
   lane_access ->
   f:('dead_node -> unit) ->
   unit
 
 val map_dead_nodes :
-  (_, _, _, _, _, _, _, _, 'dead_node, _, _) t ->
+  (_, _, _, _, _, _, _, _, 'dead_node, _) t ->
   lane_access ->
   f:('dead_node -> 'a) ->
   'a list

@@ -386,8 +386,7 @@ type
     'observer,
     'weak_node,
     'dead_node,
-    'scope_context,
-    'stream_metrics )
+    'scope_context )
   t =
   {
     core : Core.t;
@@ -401,8 +400,7 @@ type
           'observer,
           'weak_node,
           'dead_node,
-          'scope_context,
-          'stream_metrics )
+          'scope_context )
         t,
         Eta_signal_error.graph_error )
       Eta_signal_atomic_pass.t;
@@ -414,7 +412,6 @@ type
     dead_nodes : 'dead_node Eta_signal_tombstone_index.t;
     tombstone_counters : Eta_signal_tombstone_index.counters;
     current_scope : 'scope_context;
-    mutable stream_bridge_metrics : 'stream_metrics;
   }
 
 type lane_access = Core.lane_access
@@ -598,7 +595,7 @@ let core_counter = function
   | Nodes_became_necessary -> Core.Nodes_became_necessary
   | Nodes_became_unnecessary -> Core.Nodes_became_unnecessary
 
-let create ~create_scope_context ~create_stream_bridge_metrics () =
+let create ~create_scope_context () =
   {
     core = Core.create ();
     atomic_pass = Eta_signal_atomic_pass.create ();
@@ -608,7 +605,6 @@ let create ~create_scope_context ~create_stream_bridge_metrics () =
     dead_nodes = Eta_signal_tombstone_index.create ();
     tombstone_counters = Eta_signal_tombstone_index.create_counters ();
     current_scope = create_scope_context ();
-    stream_bridge_metrics = create_stream_bridge_metrics ();
   }
 
 let context_error_message = Core.context_error_message
@@ -1232,8 +1228,6 @@ let ensure_not_pure t =
     Error `Ambiguous_scope
   else Ok ()
 
-let stream_bridge_metrics t = t.stream_bridge_metrics
-let set_stream_bridge_metrics t _lane metrics = t.stream_bridge_metrics <- metrics
 let add_observer t _lane observer = t.observers <- observer :: t.observers
 
 type 'observer observer_identity = {

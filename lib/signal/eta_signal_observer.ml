@@ -62,6 +62,8 @@ module Delivery_handle = struct
          | None -> None
          | Some token -> Some (token, handle.update))
 
+  let token handle = handle.token
+  let update handle = handle.update
   let acknowledge_sent handle = handle.acknowledge_sent
   let acknowledge_drop handle = handle.acknowledge_drop
 end

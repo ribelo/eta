@@ -1,0 +1,5 @@
+(library
+ (name eta_signal_stream)
+ (public_name eta_signal_stream)
+ (modules eta_signal_stream)
+ (libraries eta eta_signal eta_stream eta_signal_stream_bridge))

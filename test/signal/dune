@@ -157,10 +157,36 @@
  (action
   (copy %{deps} %{target})))
 
+(library
+ (name eta_signal_test_support)
+ (wrapped false)
+ (modules eta_signal_test_helpers eta_signal_test_interrupt_runtime)
+ (libraries
+  eta
+  eta_observability
+  eta_signal
+  eta_signal_stream
+  eta_stream
+  eta_eio
+  eta_test
+  alcotest
+  eio_main
+  unix))
+
 (test
  (name test_eta_signal)
  (modules test_eta_signal)
- (libraries eta eta_observability eta_signal eta_stream eta_eio eta_test alcotest eio_main unix)
+ (libraries
+  eta
+  eta_observability
+  eta_signal
+  eta_signal_test_support
+  eta_stream
+  eta_eio
+  eta_test
+  alcotest
+  eio_main
+  unix)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
@@ -185,6 +211,7 @@
  (alias runtest)
  (deps
   (source_tree negative)
-  (:eta_signal_cma ../../lib/signal/eta_signal.cma))
+  (:eta_signal_cma ../../lib/signal/eta_signal.cma)
+  (:eta_signal_stream_cma ../../lib/signal_stream/eta_signal_stream.cma))
  (action
-  (run bash negative/run.sh %{eta_signal_cma})))
+  (run bash negative/run.sh %{eta_signal_cma} %{eta_signal_stream_cma})))

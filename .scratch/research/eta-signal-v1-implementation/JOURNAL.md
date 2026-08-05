@@ -936,3 +936,51 @@ perf-loc gate with the recorded edge-effects feasibility investigation.
 nix develop -c dune build @install @signal-economics
 nix develop -c dune runtest test/laws test/signal test/signal_map --force
 ```
+
+## Slice 9 — Signal Stream published as eta_signal_stream
+
+- `For_stream` sealed capability per issue-13: top-level
+  `Eta_signal.Stream_source` module type (`observe_delivery`, `current`,
+  `acknowledge`, `dispose`; delivery type sealed in the mli) and
+  `module For_stream` in each graph result. `graph_error` moved to
+  `Eta_signal` top level (spec §11 names `Eta_signal.graph_error`); the
+  functor result keeps a transparent alias so existing `S.graph_error`
+  references keep working.
+- New `eta_signal_stream` package: private
+  `lib/signal_stream/private/eta_signal_stream_bridge.ml` (bridge uses only
+  the sealed endpoint) plus public `Eta_signal_stream.Make (S.For_stream)`
+  with the spec §11 signatures. The polymorphic
+  `('b, [> stream_error ] as 'err)` `with_observed` required an explicitly
+  quantified annotation in the `decode_with_policy` style; plain coercions
+  collapse the row at generalization.
+- `Closed_with_invalid_scope` defect replaces the functor-scoped
+  `Graph_error` raise for the closed-with-error publication race (the
+  adapter cannot see `S.Graph_error`).
+- Core deletions: `module Stream`, the kernel-inline `Stream_bridge`, the
+  `stream_bridge_drop_count` stats field, public `stream_error` /
+  `pp_stream_error`, the graph record's `'stream_metrics` type parameter,
+  and the `eta_stream` dependency of `eta_signal` (opam regenerated).
+- Acknowledgement is unified at the endpoint: sent and drop paths both call
+  `Source.acknowledge`; the old `acknowledge_drop ~after_ack` hook existed
+  only for the deleted drop metric.
+- Behavior note: `on_drop` now fires for every offered-and-dropped update.
+  The old stats counter incremented at acknowledgement time, so updates
+  superseded before acknowledgement were never counted; the spec requires
+  one outcome per offered update, and the model test's per-offer drop
+  predictions agree with the new count.
+- Tests: 18 stream tests moved to `test/signal_stream` (bridge races,
+  timer-start races, and the contract coverage); shared helpers and the
+  interrupt runtime extracted to `test/signal/eta_signal_test_support`.
+  Stats-based drop assertions replaced by `on_drop`-hook accounting (the
+  hook lists already proved exactly-once). `stream_to_signal_negative.ml`
+  now probes `Signal_stream.to_signal`; the negative harness compiles
+  against both cmas. The pre-existing `~on_update:in` mangling in
+  `test/signal_jsoo` (broken at HEAD) was fixed during its adapter
+  migration; the jsoo target remains disabled on the OxCaml track.
+- LAWS registry: SC18-SC26.
+- Verified with:
+
+```sh
+nix develop -c dune build @install
+nix develop -c dune runtest test/signal test/signal_stream test/signal_map --force
+```

@@ -8,13 +8,14 @@ module Observer_error = struct
 end
 
 module Signal = Eta_signal.Make (Observer_error) ()
+module Signal_stream = Eta_signal_stream.Make (Signal.For_stream)
 
 type test_error =
   [ Signal.graph_error
   | Signal.observer_read_error
   | Signal.stabilize_error
   | Signal.time_error
-  | Signal.stream_error
+  | Eta_signal_stream.stream_error
   | `Update_failed ]
 
 type observed_update =
@@ -3228,7 +3229,7 @@ type stream_model_slot = {
   stream_equal_policy : stream_equal_policy;
   mutable stream_observer : int Signal.observer option;
   mutable stream :
-    (int Signal.update, Signal.graph_error) Eta_stream.Stream.t option;
+    (int Signal.update, [ `Invalid_scope ]) Eta_stream.Stream.t option;
   mutable stream_current : int option;
   mutable stream_queue : observed_update list;
   mutable stream_model_drops : observed_update list;
@@ -3265,14 +3266,12 @@ let stream_model_slot_active slot =
   | None -> false
   | Some _ -> true
 
-let stream_model_enqueue slot update total_drops =
+let stream_model_enqueue slot update =
   if List.length slot.stream_queue < slot.stream_capacity then
     slot.stream_queue <- slot.stream_queue @ [ update ]
-  else (
-    slot.stream_model_drops <- slot.stream_model_drops @ [ update ];
-    incr total_drops)
+  else slot.stream_model_drops <- slot.stream_model_drops @ [ update ]
 
-let stream_model_stabilize_slot committed total_drops slot =
+let stream_model_stabilize_slot committed slot =
   if stream_model_slot_active slot then (
     let update =
       match slot.stream_current with
@@ -3283,9 +3282,7 @@ let stream_model_stabilize_slot committed total_drops slot =
           else Some (Changed (current, committed))
     in
     slot.stream_current <- Some committed;
-    Option.iter
-      (fun update -> stream_model_enqueue slot update total_drops)
-      update)
+    Option.iter (fun update -> stream_model_enqueue slot update) update)
 
 let stream_model_observe runtime signal slot =
   match slot.stream_observer with
@@ -3299,11 +3296,11 @@ let stream_model_observe runtime signal slot =
         match slot.stream_equal_policy with
         | Stream_default_equal ->
             run_ok runtime
-              (Signal.Stream.observe ~capacity:slot.stream_capacity ~on_drop
+              (Signal_stream.observe ~capacity:slot.stream_capacity ~on_drop
                  signal)
         | Stream_mod_equal _ ->
             run_ok runtime
-              (Signal.Stream.observe ~capacity:slot.stream_capacity ~on_drop
+              (Signal_stream.observe ~capacity:slot.stream_capacity ~on_drop
                  ~cutoff:
                    (Eta_signal.Cutoff.of_equal
                       (stream_model_equal slot.stream_equal_policy))
@@ -3372,15 +3369,11 @@ let stream_model_active_count slots =
     (fun count slot -> if stream_model_slot_active slot then count + 1 else count)
     0 slots
 
-let stream_model_check_stats label runtime ~base_drops ~base_active
-    ~total_drops slots =
+let stream_model_check_stats label runtime ~base_active slots =
   let stats = run_ok runtime (Signal.stats ()) in
   Alcotest.(check int) (label ^ " active observers")
     (base_active + stream_model_active_count slots)
-    stats.Signal.active_observer_count;
-  Alcotest.(check int) (label ^ " stream drops")
-    (base_drops + !total_drops)
-    stats.Signal.stream_bridge_drop_count
+    stats.Signal.active_observer_count
 
 let generate_stream_model_ops ~seed ~slot_count ~steps =
   let random = Random.State.make [| seed; slot_count; steps; 41 |] in
@@ -3443,9 +3436,7 @@ let run_stream_model_trace name ~seed =
        create_stream_model_slot 1; create_stream_model_slot 4 |]
   in
   let base_stats = run_ok runtime (Signal.stats ()) in
-  let base_drops = base_stats.Signal.stream_bridge_drop_count in
   let base_active = base_stats.Signal.active_observer_count in
-  let total_drops = ref 0 in
   let pending = ref 0 in
   let committed = ref 0 in
   let ops =
@@ -3472,12 +3463,11 @@ let run_stream_model_trace name ~seed =
       | Stream_stabilize ->
           committed := !pending;
           Array.iter
-            (stream_model_stabilize_slot !committed total_drops)
+            (stream_model_stabilize_slot !committed)
             slots;
           run_ok runtime Signal.stabilize);
       Array.iteri (stream_model_check_slot label) slots;
-      stream_model_check_stats label runtime ~base_drops ~base_active
-        ~total_drops slots)
+      stream_model_check_stats label runtime ~base_active slots)
     ops;
   Array.iteri
     (fun slot_index slot ->
@@ -3485,8 +3475,7 @@ let run_stream_model_trace name ~seed =
         (Format.asprintf "%s final slot%d" name slot_index)
         runtime slot)
     slots;
-  stream_model_check_stats (name ^ " final") runtime ~base_drops ~base_active
-    ~total_drops slots
+  stream_model_check_stats (name ^ " final") runtime ~base_active slots
 
 let test_stream_bridge_trace_matches_model () =
   List.iter

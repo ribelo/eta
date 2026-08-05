@@ -141,6 +141,46 @@ end
     [of_compare compare] suppresses when [compare published candidate = 0].
     The default optional cutoff is [phys_equal]. *)
 
+type graph_error =
+  [ `Ambiguous_scope
+  | `Counter_overflow of string
+  | `Cycle
+  | `Invalid_scope
+  | `Reentrant_stabilization
+  | `Runtime_mismatch
+  | `Reentrant_update ]
+(** Typed graph-construction and stabilization failures shared by every graph
+    instance. *)
+
+module type Stream_source = sig
+  type 'a signal
+  type 'a observer
+  type 'a update
+  type 'a delivery
+  type observer_error
+  type observer_finish = [ `Disposed | `Invalid_scope ]
+
+  val observe_delivery :
+    ?cutoff:'a Cutoff.t ->
+    ?on_finish:(observer_finish -> unit) ->
+    'a signal ->
+    ('a delivery -> (unit, observer_error) Eta.Effect.t) ->
+    ('a observer, graph_error) Eta.Effect.t
+  (** Register an observer whose callback receives a sealed delivery handle
+      instead of a plain update. The delivery value contains no public
+      observer, token, or cursor. *)
+
+  val current : 'a delivery -> ('a update option, 'error) Eta.Effect.t
+  (** Read the event captured for that delivery. The result is [None] after
+      lifecycle finish or replacement by a newer event. *)
+
+  val acknowledge : 'a delivery -> (unit, 'error) Eta.Effect.t
+  (** Acknowledge using the captured event identity. Changes pending delivery
+      to delivered during one graph-lane transition. *)
+
+  val dispose : 'a observer -> (unit, graph_error) Eta.Effect.t
+end
+
 module type Package_graph = sig
   type 'a signal
   type 'a plan
@@ -197,20 +237,13 @@ end
 module Make (Observer_error : Observer_error) () : sig
   type observer_error = Observer_error.t
 
-  type graph_error =
-    [ `Ambiguous_scope
-    | `Counter_overflow of string
-    | `Cycle
-    | `Invalid_scope
-    | `Reentrant_stabilization
-    | `Runtime_mismatch
-    | `Reentrant_update ]
+  type nonrec graph_error = graph_error
 
   exception Graph_error of graph_error
   (** Raised by synchronous graph construction APIs when construction violates a
       graph contract and there is no Eta effect error channel available.
-      Effectful APIs such as {!Observer.observe}, {!stabilize}, and
-      {!Stream.observe} convert graph failures into typed Eta failures instead.
+      Effectful APIs such as {!Observer.observe} and {!stabilize} convert
+      graph failures into typed Eta failures instead.
 
       Synchronous graph-node construction APIs include {!Var.watch}, {!const},
       {!map}, [map2] through [map9], {!all}, {!reduce_balanced}, and {!bind}.
@@ -234,8 +267,6 @@ module Make (Observer_error : Observer_error) () : sig
 
   type time_error =
     [ graph_error | `Deadline_overflow | `Invalid_interval | `Past_deadline ]
-  type stream_error = [ graph_error | `Invalid_capacity ]
-
   type 'a var
   type 'a signal
   type 'a observer
@@ -293,7 +324,6 @@ module Make (Observer_error : Observer_error) () : sig
     dynamic_scope_invalidations : int;
     nodes_became_necessary : int;
     nodes_became_unnecessary : int;
-    stream_bridge_drop_count : int;
     lane_waiter_count : int;
     lane_cancelled_waiter_count : int;
     keyed : keyed_stats;
@@ -306,8 +336,7 @@ module Make (Observer_error : Observer_error) () : sig
       observer handles invalidated by dynamic-scope replacement and not yet
       disposed. [live_dirty_node_count] counts valid dirty nodes;
       [dead_node_count] counts invalid nodes retained in the bounded diagnostic
-      tombstone index. [stream_bridge_drop_count] counts lossy
-      {!Stream.observe} bridge updates that were acknowledged as dropped.
+      tombstone index.
       [lane_waiter_count] is the number of graph-lane waiters queued behind the
       running stats read; [lane_cancelled_waiter_count] is the cumulative count
       of waiters cancelled while acquiring or owning the graph lane.
@@ -333,7 +362,6 @@ module Make (Observer_error : Observer_error) () : sig
   val pp_observer_read_error : Format.formatter -> observer_read_error -> unit
   val pp_stabilize_error : Format.formatter -> stabilize_error -> unit
   val pp_time_error : Format.formatter -> time_error -> unit
-  val pp_stream_error : Format.formatter -> stream_error -> unit
 
   module Var : sig
     type 'a t = 'a var
@@ -454,6 +482,14 @@ module Make (Observer_error : Observer_error) () : sig
         still changed before timer cleanup runs. Disposal-hook defects remain
         Eta defects or finalizer diagnostics. *)
   end
+
+  module For_stream :
+    Stream_source
+      with type 'a signal = 'a signal
+      with type 'a observer = 'a observer
+      with type 'a update = 'a update
+      with type observer_error = observer_error
+  (** Narrow sealed observer-delivery capability for [eta_signal_stream]. *)
 
   module Package : Package_graph with type 'a signal = 'a signal
 
@@ -733,71 +769,6 @@ module Make (Observer_error : Observer_error) () : sig
 
   end
 
-  module Stream : sig
-    val observe :
-      ?capacity:int ->
-      ?on_drop:('a update -> unit) ->
-      ?cutoff:'a Cutoff.t ->
-      'a signal ->
-      ('a observer * ('a update, graph_error) Eta_stream.Stream.t, stream_error)
-      Eta.Effect.t
-    (** [observe ?capacity signal] creates an observer and a stream of observer
-        updates. [capacity] defaults to [1024] and bounds the bridge queue.
-        Without [?cutoff], stream update emission uses {!Cutoff.phys_equal} as
-        its observer cutoff. Pass [?cutoff] when stream consumers must receive
-        updates only for structural value changes. This is especially important
-        for streams of arrays, records, maps, lists, decoded rows, or JSON-like
-        trees, where allocating a fresh but equal value would otherwise emit.
-        For example:
-
-        {[
-          S.Stream.observe ~cutoff:view_model_cutoff view_model_signal
-        ]}
-
-        Publication from stabilization is nonblocking: when the bridge already
-        has [capacity] buffered updates, the newest stream update is dropped
-        and stabilization continues. A later delivered change may therefore
-        report an [old_value] that was not itself delivered through the stream.
-        Pass [?on_drop] to observe each dropped update; the hook runs
-        synchronously during observer delivery and should be reserved for
-        counters, metrics, or lightweight logging. If the hook raises, Eta logs
-        [eta_signal.stream.on_drop_failure], still acknowledges the drop, and
-        continues stabilization. The failed hook is not retried.
-
-        Disposing the returned observer cleanly closes the stream queue.
-        Buffered updates drain before the stream ends. Early stream consumers
-        such as {!Eta_stream.Stream.take} do not dispose the observer; the
-        returned observer remains the lifecycle handle. Graph operations on that
-        observer remain restricted to the graph owner domain. The stream is
-        backed by a cross-domain {!Eta.Queue.t} and may be consumed from another
-        Eta runtime or domain. The queue does not copy update payloads; callers
-        must ensure values are safe for cross-domain use.
-
-        Fails with [`Invalid_capacity] when [capacity <= 0]. *)
-
-    val with_observed :
-      ?capacity:int ->
-      ?on_drop:('a update -> unit) ->
-      ?cutoff:'a Cutoff.t ->
-      'a signal ->
-      (('a update, graph_error) Eta_stream.Stream.t ->
-      ('b, stream_error) Eta.Effect.t) ->
-      ('b, stream_error) Eta.Effect.t
-    (** [with_observed ?capacity signal f] creates a stream observer, runs [f]
-        with the update stream, and disposes the observer when [f] exits on
-        success, typed failure, defect, or cancellation.
-
-        This is the safe default for bounded stream-consumer workflows because
-        the observer is the graph-demand handle. When [f] stops early, returns
-        a value, or fails, Eta still disposes the observer and closes the
-        stream after buffered updates drain. Use {!observe} directly when the
-        observer lifetime intentionally outlives the consumer effect, or when a
-        wider workflow also needs non-stream Eta operations in the same error
-        channel.
-
-        Cleanup uses {!Observer.dispose}; disposal cleanup failures are
-        reported through Eta's resource semantics. *)
-  end
 end
 
 module Make_no_error () : module type of Make (No_observer_error) ()
