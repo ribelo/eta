@@ -4562,6 +4562,48 @@ module Make (Observer_error : Observer_error) () = struct
       type a. graph_lane -> Graph.staging -> a signal -> a * bool =
    fun lane staging signal ->
     remember_computed lane staging (P signal);
+    match signal.kind with
+    | Map (child, f) ->
+        compute_map_uncached lane staging signal child f
+    | Const _ | Var _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _ | Map7 _
+    | Map8 _ | Map9 _ | All _ | Bind _ | Keyed _ ->
+        compute_uncached_generic lane staging signal
+
+  and compute_map_uncached :
+      type a b.
+      graph_lane ->
+      Graph.staging ->
+      b signal ->
+      a signal ->
+      (a -> b) ->
+      b * bool =
+   fun lane staging signal child f ->
+    let child_value, child_changed = compute lane staging child in
+    let snapshot = signal_effective_snapshot signal in
+    let dependencies = [ P child ] in
+    if
+      signal.dirty
+      || not (Signal_snapshot.is_initialized snapshot)
+      || child_changed
+      || dependencies_changed lane signal dependencies
+    then (
+      stage_dependency_versions lane staging signal dependencies;
+      Graph.bump_counter graph lane Graph.Recompute_count;
+      Scheduler.note_cutoff_call scheduler_counters;
+      let value = f child_value in
+      let changed =
+        Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
+          ~initialized:(Signal_snapshot.is_initialized snapshot)
+          ~current:(Signal_snapshot.value snapshot) ~next:value
+      in
+      if changed then stage_signal lane staging signal value;
+      (if changed then value else current_or_raise signal), changed)
+    else
+      (current_or_raise signal, false)
+
+  and compute_uncached_generic :
+      type a. graph_lane -> Graph.staging -> a signal -> a * bool =
+   fun lane staging signal ->
     let signal_initialized () =
       Signal_snapshot.is_initialized (signal_effective_snapshot signal)
     in
