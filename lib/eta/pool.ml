@@ -109,8 +109,11 @@ let stats_locked t =
     shutting_down = t.shutting_down;
   }
 
+let snapshot_stats t =
+  Sync_lock.use t.mutex (fun () -> stats_locked t)
+
 let emit_gauges t =
-  Effect.sync (fun () -> Sync_lock.use t.mutex @@ fun () -> stats_locked t)
+  Effect_erasure.plain_sync1 t snapshot_stats
   |> Effect.bind (fun (s : stats) ->
          Effect.all
            [
@@ -382,33 +385,35 @@ let mark_active_close_finished t =
 let make_lease t entry =
   { pool = t; entry; invalidated = false; released = false }
 
+let decide_release lease =
+  let t = lease.pool in
+  let entry = lease.entry in
+  let now = if t.expires_entries then now_ms t else 0 in
+  with_lock t @@ fun () ->
+  let close =
+    lease.invalidated
+    || t.shutting_down
+    || (
+         t.expires_entries
+         &&
+         match t.max_lifetime with
+         | Some max_lifetime ->
+             duration_expired ~now max_lifetime entry.created_ms
+         | None -> false)
+  in
+  lease.released <- true;
+  if close || t.idle_count >= t.max_idle then `Close
+  else (
+    entry.last_used_ms <- now;
+    decr_active_locked t;
+    t.idle <- entry :: t.idle;
+    t.idle_count <- t.idle_count + 1;
+    `Keep)
+
 let release_lease ?(release_permit = true) lease =
   let t = lease.pool in
   let entry = lease.entry in
-  let decide =
-    Effect.sync @@ fun () ->
-    let now = if t.expires_entries then now_ms t else 0 in
-    with_lock t @@ fun () ->
-    let close =
-      lease.invalidated
-      || t.shutting_down
-      || (
-           t.expires_entries
-           &&
-           match t.max_lifetime with
-           | Some max_lifetime ->
-               duration_expired ~now max_lifetime entry.created_ms
-           | None -> false)
-    in
-    lease.released <- true;
-    if close || t.idle_count >= t.max_idle then `Close
-    else (
-      entry.last_used_ms <- now;
-      decr_active_locked t;
-      t.idle <- entry :: t.idle;
-      t.idle_count <- t.idle_count + 1;
-      `Keep)
-  in
+  let decide = Effect_erasure.plain_sync1 lease decide_release in
   decide
   |> Effect.bind (function
        | `Keep ->
