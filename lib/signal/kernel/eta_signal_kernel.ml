@@ -4927,7 +4927,9 @@ module Make (Observer_error : Observer_error) () = struct
       | Scheduler_visiting -> raise (Graph_error `Cycle)
       | Scheduler_unseen ->
           set_visit_state packed Scheduler_visiting;
-          let stack = ref [ { frame_node = packed; frame_next_dependency = 0 } ] in
+          let local_ stack =
+            stack_ (ref [ { frame_node = packed; frame_next_dependency = 0 } ])
+          in
           while !stack <> [] do
             match !stack with
             | [] -> ()

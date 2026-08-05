@@ -244,9 +244,9 @@ let run t capability ops =
           sealed_transaction = None;
         }
       in
-      let staging = ref None in
-      let pending = ref [] in
-      let observers = ref [] in
+      let local_ staging = stack_ (ref None) in
+      let local_ pending = stack_ (ref []) in
+      let local_ observers = stack_ (ref []) in
       (try
          check_fault t.faults Before_phase_install;
          t.session <- Some session;
