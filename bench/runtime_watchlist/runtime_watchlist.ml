@@ -130,7 +130,9 @@ let run_retry_flaky_sample () =
   | Exit.Ok _ -> ()
   | Exit.Error _ -> failwith "retry should succeed"
 
-let workload name run = { Bench_lib.name; run; samples = None }
+(* [ops] is the number of measured operations one [run] call performs, used to
+   normalize the derived per-operation rows. *)
+let workload ?(ops = 1) name run = Bench_lib.workload ~ops name run
 
 let overhead_workloads rt =
   let eta_bind = eta_bind_chain bind_n (Effect.pure 0) in
@@ -157,25 +159,25 @@ let overhead_workloads rt =
   [
     workload "overhead.eta.pure.reused_rt" (fun () ->
         run_eta_int rt (Effect.pure 0));
-    workload "overhead.eta.bind.100k.prebuilt" (fun () ->
+    workload ~ops:100_000 "overhead.eta.bind.100k.prebuilt" (fun () ->
         run_eta_int rt eta_bind);
-    workload "overhead.eta.fail_catch.100k.prebuilt" (fun () ->
+    workload ~ops:100_000 "overhead.eta.fail_catch.100k.prebuilt" (fun () ->
         run_eta_int rt eta_fail);
-    workload "overhead.eta.log.100k.no_intercept" (fun () ->
+    workload ~ops:100_000 "overhead.eta.log.100k.no_intercept" (fun () ->
         run_eta_unit rt eta_logs);
-    workload "overhead.eta.log.100k.minimum_filtered" (fun () ->
+    workload ~ops:100_000 "overhead.eta.log.100k.minimum_filtered" (fun () ->
         run_eta_unit rt eta_logs_filtered);
-    workload "overhead.eta.logf.100k.construct.minimum_filtered" (fun () ->
+    workload ~ops:100_000 "overhead.eta.logf.100k.construct.minimum_filtered" (fun () ->
         run_eta_unit rt eta_logfs_filtered);
-    workload "overhead.eta.logf.100k.construct.enabled" (fun () ->
+    workload ~ops:100_000 "overhead.eta.logf.100k.construct.enabled" (fun () ->
         run_eta_unit rt eta_logfs);
-    workload "overhead.eta.logf.100k.construct.minimum_filtered.width_1m"
+    workload ~ops:100_000 "overhead.eta.logf.100k.construct.minimum_filtered.width_1m"
       (fun () -> run_eta_unit rt eta_logfs_wide_filtered);
-    workload "overhead.eta.log.100k.identity_intercept" (fun () ->
+    workload ~ops:100_000 "overhead.eta.log.100k.identity_intercept" (fun () ->
         run_eta_unit rt eta_logs_intercepted);
-    workload "overhead.eta.log.100k.replace_intercept" (fun () ->
+    workload ~ops:100_000 "overhead.eta.log.100k.replace_intercept" (fun () ->
         run_eta_unit rt eta_logs_replaced);
-    workload "overhead.eta.log.100k.annotate_logs_active" (fun () ->
+    workload ~ops:100_000 "overhead.eta.log.100k.annotate_logs_active" (fun () ->
         run_eta_unit rt eta_logs_annotated);
   ]
 

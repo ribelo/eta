@@ -23,7 +23,7 @@ let roundtrip () =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "schema_test." ^ name; run; samples = None }
+    Bench_lib.workload ("schema_test." ^ name) run
   in
   [
     item "decode_ok.10k" (fun () -> Bench_lib.repeat 10_000 decode_ok);

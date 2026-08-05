@@ -135,7 +135,7 @@ let run_policy () =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "eta_schema." ^ name; run; samples = None }
+    Bench_lib.workload ("eta_schema." ^ name) run
   in
   [
     item "decode.record3.simple" (fun () -> repeat 10_000 (fun _ -> decode record3_schema record3_json));

@@ -289,7 +289,7 @@ let sqlite_file_wal_insert_tx rows =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "sql." ^ name; run; samples = None }
+    Bench_lib.workload ("sql." ^ name) run
   in
   [
     item "select.render.100k" (fun () -> repeat 100_000 (fun _ -> render_select ()));

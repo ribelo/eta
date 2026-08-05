@@ -44,7 +44,7 @@ let supervisor_start_await n ~with_finalizer =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "effect.concurrency." ^ name; run; samples = None }
+    Bench_lib.workload ("effect.concurrency." ^ name) run
   in
   [
     item "par.success.2" (fun () ->

@@ -41,6 +41,8 @@ let run_lookup router paths =
       | Error _ -> failwith ("lookup failed for " ^ path))
     paths
 
+let lookup_iters = 1000
+
 let benchmark routes paths =
   let router = build_router routes in
   let rec loop i =
@@ -49,7 +51,7 @@ let benchmark routes paths =
       run_lookup router paths;
       loop (i - 1))
   in
-  fun () -> loop 1000
+  fun () -> loop lookup_iters
 
 let () =
   Memtrace.trace_if_requested ~context:"bench_router" ();
@@ -57,11 +59,10 @@ let () =
   let opts = Bench_lib.parse_args () in
   Bench_lib.run opts
     [
-      {
-        Bench_lib.name =
-          Printf.sprintf "eta_router.lookup (%d routes x 1000 iters)"
-            (List.length routes);
-        run = benchmark routes paths;
-        samples = None;
-      };
+      (* One [run] call performs [lookup_iters] passes over every path. *)
+      Bench_lib.workload
+        ~ops:(lookup_iters * List.length paths)
+        (Printf.sprintf "eta_router.lookup (%d routes x %d iters)"
+           (List.length routes) lookup_iters)
+        (benchmark routes paths);
     ]

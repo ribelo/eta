@@ -60,16 +60,15 @@ let aggregate count =
   ignore (Eta_otel.aggregate_points (List.init count point))
 
 let workloads =
-  let item name run =
-    { Bench_lib.name = "otel." ^ name; run; samples = None }
-  in
+  (* [ops] is the number of records one [run] call encodes or aggregates. *)
+  let item ~ops name run = Bench_lib.workload ~ops ("otel." ^ name) run in
   [
-    item "encoder.span.100" (fun () -> run_otel `Span 100);
-    item "encoder.span.1000" (fun () -> run_otel `Span 1_000);
-    item "encoder.log.100" (fun () -> run_otel `Log 100);
-    item "encoder.metric.100" (fun () -> run_otel `Metric 100);
-    item "aggregate.counter.1k" (fun () -> aggregate 1_000);
-    item "aggregate.counter.10k" (fun () -> aggregate 10_000);
+    item ~ops:100 "encoder.span.100" (fun () -> run_otel `Span 100);
+    item ~ops:1_000 "encoder.span.1000" (fun () -> run_otel `Span 1_000);
+    item ~ops:100 "encoder.log.100" (fun () -> run_otel `Log 100);
+    item ~ops:100 "encoder.metric.100" (fun () -> run_otel `Metric 100);
+    item ~ops:1_000 "aggregate.counter.1k" (fun () -> aggregate 1_000);
+    item ~ops:10_000 "aggregate.counter.10k" (fun () -> aggregate 10_000);
   ]
 
 let () = Bench_lib.run (Bench_lib.parse_args ()) workloads

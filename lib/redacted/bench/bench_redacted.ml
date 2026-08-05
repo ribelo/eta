@@ -18,7 +18,7 @@ let compare_value i =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "redacted." ^ name; run; samples = None }
+    Bench_lib.workload ("redacted." ^ name) run
   in
   [
     item "make_value.100k" (fun () -> repeat 100_000 make_value);

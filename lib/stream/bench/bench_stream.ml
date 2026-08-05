@@ -77,7 +77,7 @@ let from_file size chunk take =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "eta_stream." ^ name; run; samples = None }
+    Bench_lib.workload ("eta_stream." ^ name) run
   in
   [
     item "range.map.filter.fold.1k" (fun () -> map_filter_fold 1_000);

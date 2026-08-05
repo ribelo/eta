@@ -813,7 +813,7 @@ let deterministic_counters = Hashtbl.create 32
 let workload ?(counters = []) name run =
   let name = "eta_crux." ^ name in
   Hashtbl.replace deterministic_counters name counters;
-  { Bench_lib.name = name; run; samples = None }
+  Bench_lib.workload (name) run
 
 let mean values =
   Array.fold_left ( +. ) 0. values

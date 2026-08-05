@@ -10,13 +10,21 @@ Package-level optimization status is tracked separately in
 
 | Category | Prefix | Purpose |
 | --- | --- | --- |
-| Core interpreter | `effect.core.*` | Per-bind, sync leaf, catch, and typed-failure boundary cost. |
+| Core interpreter | `effect.core.*` | Per-bind, sync leaf, catch, typed-failure boundary, and interruptibility-fence cost. Both bind shapes are measured: `bind_source_nested` grows the chain on the source side, `bind_continuation_nested` grows it inside the continuation. Each has a `prebuilt` and a `build_run` variant so an interpretation regression is distinguishable from a construction regression. |
+| Runtime setup | `eta.setup.*` | The one row that deliberately pays a full `Eio_main.run` + `Runtime.create` per sample, because a binary entry point pays it. Every other row reuses one process-wide runtime. |
 | Overhead controls | `overhead.*` | Paired Eta-vs-minimal-interpreter controls for bind, fail/catch, and setup ratios. |
 | Real-use workloads | `realuse.*` | End-to-end programs (fanout, retry, scope, pipeline) that exercise `map_par`, `Schedule`/`retry`, `acquire_release`/`scoped`, and bind/catch composition. Each row pays one full Eio runtime setup per sample, matching what a binary entry point pays. |
 | Concurrency | `effect.concurrency.*` | `par`, `all`, `map_par`, `race`, and supervisor costs. |
 | Observability | `effect.observability.*` | Tracer, auto-instrumentation, cause construction, trace context, and OTLP adapter cost. |
 | Blueprint construction | `effect.construction.*` | Allocation and wall time for deep map, bind, and preserve-backed construction chains. |
-| Queue | `eta.queue.*` | Unbounded queue send/receive and producer/consumer handoff cost. |
+| Queue | `eta.queue.*` | Unbounded fill/drain and try-offer/poll bookkeeping, plus a capacity-1 bounded rendezvous and a multi-producer bounded row that actually exercise the block-on-full and block-on-empty paths. |
+| Pubsub | `eta.pubsub.*` | Publish/receive on an unbounded hub, four-subscriber fanout, the `Drop_new` full-hub decision path, and a capacity-1 backpressure rendezvous. |
+| Semaphore | `eta.semaphore.*` | Uncontended acquire/release, and acquisition through a single permit from several fibers. |
+| Promise | `eta.promise.*` | Settled-read path, and the park/wake handoff. The `via_par` row includes one `Effect.par` per operation by construction. |
+| Channel | `eta.channel.*` | Bounded rendezvous at capacity 1 and capacity 64. |
+| Pool | `eta.pool.*` | Warm lease checkout/checkin, and checkout under more borrowers than resources. |
+| Mutable_ref | `eta.mutable_ref.*` | `update` and `compare_and_set` through the effect boundary. |
+| Cancellation | `eta.cancel.*` | Scope exit with a child parked on `never`, with and without an interrupt finalizer. |
 | Streams | `eta_stream.*` | Representative `eta_stream` pipelines and file reads. |
 | HTTP/WebSocket | `http.ws.*` | WebSocket codec encode/decode and local loopback echo cost. |
 | HTTP server loop | `METRIC h1_*`, `METRIC h2_*` | In-process H1/H2 server loop throughput and allocation without socket/client noise. |
@@ -25,7 +33,43 @@ Package-level optimization status is tracked separately in
 | Package compile time | `compile.<pkg>.*` | Clean and incremental Dune builds for native package directories tracked by `bench/compile/run_compile.sh`. |
 | User-code compile time | `compile.fixture.*` | Deep-bind, explicit-deps, schema-heavy, and ppx-heavy workloads. |
 
+## Methodology
+
+The shared harness in `bench/lib/bench_lib.ml` applies the following to every
+row in every package. Ignoring any of it produces numbers that move for reasons
+unrelated to the code under test.
+
+- **One warmup invocation per workload is measured and then discarded.** The
+  first invocation pays one-time costs a steady-state consumer does not pay per
+  operation. Before this was added, the first sample ran up to 10x the
+  subsequent ones.
+- **Monotonic timing.** `Unix.gettimeofday` returns absolute epoch seconds in a
+  double, which quantizes to ~238 ns and is subject to clock steps. The harness
+  uses `Mtime_clock` instead.
+- **`median` is the number to read.** It is emitted alongside `mean`, `stddev`,
+  `min`, `max`, and the raw samples. `bench/compare` uses the median.
+- **GC parameters are pinned and the major heap is primed once per process.**
+  Major-heap pacing otherwise depends on how much earlier rows allocated: the
+  same 100k-node workload measured 2.4x faster in a full run than when selected
+  alone with `--filter`. Samples call `Gc.full_major`, not `Gc.compact`;
+  compacting per sample was what made the dependence observable.
+- **`ops` and the per-operation rows.** Each workload records how many measured
+  operations one invocation performs. When that count exceeds 1, the harness
+  emits derived `wall_ns_per_op` and `allocated_words_per_op` rows. Prefer them
+  over the totals, which include whatever fixed cost the invocation carries.
+- **Cheap operations are looped inside the measured region.** A single bind, a
+  single sync leaf, or a single catch is far below both the clock resolution and
+  the cost of entering a runtime, so a row that measured one of them measured
+  nothing.
+- **`--quick` is 3 samples, the default is 7.** Never 1: the warmup sample is
+  discarded, and one surviving sample carries no dispersion.
+
 ## Running
+
+Benchmarks build and run under the `release` profile by default, because that is
+the profile that carries `-O3 -unbox-closures` and therefore the profile
+consumers ship. Override with `BENCH_PROFILE`. The profile is recorded in the
+result file's `machine` block.
 
 Full run:
 
@@ -84,9 +128,12 @@ Each file contains:
 - `schema_version`
 - `commit`, `commit_time`, `run_time`
 - `dirty`
-- `machine` with OS, kernel, CPU, OCaml, and Dune versions
-- `benchmarks[]` with `name`, `metric`, `unit`, raw `samples`, `mean`,
-  `stddev`, `min`, and `max`
+- `machine` with OS, kernel, CPU, OCaml, Dune versions, and the build `profile`
+- `benchmarks[]` with `name`, `metric`, `unit`, `ops`, raw `samples`, `mean`,
+  `median`, `stddev`, `min`, and `max`
+
+Rows with `ops > 1` are accompanied by derived `wall_ns_per_op` and
+`allocated_words_per_op` rows carrying the same `ops` value.
 
 Runtime rows report `allocated_words` as
 `minor_words + major_words - promoted_words`, alongside the three raw GC
@@ -109,6 +156,10 @@ nix develop -c dune exec bench/compare.exe
 
 The compare tool prints a per-metric delta table. It has no failure threshold
 and does not act as a gate.
+
+It lists rows present on only one side and warns on stderr when the two row sets
+differ or when the recorded machine fingerprints - including the build profile -
+differ. Neither warning changes its exit code.
 
 For the focused "how much does Eta cost?" question, use the overhead ratio
 report:
@@ -143,6 +194,11 @@ Avoid committing dirty-tree results unless the commit message explains why.
 
 4. Compare against the good baseline.
 5. Mark the bisect step good or bad based on the metric movement.
+
+A filtered run is comparable to a full run only because the harness pins GC
+parameters and primes the heap; measured agreement between a full run and a
+single-row filtered run is within ~7%. `bench/compare` still warns that the row
+sets differ, which is expected for this workflow.
 
 ## Caveats
 

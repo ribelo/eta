@@ -175,7 +175,7 @@ let trace_context_roundtrip () =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "effect.observability." ^ name; run; samples = None }
+    Bench_lib.workload ("effect.observability." ^ name) run
   in
   [
     item "noop_tracer.no_auto" (fun () -> run ~tracer:Eta_observability.Tracer.noop (chain 10_000));

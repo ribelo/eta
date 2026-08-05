@@ -94,7 +94,7 @@ let mutable_ref_dynamic iterations =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "eta_signal." ^ name; run; samples = None }
+    Bench_lib.workload ("eta_signal." ^ name) run
   in
   [
     item "static.update_stabilize.10k" (fun () -> signal_static 10_000);

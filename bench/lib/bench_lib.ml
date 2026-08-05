@@ -12,11 +12,20 @@ let repeat n f =
     f ()
   done
 
+(** [ops] is the number of measured operations performed by one [run] call. It
+    is the normalization basis for the derived [*_per_op] rows, and it is
+    recorded in the emitted JSON so a reader never has to guess it. Use [1] for
+    a workload whose [run] is itself the unit of interest. *)
 type workload = {
   name : string;
   run : unit -> unit;
   samples : int option;
+  ops : int;
 }
+
+let workload ?samples ?(ops = 1) name run =
+  if ops < 1 then invalid_arg "Bench_lib.workload: ops must be positive";
+  { name; run; samples; ops }
 
 let parse_args () =
   let quick = ref false in
@@ -38,13 +47,31 @@ let parse_args () =
     | arg :: _ -> invalid_arg ("unknown bench argument: " ^ arg)
   in
   loop (List.tl (Array.to_list Sys.argv));
-  let default_samples = if !quick then 1 else 5 in
+  (* Never 1: the first timed sample of a workload is discarded as warmup, and
+     a single surviving sample carries no dispersion at all. *)
+  let default_samples = if !quick then 3 else 7 in
   {
     quick = !quick;
     filter_raw = !filter_raw;
     filter = !filter;
     samples = Option.value !samples ~default:default_samples;
   }
+
+let sorted samples = List.sort compare samples
+
+let median samples =
+  match sorted samples with
+  | [] -> 0.
+  | xs ->
+      let n = List.length xs in
+      let arr = Array.of_list xs in
+      if n mod 2 = 1 then arr.(n / 2)
+      else (arr.((n / 2) - 1) +. arr.(n / 2)) /. 2.
+
+(** Divide a per-[run] measurement by the operations one [run] performs. *)
+let per_op ~ops value =
+  if ops < 1 then invalid_arg "Bench_lib.per_op: ops must be positive"
+  else value /. float_of_int ops
 
 let contains literal name =
   try
@@ -113,22 +140,28 @@ let json_float n =
   if classify_float n = FP_nan || classify_float n = FP_infinite then "0"
   else Printf.sprintf "%.6f" n
 
-let emit_measurement ~name ~metric ~unit samples =
+let emit_measurement ~name ~metric ~unit ~ops samples =
   let samples_json = samples |> List.map json_float |> String.concat "," in
   Printf.printf
-    "{\"name\":%s,\"metric\":%s,\"unit\":%s,\"samples\":[%s],\"mean\":%s,\"stddev\":%s,\"min\":%s,\"max\":%s}\n%!"
-    (json_string name) (json_string metric) (json_string unit) samples_json
-    (json_float (mean samples)) (json_float (stddev samples))
+    "{\"name\":%s,\"metric\":%s,\"unit\":%s,\"ops\":%d,\"samples\":[%s],\"mean\":%s,\"median\":%s,\"stddev\":%s,\"min\":%s,\"max\":%s}\n%!"
+    (json_string name) (json_string metric) (json_string unit) ops samples_json
+    (json_float (mean samples)) (json_float (median samples))
+    (json_float (stddev samples))
     (json_float (min_float samples)) (json_float (max_float samples))
 
 let measure_once f =
-  Gc.compact ();
+  (* [full_major] settles pending collector work so the sample's GC counters and
+     wall time belong to the sample. It deliberately does not compact: releasing
+     the heap to the OS before every sample made a row's cost depend on the
+     heap history of whichever rows ran before it, which broke filtered runs. *)
+  Gc.full_major ();
   let before_minor, before_promoted, before_major = Gc.counters () in
-  let start = Unix.gettimeofday () in
+  (* Monotonic. [Unix.gettimeofday] returns absolute epoch seconds in a double,
+     which quantizes to ~238 ns and is subject to clock steps. *)
+  let start = Mtime_clock.counter () in
   f ();
-  let stop = Unix.gettimeofday () in
+  let wall_ns = Mtime.Span.to_float_ns (Mtime_clock.count start) in
   let after_minor, after_promoted, after_major = Gc.counters () in
-  let wall_ns = (stop -. start) *. 1_000_000_000. in
   let minor_words = after_minor -. before_minor in
   let promoted_words = after_promoted -. before_promoted in
   let major_words = after_major -. before_major in
@@ -138,6 +171,12 @@ let measure_once f =
 let run_workload opts workload =
   if should_run opts workload.name then
     let samples = Option.value workload.samples ~default:opts.samples in
+    (* Warmup. The first invocation of a workload pays one-time costs - code
+       paging, lazy initialisation, heap growth to the workload's high-water
+       mark - that a steady-state consumer does not pay per operation. It is
+       measured and then dropped rather than skipped, so that its GC work is
+       accounted for before the reported samples begin. *)
+    ignore (measure_once workload.run);
     let rec collect i walls allocated minors promoteds majors =
       if i = 0 then
         ( List.rev walls,
@@ -153,12 +192,45 @@ let run_workload opts workload =
     let walls, allocated, minors, promoted, majors =
       collect samples [] [] [] [] []
     in
-    emit_measurement ~name:workload.name ~metric:"wall_ns" ~unit:"ns" walls;
-    emit_measurement ~name:workload.name ~metric:"allocated_words" ~unit:"words"
-      allocated;
-    emit_measurement ~name:workload.name ~metric:"minor_words" ~unit:"words" minors;
-    emit_measurement ~name:workload.name ~metric:"promoted_words" ~unit:"words"
-      promoted;
-    emit_measurement ~name:workload.name ~metric:"major_words" ~unit:"words" majors
+    let ops = workload.ops in
+    let emit metric unit samples =
+      emit_measurement ~name:workload.name ~metric ~unit ~ops samples
+    in
+    emit "wall_ns" "ns" walls;
+    emit "allocated_words" "words" allocated;
+    emit "minor_words" "words" minors;
+    emit "promoted_words" "words" promoted;
+    emit "major_words" "words" majors;
+    if ops > 1 then begin
+      let normalize samples = List.map (per_op ~ops) samples in
+      emit "wall_ns_per_op" "ns/op" (normalize walls);
+      emit "allocated_words_per_op" "words/op" (normalize allocated)
+    end
 
-let run opts workloads = List.iter (run_workload opts) workloads
+(* Benchmark runs must not depend on the ambient [OCAMLRUNPARAM], and a row's
+   cost must not depend on how much earlier rows in the same process allocated.
+   Major-heap pacing does depend on that history: the same 100k-node workload
+   measured 2.4x faster after other large rows had already grown the heap than
+   it did when selected alone with [--filter]. Pin the collector parameters and
+   raise the major heap to a fixed working size before any workload runs, so a
+   filtered run and a full run start every row from the same collector regime. *)
+let minor_heap_words = 256 * 1024
+let space_overhead = 120
+let heap_prime_words = 8 * 1024 * 1024
+
+let prime_runtime () =
+  Gc.set { (Gc.get ()) with minor_heap_size = minor_heap_words; space_overhead };
+  let block = heap_prime_words / 8 in
+  let sink = ref [] in
+  for _ = 1 to 8 do
+    sink := Array.make block 0 :: !sink
+  done;
+  ignore (Sys.opaque_identity !sink);
+  sink := [];
+  (* [full_major] reclaims the primed words but, unlike [compact], leaves the
+     pools with the runtime, which is exactly the state we want to pin. *)
+  Gc.full_major ()
+
+let run opts workloads =
+  prime_runtime ();
+  List.iter (run_workload opts) workloads

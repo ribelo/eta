@@ -272,7 +272,7 @@ let error_projection_json () =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "http." ^ name; run; samples = None }
+    Bench_lib.workload ("http." ^ name) run
   in
   [
     item "h1.parse.response.100k" (fun () ->

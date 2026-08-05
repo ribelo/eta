@@ -241,7 +241,10 @@
                 opam pin add --kind=git "$package" "$eta_url" --no-action --yes
               done
 
-              opam install qcheck --yes
+              # Test and benchmark tooling that no Eta package depends on:
+              # qcheck drives the law suites, memtrace is the allocation-trace
+              # hook in bench/router.
+              opam install qcheck memtrace --yes
               opam install "''${package_args[@]}" --assume-depexts --yes
 
               echo "Eta packages installed into OPAM switch: $switch_name"

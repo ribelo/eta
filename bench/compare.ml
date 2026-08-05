@@ -58,12 +58,64 @@ let table xs =
   List.iter (fun m -> Hashtbl.replace tbl (key m) m) xs;
   tbl
 
+let unique values =
+  let seen = Hashtbl.create (List.length values) in
+  List.filter
+    (fun value ->
+      if Hashtbl.mem seen value then false
+      else (
+        Hashtbl.add seen value ();
+        true))
+    values
+
+let machine_fingerprint path =
+  let rec canonical (json : Yojson.Safe.t) : Yojson.Safe.t =
+    match json with
+    | `Assoc fields ->
+        `Assoc
+          (fields
+          |> List.map (fun (name, value) -> (name, canonical value))
+          |> List.sort (fun (left, _) (right, _) -> String.compare left right))
+    | `List values -> `List (List.map canonical values)
+    | `Tuple values -> `Tuple (List.map canonical values)
+    | `Variant (name, value) -> `Variant (name, Option.map canonical value)
+    | (`Null | `Bool _ | `Int _ | `Intlit _ | `Float _ | `String _) as value ->
+        value
+  in
+  let json = Yojson.Safe.from_file path in
+  let open Yojson.Safe.Util in
+  json |> member "machine" |> canonical |> Yojson.Safe.to_string
+
+let rows_only left right =
+  let right_keys = Hashtbl.create (List.length right) in
+  List.iter (fun measurement -> Hashtbl.replace right_keys (key measurement) ())
+    right;
+  left |> List.map key |> unique
+  |> List.filter (fun row_key -> not (Hashtbl.mem right_keys row_key))
+
+let print_row_differences only_left only_right =
+  Printf.printf "\nrows only in left (%d):\n" (List.length only_left);
+  List.iter (fun row_key -> Printf.printf "  %s\n" row_key) only_left;
+  Printf.printf "rows only in right (%d):\n" (List.length only_right);
+  List.iter (fun row_key -> Printf.printf "  %s\n" row_key) only_right
+
 let compare left right =
-  let left_tbl = table (load left) in
+  let left_values = load left in
+  let left_tbl = table left_values in
   let right_values = load right in
+  let only_left = rows_only left_values right_values in
+  let only_right = rows_only right_values left_values in
   Printf.printf "left:  %s\nright: %s\n\n" left right;
-  Printf.printf "%-54s %-14s %14s %14s %12s\n" "benchmark"
-    "metric" "left median" "right median" "delta%";
+  let name_width =
+    List.fold_left (fun width m -> max width (String.length m.name)) 54
+      right_values
+  in
+  let metric_width =
+    List.fold_left (fun width m -> max width (String.length m.metric)) 14
+      right_values
+  in
+  Printf.printf "%-*s %-*s %14s %14s %12s\n" name_width "benchmark"
+    metric_width "metric" "left median" "right median" "delta%";
   List.iter
     (fun r ->
       match Hashtbl.find_opt left_tbl (key r) with
@@ -76,20 +128,21 @@ let compare left right =
               *. 100.
           in
           Printf.printf
-            "%-54s %-14s %14.2f %14.2f %11.2f%% %s\n"
-            r.name r.metric l.median r.median delta
+            "%-*s %-*s %14.2f %14.2f %11.2f%% %s\n" name_width
+            r.name metric_width r.metric l.median r.median delta
             r.unit_)
-    right_values
-
-let unique values =
-  let seen = Hashtbl.create (List.length values) in
-  List.filter
-    (fun value ->
-      if Hashtbl.mem seen value then false
-      else (
-        Hashtbl.add seen value ();
-        true))
-    values
+    right_values;
+  print_row_differences only_left only_right;
+  if only_left <> [] || only_right <> [] then
+    Printf.eprintf
+      "WARNING: benchmark row sets differ between %s and %s; deltas are \
+       incomplete\n"
+      left right;
+  if machine_fingerprint left <> machine_fingerprint right then
+    Printf.eprintf
+      "WARNING: machine fingerprints differ (including profile) between %s \
+       and %s; results may be incomparable\n"
+      left right
 
 let percent_increase ~before ~after =
   if before = 0. then

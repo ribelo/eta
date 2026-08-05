@@ -88,7 +88,7 @@ let provider () =
 let workloads =
   let p = provider () in
   let item name run =
-    { Bench_lib.name = "ai." ^ name; run; samples = None }
+    Bench_lib.workload ("ai." ^ name) run
   in
   [
     item "toolkit.add_find.100k" (fun () ->

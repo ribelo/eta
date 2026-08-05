@@ -1,7 +1,7 @@
 (library
  (name bench_lib)
  (modules bench_lib)
- (libraries unix str))
+ (libraries mtime.clock.os str))
 
 (library
  (name bench_ai_support)
@@ -9,6 +9,6 @@
  (libraries eta_ai))
 
 (test
- (name test_bench_lib_repeat)
- (modules test_bench_lib_repeat)
+ (name test_bench_lib)
+ (modules test_bench_lib)
  (libraries bench_lib alcotest))

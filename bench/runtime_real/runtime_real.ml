@@ -127,7 +127,7 @@ let scope_acquire_release_64 () =
 
 (* ---- workload registration ---- *)
 
-let workload name run = { Bench_lib.name = "realuse." ^ name; run; samples = None }
+let workload name run = Bench_lib.workload ("realuse." ^ name) run
 
 let workloads =
   [

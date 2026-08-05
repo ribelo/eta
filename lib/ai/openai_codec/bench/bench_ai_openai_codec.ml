@@ -50,7 +50,7 @@ let encode_tool =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "ai_openai_codec." ^ name; run; samples = None }
+    Bench_lib.workload ("ai_openai_codec." ^ name) run
   in
   [
     item "encode_chat.10k" (fun () ->

@@ -52,7 +52,7 @@ let output () =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "ai_openai." ^ name; run; samples = None }
+    Bench_lib.workload ("ai_openai." ^ name) run
   in
   [
     item "encode_chat.10k" (fun () ->

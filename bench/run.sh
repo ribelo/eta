@@ -12,6 +12,10 @@ cd "$(dirname "$0")/.."
 # EIO_BACKEND before invoking this script.
 export EIO_BACKEND="${EIO_BACKEND:-posix}"
 
+# Build and run native benchmarks with the shipped optimization profile by
+# default. Override by exporting BENCH_PROFILE before invoking this script.
+export BENCH_PROFILE="${BENCH_PROFILE:-release}"
+
 quick=false
 filter=""
 out=""
@@ -91,7 +95,7 @@ build_targets=(
 )
 
 for target in "${build_targets[@]}"; do
-  dune build -j 1 "$target"
+  dune build --profile "$BENCH_PROFILE" -j 1 "$target"
 done
 
 run_runtime _build/default/lib/eta/bench/bench_eta.exe
@@ -146,7 +150,8 @@ dune_version="$(dune --version 2>/dev/null || echo unknown)"
   printf '    "cpu_model": "%s",\n' "$cpu_model"
   printf '    "cpu_count": "%s",\n' "$cpu_count"
   printf '    "ocaml_version": "%s",\n' "$ocaml_version"
-  printf '    "dune_version": "%s"\n' "$dune_version"
+  printf '    "dune_version": "%s",\n' "$dune_version"
+  printf '    "profile": "%s"\n' "$BENCH_PROFILE"
   printf '  },\n'
   printf '  "duration_ms": %s,\n' "$duration_ms"
   printf '  "benchmarks": [\n'

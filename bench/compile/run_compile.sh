@@ -3,6 +3,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
+# Compile-time rows intentionally use Dune's default dev profile for developer rebuild latency.
+
 quick=false
 filter=""
 while [ "$#" -gt 0 ]; do

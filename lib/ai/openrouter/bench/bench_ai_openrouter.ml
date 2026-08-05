@@ -36,7 +36,7 @@ let routing () =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "ai_openrouter." ^ name; run; samples = None }
+    Bench_lib.workload ("ai_openrouter." ^ name) run
   in
   [
     item "encode_responses.10k" (fun () ->

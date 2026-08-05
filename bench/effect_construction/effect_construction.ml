@@ -27,8 +27,9 @@ let rec build_mixed remaining eff =
     |> effect_uninterruptible
     |> build_mixed (remaining - 1)
 
-let workload samples name run =
-  { Bench_lib.name = "effect.construction." ^ name; run; samples = Some samples }
+(* [ops] is the construction depth: one [run] call builds that many nodes. *)
+let workload ~samples ~ops name run =
+  Bench_lib.workload ~samples ~ops ("effect.construction." ^ name) run
 
 let () =
   let opts = Bench_lib.parse_args () in
@@ -37,10 +38,18 @@ let () =
   let run build () =
     Construction_sink.consume (build depth (Effect.pure 0))
   in
-  Bench_lib.run opts
+  let workloads =
     [
-      workload samples "map_bind" (run build_map_bind);
-      workload samples "preserve" (run build_preserve);
-      workload samples "map_bind_preserve" (run build_mixed);
-    ];
-  Printf.eprintf "construction_sink=%d\n%!" (Construction_sink.fingerprint ())
+      workload ~samples ~ops:depth "map_bind" (run build_map_bind);
+      workload ~samples ~ops:depth "preserve" (run build_preserve);
+      workload ~samples ~ops:depth "map_bind_preserve" (run build_mixed);
+    ]
+  in
+  Bench_lib.run opts workloads;
+  (* The sink is a dead-code fence: an empty sink after a workload ran means the
+     optimizer deleted the construction being measured, which must fail loudly.
+     An empty sink because [--filter] selected none of these rows is not a
+     failure - asserting there aborted every filtered [bench/run.sh] invocation,
+     including the bisect workflow the README documents. *)
+  if List.exists (fun w -> Bench_lib.should_run opts w.Bench_lib.name) workloads
+  then Printf.eprintf "construction_sink=%d\n%!" (Construction_sink.fingerprint ())

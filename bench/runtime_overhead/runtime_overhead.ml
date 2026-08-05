@@ -72,7 +72,10 @@ let run_eta_int rt program =
   | Exit.Ok v -> int_sink := Sys.opaque_identity v
   | Exit.Error _ -> failwith "unexpected Eta failure"
 
-let workload name run = { Bench_lib.name = "overhead." ^ name; run; samples = None }
+(* [ops] is the number of measured operations one [run] call performs, used to
+   normalize the derived per-operation rows. *)
+let workload ?(ops = 1) name run =
+  Bench_lib.workload ~ops ("overhead." ^ name) run
 
 let bind_n = 100_000
 let fail_n = 100_000
@@ -81,13 +84,13 @@ let direct_and_mini_workloads () =
   let mini_bind = mini_bind_chain bind_n (Pure 0) in
   let mini_fail = mini_fail_catch_loop fail_n in
   [
-    workload "direct.loop.100k" (fun () -> direct_loop bind_n);
-    workload "direct.closure_bind.100k" (fun () -> direct_closure_bind bind_n);
-    workload "mini.bind.100k.prebuilt" (fun () -> run_mini_int mini_bind);
-    workload "mini.bind.100k.build_run" (fun () ->
+    workload ~ops:100_000 "direct.loop.100k" (fun () -> direct_loop bind_n);
+    workload ~ops:100_000 "direct.closure_bind.100k" (fun () -> direct_closure_bind bind_n);
+    workload ~ops:100_000 "mini.bind.100k.prebuilt" (fun () -> run_mini_int mini_bind);
+    workload ~ops:100_000 "mini.bind.100k.build_run" (fun () ->
         run_mini_int (mini_bind_chain bind_n (Pure 0)));
-    workload "mini.fail_catch.100k.prebuilt" (fun () -> run_mini_int mini_fail);
-    workload "mini.fail_catch.100k.build_run" (fun () ->
+    workload ~ops:100_000 "mini.fail_catch.100k.prebuilt" (fun () -> run_mini_int mini_fail);
+    workload ~ops:100_000 "mini.fail_catch.100k.build_run" (fun () ->
         run_mini_int (mini_fail_catch_loop fail_n));
   ]
 
@@ -110,11 +113,11 @@ let eta_workloads rt =
   let eta_fail = eta_fail_catch_loop fail_n in
   [
     workload "eta.pure.reused_rt" (fun () -> run_eta_int rt (Effect.pure 0));
-    workload "eta.bind.100k.prebuilt" (fun () -> run_eta_int rt eta_bind);
-    workload "eta.bind.100k.build_run" (fun () ->
+    workload ~ops:100_000 "eta.bind.100k.prebuilt" (fun () -> run_eta_int rt eta_bind);
+    workload ~ops:100_000 "eta.bind.100k.build_run" (fun () ->
         run_eta_int rt (eta_bind_chain bind_n (Effect.pure 0)));
-    workload "eta.fail_catch.100k.prebuilt" (fun () -> run_eta_int rt eta_fail);
-    workload "eta.fail_catch.100k.build_run" (fun () ->
+    workload ~ops:100_000 "eta.fail_catch.100k.prebuilt" (fun () -> run_eta_int rt eta_fail);
+    workload ~ops:100_000 "eta.fail_catch.100k.build_run" (fun () ->
         run_eta_int rt (eta_fail_catch_loop fail_n));
   ]
 

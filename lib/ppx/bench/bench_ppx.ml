@@ -5,11 +5,8 @@ let repeat n f =
 
 let workloads =
   [
-    {
-      Bench_lib.name = "ppx.runtime.placeholder";
-      run = (fun () -> repeat 100_000 ignore);
-      samples = None;
-    };
+    Bench_lib.workload ~ops:100_000 "ppx.runtime.placeholder" (fun () ->
+        repeat 100_000 ignore);
   ]
 
 let () = Bench_lib.run (Bench_lib.parse_args ()) workloads

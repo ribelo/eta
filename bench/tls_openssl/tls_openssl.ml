@@ -36,11 +36,8 @@ let run_get () =
 
 let () =
   let opts = Bench_lib.parse_args () in
-  Bench_lib.run opts [
-    { name = "tls_openssl.handshake_example";
-      run = run_handshake;
-      samples = None };
-    { name = "tls_openssl.get_example";
-      run = run_get;
-      samples = None };
-  ]
+  Bench_lib.run opts
+    [
+      Bench_lib.workload "tls_openssl.handshake_example" run_handshake;
+      Bench_lib.workload "tls_openssl.get_example" run_get;
+    ]

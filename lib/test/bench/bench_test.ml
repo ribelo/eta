@@ -19,7 +19,7 @@ let expect_ok n =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "test." ^ name; run; samples = None }
+    Bench_lib.workload ("test." ^ name) run
   in
   [
     item "clock.adjust.10k" (fun () -> clock_adjust 10_000);

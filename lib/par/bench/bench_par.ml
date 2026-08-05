@@ -38,7 +38,7 @@ let iter_sum n =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "par." ^ name; run; samples = None }
+    Bench_lib.workload ("par." ^ name) run
   in
   [
     item "par_map.100k" (fun () -> par_map 100_000);

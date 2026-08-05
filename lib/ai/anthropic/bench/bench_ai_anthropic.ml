@@ -14,7 +14,7 @@ let request : Eta_ai.chat_request =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "ai_anthropic." ^ name; run; samples = None }
+    Bench_lib.workload ("ai_anthropic." ^ name) run
   in
   [
     item "encode_messages.10k" (fun () ->
