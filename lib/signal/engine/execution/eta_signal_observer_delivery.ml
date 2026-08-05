@@ -77,8 +77,7 @@ let note_terminal_skip counters =
     counters.terminal_skips <- succ counters.terminal_skips
 
 type ('event, 'callback, 'error) runner = {
-  active : 'event -> (bool, 'error) Eta.Effect.t;
-  claim : 'event -> (bool, 'error) Eta.Effect.t;
+  activate_and_claim : 'event -> (bool, 'error) Eta.Effect.t;
   after_claim : unit -> (unit, 'error) Eta.Effect.t;
   construct : 'event -> ('callback option, 'error) Eta.Effect.t;
   run_callback : 'event -> 'callback -> (unit, 'error) Eta.Effect.t;
@@ -86,11 +85,10 @@ type ('event, 'callback, 'error) runner = {
   finish_error : 'event -> delivered:bool -> (unit, 'error) Eta.Effect.t;
 }
 
-let create ~active ~claim ~after_claim ~construct ~run_callback ~acknowledge
-    ~finish_error =
+let create ~activate_and_claim ~after_claim ~construct ~run_callback
+    ~acknowledge ~finish_error =
   {
-    active;
-    claim;
+    activate_and_claim;
     after_claim;
     construct;
     run_callback;
@@ -121,11 +119,8 @@ let rec run runner = function
   | [] -> Eta.Effect.unit
   | event :: rest ->
       let open Eta.Syntax in
-      let* active = runner.active event in
-      if not active then run runner rest
+      let* claimed = runner.activate_and_claim event in
+      if not claimed then run runner rest
       else
-        let* claimed = runner.claim event in
-        if not claimed then run runner rest
-        else
-          let* () = run_claimed runner event in
-          run runner rest
+        let* () = run_claimed runner event in
+        run runner rest

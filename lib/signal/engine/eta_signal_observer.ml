@@ -330,20 +330,18 @@ end
 module Delivery_event = struct
   type ('capability, 'callback, 'error) t = {
     mark_pending : 'capability -> unit;
-    active : unit -> (bool, 'error) Eta.Effect.t;
-    claim : unit -> (bool, 'error) Eta.Effect.t;
+    activate_and_claim : unit -> (bool, 'error) Eta.Effect.t;
     construct : unit -> ('callback option, 'error) Eta.Effect.t;
     run_callback : 'callback -> (unit, 'error) Eta.Effect.t;
     acknowledge : unit -> (unit, 'error) Eta.Effect.t;
     finish_error : delivered:bool -> (unit, 'error) Eta.Effect.t;
   }
 
-  let create ~mark_pending ~active ~claim ~construct ~run_callback
+  let create ~mark_pending ~activate_and_claim ~construct ~run_callback
       ~acknowledge ~finish_error =
     {
       mark_pending;
-      active;
-      claim;
+      activate_and_claim;
       construct;
       run_callback;
       acknowledge;
@@ -355,8 +353,7 @@ module Delivery_event = struct
   let run ~after_claim events =
     Eta_signal_observer_delivery.run
       (Eta_signal_observer_delivery.create
-         ~active:(fun event -> event.active ())
-         ~claim:(fun event -> event.claim ())
+         ~activate_and_claim:(fun event -> event.activate_and_claim ())
          ~after_claim
          ~construct:(fun event -> event.construct ())
          ~run_callback:(fun event callback -> event.run_callback callback)
@@ -634,12 +631,10 @@ let make_delivery_event ~access delivery_port event_port ~observer ~token update
           delivery_port.delivery_set_snapshot capability live
             (Snapshot.with_pending_delivery ~token update
                (delivery_port.delivery_snapshot capability live)))
-    ~active:(fun () ->
+    ~activate_and_claim:(fun () ->
       access.event_with_delivery_access (fun capability ->
-          event_port.event_activation.event_active capability observer))
-    ~claim:(fun () ->
-      access.event_with_delivery_access (fun capability ->
-          claim_delivery delivery_port capability observer token))
+          event_port.event_activation.event_active capability observer
+          && claim_delivery delivery_port capability observer token))
     ~construct:(fun () ->
       access.event_with_delivery_access (fun capability ->
           if
@@ -651,15 +646,7 @@ let make_delivery_event ~access delivery_port event_port ~observer ~token update
           else Ok None)
       |> Eta.Effect.flatten_result)
     ~run_callback:(fun callback ->
-      let open Eta.Syntax in
-      let* current =
-        access.event_with_delivery_access (fun capability ->
-            running_delivery_token_matches delivery_port capability observer
-              token)
-      in
-      if current then
-        event_port.event_callback.event_run_callback observer token callback
-      else Eta.Effect.unit)
+      event_port.event_callback.event_run_callback observer token callback)
     ~acknowledge:(fun () ->
       access.event_with_delivery_access (fun capability ->
           acknowledge_delivery delivery_port capability observer token update

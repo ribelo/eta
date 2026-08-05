@@ -25,8 +25,7 @@ val note_terminal_skip : counters -> unit
 type ('event, 'callback, 'error) runner
 
 val create :
-  active:('event -> (bool, 'error) Eta.Effect.t) ->
-  claim:('event -> (bool, 'error) Eta.Effect.t) ->
+  activate_and_claim:('event -> (bool, 'error) Eta.Effect.t) ->
   after_claim:(unit -> (unit, 'error) Eta.Effect.t) ->
   construct:('event -> ('callback option, 'error) Eta.Effect.t) ->
   run_callback:('event -> 'callback -> (unit, 'error) Eta.Effect.t) ->
