@@ -4811,14 +4811,6 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.stage_cell graph lane staging keyed.keyed_raw_input input;
     Graph.stage_cell graph lane staging keyed.keyed_children
       plan.keyed_plan_children;
-    let child_dependencies =
-      child_ops.keyed_fold
-        (fun _ child dependencies -> P child.keyed_child_output :: dependencies)
-        plan.keyed_plan_children []
-      |> List.rev
-    in
-    let dependencies = P keyed.keyed_input :: child_dependencies in
-    stage_dependency_versions lane staging signal dependencies;
     Graph.bump_counter graph lane Graph.Recompute_count;
     let snapshot = signal_effective_snapshot signal in
     let changed =
