@@ -1,4 +1,9 @@
-module T = Eta_signal_transaction
+module T = struct
+  include Eta_signal_transaction
+
+  let begin_planning () =
+    Eta_signal_transaction.begin_planning (create_workspace ())
+end
 
 type test_error = [ `Preflight_failed ]
 
@@ -123,6 +128,26 @@ let test_transaction_identity_is_physical_and_fresh () =
   T.rollback first;
   T.rollback second
 
+let test_workspace_reuses_only_terminal_storage () =
+  let workspace = T.create_workspace () in
+  let first : (T.planning, test_error) T.t =
+    Eta_signal_transaction.begin_planning workspace
+  in
+  expect_invalid_arg "active workspace rejects another transaction" (fun () ->
+      Eta_signal_transaction.begin_planning workspace);
+  let cells = List.init 10 T.create_staged in
+  List.iteri (fun index cell -> T.stage first cell index) cells;
+  let committed = commit_ok first in
+  let first_id = T.id committed in
+  T.release_workspace workspace committed;
+  let second : (T.planning, test_error) T.t =
+    Eta_signal_transaction.begin_planning workspace
+  in
+  Alcotest.(check bool) "reused storage has fresh identity" false
+    (T.equal_id first_id (T.id second));
+  T.rollback second;
+  T.release_workspace workspace second
+
 let test_seal_failure_leaves_current_values_unchanged () =
   let left = T.create_staged 1 in
   let right = T.create_staged 10 in
@@ -163,6 +188,8 @@ let () =
             `Quick test_two_transactions_cannot_share_pending_state;
           Alcotest.test_case "transaction identity is physical and fresh"
             `Quick test_transaction_identity_is_physical_and_fresh;
+          Alcotest.test_case "workspace reuses only terminal storage" `Quick
+            test_workspace_reuses_only_terminal_storage;
           Alcotest.test_case "seal failure leaves current unchanged"
             `Quick test_seal_failure_leaves_current_values_unchanged;
         ] );

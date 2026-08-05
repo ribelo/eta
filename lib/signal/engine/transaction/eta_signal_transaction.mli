@@ -8,6 +8,7 @@ type committed
 
 type (+'phase, 'error) t
 type 'a staged
+type workspace
 
 type current_writer
 
@@ -20,7 +21,9 @@ val create_staged : 'a -> 'a staged
 val current : 'a staged -> 'a
 val publish_current : current_writer -> 'a staged -> 'a -> unit
 
-val begin_planning : unit -> (planning, 'error) t
+val create_workspace : unit -> workspace
+val begin_planning : workspace -> (planning, 'error) t
+val release_workspace : workspace -> (_, _) t -> unit
 val id : (_, _) t -> id
 val equal_id : id -> id -> bool
 

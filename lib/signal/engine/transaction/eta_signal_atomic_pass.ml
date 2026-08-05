@@ -90,6 +90,7 @@ type ('owner, 'error) t = {
   counters : counters;
   commit_counters : Eta_signal_commit_plan.counters;
   faults : fault_injector;
+  workspace : Eta_signal_transaction.workspace;
   mutable phase : phase;
   mutable session : ('owner, 'error) planning_session option;
 }
@@ -99,6 +100,7 @@ let create () =
     counters = create_counters ();
     commit_counters = Eta_signal_commit_plan.create_counters ();
     faults = create_fault_injector ();
+    workspace = Eta_signal_transaction.create_workspace ();
     phase = Idle;
     session = None;
   }
@@ -215,6 +217,10 @@ let ops ~reentrant_error ~classify_graph_error ~advance_generation ~begin_stagin
   }
 
 let return_idle t =
+  Option.iter
+    (fun session ->
+      Eta_signal_transaction.release_workspace t.workspace session.transaction)
+    t.session;
   t.session <- None;
   t.phase <- Idle;
   note_return_to_idle t.counters
@@ -238,17 +244,17 @@ let run t capability ops =
   match t.phase with
   | Planning | Delivering -> Planning_error ([], ops.reentrant_error)
   | Idle ->
-      let session =
-        {
-          transaction = Eta_signal_transaction.begin_planning ();
-          sealed_transaction = None;
-        }
-      in
       let local_ staging = stack_ (ref None) in
       let local_ pending = stack_ (ref []) in
       let local_ observers = stack_ (ref []) in
       (try
          check_fault t.faults Before_phase_install;
+         let session =
+           {
+             transaction = Eta_signal_transaction.begin_planning t.workspace;
+             sealed_transaction = None;
+           }
+         in
          t.session <- Some session;
          t.phase <- Planning;
          note_phase_entry t.counters;

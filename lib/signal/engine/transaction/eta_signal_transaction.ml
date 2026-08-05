@@ -38,6 +38,11 @@ type 'error core = {
 
 type (+'phase, 'error) t = { core : 'error core }
 
+type workspace = {
+  mutable cells : cell array;
+  mutable in_use : bool;
+}
+
 type current_writer = Current_writer of string
 
 let initialize_current = Current_writer "initialize_current"
@@ -61,16 +66,36 @@ let publish_current (Current_writer writer) cell value =
 let id tx = tx.core.id
 let equal_id left right = left == right
 
-let begin_planning () =
+let create_workspace () =
+  { cells = Array.make 8 unused_cell; in_use = false }
+
+let begin_planning workspace =
+  if workspace.in_use then
+    invalid_arg "Eta_signal_transaction.begin_planning: workspace is in use";
+  workspace.in_use <- true;
   {
     core =
       {
         id = ref ();
         state = Planning;
-        cells = Array.make 8 unused_cell;
+        cells = workspace.cells;
         cell_count = 0;
       };
   }
+
+let release_workspace workspace tx =
+  if not workspace.in_use then
+    invalid_arg "Eta_signal_transaction.release_workspace: workspace is idle";
+  (match tx.core.state with
+  | Committed | Rolled_back -> ()
+  | Planning | Sealed ->
+      invalid_arg
+        "Eta_signal_transaction.release_workspace: transaction is active");
+  if tx.core.cell_count <> 0 then
+    invalid_arg
+      "Eta_signal_transaction.release_workspace: transaction cells are active";
+  workspace.cells <- tx.core.cells;
+  workspace.in_use <- false
 
 let state_label = function
   | Planning -> "planning"
