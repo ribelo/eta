@@ -107,6 +107,32 @@ let async_immediate_chain n =
   in
   go n 0
 
+(* A persistent external producer invokes each callback from another fiber after
+   registration returns. The producer is shared across the whole chain, so this
+   measures async registration plus a real park/wake rather than one fiber
+   creation per operation. *)
+let async_deferred_chain ~sw n =
+  let callbacks :
+      ((int, [ `Never ]) Exit.t -> unit) Eio.Stream.t =
+    Eio.Stream.create 1
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      for _ = 1 to n do
+        let resume = Eio.Stream.take callbacks in
+        Eio.Fiber.yield ();
+        resume (Exit.Ok one)
+      done);
+  let rec go i acc =
+    if i = 0 then Effect.pure acc
+    else
+      effect_async
+        ~register:(fun resume ->
+          Eio.Stream.add callbacks resume;
+          None)
+      |> Effect.bind (fun value -> go (i - 1) (acc + value))
+  in
+  go n 0
+
 (* One catch per iteration, looped, so the row is not swamped by the cost of
    entering the runtime. *)
 let catch_success_chain n =
@@ -499,8 +525,9 @@ let setup_workloads () =
         run_int rt (Effect.pure one));
   ]
 
-let core_workloads rt =
+let core_workloads sw rt =
   let n = ops_per_run in
+  let async_deferred_ops = 20_000 in
   (* Prebuilt programs isolate interpretation from construction. The paired
      [build_run] rows below include construction, so a regression in either can
      be attributed. *)
@@ -521,6 +548,9 @@ let core_workloads rt =
     row "sync" (fun () -> run_int rt (sync_chain n));
     row "async_immediate.build_run" (fun () ->
         run_int rt (async_immediate_chain n));
+    Bench_lib.workload ~ops:async_deferred_ops
+      "effect.core.async_deferred.build_run" (fun () ->
+        run_int rt (async_deferred_chain ~sw async_deferred_ops));
     row "catch_success" (fun () -> run_int rt (catch_success_chain n));
     row "catch_failure" (fun () -> run_int rt (catch_failure_chain n));
     row "tap_error_failure" (fun () -> run_int rt (tap_error_chain n));
@@ -621,7 +651,7 @@ let () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
-  Bench_lib.run opts (core_workloads rt);
+  Bench_lib.run opts (core_workloads sw rt);
   Bench_lib.run opts (mutable_ref_workloads rt);
   Bench_lib.run opts (semaphore_workloads rt);
   Bench_lib.run opts (promise_workloads rt);
