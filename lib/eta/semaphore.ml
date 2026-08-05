@@ -223,5 +223,5 @@ let with_permits t n (f) =
   Effect.with_scope
     (Effect.acquire_release
        ~acquire:(acquire t n)
-       ~release:(fun () -> Effect.sync (fun () -> release t n))
+       ~release:(fun () -> Effect_erasure.plain_sync2 t n release)
     |> Effect.bind (fun () -> f ()))
