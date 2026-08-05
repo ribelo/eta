@@ -5011,11 +5011,12 @@ module Make (Observer_error : Observer_error) () = struct
         (fun _ (P signal) timers ->
           match signal.timer with
           | Some timer
-            when Hashtbl.mem timer_nodes signal.id
+            when signal.demand > 0
                  && not (Hashtbl.mem queued_ids (signal_id_int signal.id)) ->
               (signal.id, timer) :: timers
-          | Some _ | None -> timers)
-        necessary_nodes timers
+          | Some _ -> timers
+          | None -> assert false)
+        timer_nodes timers
     in
     timer_drain_snapshot := drained;
     Timer.node_demand_plan ~timers
@@ -5386,9 +5387,8 @@ module Make (Observer_error : Observer_error) () = struct
       (fun _ ->
         Hashtbl.iter
           (fun _id (P signal as packed) ->
-            if Option.is_some signal.timer && Hashtbl.mem timer_nodes signal.id
-            then schedule_signal packed)
-          necessary_nodes)
+            if signal.demand > 0 then schedule_signal packed)
+          timer_nodes)
       timer_refresh;
     let pending =
       Graph.stabilization_pending_plan
