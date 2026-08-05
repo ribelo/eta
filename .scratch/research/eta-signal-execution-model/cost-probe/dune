@@ -1,0 +1,12 @@
+(env
+ (release
+  (ocamlopt_flags -O3)))
+
+(executable
+ (name probe)
+ (libraries
+  eta
+  eta_eio
+  eta_signal.__private__.eta_signal_kernel
+  eio_main
+  unix))

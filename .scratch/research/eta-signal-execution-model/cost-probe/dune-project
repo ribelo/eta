@@ -1,0 +1,7 @@
+(lang dune 3.22)
+
+(name eta_signal)
+
+(package
+ (name eta_signal)
+ (allow_empty))

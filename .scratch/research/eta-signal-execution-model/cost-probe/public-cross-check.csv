@@ -1,0 +1,4 @@
+name,operations,sample,wall_ns,allocated_words
+eta_signal.changed.depth_1,131072,1,6517.479051,5373.000610
+eta_signal.changed.depth_10,131072,1,7281.912985,5985.000610
+eta_signal.changed.depth_100,32768,1,15668.396372,12105.002441

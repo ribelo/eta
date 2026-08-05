@@ -55,6 +55,7 @@ main Dune workspace.
 
 - [Binding Signal behavior](issues/01-binding-signal-behavior.md) — preserve 32 public observation rows while reopening every private execution representation.
 - [Incremental layered baseline](issues/02-incremental-layered-baseline.md) — use the zero-allocation raw static core and measure each adapter as a separate baseline layer.
+- [Eta execution-cost decomposition](issues/03-eta-cost-decomposition.md) — reject the current `729 + 68d`-word raw planner and keep Effect, lane, runtime, observer, and timer costs separate.
 
 ## Not yet specified
 
