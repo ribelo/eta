@@ -193,14 +193,16 @@ let acquire t n =
     (Effect_core.sync_contract2 ~leaf_name:"Semaphore.acquire" t n
        acquire_with_contract)
 
+let release_if_claimed claimed t n =
+  if Atomic.compare_and_set claimed true false then release t n
+
 let with_permits_or_abort t n ~abort (f) =
   (* [claimed] means this combinator owns a granted permit. The finalizer is the
      only release path, so permits cannot escape through a result that a race or
      parent cancellation later discards. *)
   let claimed = Atomic.make false in
   let release_claimed =
-    Effect.sync (fun () ->
-        if Atomic.compare_and_set claimed true false then release t n)
+    Effect_erasure.plain_sync3 claimed t n release_if_claimed
   in
   let body =
     (* Warm fast path: when a permit is immediately available there is nothing
