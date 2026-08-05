@@ -407,8 +407,7 @@ let recv_sync contract (t : ('a, 'err) t) =
         raise exn)
 
 let send t value =
-  Effect_erasure.public_sync ~leaf_name:"Channel.send" t (fun contract t ->
-      send_sync contract t value)
+  Effect_erasure.public_sync2 ~leaf_name:"Channel.send" t value send_sync
   |> Effect.bind (function
        | `Sent -> Effect.unit
        | `Full -> assert false

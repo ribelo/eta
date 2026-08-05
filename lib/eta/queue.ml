@@ -524,8 +524,7 @@ let sent_token t = with_lock t @@ fun () -> t.sent_token
 let same_sent_token left right = left == right
 
 let offer t value =
-  Effect_erasure.public_sync ~leaf_name:"Queue.offer" t (fun contract t ->
-      offer_sync contract t value)
+  Effect_erasure.public_sync2 ~leaf_name:"Queue.offer" t value offer_sync
   |> Effect.bind (function
        | `Sent -> Effect.pure true
        | `Dropped -> Effect.pure false

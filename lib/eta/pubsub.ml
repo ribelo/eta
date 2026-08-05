@@ -306,8 +306,7 @@ let publish_sync contract t value =
         raise exn)
 
 let publish t value =
-  Effect_erasure.public_sync ~leaf_name:"Pubsub.publish" t (fun contract t ->
-      publish_sync contract t value)
+  Effect_erasure.public_sync2 ~leaf_name:"Pubsub.publish" t value publish_sync
   |> Effect.bind (function
        | `Published result -> Effect.pure result
        | `Closed -> Effect.fail `Closed
