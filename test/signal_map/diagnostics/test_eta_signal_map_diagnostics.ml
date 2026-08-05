@@ -190,9 +190,10 @@ let test_keyed_stats_count_failed_attempt_and_rollback () =
   let input = H.S.Var.create H.M.empty in
   let output =
     H.K.mapi
-      ~data_cutoff:(fun ~published:_ ~candidate:_ ->
-        if !fail_cutoff then failwith "cutoff";
-        false)
+      ~data_cutoff:
+        (Eta_signal.Cutoff.of_equal (fun _ _ ->
+           if !fail_cutoff then failwith "cutoff";
+           false))
       (H.S.Var.watch input) ~f:(fun ~key:_ ~data ->
         if !fail_builder then failwith "builder";
         data)

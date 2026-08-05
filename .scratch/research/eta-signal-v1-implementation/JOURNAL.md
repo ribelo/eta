@@ -443,3 +443,35 @@ nix develop -c dune runtest test/signal test/signal_map --force
 ```sh
 nix develop -c dune runtest test/signal test/signal_map --force
 ```
+
+## 2026-08-05 - Slice 5: named cutoffs
+
+- Published `Eta_signal.Cutoff` with the five named constructors required by
+  the specification: `always`, `never`, `phys_equal`, `of_equal`, and
+  `of_compare`. The public cutoff type aliases one private immutable kernel
+  representation so public and keyed-package cutoffs have the same identity.
+- Replaced the public `?equal` surface with `?cutoff` on sources, derived
+  maps, binds, observers, stream bridges, and keyed `data_cutoff`. `const` no
+  longer takes a redundant cutoff because a constant has no later candidate.
+- Added deterministic contract tests for every constructor, the
+  published-then-candidate argument order, and the separate authority of
+  producer and observer cutoffs. Registered the new law-bearing prose as
+  SC01-SC05 in the executable-law registry and refreshed stale Signal spans
+  after the interface insertion.
+- Migrated model, keyed, keyed-private, diagnostic, overflow-harness, and law
+  call sites. The old raw-function signal APIs were deleted rather than kept
+  as wrappers.
+- Verified with:
+
+```sh
+nix develop -c dune runtest test/signal/contract --force
+nix develop -c dune runtest test/signal test/signal_map test/laws --force
+nix develop -c dune build @signal-economics
+nix develop -c dune build @install
+```
+
+- The combined signal, signal-map, kernel, economics, model, and public suites
+  completed green. The generated `keyed_mapi_properties.exe` invocation was
+  stopped after more than twenty minutes of uninterrupted CPU before it
+  printed a final result; this slice remains open, and the complete generated
+  law rerun is still required before slice completion.

@@ -220,6 +220,8 @@ module Timer = Eta_signal_timer
 module Timer_policy = Eta_signal_timer_policy
 module Transaction = Eta_signal_transaction
 
+module Cutoff = Eta_signal_cutoff
+
 module Owner_transaction = struct
   type t = (Transaction.planning, unit) Transaction.t
   type 'a cell = 'a Transaction.staged
@@ -280,7 +282,7 @@ module type Package_graph = sig
   }
 
   val stable_family :
-    ?data_cutoff:(published:'data -> candidate:'data -> bool) ->
+    ?data_cutoff:'data Cutoff.t ->
     input:'data_map signal ->
     input_ops:('key, 'data, 'data_map) input_ops ->
     output_ops:('key, 'output, 'output_map) output_ops ->
@@ -293,6 +295,11 @@ end
 
 module Make (Observer_error : Observer_error) () = struct
   type observer_error = Observer_error.t
+
+  let cutoff_equal cutoff published candidate =
+    Cutoff.suppress cutoff ~published ~candidate
+
+  let cutoff_or_default = Option.value ~default:Cutoff.phys_equal
 
   type graph_error = Error.graph_error
 
@@ -656,7 +663,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   and ('key, 'data, 'output, 'data_map, 'output_map, 'child_map) keyed = {
     keyed_input : 'data_map signal;
-    keyed_data_cutoff : published:'data -> candidate:'data -> bool;
+    keyed_data_cutoff : 'data Cutoff.t;
     keyed_builder : key:'key -> data:'data signal -> 'output signal;
     keyed_data_ops : ('key, 'data, 'data_map) keyed_input_ops;
     keyed_output_ops : ('key, 'output, 'output_map) keyed_output_ops;
@@ -2596,7 +2603,7 @@ module Make (Observer_error : Observer_error) () = struct
       let published = Transaction.current child.keyed_child_source.source_value in
       if
         not
-          (keyed.keyed_data_cutoff ~published ~candidate)
+          (cutoff_equal keyed.keyed_data_cutoff published candidate)
       then (
         plan.keyed_plan_updates <- child :: plan.keyed_plan_updates;
         Graph.stage_cell graph lane staging
@@ -3292,7 +3299,8 @@ module Make (Observer_error : Observer_error) () = struct
   module Var = struct
     type 'a t = 'a var
 
-    let create ?equal value = new_var ?equal value
+    let create ?(cutoff = Cutoff.phys_equal) value =
+      new_var ~equal:(cutoff_equal cutoff) value
 
     let value (source : 'a t) =
       ensure_graph_context ();
@@ -3368,8 +3376,9 @@ module Make (Observer_error : Observer_error) () = struct
             observer)
       |> Effect.flatten_result
 
-    let observe_delivery_callback ?(equal = default_equal) ?(on_finish = [])
-        signal callback =
+    let observe_delivery_callback ?(cutoff = Cutoff.phys_equal)
+        ?(on_finish = []) signal callback =
+      let equal = cutoff_equal cutoff in
       let registered = ref None in
       cleanup_observer_registration_on_error
         (fun () ->
@@ -3414,13 +3423,13 @@ module Make (Observer_error : Observer_error) () = struct
                (refresh_timer_demand ()
                |> Effect.bind (fun () -> transfer_active_observer observer)))
 
-    let observe_delivery ?equal ?on_finish signal callback =
-      observe_delivery_callback ?equal ?on_finish signal
+    let observe_delivery ?cutoff ?on_finish signal callback =
+      observe_delivery_callback ?cutoff ?on_finish signal
         (fun observer token update ->
           callback (delivery observer token update))
 
-    let observe ?equal signal callback =
-      observe_delivery_callback ?equal signal (fun _observer _token update ->
+    let observe ?cutoff signal callback =
+      observe_delivery_callback ?cutoff signal (fun _observer _token update ->
           callback update)
 
     let read observer =
@@ -3441,42 +3450,54 @@ module Make (Observer_error : Observer_error) () = struct
     let dispose observer = dispose_observer_effect observer
   end
 
-  let const ?equal value = new_const ?equal value
-  let map ?equal f a = new_signal ?equal (Map (a, f)) [ P a ]
-  let map2 ?equal f a b = new_signal ?equal (Map2 (a, b, f)) [ P a; P b ]
+  let const value = new_const value
 
-  let map3 ?equal f a b c =
-    new_signal ?equal (Map3 (a, b, c, f)) [ P a; P b; P c ]
+  let map ?(cutoff = Cutoff.phys_equal) f a =
+    new_signal ~equal:(cutoff_equal cutoff) (Map (a, f)) [ P a ]
 
-  let map4 ?equal f a b c d =
-    new_signal ?equal (Map4 (a, b, c, d, f)) [ P a; P b; P c; P d ]
+  let map2 ?(cutoff = Cutoff.phys_equal) f a b =
+    new_signal ~equal:(cutoff_equal cutoff) (Map2 (a, b, f)) [ P a; P b ]
 
-  let map5 ?equal f a b c d e =
-    new_signal ?equal (Map5 (a, b, c, d, e, f)) [ P a; P b; P c; P d; P e ]
+  let map3 ?(cutoff = Cutoff.phys_equal) f a b c =
+    new_signal ~equal:(cutoff_equal cutoff) (Map3 (a, b, c, f))
+      [ P a; P b; P c ]
 
-  let map6 ?equal f a b c d e f_signal =
-    new_signal ?equal
+  let map4 ?(cutoff = Cutoff.phys_equal) f a b c d =
+    new_signal ~equal:(cutoff_equal cutoff) (Map4 (a, b, c, d, f))
+      [ P a; P b; P c; P d ]
+
+  let map5 ?(cutoff = Cutoff.phys_equal) f a b c d e =
+    new_signal ~equal:(cutoff_equal cutoff) (Map5 (a, b, c, d, e, f))
+      [ P a; P b; P c; P d; P e ]
+
+  let map6 ?(cutoff = Cutoff.phys_equal) f a b c d e f_signal =
+    new_signal ~equal:(cutoff_equal cutoff)
       (Map6 (a, b, c, d, e, f_signal, f))
       [ P a; P b; P c; P d; P e; P f_signal ]
 
-  let map7 ?equal f a b c d e f_signal g =
-    new_signal ?equal
+  let map7 ?(cutoff = Cutoff.phys_equal) f a b c d e f_signal g =
+    new_signal ~equal:(cutoff_equal cutoff)
       (Map7 (a, b, c, d, e, f_signal, g, f))
       [ P a; P b; P c; P d; P e; P f_signal; P g ]
 
-  let map8 ?equal f a b c d e f_signal g h =
-    new_signal ?equal
+  let map8 ?(cutoff = Cutoff.phys_equal) f a b c d e f_signal g h =
+    new_signal ~equal:(cutoff_equal cutoff)
       (Map8 (a, b, c, d, e, f_signal, g, h, f))
       [ P a; P b; P c; P d; P e; P f_signal; P g; P h ]
 
-  let map9 ?equal f a b c d e f_signal g h i =
-    new_signal ?equal
+  let map9 ?(cutoff = Cutoff.phys_equal) f a b c d e f_signal g h i =
+    new_signal ~equal:(cutoff_equal cutoff)
       (Map9 (a, b, c, d, e, f_signal, g, h, i, f))
       [ P a; P b; P c; P d; P e; P f_signal; P g; P h; P i ]
 
   let both a b = map2 (fun a b -> (a, b)) a b
-  let all ?equal signals = new_signal ?equal (All signals) (List.map (fun s -> P s) signals)
-  let bind ?equal source selector = make_bind ?equal source selector
+
+  let all ?(cutoff = Cutoff.phys_equal) signals =
+    new_signal ~equal:(cutoff_equal cutoff) (All signals)
+      (List.map (fun s -> P s) signals)
+
+  let bind ?(cutoff = Cutoff.phys_equal) source selector =
+    make_bind ~equal:(cutoff_equal cutoff) source selector
 
   let observer_count_plan =
     Graph.observer_count_plan ~active:observer_active
@@ -4000,9 +4021,9 @@ module Make (Observer_error : Observer_error) () = struct
     let timer_refresh_operation source spec =
       Refresh_operation (source, spec)
 
-    let make_timer_signal ?equal initial interval ~runtime_contract
-        source_policy update =
-      let source = Var.create ?equal initial in
+    let make_timer_signal ?(cutoff = Cutoff.phys_equal) initial interval
+        ~runtime_contract source_policy update =
+      let source = Var.create ~cutoff initial in
       let signal = Var.watch source in
       Timer_policy.source_policy_result source_policy
         ~plan:
@@ -4039,8 +4060,9 @@ module Make (Observer_error : Observer_error) () = struct
                     |> Effect.bind (fun initial_ms ->
                            construct_timer_signal (fun () ->
                                let now_ms_signal =
-                                 make_timer_signal ~equal:Int.equal initial_ms
-                                   every ~runtime_contract
+                                 make_timer_signal
+                                   ~cutoff:(Cutoff.of_equal Int.equal)
+                                   initial_ms every ~runtime_contract
                                    (Timer_policy.current_time_source_policy ())
                                    {
                                      source_timer_update =
@@ -4052,13 +4074,14 @@ module Make (Observer_error : Observer_error) () = struct
                                                 |> Effect.map (fun _ -> ())));
                                    }
                                in
-                               map ~equal:monotonic_time_equal
+                               map ~cutoff:(Cutoff.of_equal monotonic_time_equal)
                                  (fun ms -> { runtime_contract; ms })
                                  now_ms_signal))))
 
     let construct_deadline_signal every deadline_ms ~runtime_contract =
       construct_timer_signal (fun () ->
-          make_timer_signal ~equal:Bool.equal false every ~runtime_contract
+          make_timer_signal ~cutoff:(Cutoff.of_equal Bool.equal) false every
+            ~runtime_contract
             (Timer_policy.deadline_source_policy ~deadline_ms)
             {
               source_timer_update =
@@ -4121,8 +4144,8 @@ module Make (Observer_error : Observer_error) () = struct
              |> Effect.bind (fun runtime_contract ->
                     construct_timer_signal (fun () ->
                         let interval_ms = Duration.to_ms interval in
-                        make_timer_signal ~equal:Int.equal 0 interval
-                          ~runtime_contract
+                        make_timer_signal ~cutoff:(Cutoff.of_equal Int.equal) 0
+                          interval ~runtime_contract
                           (Timer_policy.interval_source_policy ~interval_ms)
                           {
                             source_timer_update =
@@ -4197,20 +4220,27 @@ module Make (Observer_error : Observer_error) () = struct
   module Stream = struct
     let default_capacity = Stream_bridge.default_capacity
 
-    let observe ?(capacity = default_capacity) ?on_drop ?equal signal =
-      Stream_bridge.observe ~capacity ?on_drop ?equal
+    let observe ?(capacity = default_capacity) ?on_drop
+        ?(cutoff = Cutoff.phys_equal) signal =
+      let equal = cutoff_equal cutoff in
+      Stream_bridge.observe ~capacity ?on_drop ~equal
         ~metrics:(graph_stream_bridge_metrics ())
         ~on_closed_with_error:(fun err ->
           Effect.sync (fun () -> raise (Graph_error err)))
         ~map_observe_error:(fun err -> (err :> stream_error))
         ~observe_delivery:
           (fun ?equal ~on_finish signal callback ->
-            Observer.observe_delivery ?equal ~on_finish signal callback)
+            let cutoff =
+              match equal with
+              | None -> Cutoff.phys_equal
+              | Some equal -> Cutoff.of_equal equal
+            in
+            Observer.observe_delivery ~cutoff ~on_finish signal callback)
         signal
 
-    let with_observed ?capacity ?on_drop ?equal signal f =
+    let with_observed ?capacity ?on_drop ?cutoff signal f =
       Effect.with_resource
-        ~acquire:(observe ?capacity ?on_drop ?equal signal)
+        ~acquire:(observe ?capacity ?on_drop ?cutoff signal)
         ~release:(fun (observer, _stream) ->
           Observer.dispose observer)
         (fun (_observer, stream) -> f stream)
@@ -4410,7 +4440,7 @@ module Make (Observer_error : Observer_error) () = struct
     let set_keyed_counter = set_keyed_counter
 
     let keyed_mapi
-        ?(data_cutoff = fun ~published ~candidate -> default_equal published candidate)
+        ?(data_cutoff = Cutoff.phys_equal)
         ~data_ops ~output_ops input ~f =
       let child_ops = keyed_child_ops data_ops.keyed_compare_key in
       let keyed =

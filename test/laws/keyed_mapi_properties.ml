@@ -106,6 +106,10 @@ let run_case matrix sample =
     | Eta.Exit.Error (Eta.Cause.Fail `Invalid_scope) -> true
     | Eta.Exit.Error _ | Eta.Exit.Ok _ -> false
   in
+  let raw_data_cutoff f =
+    Eta_signal.Cutoff.of_equal (fun published candidate ->
+        f ~published ~candidate)
+  in
   let data_signals = Hashtbl.create 8 in
   let child_signals = Hashtbl.create 8 in
   let local_sources = Hashtbl.create 8 in
@@ -298,7 +302,9 @@ let run_case matrix sample =
         M.set third unchanged
           (M.set other (box 2 20) (one (box 1 10)))
       in
-      let input, _output, observer = setup ~data_cutoff:cutoff initial in
+      let input, _output, observer =
+        setup ~data_cutoff:(raw_data_cutoff cutoff) initial
+      in
       let final =
         M.set (third + 1) (box 5 50)
           (M.set third unchanged (one (box 4 40)))
@@ -330,9 +336,10 @@ let run_case matrix sample =
       let calls = ref [] in
       let input, _output, observer =
         setup
-          ~data_cutoff:(fun ~published ~candidate ->
-            calls := (published, candidate) :: !calls;
-            false)
+          ~data_cutoff:
+            (raw_data_cutoff (fun ~published ~candidate ->
+               calls := (published, candidate) :: !calls;
+               false))
           (one published)
       in
       set input (one candidate);
@@ -343,7 +350,7 @@ let run_case matrix sample =
       let published = box 1 10 in
       let candidate = box 2 20 in
       let input, _output, observer =
-        setup ~data_cutoff:(fun ~published:_ ~candidate:_ -> true) (one published)
+        setup ~data_cutoff:Eta_signal.Cutoff.always (one published)
       in
       let root = read observer in
       set input (one candidate);
@@ -358,7 +365,9 @@ let run_case matrix sample =
         calls := !calls @ [ (published, candidate) ];
         published == a && candidate == b
       in
-      let input, _output, observer = setup ~data_cutoff:cutoff (one a) in
+      let input, _output, observer =
+        setup ~data_cutoff:(raw_data_cutoff cutoff) (one a)
+      in
       set input (one b);
       stabilize ();
       set input (one c);
@@ -371,10 +380,11 @@ let run_case matrix sample =
       let calls = ref 0 and fail = ref true in
       let input, _output, observer =
         setup
-          ~data_cutoff:(fun ~published:_ ~candidate:_ ->
-            incr calls;
-            if !fail then failwith "cutoff";
-            false)
+          ~data_cutoff:
+            (raw_data_cutoff (fun ~published:_ ~candidate:_ ->
+               incr calls;
+               if !fail then failwith "cutoff";
+               false))
           (one old)
       in
       set input (one next);
@@ -390,7 +400,10 @@ let run_case matrix sample =
       let calls = ref 0 in
       let input, _output, observer =
         setup
-          ~data_cutoff:(fun ~published:_ ~candidate:_ -> incr calls; false)
+          ~data_cutoff:
+            (raw_data_cutoff (fun ~published:_ ~candidate:_ ->
+               incr calls;
+               false))
           (one shared)
       in
       shared.value <- 20;
@@ -428,7 +441,8 @@ let run_case matrix sample =
         K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data ->
             let source = S.Var.create 0 in
             local := Some source;
-            S.map2 ~equal:Int.equal (fun data local -> data.value + (local mod 1))
+            S.map2 ~cutoff:(Eta_signal.Cutoff.of_equal Int.equal)
+              (fun data local -> data.value + (local mod 1))
               data (S.Var.watch source))
       in
       let observer = run_ok (S.Observer.observe output (fun _ -> E.unit)) in

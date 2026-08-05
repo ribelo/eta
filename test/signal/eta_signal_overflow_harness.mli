@@ -44,7 +44,7 @@ module Make (Observer_error : Observer_error) () : sig
   module Var : sig
     type 'a t = 'a var
 
-    val create : ?equal:('a -> 'a -> bool) -> 'a -> 'a t
+    val create : ?cutoff:'a Eta_signal_cutoff.t -> 'a -> 'a t
     val watch : 'a t -> 'a signal
     val set : 'a t -> 'a -> (unit, [> `Reentrant_update ]) Eta.Effect.t
   end
@@ -53,7 +53,7 @@ module Make (Observer_error : Observer_error) () : sig
     type 'a t = 'a observer
 
     val observe :
-      ?equal:('a -> 'a -> bool) ->
+      ?cutoff:'a Eta_signal_cutoff.t ->
       'a signal ->
       ('a update -> (unit, observer_error) Eta.Effect.t) ->
       ('a t, graph_error) Eta.Effect.t
@@ -62,10 +62,10 @@ module Make (Observer_error : Observer_error) () : sig
     val dispose : 'a t -> (unit, graph_error) Eta.Effect.t
   end
 
-  val const : ?equal:('a -> 'a -> bool) -> 'a -> 'a signal
+  val const : 'a -> 'a signal
 
   val bind :
-    ?equal:('b -> 'b -> bool) -> 'a signal -> ('a -> 'b signal) -> 'b signal
+    ?cutoff:'b Eta_signal_cutoff.t -> 'a signal -> ('a -> 'b signal) -> 'b signal
 
   val stabilize : (unit, stabilize_error) Eta.Effect.t
   val stats : unit -> (stats, graph_error) Eta.Effect.t

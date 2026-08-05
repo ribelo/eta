@@ -370,7 +370,9 @@ let test_map_invariants_repeated_children_cutoff_and_final_values () =
   in
   let cutoff_source = S.Var.create 0 in
   let cutoff_child =
-    S.Var.watch cutoff_source |> S.map ~equal:Int.equal (fun value -> value mod 2)
+    S.Var.watch cutoff_source
+    |> S.map ~cutoff:(Eta_signal.Cutoff.of_equal Int.equal) (fun value ->
+           value mod 2)
   in
   let cutoff_calls = ref 0 in
   let cutoff_map9 =
@@ -1126,7 +1128,7 @@ let test_source_cutoff_forces_same_block_propagation () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let block = Array.make 1 1 in
-  let source = S.Var.create ~equal:(fun _ _ -> false) block in
+  let source = S.Var.create ~cutoff:Eta_signal.Cutoff.never block in
   let mapped_calls = ref 0 in
   let mapped =
     S.Var.watch source
@@ -1146,6 +1148,111 @@ let test_source_cutoff_forces_same_block_propagation () =
     (run_ok runtime (S.Observer.read observer));
   run_ok runtime (S.Observer.dispose observer)
 
+let test_cutoff_constructors_observe_published_then_candidate () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let read_after_set cutoff initial candidate =
+    let source = S.Var.create ~cutoff initial in
+    let observer =
+      run_ok runtime (S.Observer.observe (S.Var.watch source) (fun _ -> E.unit))
+    in
+    run_ok runtime S.stabilize;
+    run_ok runtime (S.Var.set source candidate);
+    run_ok runtime S.stabilize;
+    let result = run_ok runtime (S.Observer.read observer) in
+    run_ok runtime (S.Observer.dispose observer);
+    result
+  in
+  Alcotest.(check int) "always suppresses every candidate" 0
+    (read_after_set Eta_signal.Cutoff.always 0 1);
+  Alcotest.(check int) "never suppresses no candidate" 1
+    (read_after_set Eta_signal.Cutoff.never 0 1);
+  let physical_calls = ref 0 in
+  let physical_source = S.Var.create [| 0 |] in
+  let physical_mapped =
+    S.Var.watch physical_source
+    |> S.map (fun value ->
+           incr physical_calls;
+           Array.get value 0)
+  in
+  let physical_observer =
+    run_ok runtime (S.Observer.observe physical_mapped (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Var.set physical_source [| 0 |]);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "physical cutoff accepts a fresh block" 2
+    !physical_calls;
+  Alcotest.(check int) "physical cutoff publishes a fresh block" 0
+    (run_ok runtime (S.Observer.read physical_observer));
+  run_ok runtime (S.Observer.dispose physical_observer);
+  let equal_calls = ref [] in
+  let published = ref "published" in
+  let candidate = ref "candidate" in
+  let equal =
+    Eta_signal.Cutoff.of_equal (fun left right ->
+        equal_calls := (left, right) :: !equal_calls;
+        true)
+  in
+  Alcotest.(check bool) "of_equal suppresses on true" true
+    (read_after_set equal published candidate == published);
+  (match !equal_calls with
+   | [ (left, right) ] ->
+       Alcotest.(check bool) "of_equal receives published then candidate" true
+         (left == published && right == candidate)
+   | _ -> Alcotest.fail "of_equal made the wrong cutoff calls");
+  let compare_calls = ref [] in
+  let compare =
+    Eta_signal.Cutoff.of_compare (fun left right ->
+        compare_calls := (left, right) :: !compare_calls;
+        0)
+  in
+  Alcotest.(check bool) "of_compare suppresses on zero" true
+    (read_after_set compare published candidate == published);
+  (match !compare_calls with
+   | [ (left, right) ] ->
+       Alcotest.(check bool) "of_compare receives published then candidate" true
+         (left == published && right == candidate)
+   | _ -> Alcotest.fail "of_compare made the wrong cutoff calls")
+
+let test_producer_and_observer_cutoffs_have_distinct_authority () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let producer_events = ref [] in
+  let producer_source = S.Var.create ~cutoff:Eta_signal.Cutoff.always 0 in
+  let producer_observer =
+    run_ok runtime
+      (S.Observer.observe (S.Var.watch producer_source) (fun update ->
+           E.sync (fun () -> producer_events := update :: !producer_events)))
+  in
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Var.set producer_source 1);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "producer suppression preserves committed value" 0
+    (run_ok runtime (S.Observer.read producer_observer));
+  Alcotest.(check int) "producer suppression emits only initialization" 1
+    (List.length !producer_events);
+  let observer_events = ref [] in
+  let observer_source = S.Var.create 0 in
+  let observer =
+    run_ok runtime
+      (S.Observer.observe ~cutoff:Eta_signal.Cutoff.always
+         (S.Var.watch observer_source) (fun update ->
+           E.sync (fun () -> observer_events := update :: !observer_events)))
+  in
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Var.set observer_source 1);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "observer suppression still advances current" 1
+    (run_ok runtime (S.Observer.read observer));
+  Alcotest.(check int) "observer cutoff never suppresses initialization" 1
+    (List.length !observer_events);
+  (match !observer_events with
+   | [ S.Initialized 0 ] -> ()
+   | _ -> Alcotest.fail "observer cutoff emitted a changed event");
+  run_ok runtime (S.Observer.dispose producer_observer);
+  run_ok runtime (S.Observer.dispose observer)
+
 let test_equality_defects_preserve_committed_snapshots () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1153,7 +1260,9 @@ let test_equality_defects_preserve_committed_snapshots () =
   let cutoff_signal =
     S.Var.watch cutoff_source
     |> S.map
-         ~equal:(fun _old_value _new_value -> failwith "cutoff equality")
+         ~cutoff:
+           (Eta_signal.Cutoff.of_equal (fun _old_value _new_value ->
+              failwith "cutoff equality"))
          (fun value -> value)
   in
   let cutoff_observer =
@@ -1169,9 +1278,10 @@ let test_equality_defects_preserve_committed_snapshots () =
   let source_equal_fails = ref true in
   let source =
     S.Var.create
-      ~equal:(fun _old_value _new_value ->
-        if !source_equal_fails then failwith "source equality";
-        false)
+      ~cutoff:
+        (Eta_signal.Cutoff.of_equal (fun _old_value _new_value ->
+           if !source_equal_fails then failwith "source equality";
+           false))
       1
   in
   let source_observer =
@@ -1194,9 +1304,10 @@ let test_equality_defects_preserve_committed_snapshots () =
   let observer =
     run_ok runtime
       (S.Observer.observe
-         ~equal:(fun _old_value _new_value ->
-           if !observer_equal_fails then failwith "observer equality";
-           false)
+         ~cutoff:
+           (Eta_signal.Cutoff.of_equal (fun _old_value _new_value ->
+              if !observer_equal_fails then failwith "observer equality";
+              false))
          (S.Var.watch observer_source)
          (record observer_events))
   in
@@ -2277,6 +2388,12 @@ let () =
             `Quick test_default_physical_cutoff_suppresses_in_place_mutation;
           Alcotest.test_case "source cutoff forces same-block propagation" `Quick
             test_source_cutoff_forces_same_block_propagation;
+          Alcotest.test_case
+            "cutoff constructors observe published then candidate" `Quick
+            test_cutoff_constructors_observe_published_then_candidate;
+          Alcotest.test_case
+            "producer and observer cutoffs have distinct authority" `Quick
+            test_producer_and_observer_cutoffs_have_distinct_authority;
           Alcotest.test_case "equality defects preserve committed snapshots"
             `Quick test_equality_defects_preserve_committed_snapshots;
           Alcotest.test_case "ambiguous scope failures are typed" `Quick

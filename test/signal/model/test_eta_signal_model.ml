@@ -1006,7 +1006,9 @@ let test_source_equality_trace_matches_model () =
   let parity_equal left right = left mod 2 = right mod 2 in
   let run_trace name ops =
     Eta_test.with_test_clock @@ fun _sw _clock runtime ->
-    let source = Signal.Var.create ~equal:parity_equal 0 in
+    let source =
+      Signal.Var.create ~cutoff:(Eta_signal.Cutoff.of_equal parity_equal) 0
+    in
     let updates = ref [] in
     let observer =
       run_ok runtime
@@ -1070,7 +1072,7 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
       Signal.map (fun value -> cutoff_payload value) source_signal
     in
     let structural =
-      Signal.map ~equal:int_list_equal
+      Signal.map ~cutoff:(Eta_signal.Cutoff.of_equal int_list_equal)
         (fun value -> cutoff_payload value)
         source_signal
     in
@@ -1084,7 +1086,8 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
     in
     let bind_inner_calls = ref 0 in
     let bound =
-      Signal.bind ~equal:int_list_equal (Signal.const ()) (fun () ->
+      Signal.bind ~cutoff:(Eta_signal.Cutoff.of_equal int_list_equal)
+        (Signal.const ()) (fun () ->
           source_signal
           |> Signal.map (fun value ->
                  incr bind_inner_calls;
@@ -1126,7 +1129,7 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
     in
     let suppressed_observer =
       run_ok runtime
-        (Signal.Observer.observe ~equal:(fun _ _ -> true) source_signal
+        (Signal.Observer.observe ~cutoff:Eta_signal.Cutoff.always source_signal
            (fun _update -> E.sync (fun () -> incr suppressed_callbacks)))
     in
     let pending = ref 0 in
@@ -3095,9 +3098,10 @@ let small_graph_observe runtime signals observer =
         | Small_mod_equal modulus ->
             Some (fun left right -> left mod modulus = right mod modulus)
       in
+      let cutoff = Option.map Eta_signal.Cutoff.of_equal equal in
       let actual_observer =
         run_ok runtime
-          (Signal.Observer.observe ?equal signals.(observer.small_observed_node)
+          (Signal.Observer.observe ?cutoff signals.(observer.small_observed_node)
              (small_graph_record observer))
       in
       observer.small_actual_observer <- Some actual_observer;
@@ -3311,7 +3315,9 @@ let stream_model_observe runtime signal slot =
         | Stream_mod_equal _ ->
             run_ok runtime
               (Signal.Stream.observe ~capacity:slot.stream_capacity ~on_drop
-                 ~equal:(stream_model_equal slot.stream_equal_policy)
+                 ~cutoff:
+                   (Eta_signal.Cutoff.of_equal
+                      (stream_model_equal slot.stream_equal_policy))
                  signal)
       in
       slot.stream_observer <- Some observer;

@@ -6,6 +6,7 @@
  (modules
   eta_signal_overflow_harness
   eta_signal_overflow_impl
+  eta_signal_cutoff
   eta_signal_bind
   eta_signal_debug
   eta_signal_error
@@ -21,6 +22,18 @@
 (rule
  (target eta_signal_overflow_impl.ml)
  (deps ../../lib/signal/kernel/eta_signal_kernel.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_cutoff.ml)
+ (deps ../../lib/signal/eta_signal_cutoff.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_cutoff.mli)
+ (deps ../../lib/signal/eta_signal_cutoff.mli)
  (action
   (copy %{deps} %{target})))
 

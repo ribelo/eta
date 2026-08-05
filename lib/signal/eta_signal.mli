@@ -3,19 +3,18 @@
     Each functor application owns one graph. Signals describe graph structure;
     observer handles are the public read surface for stabilized derived values.
 
-    Equality cutoffs default to physical equality [( == )] for source vars,
-    derived signals, observers, and stream bridges. This is a cheap identity
-    cutoff, not a structural-value cutoff.
+    Cutoffs default to {!Cutoff.phys_equal} for source vars, derived signals,
+    observers, and stream bridges. This is a cheap identity cutoff, not a
+    structural-value cutoff.
 
-    Rule of thumb: if the value is heap-shaped, pass [?equal] and publish a
-    fresh value when the logical content changes. Use the physical default only
-    when object identity is the value semantics you want, for example stable
-    immutable tokens or values whose changes are always represented by a new
-    identity. Prefer explicit structural cutoffs for arrays, records, maps,
-    sets, JSON-like trees, decoded rows, lists rebuilt on every recomputation,
-    and any derived value allocated fresh from unchanged logical content.
+    If the value is heap-shaped, pass [?cutoff] and publish a fresh value when
+    the logical content changes. Use {!Cutoff.of_equal} or
+    {!Cutoff.of_compare} for structural values. Use the physical default only
+    when object identity is the value semantics, for example stable immutable
+    tokens. Prefer explicit structural cutoffs for arrays, records, maps, sets,
+    JSON-like trees, decoded rows, and lists rebuilt by each recomputation.
 
-    Structural [?equal] cannot recover a previous snapshot after you mutate the
+    A structural cutoff cannot recover a previous snapshot after you mutate the
     same heap object in place: the graph still holds that object as the old
     value. Treat signal payloads as immutable once published, or publish a copy.
     In the examples below, [S] is a signal module produced by {!Make} or
@@ -57,7 +56,8 @@
       in
       let parity =
         S.Var.watch source
-        |> S.map ~equal:array_equal (fun value -> [| value mod 2 |])
+        |> S.map ~cutoff:(Eta_signal.Cutoff.of_equal array_equal)
+             (fun value -> [| value mod 2 |])
       in
       parity
     ]}
@@ -65,8 +65,10 @@
     Common structural cutoffs:
 
     {[
-      let int_array_equal = Array.equal Int.equal
-      let string_list_equal = List.equal String.equal
+      let int_array_cutoff =
+        Eta_signal.Cutoff.of_equal (Array.equal Int.equal)
+      let string_list_cutoff =
+        Eta_signal.Cutoff.of_equal (List.equal String.equal)
 
       type user = {
         id : int;
@@ -75,24 +77,27 @@
 
       let user_equal left right =
         Int.equal left.id right.id && String.equal left.name right.name
+      let user_cutoff = Eta_signal.Cutoff.of_equal user_equal
 
       module IntMap = Map.Make (Int)
-      let int_map_equal = IntMap.equal String.equal
+      let int_map_cutoff =
+        Eta_signal.Cutoff.of_equal (IntMap.equal String.equal)
 
-      let decoded_user_row_equal = user_equal
+      let decoded_user_row_cutoff = user_cutoff
 
       type view_model = {
         title : string;
         rows : string list;
       }
 
-      let view_model_equal left right =
-        String.equal left.title right.title
-        && List.equal String.equal left.rows right.rows
+      let view_model_cutoff =
+        Eta_signal.Cutoff.of_equal (fun left right ->
+          String.equal left.title right.title
+          && List.equal String.equal left.rows right.rows)
 
       let view_model =
         S.Var.watch model_source
-        |> S.map ~equal:view_model_equal derive_view_model
+        |> S.map ~cutoff:view_model_cutoff derive_view_model
     ]}
 
     A graph is single-domain: create and use all vars, signals, observers, and
@@ -118,6 +123,23 @@ module No_observer_error : sig
 
   val pp : Format.formatter -> t -> unit
 end
+
+module Cutoff : sig
+  type 'a t = 'a Eta_signal_cutoff.t
+
+  val always : 'a t
+  val never : 'a t
+  val phys_equal : 'a t
+  val of_equal : ('a -> 'a -> bool) -> 'a t
+  val of_compare : ('a -> 'a -> int) -> 'a t
+end
+(** Immutable candidate-suppression policies. A cutoff receives the published
+    value first and the candidate second. A true result suppresses the
+    candidate. [always] suppresses every candidate, [never] suppresses none,
+    [phys_equal] suppresses physically equal candidates, [of_equal equal]
+    suppresses when [equal published candidate] is true, and
+    [of_compare compare] suppresses when [compare published candidate = 0].
+    The default optional cutoff is [phys_equal]. *)
 
 module type Package_graph = sig
   type 'a signal
@@ -148,7 +170,7 @@ module type Package_graph = sig
   }
 
   val stable_family :
-    ?data_cutoff:(published:'data -> candidate:'data -> bool) ->
+    ?data_cutoff:'data Cutoff.t ->
     input:'data_map signal ->
     input_ops:('key, 'data, 'data_map) input_ops ->
     output_ops:('key, 'output, 'output_map) output_ops ->
@@ -315,23 +337,23 @@ module Make (Observer_error : Observer_error) () : sig
   module Var : sig
     type 'a t = 'a var
 
-    val create : ?equal:('a -> 'a -> bool) -> 'a -> 'a t
-    (** Create a source variable. Without [?equal], source updates use
-        physical equality as their cutoff.
+    val create : ?cutoff:'a Cutoff.t -> 'a -> 'a t
+    (** Create a source variable. Without [?cutoff], source updates use
+        {!Cutoff.phys_equal}.
 
         For arrays, records, maps, lists, decoded rows, JSON-like trees, and
-        other structural values, pass [?equal] and publish fresh values. Setting
+        other structural values, pass [?cutoff] and publish fresh values. Setting
         the same heap object after in-place mutation is suppressed by the
-        default cutoff, and even a structural [?equal] cannot reconstruct the
+        default cutoff, and even a structural cutoff cannot reconstruct the
         pre-mutation snapshot if that snapshot aliases the same object.
 
         Prefer making the structural cutoff explicit at the source boundary:
 
         {[
           let source =
-            S.Var.create ~equal:view_model_equal initial_view_model
+            S.Var.create ~cutoff:view_model_cutoff initial_view_model
           in
-          (* Later updates should publish a fresh [view_model] value. *)
+          (* Later updates must publish a fresh [view_model] value. *)
           S.Var.set source next_view_model
         ]}
 
@@ -374,7 +396,7 @@ module Make (Observer_error : Observer_error) () : sig
     type 'a t = 'a observer
 
     val observe :
-      ?equal:('a -> 'a -> bool) ->
+      ?cutoff:'a Cutoff.t ->
       'a signal ->
       ('a update -> (unit, observer_error) Eta.Effect.t) ->
       ('a t, graph_error) Eta.Effect.t
@@ -384,14 +406,14 @@ module Make (Observer_error : Observer_error) () : sig
         snapshot is published. If an observer is disposed before its callback is
         delivered, the collected callback is skipped.
 
-        Without [?equal], observer callback emission uses physical equality as
-        its cutoff. The observer's current value still advances to the latest
-        stabilized value when a callback is suppressed. Pass [?equal] for
-        structural observer values when callbacks should represent logical
-        content changes rather than heap identity changes:
+        Without [?cutoff], observer callback emission uses {!Cutoff.phys_equal}.
+        The observer's current value still advances to the latest stabilized
+        value when a callback is suppressed. Pass [?cutoff] for structural
+        observer values when callbacks must represent logical content changes
+        rather than heap identity changes:
 
         {[
-          S.Observer.observe ~equal:view_model_equal view_model_signal
+          S.Observer.observe ~cutoff:view_model_cutoff view_model_signal
             handle_view_model_update
         ]}
 
@@ -427,17 +449,18 @@ module Make (Observer_error : Observer_error) () : sig
 
   module Package : Package_graph with type 'a signal = 'a signal
 
-  val const : ?equal:('a -> 'a -> bool) -> 'a -> 'a signal
-  (** Constant signal. Without [?equal], the signal cutoff is physical equality.
+  val const : 'a -> 'a signal
+  (** Constant signal. A constant has no later candidate and therefore has no
+      cutoff.
 
       Raises [Graph_error] on graph construction failures; see
       {!exception:Graph_error}. *)
 
-  val map : ?equal:('b -> 'b -> bool) -> ('a -> 'b) -> 'a signal -> 'b signal
-  (** Map one dependency. Without [?equal], the derived-value cutoff is physical
-      equality. Freshly allocated but structurally equal values are therefore
-      treated as changes unless a structural [?equal] is supplied.
-      Pass [?equal] when [f] returns arrays, records, maps, lists, JSON-like
+  val map : ?cutoff:'b Cutoff.t -> ('a -> 'b) -> 'a signal -> 'b signal
+  (** Map one dependency. Without [?cutoff], the derived-value cutoff is
+      {!Cutoff.phys_equal}. Freshly allocated but structurally equal values are
+      therefore treated as changes unless a structural cutoff is supplied.
+      Pass [?cutoff] when [f] returns arrays, records, maps, lists, JSON-like
       trees, decoded rows, or other freshly rebuilt structural values. Prefer
       immutable/copy-on-write results; mutating a previously published result in
       place mutates the cached old value too.
@@ -447,7 +470,7 @@ module Make (Observer_error : Observer_error) () : sig
       {[
         let view_model =
           model_signal
-          |> S.map ~equal:view_model_equal derive_view_model
+          |> S.map ~cutoff:view_model_cutoff derive_view_model
       ]}
 
       The mapping function must be pure and total. Eta may evaluate pure graph
@@ -459,20 +482,20 @@ module Make (Observer_error : Observer_error) () : sig
       {!exception:Graph_error}. *)
 
   val map2 :
-    ?equal:('c -> 'c -> bool) ->
+    ?cutoff:'c Cutoff.t ->
     ('a -> 'b -> 'c) ->
     'a signal ->
     'b signal ->
     'c signal
-  (** Map two dependencies. Without [?equal], the derived-value cutoff is
-      physical equality. The same default applies to [map3] through [map9] and
-      {!both}. Mapping functions must be pure and total; see {!map}.
+  (** Map two dependencies. Without [?cutoff], the derived-value cutoff is
+      {!Cutoff.phys_equal}. The same default applies to [map3] through [map9]
+      and {!both}. Mapping functions must be pure and total; see {!map}.
 
       Raises [Graph_error] on graph construction failures; see
       {!exception:Graph_error}. *)
 
   val map3 :
-    ?equal:('d -> 'd -> bool) ->
+    ?cutoff:'d Cutoff.t ->
     ('a -> 'b -> 'c -> 'd) ->
     'a signal ->
     'b signal ->
@@ -480,7 +503,7 @@ module Make (Observer_error : Observer_error) () : sig
     'd signal
 
   val map4 :
-    ?equal:('e -> 'e -> bool) ->
+    ?cutoff:'e Cutoff.t ->
     ('a -> 'b -> 'c -> 'd -> 'e) ->
     'a signal ->
     'b signal ->
@@ -489,7 +512,7 @@ module Make (Observer_error : Observer_error) () : sig
     'e signal
 
   val map5 :
-    ?equal:('f -> 'f -> bool) ->
+    ?cutoff:'f Cutoff.t ->
     ('a -> 'b -> 'c -> 'd -> 'e -> 'f) ->
     'a signal ->
     'b signal ->
@@ -499,7 +522,7 @@ module Make (Observer_error : Observer_error) () : sig
     'f signal
 
   val map6 :
-    ?equal:('g -> 'g -> bool) ->
+    ?cutoff:'g Cutoff.t ->
     ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g) ->
     'a signal ->
     'b signal ->
@@ -510,7 +533,7 @@ module Make (Observer_error : Observer_error) () : sig
     'g signal
 
   val map7 :
-    ?equal:('h -> 'h -> bool) ->
+    ?cutoff:'h Cutoff.t ->
     ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h) ->
     'a signal ->
     'b signal ->
@@ -522,7 +545,7 @@ module Make (Observer_error : Observer_error) () : sig
     'h signal
 
   val map8 :
-    ?equal:('i -> 'i -> bool) ->
+    ?cutoff:'i Cutoff.t ->
     ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h -> 'i) ->
     'a signal ->
     'b signal ->
@@ -535,7 +558,7 @@ module Make (Observer_error : Observer_error) () : sig
     'i signal
 
   val map9 :
-    ?equal:('j -> 'j -> bool) ->
+    ?cutoff:'j Cutoff.t ->
     ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h -> 'i -> 'j) ->
     'a signal ->
     'b signal ->
@@ -549,17 +572,19 @@ module Make (Observer_error : Observer_error) () : sig
     'j signal
 
   val both : 'a signal -> 'b signal -> ('a * 'b) signal
-  (** Pair two signals. The pair cutoff is physical equality because [both]
-      has no [?equal] argument. Use {!map2} with an explicit structural cutoff
+  (** Pair two signals. The pair cutoff is {!Cutoff.phys_equal} because [both]
+      has no [?cutoff] argument. Use {!map2} with an explicit structural cutoff
       when pair contents define the logical value:
 
       {[
-        let pair_equal (left_count, left_name) (right_count, right_name) =
-          Int.equal left_count right_count
-          && String.equal left_name right_name
+        let pair_cutoff =
+          Eta_signal.Cutoff.of_equal (fun (left_count, left_name)
+              (right_count, right_name) ->
+            Int.equal left_count right_count
+            && String.equal left_name right_name)
 
         let paired =
-          S.map2 ~equal:pair_equal
+          S.map2 ~cutoff:pair_cutoff
             (fun count name -> (count, name))
             count_signal name_signal
       ]}
@@ -567,16 +592,17 @@ module Make (Observer_error : Observer_error) () : sig
       Raises [Graph_error] on graph construction failures; see
       {!exception:Graph_error}. *)
 
-  val all : ?equal:('a list -> 'a list -> bool) -> 'a signal list -> 'a list signal
-  (** Collect a list of signals. Without [?equal], the list cutoff is physical
-      equality. Pass [~equal:(List.equal element_equal)] when list contents
-      define the logical value; otherwise each freshly allocated list is a
-      change by identity.
+  val all : ?cutoff:'a list Cutoff.t -> 'a signal list -> 'a list signal
+  (** Collect a list of signals. Without [?cutoff], the list cutoff is
+      {!Cutoff.phys_equal}. Pass
+      [~cutoff:(Eta_signal.Cutoff.of_equal (List.equal element_equal))] when
+      list contents define the logical value; otherwise each freshly allocated
+      list is a change by identity.
 
       Raises [Graph_error] on graph construction failures; see
       {!exception:Graph_error}. *)
 
-  val bind : ?equal:('b -> 'b -> bool) -> 'a signal -> ('a -> 'b signal) -> 'b signal
+  val bind : ?cutoff:'b Cutoff.t -> 'a signal -> ('a -> 'b signal) -> 'b signal
   (** Dynamically select a signal from the current value of another signal.
       Nodes created by an inactive branch are invalidated when that branch is
       replaced; observing a captured inactive-branch node fails with
@@ -587,8 +613,8 @@ module Make (Observer_error : Observer_error) () : sig
       node fails; side effects in selectors are therefore outside the signal
       contract.
 
-      Without [?equal], the selected output cutoff is physical equality.
-      Pass [?equal] when selected branch outputs are structural values such as
+      Without [?cutoff], the selected output cutoff is {!Cutoff.phys_equal}.
+      Pass [?cutoff] when selected branch outputs are structural values such as
       arrays, records, maps, lists, decoded rows, JSON-like trees, or freshly
       rebuilt immutable trees.
 
@@ -758,21 +784,21 @@ module Make (Observer_error : Observer_error) () : sig
     val observe :
       ?capacity:int ->
       ?on_drop:('a update -> unit) ->
-      ?equal:('a -> 'a -> bool) ->
+      ?cutoff:'a Cutoff.t ->
       'a signal ->
       ('a observer * ('a update, graph_error) Eta_stream.Stream.t, stream_error)
       Eta.Effect.t
     (** [observe ?capacity signal] creates an observer and a stream of observer
         updates. [capacity] defaults to [1024] and bounds the bridge queue.
-        Without [?equal], stream update emission uses physical equality as its
-        observer cutoff. Pass [?equal] when stream consumers should receive
+        Without [?cutoff], stream update emission uses {!Cutoff.phys_equal} as
+        its observer cutoff. Pass [?cutoff] when stream consumers must receive
         updates only for structural value changes. This is especially important
         for streams of arrays, records, maps, lists, decoded rows, or JSON-like
         trees, where allocating a fresh but equal value would otherwise emit.
         For example:
 
         {[
-          S.Stream.observe ~equal:view_model_equal view_model_signal
+          S.Stream.observe ~cutoff:view_model_cutoff view_model_signal
         ]}
 
         Publication from stabilization is nonblocking: when the bridge already
@@ -799,7 +825,7 @@ module Make (Observer_error : Observer_error) () : sig
     val with_observed :
       ?capacity:int ->
       ?on_drop:('a update -> unit) ->
-      ?equal:('a -> 'a -> bool) ->
+      ?cutoff:'a Cutoff.t ->
       'a signal ->
       (('a update, graph_error) Eta_stream.Stream.t ->
       ('b, stream_error) Eta.Effect.t) ->

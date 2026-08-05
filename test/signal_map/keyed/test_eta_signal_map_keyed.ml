@@ -118,10 +118,11 @@ let test_keyed_mapi_cutoff_defect_rolls_back_and_retries () =
   let calls = ref 0 in
   let output =
     K.mapi
-      ~data_cutoff:(fun ~published:_ ~candidate:_ ->
-        incr calls;
-        if !fail then failwith "cutoff";
-        false)
+      ~data_cutoff:
+        (Eta_signal.Cutoff.of_equal (fun _ _ ->
+           incr calls;
+           if !fail then failwith "cutoff";
+           false))
       (S.Var.watch input) ~f:(fun ~key:_ ~data -> S.map ( ! ) data)
   in
   let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in

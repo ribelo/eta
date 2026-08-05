@@ -142,7 +142,7 @@ module type PACKAGE = Eta_signal.Package_graph
 module Make (Package : PACKAGE) : sig
   module Keyed (Order : Map.Ordered_type) : sig
     val mapi :
-      ?data_cutoff:(published:'data -> candidate:'data -> bool) ->
+      ?data_cutoff:'data Eta_signal.Cutoff.t ->
       'data Map.Make(Order).t Package.signal ->
       f:(key:Order.t -> data:'data Package.signal -> 'output Package.signal) ->
       'output Map.Make(Order).t Package.signal
