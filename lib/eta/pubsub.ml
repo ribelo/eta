@@ -29,7 +29,9 @@ type 'err close_reason =
   | Failed of 'err
 
 type 'err publish_out =
-  [ `Published of publish_result | `Closed | `Closed_with_error of 'err ]
+  | Publish_succeeded of publish_result
+  | Publish_closed
+  | Publish_closed_with_error of 'err
 
 type receiver = {
   contract : Runtime_contract.t;
@@ -128,6 +130,10 @@ let with_lock_during_cancel contract t f =
 let close_result = function
   | Clean -> `Closed
   | Failed err -> `Closed_with_error err
+
+let publish_close_result = function
+  | Clean -> Publish_closed
+  | Failed err -> Publish_closed_with_error err
 
 let add_wakeup wakeups wakeup = wakeups := wakeup :: !wakeups
 
@@ -267,7 +273,7 @@ and admit_waiting_publishers_locked wakeups t =
               deactivate_publisher_locked t publisher;
               let result = admit_value_locked wakeups t publisher.value in
               add_wakeup wakeups
-                (Wake_publisher (publisher, `Published result));
+                (Wake_publisher (publisher, Publish_succeeded result));
               loop ()
       in
       loop ()
@@ -296,20 +302,21 @@ let publish_sync_slow contract t value =
   match
     with_lock t @@ fun () ->
     match t.closed with
-    | Some reason -> Blocking_ready (close_result reason)
+    | Some reason -> Blocking_ready (publish_close_result reason)
     | None -> (
         let subscriber_count = active_subscriber_count t in
         match t.overflow with
         | Drop_new _ when subscriber_count > 0 && not (capacity_available t) ->
             t.dropped <- t.dropped + subscriber_count;
             Blocking_ready
-              (`Published { subscriber_count; dropped = subscriber_count })
+              (Publish_succeeded
+                 { subscriber_count; dropped = subscriber_count })
         | Backpressure _ when subscriber_count > 0 && not (capacity_available t)
           ->
             let promise, publisher = enqueue_publisher contract t value in
             Blocking_wait (promise, publisher)
         | Unbounded | Drop_new _ | Backpressure _ ->
-            Blocking_ready (`Published (admit_value_locked wakeups t value)))
+            Blocking_ready (Publish_succeeded (admit_value_locked wakeups t value)))
   with
   | Blocking_ready result ->
       resolve_wakeups !wakeups;
@@ -327,19 +334,23 @@ let publish_nonblocking_sync t value =
   match
     with_lock t @@ fun () ->
     match t.closed with
-    | Some reason -> Publish_ready (close_result reason)
+    | Some reason -> Publish_ready (publish_close_result reason)
     | None ->
         let subscriber_count = active_subscriber_count t in
         match t.overflow with
         | Drop_new _ when subscriber_count > 0 && not (capacity_available t) ->
             t.dropped <- t.dropped + subscriber_count;
             Publish_ready
-              (`Published { subscriber_count; dropped = subscriber_count })
+              (Publish_succeeded
+                 { subscriber_count; dropped = subscriber_count })
         | Unbounded | Drop_new _ when t.waiting_receivers = 0 ->
-            Publish_ready (`Published (admit_value_without_wake_locked t value))
+            Publish_ready
+              (Publish_succeeded (admit_value_without_wake_locked t value))
         | Unbounded | Drop_new _ ->
             let wakeups = ref [] in
-            let result = `Published (admit_value_locked wakeups t value) in
+            let result =
+              Publish_succeeded (admit_value_locked wakeups t value)
+            in
             Publish_wake (result, !wakeups)
         | Backpressure _ ->
             invalid_arg "Eta.Pubsub: nonblocking publish used for Backpressure"
@@ -357,9 +368,10 @@ let publish_sync contract t value =
 let publish t value =
   Effect_erasure.public_sync2 ~leaf_name:"Pubsub.publish" t value publish_sync
   |> Effect.bind (function
-       | `Published result -> Effect.pure result
-       | `Closed -> Effect.fail `Closed
-       | `Closed_with_error err -> Effect.fail (`Closed_with_error err))
+       | Publish_succeeded result -> Effect.pure result
+       | Publish_closed -> Effect.fail `Closed
+       | Publish_closed_with_error err ->
+           Effect.fail (`Closed_with_error err))
 
 let add_subscription t =
   Effect.sync (fun () ->
@@ -522,7 +534,7 @@ let close_locked wakeups t reason =
       | Some publisher ->
           deactivate_publisher_locked t publisher;
           add_wakeup wakeups
-            (Wake_publisher (publisher, close_result reason))
+            (Wake_publisher (publisher, publish_close_result reason))
     done;
     wake_all_receivers wakeups t)
 
