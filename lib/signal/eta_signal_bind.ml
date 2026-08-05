@@ -179,6 +179,8 @@ let dependencies_from_inner ~source ~inner =
   | None -> [ source ]
   | Some inner -> [ source; inner ]
 
+let inner snapshot = snapshot.inner
+
 let dependencies ~source ~inner_dependency snapshot =
   dependencies_from_inner ~source
     ~inner:(Option.map inner_dependency snapshot.inner)

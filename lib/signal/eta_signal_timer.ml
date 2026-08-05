@@ -597,15 +597,18 @@ type 'timer daemon_context = {
   daemon_state : 'timer state_port;
   daemon_update : 'timer daemon_update;
   daemon_hooks : daemon_hooks;
+  daemon_on_lifecycle_mismatch : 'timer -> unit;
 }
 
-let daemon_context ~advance_generation ~state_access ~state ~update ~hooks =
+let daemon_context ~advance_generation ~state_access ~state ~update ~hooks
+    ~on_lifecycle_mismatch =
   {
     daemon_advance_generation = advance_generation;
     daemon_state_access = state_access;
     daemon_state = state;
     daemon_update = update;
     daemon_hooks = hooks;
+    daemon_on_lifecycle_mismatch = on_lifecycle_mismatch;
   }
 
 type ('id, 'necessary, 'runtime, 'timer, 'eff, 'error) demand_port = {
@@ -956,13 +959,23 @@ let start_daemon context timer ~generation ~schedule ~update_on_start
   let with_state f = context.daemon_state_access.daemon_with_state f in
   let cleanup_after_exit ~generation exit =
     with_state (fun () ->
+        let policy_exit = daemon_exit exit in
         cleanup_after_exit ~advance_generation port timer ~generation
-          (daemon_exit exit))
+          policy_exit;
+        match policy_exit with
+        | Eta_signal_timer_policy.Daemon_error ->
+            context.daemon_on_lifecycle_mismatch timer
+        | Eta_signal_timer_policy.Daemon_ok -> ())
   in
   let cleanup_failed_start ~generation exit =
     with_state (fun () ->
+        let policy_exit = daemon_exit exit in
         cleanup_failed_start ~advance_generation port timer ~generation
-          (daemon_exit exit))
+          policy_exit;
+        match policy_exit with
+        | Eta_signal_timer_policy.Daemon_error ->
+            context.daemon_on_lifecycle_mismatch timer
+        | Eta_signal_timer_policy.Daemon_ok -> ())
   in
   let after_update_state ~generation =
     with_state (fun () -> after_update_state port timer ~generation)

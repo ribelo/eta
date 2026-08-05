@@ -10,6 +10,18 @@ let widen (eff : ('a, [< test_error ]) E.t) : ('a, test_error) E.t =
 let run_ok runtime eff =
   Eta_test.Expect.expect_ok (Eta.Runtime.run runtime (widen eff))
 
+let wait_for_sleepers clock expected =
+  let rec loop attempts =
+    if Eta_test.Test_clock.sleeper_count clock >= expected then ()
+    else if attempts = 0 then
+      Alcotest.failf "expected %d sleepers, got %d" expected
+        (Eta_test.Test_clock.sleeper_count clock)
+    else (
+      Eta_test.Async.yield ();
+      loop (attempts - 1))
+  in
+  loop 100
+
 let test_affected_child_notification_avoids_scan () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let left_source = S.Var.create 1 in
@@ -232,6 +244,39 @@ let test_observer_delivery_counters_cover_plan_and_delivery () =
   run_ok runtime (S.Observer.dispose observer);
   run_ok runtime (S.Observer.dispose unrelated_observer)
 
+let test_timer_reconciliation_is_boundary_driven () =
+  Eta_test.with_test_clock @@ fun _switch clock runtime ->
+  let timer = run_ok runtime (S.Time.interval (Eta.Duration.ms 10)) in
+  S.Extension.reset_counters ();
+  run_ok runtime S.stabilize;
+  let demand = S.Extension.demand_counter_snapshot () in
+  Alcotest.(check int) "untouched stabilize has no timer transitions" 0
+    demand.timer_desired_state_transitions;
+  Alcotest.(check int) "undemanded timer owns no reconciliation work" 0
+    (S.Extension.timer_reconciliation_work_count ());
+  let observer =
+    run_ok runtime (S.Observer.observe timer ~on_update:(fun _ -> E.unit))
+  in
+  let demand = S.Extension.demand_counter_snapshot () in
+  Alcotest.(check int) "registration crosses the boundary once" 1
+    demand.timer_desired_state_transitions;
+  run_ok runtime S.stabilize;
+  wait_for_sleepers clock 1;
+  Eta_test.Test_clock.adjust clock (Eta.Duration.ms 10);
+  Eta_test.Async.yield ();
+  run_ok runtime S.stabilize;
+  let demand = S.Extension.demand_counter_snapshot () in
+  Alcotest.(check int) "timer tick does not cross the boundary" 1
+    demand.timer_desired_state_transitions;
+  Alcotest.(check int) "demanded timer owns reconciliation work" 1
+    (S.Extension.timer_reconciliation_work_count ());
+  run_ok runtime (S.Observer.dispose observer);
+  let demand = S.Extension.demand_counter_snapshot () in
+  Alcotest.(check int) "disposal crosses the boundary once more" 2
+    demand.timer_desired_state_transitions;
+  Alcotest.(check int) "timer work released after demand loss" 0
+    (S.Extension.timer_reconciliation_work_count ())
+
 let test_observer_finish_runs_exactly_once () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let idle_source = S.Var.create 1 in
@@ -301,6 +346,8 @@ let () =
             test_cleanup_hooks_own_pending_work;
           Alcotest.test_case "observer delivery counters cover plan and delivery"
             `Quick test_observer_delivery_counters_cover_plan_and_delivery;
+          Alcotest.test_case "timer reconciliation is boundary driven" `Quick
+            test_timer_reconciliation_is_boundary_driven;
           Alcotest.test_case "observer finish runs exactly once" `Quick
             test_observer_finish_runs_exactly_once;
         ] );

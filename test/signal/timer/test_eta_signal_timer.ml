@@ -791,7 +791,7 @@ let test_preflight_and_finish_node_own_state_port () =
   Alcotest.(check (list string))
     "only finish mutates state" [ "set:finishing:finished:4" ] !events
 
-let daemon_context events port update =
+let daemon_context ~on_lifecycle_mismatch events port update =
   Timer.daemon_context ~advance_generation:succ
     ~state_access:
       (Timer.daemon_state_access
@@ -815,6 +815,78 @@ let daemon_context events port update =
              (fun () ->
                Eta.Effect.sync (fun () -> append_event events "after_update"))
            })
+    ~on_lifecycle_mismatch
+
+let test_start_daemon_failed_start_reports_lifecycle_mismatch () =
+  with_runtime @@ fun runtime ->
+  let events = ref [] in
+  let mismatches = ref 0 in
+  let timer =
+    make_timer "daemon"
+      ~current:(Timer_policy.starting_state ~generation:3)
+      ~effective:(Timer_policy.starting_state ~generation:3)
+  in
+  let port =
+    Timer.state_port
+      ~effective:(fun timer -> timer.effective)
+      ~current:(fun timer -> timer.current)
+      ~set_current:(fun timer state ->
+        timer.current <- state;
+        append_event events ("set:" ^ state_label state))
+  in
+  (match
+     Eta_eio.Runtime.run runtime
+       (Timer.start_daemon
+          (daemon_context
+             ~on_lifecycle_mismatch:(fun _timer -> incr mismatches)
+             events port
+             (Timer.daemon_update
+                ~update:
+                  { run_update =
+                      (fun _timer ~generation:_ ~missed:_ ->
+                        Eta.Effect.sync (fun () ->
+                            failwith "start update boom"))
+                  }))
+          timer ~generation:3 ~schedule:(Timer_policy.Periodic 10)
+          ~update_on_start:true
+          ~catch_up_policy:Timer_policy.Catch_up_coalesced)
+   with
+   | Eta.Exit.Ok () -> Alcotest.fail "expected start update failure"
+   | Eta.Exit.Error _ -> ());
+  Alcotest.(check int) "failed start reports lifecycle mismatch once" 1
+    !mismatches
+
+let test_start_daemon_clean_start_skips_lifecycle_mismatch () =
+  with_runtime @@ fun runtime ->
+  let events = ref [] in
+  let mismatches = ref 0 in
+  let timer =
+    make_timer "daemon"
+      ~current:(Timer_policy.starting_state ~generation:3)
+      ~effective:(Timer_policy.starting_state ~generation:3)
+  in
+  let port =
+    Timer.state_port
+      ~effective:(fun timer -> timer.effective)
+      ~current:(fun timer -> timer.current)
+      ~set_current:(fun timer state ->
+        timer.current <- state;
+        append_event events ("set:" ^ state_label state))
+  in
+  run_ok runtime
+    (Timer.start_daemon
+       (daemon_context
+          ~on_lifecycle_mismatch:(fun _timer -> incr mismatches)
+          events port
+          (Timer.daemon_update
+             ~update:
+               { run_update =
+                   (fun _timer ~generation:_ ~missed:_ -> Eta.Effect.unit)
+               }))
+       timer ~generation:3 ~schedule:(Timer_policy.Periodic 10)
+       ~update_on_start:true ~catch_up_policy:Timer_policy.Catch_up_coalesced);
+  Alcotest.(check int) "clean start reports no lifecycle mismatch" 0
+    !mismatches
 
 let test_start_daemon_wires_start_update_through_timer_port () =
   with_runtime @@ fun runtime ->
@@ -834,7 +906,7 @@ let test_start_daemon_wires_start_update_through_timer_port () =
   in
   run_ok runtime
     (Timer.start_daemon
-       (daemon_context events port
+       (daemon_context ~on_lifecycle_mismatch:(fun _timer -> ()) events port
           (Timer.daemon_update
              ~update:
                { run_update =
@@ -880,7 +952,7 @@ let test_create_daemon_node_owns_start_effect_generation () =
     let timer =
       Timer.create_daemon_node ~runtime_contract ~refresh_when_inactive:true
         ~refresh_operation:None
-        (daemon_context events port
+        (daemon_context ~on_lifecycle_mismatch:(fun _timer -> ()) events port
            (Timer.daemon_update
               ~update:
                 { run_update =
@@ -941,6 +1013,10 @@ let () =
             test_preflight_and_finish_node_own_state_port;
           Alcotest.test_case "start daemon callback ownership" `Quick
             test_start_daemon_wires_start_update_through_timer_port;
+          Alcotest.test_case "failed start reports lifecycle mismatch" `Quick
+            test_start_daemon_failed_start_reports_lifecycle_mismatch;
+          Alcotest.test_case "clean start skips lifecycle mismatch" `Quick
+            test_start_daemon_clean_start_skips_lifecycle_mismatch;
           Alcotest.test_case "daemon node start ownership" `Quick
             test_create_daemon_node_owns_start_effect_generation;
         ] );

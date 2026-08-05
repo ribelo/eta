@@ -88,6 +88,9 @@ val switch :
 
 val inner_scope : (_, _, 'scope) snapshot -> 'scope option
 
+val inner : (_, 'inner, _) snapshot -> 'inner option
+(** Project the currently selected inner branch, when one is attached. *)
+
 val dependencies :
   source:'dependency ->
   inner_dependency:('inner -> 'dependency) ->

@@ -559,6 +559,10 @@ module Make (Observer_error : Observer_error) () = struct
     scope : scope option;
     lifetime : Node_lifetime.t;
     mutable timer : timer_node option;
+    mutable timer_reconcile_linked : bool;
+    mutable timer_reconcile_token : int;
+    mutable timer_reconcile_previous : packed_signal option;
+    mutable timer_reconcile_next : packed_signal option;
   }
 
   and scheduler_frame = {
@@ -1019,6 +1023,41 @@ module Make (Observer_error : Observer_error) () = struct
   let necessary_nodes = Hashtbl.create 16
   let necessary_bind_nodes = Hashtbl.create 8
   let timer_nodes = Hashtbl.create 8
+  let timer_reconcile_head = ref None
+
+  let link_timer_reconcile (P signal as packed) =
+    if Hashtbl.mem timer_nodes signal.id then (
+      signal.timer_reconcile_token <- signal.timer_reconcile_token + 1;
+      if not signal.timer_reconcile_linked then (
+        signal.timer_reconcile_linked <- true;
+        signal.timer_reconcile_previous <- None;
+        signal.timer_reconcile_next <- !timer_reconcile_head;
+        (match !timer_reconcile_head with
+         | None -> ()
+         | Some (P head) -> head.timer_reconcile_previous <- Some packed);
+        timer_reconcile_head := Some packed))
+
+  let unlink_timer_reconcile (P signal) =
+    if signal.timer_reconcile_linked then (
+      signal.timer_reconcile_linked <- false;
+      (match signal.timer_reconcile_previous with
+       | None -> timer_reconcile_head := signal.timer_reconcile_next
+       | Some (P previous) ->
+           previous.timer_reconcile_next <- signal.timer_reconcile_next);
+      (match signal.timer_reconcile_next with
+       | None -> ()
+       | Some (P next) ->
+           next.timer_reconcile_previous <- signal.timer_reconcile_previous);
+      signal.timer_reconcile_previous <- None;
+      signal.timer_reconcile_next <- None)
+
+  let unlink_timer_reconcile_token (P signal) token =
+    if signal.timer_reconcile_linked && signal.timer_reconcile_token = token
+    then unlink_timer_reconcile (P signal)
+
+  let timer_reconcile_pending () = !timer_reconcile_head
+
+  let timer_reconcile_next (P signal) = signal.timer_reconcile_next
 
   let scheduler_access =
     Scheduler.access
@@ -1164,6 +1203,9 @@ module Make (Observer_error : Observer_error) () = struct
         Topology.iter signal.dependencies visit)
       ~dependency:edge_child
       ~on_boundary:(fun (P signal as packed) ~necessary ->
+        if Option.is_some signal.timer then (
+          Demand.note_timer_desired_state_transition demand_counters;
+          link_timer_reconcile packed);
         if necessary then (
           if Option.is_some signal.timer then
             Work.admit work Work.Timer_reconciliation;
@@ -1508,10 +1550,6 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.demand_roots ~demand:observer_demands_signal
       ~root:(fun (O observer) -> P observer.obs_signal)
 
-  let graph_reachable_plan () =
-    Graph.reachable_plan ~ops:reachable_ops
-      ~registry:live_signal_registry ~roots:observer_demand_roots
-
   let observer_active_roots observers =
     observer_roots observer_active observers
 
@@ -1728,6 +1766,10 @@ module Make (Observer_error : Observer_error) () = struct
           scope;
           lifetime = Node_lifetime.create ();
           timer = None;
+          timer_reconcile_linked = false;
+          timer_reconcile_token = 0;
+          timer_reconcile_previous = None;
+          timer_reconcile_next = None;
         })
       ~reserve_dependencies:(fun signal count ->
         Topology.reserve_additional signal.dependencies count)
@@ -1836,11 +1878,12 @@ module Make (Observer_error : Observer_error) () = struct
       ~valid:(fun (P signal) -> signal_valid signal)
       ~set_invalid:(fun (P signal) ->
         ignore (Node_lifetime.invalidate signal.lifetime : bool))
-      ~timer_hooks:(fun (P signal) ->
+      ~timer_hooks:(fun (P signal as packed) ->
         match signal.timer with
         | None -> []
         | Some timer ->
             Hashtbl.remove timer_nodes signal.id;
+            unlink_timer_reconcile packed;
             timer_invalidation_hooks timer)
       ~tombstone:signal_tombstone
       ~tombstone_id:(fun tombstone -> tombstone.dead_id)
@@ -2202,70 +2245,101 @@ module Make (Observer_error : Observer_error) () = struct
     List.iter finish_keyed_commit plans;
     hooks
 
-  let signal_timer (P signal) =
-    Option.map (fun timer -> (signal.id, timer)) signal.timer
-
-  let collect_post_commit_necessary_timers lane invalidations =
-    if Hashtbl.length timer_nodes = 0 then Hashtbl.create 0
-    else
-    let reachable_ops =
-      Graph.reachable_ops ~id:(fun (P signal) -> signal.id)
-        ~valid:(fun (P signal) ->
-          signal_valid signal
-          && not (staged_bind_invalidates invalidations (P signal)))
-        ~children:(fun (P signal) ->
-          let signal_children =
-            match signal.kind with
-            | Bind bind ->
-                Bind.dependencies ~source:(P bind.source)
-                  ~inner_dependency:(fun inner -> P inner)
-                  (bind_effective_snapshot bind)
-            | Keyed keyed -> (
-                match keyed.keyed_pending with
-                | None -> signal_dependencies signal
-                | Some keyed_plan ->
-                    let children =
-                      keyed.keyed_child_ops.keyed_fold
-                        (fun _ child dependencies ->
-                          P child.keyed_child_output :: dependencies)
-                        keyed_plan.keyed_plan_children []
-                      |> List.rev
-                    in
-                    P keyed.keyed_input :: children)
-            | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
-            | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
-                signal_dependencies signal
-          in
-          children_with_scope_owner signal signal_children)
+  let preflight_queued_timer_reconciliation () =
+    let rec walk (P signal as packed) =
+      (match signal.timer with
+       | Some timer ->
+           if Hashtbl.mem timer_nodes signal.id then
+             if signal.demand > 0 then preflight_timer_start timer
+             else preflight_timer_stop timer
+       | None -> ());
+      match timer_reconcile_next packed with
+      | None -> ()
+      | Some next -> walk next
     in
-    let plan =
-      Graph.reachable_plan ~ops:reachable_ops
-        ~registry:live_signal_registry
-        ~roots:observer_demand_roots
+    Option.iter walk (timer_reconcile_pending ())
+
+  let signal_effective_children (type a) (signal : a signal) :
+      packed_signal list =
+    match signal.kind with
+    | Bind bind ->
+        Bind.dependencies ~source:(P bind.source)
+          ~inner_dependency:(fun inner -> P inner)
+          (bind_effective_snapshot bind)
+    | Keyed keyed -> (
+        match keyed.keyed_pending with
+        | None -> signal_dependencies signal
+        | Some keyed_plan ->
+            let children =
+              keyed.keyed_child_ops.keyed_fold
+                (fun _ child dependencies ->
+                  P child.keyed_child_output :: dependencies)
+                keyed_plan.keyed_plan_children []
+              |> List.rev
+            in
+            P keyed.keyed_input :: children)
+    | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
+    | Map7 _ | Map8 _ | Map9 _ | All _ ->
+        signal_dependencies signal
+
+  let staged_bind_switch_pending lane staging (B bind) =
+    match bind_staged_snapshot lane staging bind with
+    | None -> false
+    | Some staged -> (
+        match (Bind.inner (bind_current_snapshot bind), Bind.inner staged) with
+        | None, None -> false
+        | Some current_inner, Some staged_inner ->
+            signal_id_int current_inner.id <> signal_id_int staged_inner.id
+        | None, Some _ | Some _, None -> true)
+
+  (* Bind-switch demand boundaries apply during commit, after preflight, so
+     the reconcile queue cannot see them yet. Reserve timer capacity for the
+     staged world directly: starts follow the staged branch (the attach
+     cascade), stops follow the current branch for timers whose demand
+     crosses to zero (the detach cascade). Capacity checks are pure, so
+     shared visits are deduplicated only to bound work. *)
+  let preflight_staged_bind_timers lane staging invalidations =
+    let start_visited = Hashtbl.create 8 in
+    let stop_visited = Hashtbl.create 8 in
+    let walk ~visited ~children ~on_timer root =
+      let rec go (P signal as packed) =
+        let key = signal_id_int signal.id in
+        if
+          (not (Hashtbl.mem visited key))
+          && signal_valid signal
+          && not (staged_bind_invalidates invalidations packed)
+        then (
+          Hashtbl.replace visited key ();
+          on_timer packed;
+          List.iter go (children packed))
+      in
+      go root
     in
-    Graph.post_commit_necessary_timers graph lane
-      (Graph.timer_demand_source ~reachable:plan ~timer:signal_timer)
-
-  let collect_current_necessary_timers lane =
-    let necessary_timers = Hashtbl.create (Hashtbl.length timer_nodes) in
-    Hashtbl.iter
-      (fun id (P signal) ->
-        if signal.demand > 0 then
-          Option.iter
-            (fun timer -> Hashtbl.replace necessary_timers id timer)
-            signal.timer)
-      timer_nodes;
-    necessary_timers
-
-  let preflight_post_commit_timer_starts post_commit_necessary =
-    post_commit_necessary
-    |> Hashtbl.iter (fun _ timer -> preflight_timer_start timer)
-
-  let preflight_post_commit_timer_stops lane post_commit_necessary =
-    collect_current_necessary_timers lane
-    |> Hashtbl.iter (fun id timer ->
-           if not (Hashtbl.mem post_commit_necessary id) then
-             preflight_timer_stop timer)
+    Graph.iter_staged_binds graph lane staging ~f:(fun (B bind) ->
+        match (bind.owner, staged_bind_switch_pending lane staging (B bind)) with
+        | Some owner, true when owner.demand > 0 -> (
+            (match Bind.inner (bind_current_snapshot bind) with
+             | None -> ()
+             | Some inner ->
+                 walk ~visited:stop_visited
+                   ~children:(fun (P signal) -> signal_dependencies signal)
+                   ~on_timer:(fun (P signal) ->
+                     if signal.demand = 1 then
+                       Option.iter preflight_timer_stop signal.timer)
+                   (P inner));
+            match bind_staged_snapshot lane staging bind with
+            | None -> ()
+            | Some staged -> (
+                match Bind.inner staged with
+                | None -> ()
+                | Some inner ->
+                    walk ~visited:start_visited
+                      ~children:(fun (P signal) ->
+                        signal_effective_children signal)
+                      ~on_timer:(fun (P signal) ->
+                        Option.iter preflight_timer_start signal.timer)
+                      (P inner)))
+        | _ -> ())
 
   let preflight_commit_staging lane staging =
     Graph.staged_preflight ~preflight:(fun () ->
@@ -2277,17 +2351,14 @@ module Make (Observer_error : Observer_error) () = struct
         discard_invalid_dynamic_work lane staging invalidations;
         let active_keyed = pending_keyed_nodes lane in
         List.iter preflight_keyed_plan active_keyed;
-        let post_commit_necessary =
-          collect_post_commit_necessary_timers lane invalidations
-        in
         List.iter
           (fun (P signal) ->
             Option.iter preflight_timer_stop signal.timer)
           invalidations.invalidated_nodes;
-        preflight_post_commit_timer_stops lane post_commit_necessary;
+        preflight_queued_timer_reconciliation ();
+        preflight_staged_bind_timers lane staging invalidations;
         Graph.iter_computed graph lane staging
-          ~f:(preflight_signal_commit lane staging invalidations);
-        preflight_post_commit_timer_starts post_commit_necessary)
+          ~f:(preflight_signal_commit lane staging invalidations))
 
   let remember_pure_disposal_hooks lane staging hooks =
     Graph.remember_pure_disposal_hooks graph lane staging hooks
@@ -2905,16 +2976,45 @@ module Make (Observer_error : Observer_error) () = struct
     fail_with_pending_disposal_hooks hooks_ref
       (Effect.fail (err :> stabilize_error))
 
-  let timer_demand_unlocked _lane =
-    Hashtbl.fold
-      (fun id (P signal) timers ->
-        match signal.timer with
-        | None -> timers
-        | Some timer -> (id, timer) :: timers)
-      timer_nodes []
+  let timer_drain_snapshot = ref []
 
-  let timer_demand_plan_unlocked lane =
-    Timer.node_demand_plan ~timers:(timer_demand_unlocked lane)
+  (* Reconciliation resources are the union of queued transition timers
+     (drained on success) and currently necessary timers (runtime-contract
+     validation on every refresh, even without a pending transition). The
+     necessary set is the incrementally maintained registry, not a scan. *)
+  let timer_demand_plan_unlocked _lane =
+    let queued_ids = Hashtbl.create 8 in
+    let rec collect (P signal as packed) (drained, timers) =
+      let drained, timers =
+        match signal.timer with
+        | Some timer when Hashtbl.mem timer_nodes signal.id ->
+            Hashtbl.replace queued_ids (signal_id_int signal.id) ();
+            ( (signal.id, signal.timer_reconcile_token) :: drained,
+              (signal.id, timer) :: timers )
+        | Some _ | None -> (drained, timers)
+      in
+      match timer_reconcile_next packed with
+      | None -> (drained, timers)
+      | Some next -> collect next (drained, timers)
+    in
+    let drained, timers =
+      match timer_reconcile_pending () with
+      | None -> ([], [])
+      | Some head -> collect head ([], [])
+    in
+    let timers =
+      Hashtbl.fold
+        (fun _ (P signal) timers ->
+          match signal.timer with
+          | Some timer
+            when Hashtbl.mem timer_nodes signal.id
+                 && not (Hashtbl.mem queued_ids (signal_id_int signal.id)) ->
+              (signal.id, timer) :: timers
+          | Some _ | None -> timers)
+        necessary_nodes timers
+    in
+    timer_drain_snapshot := drained;
+    Timer.node_demand_plan ~timers
       ~is_necessary:(fun id ->
         match Hashtbl.find_opt timer_nodes id with
         | Some (P signal) -> signal.demand > 0
@@ -2936,6 +3036,19 @@ module Make (Observer_error : Observer_error) () = struct
             |> Effect.flatten_result)
         }
 
+  let unlink_drained_timer_reconciliations () =
+    match !timer_drain_snapshot with
+    | [] -> Effect.unit
+    | drained ->
+        timer_drain_snapshot := [];
+        with_graph_lane_access (fun _lane ->
+            List.iter
+              (fun (id, token) ->
+                match Hashtbl.find_opt timer_nodes id with
+                | Some packed -> unlink_timer_reconcile_token packed token
+                | None -> ())
+              drained)
+
   let refresh_timer_demand () =
     Timer.node_demand_refresh
       ~advance_generation:(checked_succ "timer generation")
@@ -2944,6 +3057,7 @@ module Make (Observer_error : Observer_error) () = struct
         (Timer.node_demand_effect_port ~plan:(fun _runtime_contract lane ->
              timer_demand_plan_unlocked lane))
     |> Timer.run_node_demand_refresh
+    |> Effect.bind unlink_drained_timer_reconciliations
 
   let timer_demand_cleanup_pending = ref false
 
@@ -3261,9 +3375,10 @@ module Make (Observer_error : Observer_error) () = struct
     Option.iter
       (fun _ ->
         Hashtbl.iter
-          (fun _ (P signal as packed) ->
-            if signal.demand > 0 then schedule_signal packed)
-          timer_nodes)
+          (fun _id (P signal as packed) ->
+            if Option.is_some signal.timer && Hashtbl.mem timer_nodes signal.id
+            then schedule_signal packed)
+          necessary_nodes)
       timer_refresh;
     let pending =
       Graph.stabilization_pending_plan
@@ -4117,7 +4232,9 @@ module Make (Observer_error : Observer_error) () = struct
              ~hooks:
                (Timer.daemon_hooks
                   ~after_due_read_before_commit:{ run_hook = (fun () -> Effect.unit) }
-                  ~after_update_constructed_before_run:{ run_hook = (fun () -> Effect.unit) }))
+                  ~after_update_constructed_before_run:{ run_hook = (fun () -> Effect.unit) })
+             ~on_lifecycle_mismatch:(fun _timer ->
+               link_timer_reconcile (P signal)))
           ~schedule ~update_on_start
           ~catch_up_policy:update.timer_catch_up_policy
       in
@@ -4303,6 +4420,8 @@ module Make (Observer_error : Observer_error) () = struct
     type nonrec 'a signal = 'a signal
     type dirty_listener = unit -> unit
     type token = Obj.t
+
+    let demand_counter_snapshot () = Demand.counter_snapshot demand_counters
 
     let scheduler_empty () = Scheduler.is_empty scheduler
     let actionable_work_count () = Work.total work

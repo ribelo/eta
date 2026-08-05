@@ -139,6 +139,7 @@ val daemon_context :
   state:'timer state_port ->
   update:'timer daemon_update ->
   hooks:daemon_hooks ->
+  on_lifecycle_mismatch:('timer -> unit) ->
   'timer daemon_context
 
 type ('id, 'operation, 'error) node_demand_plan

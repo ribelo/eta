@@ -756,3 +756,85 @@ nix develop -c dune runtest test/signal/economics --force
 - The `Timer.node_demand_plan ~is_necessary` scan protocol and the two
   collect_*_necessary_timers functions are deleted once the queue serves
   both drains.
+
+## 2026-08-06 - Slice 7c: queued timer reconciliation (implemented)
+
+- Replaced every per-commit timer scan with boundary-driven queued
+  reconciliation:
+  - Each timer signal carries an intrusive reconcile link
+    (`timer_reconcile_linked/previous/next` + a token bumped on every
+    boundary). The `Demand.adjust_many` `on_boundary` hook links timer
+    signals on every necessity crossing; linking is guarded by
+    `timer_nodes` membership so invalidated timers can never re-enter
+    the queue (invalidation already unlinks and stops via hooks).
+  - The queue is a touched set only; necessity is re-derived from live
+    `signal.demand` at drain time, which keeps the design staging-
+    rollback safe (rollback restores demand without firing boundaries,
+    but the still-linked timers re-derive the restored direction).
+  - `begin_stabilize` refresh scheduling now iterates the incrementally
+    maintained `necessary_nodes` set (timer + `timer_nodes` membership
+    filters) instead of scanning all `timer_nodes` with a demand filter.
+  - `preflight_commit_staging` drains the queue non-consuming
+    (`preflight_timer_start/stop` are pure capacity checks) and deletes
+    `collect_current_necessary_timers`,
+    `collect_post_commit_necessary_timers`,
+    `preflight_post_commit_timer_starts/stops`, and the orphaned
+    `Graph.timer_demand_source`/`timer_demand`/`timer_demand_plan`/
+    `post_commit_necessary_timers` family plus `graph_reachable_plan`.
+  - Effect path: `timer_demand_plan_unlocked` snapshots the queue
+    (token-tagged) and unions it with necessary timers (runtime-contract
+    validation must cover every necessary timer even without a pending
+    transition; `classify_demand` validates necessary resources).
+    `refresh_timer_demand` unlinks snapshot tokens only on success;
+    failures leave timers linked for the next retry (spec: a failed
+    start leaves a queued lifecycle mismatch; a later graph effect
+    retries it). The token is bumped on every boundary so a boundary
+    mid-refresh keeps the timer queued.
+  - Async lifecycle mismatches (daemon error exits, failed starts) never
+    fire a boundary, so `Timer.daemon_context` gained
+    `on_lifecycle_mismatch`, invoked from `cleanup_after_exit` and
+    `cleanup_failed_start` on `Daemon_error` exits only; the kernel
+    re-links the timer's signal. Clean starts/stops do not fire it.
+- Bind-switch subtlety: bind lifecycle (attach/detach + demand cascade)
+  applies at commit, after preflight, so the queue cannot see staged
+  switches at preflight time. `preflight_staged_bind_timers` reserves
+  capacity with two branch-bounded traversals per staged bind switch
+  with a demanded owner: starts follow the staged (effective) branch,
+  stops follow the current branch for timers whose demand crosses to
+  zero. Same-inner re-stage is skipped (net-zero demand). This replaces
+  the old whole-graph post-commit reachability with work proportional
+  to the switched branches; steady-state commits with no staged binds
+  do no traversal.
+  - Documented corner: a timer at `max_int` generation behind nested
+    staged binds where the activating demand arrives from an outer
+    switch in the same commit can surface the generation overflow in
+    the effect phase rather than at precommit; the failure is still
+    loud and typed, one phase later. Single-level binds (the contract
+    tests) stay exact at precommit.
+- Evidence:
+  - `timer reconciliation is boundary driven` (kernel extension):
+    untouched stabilize = 0 timer desired-state transitions and 0
+    reconciliation work; registration = exactly 1; timer tick = no new
+    transition; disposal = exactly 1 more; work released after demand
+    loss. `Eta_signal_demand.note_timer_desired_state_transition` is
+    now wired into the kernel boundary hook (was counter-test-only).
+  - `failed start reports lifecycle mismatch` and
+    `clean start skips lifecycle mismatch` (timer demand suite):
+    daemon-context hook fires exactly on `Daemon_error` start/exit.
+  - Overflow contract preserved: `time timer start overflow is
+    precommit failure` and `external timer stop overflow is precommit
+    failure` both pass (these pinned the staged-bind preflight
+    traversals).
+  - Runtime-mismatch suite (`timer runtime mismatch on observe`,
+    `mixed runtime timer mismatch recovery`,
+    `dispose reports timer runtime mismatch`) passes with the
+    queued-union-necessary plan.
+- Verified with:
+
+```sh
+nix develop -c dune build @install @signal-economics
+nix develop -c dune runtest test/signal test/signal_map test/laws --force
+nix develop -c dune runtest --force
+```
+
+- Full suite: 76 test executables green.
