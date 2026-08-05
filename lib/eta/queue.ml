@@ -517,7 +517,7 @@ let offer_sync contract t value =
         | `Settled result -> result
         | `Cancelled -> raise exn)
 
-let try_offer t value = Effect.sync (fun () -> try_offer_sync t value)
+let try_offer t value = Effect_erasure.plain_sync2 t value try_offer_sync
 let try_offer_now t value = try_offer_sync t value
 
 let sent_token t = with_lock t @@ fun () -> t.sent_token
@@ -563,14 +563,16 @@ let take_value wakeups t =
   admit_waiting_senders_locked wakeups t;
   `Item value
 
-let poll t =
-  with_committed_wakeups_effect t @@ fun wakeups ->
+let poll_sync t =
+  with_committed_wakeups_sync t @@ fun wakeups ->
   if t.shutdown then `Closed
-    else if not (Stdlib.Queue.is_empty t.values) then take_value wakeups t
-    else
-      match t.closed with
-      | None -> `Empty
-      | Some reason -> close_result reason
+  else if not (Stdlib.Queue.is_empty t.values) then take_value wakeups t
+  else
+    match t.closed with
+    | None -> `Empty
+    | Some reason -> close_result reason
+
+let poll t = Effect_erasure.plain_sync1 t poll_sync
 
 let poll_now t =
   with_committed_wakeups_sync t @@ fun wakeups ->

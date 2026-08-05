@@ -78,6 +78,19 @@ type ('a, +'err) t =
      block to carry an always-[None] [leaf_name]; interpreting [Sync] directly in
      [eval] costs one 2-word block and no closure. *)
   | Sync : (unit -> 'a) -> ('a, 'err) t
+  | Sync1 :
+      {
+        value : 'value;
+        run : 'value -> 'a;
+      }
+      -> ('a, 'err) t
+  | Sync2 :
+      {
+        value1 : 'value1;
+        value2 : 'value2;
+        run : 'value1 -> 'value2 -> 'a;
+      }
+      -> ('a, 'err) t
   | Sync_frame :
       {
         run : frame -> 'a;
@@ -148,7 +161,7 @@ let leaf_name : type a err. (a, err) t -> string option = function
   | Sync_contract { leaf_name; _ } -> leaf_name
   | Sync_contract2 { leaf_name; _ } -> leaf_name
   | Eval_contract { leaf_name; _ } -> leaf_name
-  | Pure _ | Fail _ | Map _ | Bind _ | Sync _ -> None
+  | Pure _ | Fail _ | Map _ | Bind _ | Sync _ | Sync1 _ | Sync2 _ -> None
 
 let make ?leaf_name eval =
   Custom { eval; leaf_name }
@@ -276,6 +289,16 @@ let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
   | Custom { eval; _ } -> eval frame
   | Sync f -> (
       try ok (f ()) with
+      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+          raise exn
+      | exn -> exit_of_exn frame exn)
+  | Sync1 { value; run } -> (
+      try ok (run value) with
+      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+          raise exn
+      | exn -> exit_of_exn frame exn)
+  | Sync2 { value1; value2; run } -> (
+      try ok (run value1 value2) with
       | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
           raise exn
       | exn -> exit_of_exn frame exn)
@@ -451,6 +474,8 @@ let eval_contract ?leaf_name value run =
 (* Interpreted by [eval]'s [Sync] branch, which carries the same exception
    handling this used to install in a per-construction closure. *)
 let sync f = Sync f
+let sync1 value run = Sync1 { value; run }
+let sync2 value1 value2 run = Sync2 { value1; value2; run }
 
 let yield = sync_frame (fun frame -> fiber_yield frame)
 
@@ -733,7 +758,7 @@ let describe eff =
     (* A [sync] leaf was a [Custom] with no [leaf_name] before it got its own
        constructor, and [describe] is public output, so it keeps rendering the
        same. Renaming it to "Sync" would be a user-visible change. *)
-    | Sync _ -> line depth "Custom"
+    | Sync _ | Sync1 _ | Sync2 _ -> line depth "Custom"
     | Sync_frame { leaf_name = None; _ } -> line depth "Custom"
     | Sync_frame { leaf_name = Some name; _ } ->
         line depth (Printf.sprintf "Custom(%S)" name)
