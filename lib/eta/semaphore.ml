@@ -150,31 +150,43 @@ let acquire t n =
   Effect_erasure.effect_to_public
     (Effect_core.sync_frame ~leaf_name:"Semaphore.acquire" (fun frame ->
          let contract = frame.Effect_core.runtime.Runtime_core.contract in
-         let promise, resolver = contract.Runtime_contract.create_promise () in
-         let waiter = { permits = n; contract; resolver; state = Waiting } in
+         (* Uncontended fast path: grab the permit without building the waiter
+            machinery. The promise/waiter are only needed once we actually have
+            to park. Building them after the locked attempt is safe because
+            creating a promise and allocating the waiter do not suspend, so no
+            other fiber can run between the failed attempt and the re-check
+            below under the lock. *)
          let wakeups = ref [] in
-         let acquisition =
-           with_lock t @@ fun () ->
-           if acquire_locked wakeups t n then `Acquired
-           else (
-             Stdlib.Queue.push waiter t.waiters;
-             `Waiting (contract, promise, waiter))
-         in
-         resolve_wakeups !wakeups;
-         match acquisition with
-         | `Acquired -> ()
-         | `Waiting (contract, promise, waiter) -> (
-             try
-               contract.Runtime_contract.await_promise promise;
-               with_lock t @@ fun () ->
-               match waiter.state with
-               | Resolved_unclaimed -> waiter.state <- Claimed
-               | Waiting | Claimed | Cancelled -> ()
-             with exn ->
-               (match contract.Runtime_contract.cancellation_reason exn with
-               | Some _ -> cleanup_waiter contract t waiter
-               | None -> ());
-               raise exn)))
+         if with_lock t @@ fun () -> acquire_locked wakeups t n then (
+           resolve_wakeups !wakeups;
+           ())
+         else (
+           resolve_wakeups !wakeups;
+           let promise, resolver = contract.Runtime_contract.create_promise () in
+           let waiter = { permits = n; contract; resolver; state = Waiting } in
+           let wakeups = ref [] in
+           let acquisition =
+             with_lock t @@ fun () ->
+             if acquire_locked wakeups t n then `Acquired
+             else (
+               Stdlib.Queue.push waiter t.waiters;
+               `Waiting)
+           in
+           resolve_wakeups !wakeups;
+           match acquisition with
+           | `Acquired -> ()
+           | `Waiting -> (
+               try
+                 contract.Runtime_contract.await_promise promise;
+                 with_lock t @@ fun () ->
+                 match waiter.state with
+                 | Resolved_unclaimed -> waiter.state <- Claimed
+                 | Waiting | Claimed | Cancelled -> ()
+               with exn ->
+                 (match contract.Runtime_contract.cancellation_reason exn with
+                 | Some _ -> cleanup_waiter contract t waiter
+                 | None -> ());
+                 raise exn))))
 
 let with_permits_or_abort t n ~abort (f) =
   (* [claimed] means this combinator owns a granted permit. The finalizer is the
@@ -186,11 +198,19 @@ let with_permits_or_abort t n ~abort (f) =
         if Atomic.compare_and_set claimed true false then release t n)
   in
   let body =
-    Effect.race
-      [ acquire t n |> Effect.map (fun () -> Atomic.set claimed true; true);
-        abort |> Effect.map (fun _ -> false) ]
-    |> Effect.bind (fun acquired ->
-           if acquired then f () |> Effect.map Option.some else Effect.pure None)
+    (* Warm fast path: when a permit is immediately available there is nothing
+       to [abort], so take it directly and skip the race. Racing acquire against
+       [abort] forks a fiber and tears it down on every call even when the
+       acquire never blocks; [abort] only matters once the acquire must wait.
+       [claimed] is set here exactly as the race-won branch sets it, so the
+       finalizer releases the permit on every exit path. *)
+    if try_acquire t n then (Atomic.set claimed true; f () |> Effect.map Option.some)
+    else
+      Effect.race
+        [ acquire t n |> Effect.map (fun () -> Atomic.set claimed true; true);
+          abort |> Effect.map (fun _ -> false) ]
+      |> Effect.bind (fun acquired ->
+             if acquired then f () |> Effect.map Option.some else Effect.pure None)
   in
   Effect.finally release_claimed body
 
