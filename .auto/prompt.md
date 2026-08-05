@@ -7,19 +7,21 @@ Reduce steady-state allocation and execution cost in `eta_signal` and
 Incremental and `Incr_map` under matched changed-value, cutoff, dynamic-bind,
 retained-data, membership-churn, and child-only workloads.
 
-The current primary workload changes one stable child in a keyed map with
-10,000 entries. It is the largest known steady-state cost center that does not
-change input-map topology.
+The current primary workload changes the source of a scalar chain with 100
+unary `map` nodes. It isolates the per-node execution cost that leaves Eta
+thousands of times more allocation-heavy than Incremental.
 
 ## Metrics
 
-- **Primary**: `signal_map_child_10k_wall_ns` (ns/op, lower is better).
-- **Secondary**: child-change allocation; scalar depth-one allocation and wall
-  time; membership-churn allocation and wall time.
+- **Primary**: `signal_depth_100_words` (words/op, lower is better).
+- **Secondary**: depth-100 wall time; scalar depth-one allocation and wall time;
+  child-change allocation and wall time; membership-churn allocation and wall
+  time.
 
-Allocation was the first primary metric. It fell from 1,419,614.50 to 8,333.08
-words per operation and is now a regression guard. The current target is the
-median of three in-process wall-time samples.
+Keyed child allocation fell from 1,419,614.50 to about 8,020 words per
+operation and is now a regression guard. Scalar depth 100 still allocates about
+19,682 words versus Incremental's six words, exposing approximately 122 words
+per recomputed Eta node.
 
 ## How to Run
 
@@ -76,9 +78,8 @@ before freezing:
 
 ## Starting Hypotheses
 
-- Child-only reconciliation allocates transaction plans, ordered-map patches,
-  observer delivery state, and generic graph scheduling structures for one
-  affected child.
+- Unary `Map` evaluation allocates generic `Static_eval` child, result, plan,
+  dependency-list, and callback values for every recomputed node.
 - `keyed_affected`, `keyed_plan_processed`, and pending-plan traversal may
   duplicate membership work.
 - Incremental uses dense persistent graph state and specialized node kinds.

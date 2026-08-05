@@ -19,4 +19,5 @@ measure() {
 
 measure eta_signal_map.child_change.10000 signal_map_child_10k
 measure eta_signal.changed.depth_1 signal_depth_1
+measure eta_signal.changed.depth_100 signal_depth_100
 measure eta_signal_map.membership_change.10000 signal_map_membership_10k
