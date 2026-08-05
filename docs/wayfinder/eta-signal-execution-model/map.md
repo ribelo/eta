@@ -1,0 +1,71 @@
+# Eta Signal execution-model map
+
+## Destination
+
+An implementation-ready replacement architecture for `eta_signal` and
+`eta_signal_map`, supported by staged performance prototypes. The architecture
+must preserve the Signal behavior contract and meet workload-specific
+performance gates.
+
+## Notes
+
+Planning and throwaway prototypes are the deliverables. Production
+implementation is a later effort.
+
+Executable semantics and public behavior remain binding. All internal
+architecture decisions reopen. The prior Signal Wayfinder work and current
+engine are evidence, not design templates.
+
+A pure graph kernel is the primary hypothesis. Only an executable semantic
+counterexample can reject this hypothesis. One kernel can activate structural,
+rollback, timer, or delivery machinery only when the current pass requires it.
+
+Incremental is the zero-effect performance reference, not a compatibility
+target. Comparisons must have three layers:
+
+1. Compare the raw Eta kernel with the matched Incremental kernel.
+2. Measure each Eta adapter around the same raw Eta kernel.
+3. Compare complete public operations with matched workloads.
+
+Affected-work complexity and correctness are eligibility gates. Rank eligible
+candidates by module depth, allocation, and wall time. Use workload-specific
+targets from the best relevant reference. Static scalar stabilization must
+allocate fewer than 100 words, independent of graph depth.
+
+The preferred result retains the public Signal interface. The effort can change
+that interface when another design creates a substantially deeper module. It
+must not add a compatibility path.
+
+The scope includes Eta core changes that Signal needs, `eta_signal`, and
+`eta_signal_map`. A small general Eta runtime primitive is allowed when Signal
+provides its motivating invariant. Time, churn, and migration effort are not
+constraints.
+
+Use `$simple-english` for written artifacts. Use `$codebase-design` and its
+Design It Twice method for module interfaces. Use `$prototype` for prototype
+tickets, `$research` for external source work, and `$domain-modeling` when the
+Signal language changes.
+
+Use the OxCaml toolchain. Keep frozen benchmark workloads and formulas
+unchanged. Keep durable research under
+`.scratch/research/eta-signal-execution-model/`. Keep throwaway code outside the
+main Dune workspace.
+
+## Decisions so far
+
+## Not yet specified
+
+- The raw kernel representation depends on the candidate comparison.
+- The need and interface for a general Eta runtime primitive depend on the
+  effect-seam prototypes.
+- Additional workload classes can become necessary when the behavior census
+  finds a capability without a matched benchmark.
+
+## Out of scope
+
+- Eta Crux, including changes made only for its use of Signal.
+- Eta packages unrelated to the selected Signal execution model.
+- Compatibility with the Incremental interface.
+- Compatibility shims for the current Signal implementation.
+- Production implementation and durable test replacement during this map.
+- Changes to frozen benchmark workloads, checks, operation counts, or formulas.

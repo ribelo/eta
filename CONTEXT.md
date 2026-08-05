@@ -1,5 +1,16 @@
 # Eta domain glossary
 
+## Signal behavior contract
+
+The externally observable rules for Signal values, failures, ordering,
+lifecycle, cancellation, and stabilization. Internal execution structures are
+not part of this contract.
+
+## Affected work
+
+The Signal nodes, edges, keys, and lifecycle records that one admitted change
+can alter. An operation is change-proportional when its work follows this set.
+
 ## Eta Crux
 
 An Eta-native framework for incremental, composable state machines. It is
