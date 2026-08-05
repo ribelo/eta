@@ -724,3 +724,35 @@ nix develop -c dune runtest test/signal/economics --force
   reachability scans (`collect_current_necessary_timers`,
   `collect_post_commit_necessary_timers`) with queued timer reconciliation
   and generation fencing.
+
+## 2026-08-06 - Slice 7c design: queued timer reconciliation (mapped)
+
+- Scans to replace, all in the kernel: (1) `preflight_commit_staging`
+  diffs `collect_post_commit_necessary_timers` (full reachability from
+  observer demand roots) against `collect_current_necessary_timers`
+  (`timer_nodes` Hashtbl scan); (2) the effect path `refresh_timer_demand`
+  -> `timer_demand_plan_unlocked` -> `Timer.node_demand_plan` re-derives
+  necessity per timer via a `timer_nodes` lookup scan; (3)
+  `begin_stabilize` iterates all `timer_nodes` with a `demand > 0` filter
+  to schedule timer refreshes.
+- Key enabler: every demand change funnels through
+  `Demand.adjust_many`, and `on_boundary` fires exactly once per
+  necessity crossing after each successful adjustment and never on a
+  failed one (overflow/underflow restores counts before boundaries are
+  delivered). Boundary effects never roll back: demand mutations happen
+  outside stabilization (observer register/dispose) or inside the sealed
+  total commit (bind/keyed topology). The kernel boundary hook already
+  admits/releases `Work.Timer_reconciliation` on timer crossings.
+- Design: each timer signal carries a physical `desired_necessary` flag
+  flipped by the boundary hook, plus an intrusive reconciliation link
+  (observer-candidate pattern from slice 6). The sealed commit preflight
+  drains the queue (preflight start/stop by desired vs actual timer state,
+  generation fencing), staging rollback re-links drained timers, the
+  commit seals the action list, and post-commit effects apply it. The
+  standalone dispose path drains the same queue through
+  `refresh_timer_demand` with no scan. The `begin_stabilize` refresh scan
+  becomes an intrusive demanded-timer set linked/unlinked at the same
+  boundary points.
+- The `Timer.node_demand_plan ~is_necessary` scan protocol and the two
+  collect_*_necessary_timers functions are deleted once the queue serves
+  both drains.
