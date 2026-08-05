@@ -389,7 +389,7 @@ let make_capacity_workload runtime capacity =
       ~request_capacity:1 exported
   in
   let export, post_commit =
-    match Crux.Root.advance root with
+    match run_ok runtime (Crux.Root.advance root) with
     | Ok (Crux.Root.Committed { output; post_commit }) ->
         (output, post_commit)
     | _ -> failwith "capacity benchmark failed to start"
@@ -412,7 +412,7 @@ let make_capacity_workload runtime capacity =
     if !admitted <> capacity then
       failf "capacity %d admitted %d entries" capacity !admitted;
     for _ = 1 to capacity do
-      match Crux.Root.advance root with
+      match run_ok runtime (Crux.Root.advance root) with
       | Ok (Crux.Root.Committed { post_commit; _ }) ->
           ignore
             (run_ok runtime

@@ -1,5 +1,5 @@
-type never = Crux_graph.never = |
-type 'a t = 'a Crux_graph.t
+type never = Crux_engine.never = |
+type 'a t = 'a Crux_engine.t
 
 module Diagnostic = Crux_failure.Diagnostic
 module Failure = struct
@@ -7,19 +7,19 @@ module Failure = struct
   let encode_portable = Crux_portable_failure.encode
   let decode_portable = Crux_portable_failure.decode
 end
-module Endpoint = Crux_graph.Endpoint
+module Endpoint = Crux_engine.Endpoint
 
-let return = Crux_graph.return
-let map = Crux_graph.map
-let both = Crux_graph.both
-let cutoff = Crux_graph.cutoff
-let bind = Crux_graph.bind
+let return = Crux_engine.return
+let map = Crux_engine.map
+let both = Crux_engine.both
+let cutoff = Crux_engine.cutoff
+let bind = Crux_engine.bind
 
-module Syntax = Crux_graph.Syntax
-module State_machine = Crux_graph.State_machine
-let lifecycle = Crux_graph.lifecycle
-module Assoc = Crux_graph.Assoc
-module Source = Crux_graph.Source
+module Syntax = Crux_engine.Syntax
+module State_machine = Crux_engine.State_machine
+let lifecycle = Crux_engine.lifecycle
+module Assoc = Crux_engine.Assoc.Make
+module Source = Crux_source
 
 module Codec = Crux_boundary.Codec
 module Exported_endpoint = Crux_boundary.Exported_endpoint

@@ -21,26 +21,35 @@ let advancement_boundaries =
   ]
 
 let timed_if_metrics operation =
-  Eta.Spi.Expert.make ~leaf_name:"Eta_crux.advance"
-    (fun context ->
-      let enabled =
-        Eta.Spi.Expert.observability_metrics_enabled context
-      in
-      let started_ms =
-        if enabled then
-          Eta.Spi.Expert.observability_now_ms context
-        else 0
-      in
-      let result = operation () in
-      let duration_ms =
-        if enabled then
-          float_of_int
-            (max 0
-               (Eta.Spi.Expert.observability_now_ms context
-               - started_ms))
-        else 0.
-      in
-      Eta.Exit.Ok (result, duration_ms))
+  let open Eta.Syntax in
+  let* effect, enabled, started_ms =
+    Eta.Spi.Expert.make ~leaf_name:"Eta_crux.advance"
+      (fun context ->
+        let enabled =
+          Eta.Spi.Expert.observability_metrics_enabled context
+        in
+        let started_ms =
+          if enabled then
+            Eta.Spi.Expert.observability_now_ms context
+          else 0
+        in
+        Eta.Exit.Ok (operation (), enabled, started_ms))
+  in
+  let* result = effect in
+  let+ duration_ms =
+    Eta.Spi.Expert.make ~leaf_name:"Eta_crux.advance"
+      (fun context ->
+        let duration_ms =
+          if enabled then
+            float_of_int
+              (max 0
+                 (Eta.Spi.Expert.observability_now_ms context
+                 - started_ms))
+          else 0.
+        in
+        Eta.Exit.Ok duration_ms)
+  in
+  (result, duration_ms)
 
 let with_span ?(attrs = []) name effect =
   Observability.named name

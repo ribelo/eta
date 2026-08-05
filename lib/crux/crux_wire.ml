@@ -1,4 +1,4 @@
-open Crux_graph
+open Crux_engine
 
 module Failure = Crux_failure.Failure
 module Request = Crux_boundary.Request

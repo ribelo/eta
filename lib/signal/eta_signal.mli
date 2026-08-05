@@ -221,19 +221,6 @@ module type Package_graph = sig
   val install : 'a plan -> 'a signal
 end
 
-module Owner_transaction : sig
-  type t
-  type 'a cell
-
-  val create_cell : 'a -> 'a cell
-  val current : 'a cell -> 'a
-  val begin_ : unit -> t
-  val read : t -> 'a cell -> 'a
-  val stage : t -> 'a cell -> 'a -> unit
-  val commit : t -> unit
-  val rollback : t -> unit
-end
-
 module Make (Observer_error : Observer_error) () : sig
   type observer_error = Observer_error.t
 

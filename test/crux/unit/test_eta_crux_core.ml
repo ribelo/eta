@@ -40,7 +40,7 @@ let test_description_is_inert () =
   Alcotest.(check int) "root creation did not transition" 0 !transitions;
   Alcotest.(check int) "root creation did not start lifecycle" 0
     !lifecycle_starts;
-  let _output, first_post_commit = committed (Crux.Root.advance root) in
+  let _output, first_post_commit = committed (run_ok (Crux.Root.advance root)) in
   Alcotest.(check int) "start did not transition" 0 !transitions;
   Alcotest.(check int) "lifecycle is staged until post commit" 0
     !lifecycle_starts;
@@ -59,8 +59,8 @@ let test_roots_are_isolated () =
   let right =
     Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 machine
   in
-  let left_output, left_start = committed (Crux.Root.advance left) in
-  let right_output, right_start = committed (Crux.Root.advance right) in
+  let left_output, left_start = committed (run_ok (Crux.Root.advance left)) in
+  let right_output, right_start = committed (run_ok (Crux.Root.advance right)) in
   let left_model, left_endpoint = left_output in
   let right_model, _right_endpoint = right_output in
   Alcotest.(check int) "left initial model" 0 left_model;
@@ -68,10 +68,10 @@ let test_roots_are_isolated () =
   ignore (run_ok (Crux.Post_commit.start left_start));
   ignore (run_ok (Crux.Post_commit.start right_start));
   ignore (run_ok (Crux.Endpoint.send left_endpoint 3));
-  let left_output, left_next = committed (Crux.Root.advance left) in
+  let left_output, left_next = committed (run_ok (Crux.Root.advance left)) in
   let left_model, _ = left_output in
   Alcotest.(check int) "left advanced" 3 left_model;
-  let right_idle = Crux.Root.advance right in
+  let right_idle = run_ok (Crux.Root.advance right) in
   (match right_idle with
   | Ok Crux.Root.Idle -> ()
   | _ -> Alcotest.fail "right root was not idle");
@@ -88,12 +88,12 @@ let test_endpoint_acceptance_boundary () =
   let root =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 machine
   in
-  let output, start = committed (Crux.Root.advance root) in
+  let output, start = committed (run_ok (Crux.Root.advance root)) in
   let _, endpoint = output in
   ignore (run_ok (Crux.Post_commit.start start));
   ignore (run_ok (Crux.Endpoint.send endpoint 1));
   Alcotest.(check int) "send did not run transition" 0 !transitions;
-  let output, next = committed (Crux.Root.advance root) in
+  let output, next = committed (run_ok (Crux.Root.advance root)) in
   Alcotest.(check int) "advance ran one transition" 1 !transitions;
   let model, _ = output in
   Alcotest.(check int) "committed model" 1 model;
@@ -110,11 +110,11 @@ let test_transition_effect_is_staged () =
   let root =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 machine
   in
-  let output, start = committed (Crux.Root.advance root) in
+  let output, start = committed (run_ok (Crux.Root.advance root)) in
   let _, endpoint = output in
   ignore (run_ok (Crux.Post_commit.start start));
   ignore (run_ok (Crux.Endpoint.send endpoint 1));
-  let _output, next = committed (Crux.Root.advance root) in
+  let _output, next = committed (run_ok (Crux.Root.advance root)) in
   Alcotest.(check int) "effect remains staged" 0 !effect_starts;
   ignore (run_ok (Crux.Post_commit.start next));
   Alcotest.(check int) "effect starts after acknowledgment" 1 !effect_starts
@@ -284,14 +284,14 @@ let test_cutoff_suppresses_only_dependent_recomputation () =
   let root =
     Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 description
   in
-  let output, start = committed (Crux.Root.advance root) in
+  let output, start = committed (run_ok (Crux.Root.advance root)) in
   let (model, endpoint), parity = output in
   Alcotest.(check int) "initial model" 0 model;
   Alcotest.(check int) "initial parity" 0 parity;
   Alcotest.(check int) "initial projection" 1 !projections;
   ignore (run_ok (Crux.Post_commit.start start));
   ignore (run_ok (Crux.Endpoint.send endpoint 2));
-  let output, batch = committed (Crux.Root.advance root) in
+  let output, batch = committed (run_ok (Crux.Root.advance root)) in
   let (model, _), parity = output in
   Alcotest.(check int) "equal-cutoff commit still delivers model" 2 model;
   Alcotest.(check int) "published parity" 0 parity;
@@ -303,7 +303,7 @@ let test_post_commit_starts_exactly_once () =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
       (Crux.return ())
   in
-  let _, batch = committed (Crux.Root.advance root) in
+  let _, batch = committed (run_ok (Crux.Root.advance root)) in
   Alcotest.(check bool) "first start"
     true
     (run_ok (Crux.Post_commit.start batch) = Crux.Post_commit.Admitted);
@@ -321,10 +321,10 @@ let test_idle_is_inert () =
   let root =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 description
   in
-  let _, start = committed (Crux.Root.advance root) in
+  let _, start = committed (run_ok (Crux.Root.advance root)) in
   ignore (run_ok (Crux.Post_commit.start start));
   Alcotest.(check int) "initial stabilization" 1 !evaluations;
-  (match Crux.Root.advance root with
+  (match run_ok (Crux.Root.advance root) with
   | Ok Crux.Root.Idle -> ()
   | _ -> Alcotest.fail "empty root did not return Idle");
   Alcotest.(check int) "idle did not stabilize" 1 !evaluations
@@ -347,11 +347,11 @@ let test_transition_rollback () =
   let root =
     Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 description
   in
-  let (_, endpoint), start = committed (Crux.Root.advance root) in
+  let (_, endpoint), start = committed (run_ok (Crux.Root.advance root)) in
   ignore (run_ok (Crux.Post_commit.start start));
   ignore (run_ok (Crux.Endpoint.send endpoint (-1)));
   let failed_post_commit =
-    match Crux.Root.advance root with
+    match run_ok (Crux.Root.advance root) with
     | Ok (Crux.Root.Failed { post_commit; _ }) -> post_commit
     | _ -> Alcotest.fail "transition exception did not fail the root"
   in
@@ -383,14 +383,14 @@ let test_stale_endpoint_rejection () =
       (Crux.both selector selected)
   in
   let ((_, selector_endpoint), (_, old_endpoint)), start =
-    committed (Crux.Root.advance root)
+    committed (run_ok (Crux.Root.advance root))
   in
   ignore (run_ok (Crux.Post_commit.start start));
   ignore (run_ok (Crux.Endpoint.send selector_endpoint false));
-  let _, switched = committed (Crux.Root.advance root) in
+  let _, switched = committed (run_ok (Crux.Root.advance root)) in
   ignore (run_ok (Crux.Post_commit.start switched));
   ignore (run_ok (Crux.Endpoint.send old_endpoint 1));
-  match Crux.Root.advance root with
+  match run_ok (Crux.Root.advance root) with
   | Ok (Crux.Root.Rejected Crux.Root.Stale_endpoint) -> ()
   | _ -> Alcotest.fail "disposed child endpoint was not rejected as stale"
 
@@ -409,7 +409,7 @@ let test_lifecycle_resource_cleanup () =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
       (Crux.lifecycle (Crux.return program))
   in
-  let _, initial_post = committed (Crux.Root.advance root) in
+  let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
   ignore (run_runtime_ok runtime (Crux.Post_commit.start initial_post));
   let rec await flag attempts =
     if !flag then ()
@@ -421,7 +421,7 @@ let test_lifecycle_resource_cleanup () =
   await started 100;
   Crux.Root.request_stop root;
   let stop_post =
-    match Crux.Root.advance root with
+    match run_ok (Crux.Root.advance root) with
     | Ok (Crux.Root.Stopped { post_commit }) -> post_commit
     | _ -> Alcotest.fail "stop did not produce terminal post-commit work"
   in
@@ -498,7 +498,7 @@ let test_structural_scope_settlement () =
     |> ignore
   in
   let ((_, selector_endpoint), _), initial_post =
-    committed (Crux.Root.advance root)
+    committed (run_ok (Crux.Root.advance root))
   in
   start initial_post;
   let rec await flag message attempts =
@@ -511,7 +511,7 @@ let test_structural_scope_settlement () =
   await parent_started "parent lifecycle did not start" 100;
   await child_started "child lifecycle did not start" 100;
   send selector_endpoint false;
-  let _, replacement_post = committed (Crux.Root.advance root) in
+  let _, replacement_post = committed (run_ok (Crux.Root.advance root)) in
   start replacement_post;
   await replacement_started
     "replacement did not start while removed cleanup was pending" 100;
@@ -531,7 +531,7 @@ let test_structural_scope_settlement () =
     [ "child"; "parent" ] !cleanup_order;
   Crux.Root.request_stop root;
   let stop_post =
-    match Crux.Root.advance root with
+    match run_ok (Crux.Root.advance root) with
     | Ok (Crux.Root.Stopped { post_commit }) -> post_commit
     | _ -> Alcotest.fail "root did not stop"
   in
@@ -585,7 +585,7 @@ let test_cleanup_overlap () =
                   Failure "cleanup overlap token started twice")))
   in
   let ((_, selector_endpoint), _), initial_post =
-    committed (Crux.Root.advance root)
+    committed (run_ok (Crux.Root.advance root))
   in
   start initial_post;
   let rec await flag failure attempts =
@@ -602,7 +602,7 @@ let test_cleanup_overlap () =
        |> Eta.Effect.or_die (function
             | Crux.Endpoint.Ingress_closed ->
                 Failure "cleanup overlap ingress closed")));
-  let _, replacement_post = committed (Crux.Root.advance root) in
+  let _, replacement_post = committed (run_ok (Crux.Root.advance root)) in
   start replacement_post;
   await new_started "new work waited for old cleanup" 100;
   ignore (run_runtime_ok runtime (Eta.Promise.await cleanup_entered));
@@ -613,7 +613,7 @@ let test_cleanup_overlap () =
        (Eta.Promise.resolve release_cleanup (Eta.Exit.Ok ())));
   await cleanup_settled "old cleanup did not settle" 100;
   Crux.Root.request_stop root;
-  match Crux.Root.advance root with
+  match run_ok (Crux.Root.advance root) with
   | Ok (Crux.Root.Stopped { post_commit }) -> start post_commit
   | _ -> Alcotest.fail "cleanup overlap root did not stop"
 
@@ -668,7 +668,7 @@ let test_concurrent_source_opening () =
   let root =
     Crux.Root.create ~ingress_capacity:4 ~request_capacity:1 description
   in
-  let _, initial_post = committed (Crux.Root.advance root) in
+  let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
   let start post_commit =
     Crux.Post_commit.start post_commit
     |> Eta.Effect.or_die (function
@@ -718,7 +718,7 @@ let test_concurrent_source_opening () =
     (last_ready < first_running);
   Crux.Root.request_stop root;
   let stop_post =
-    match Crux.Root.advance root with
+    match run_ok (Crux.Root.advance root) with
     | Ok (Crux.Root.Stopped { post_commit }) -> post_commit
     | _ -> Alcotest.fail "root did not stop"
   in
@@ -767,7 +767,7 @@ let test_source_opening_barrier () =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
       (Crux.both machine (Crux.both source sibling))
   in
-  let _, initial_post = committed (Crux.Root.advance root) in
+  let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
   let pending =
     Eta_test.Async.fork_run switch runtime
       (Crux.Post_commit.start initial_post
@@ -800,7 +800,7 @@ let test_source_opening_barrier () =
   in
   await_started 100;
   Crux.Root.request_stop root;
-  match Crux.Root.advance root with
+  match run_ok (Crux.Root.advance root) with
   | Ok (Crux.Root.Stopped { post_commit }) ->
       ignore
         (run_runtime_ok runtime
@@ -817,10 +817,10 @@ let test_crash_latch () =
       (Crux.lifecycle
          (Crux.return (Eta.Effect.die_message "owned lifecycle crashed")))
   in
-  let _, initial_post = committed (Crux.Root.advance root) in
+  let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
   ignore (run_runtime_ok runtime (Crux.Post_commit.start initial_post));
   let rec await_failure attempts =
-    match Crux.Root.advance root with
+    match run_ok (Crux.Root.advance root) with
     | Ok (Crux.Root.Failed { failure; post_commit }) ->
         (failure, post_commit)
     | Ok Crux.Root.Idle when attempts > 0 ->
@@ -914,7 +914,7 @@ let test_cleanup_failure_precedence () =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
       (Crux.lifecycle (Crux.return program))
   in
-  let _, initial_post = committed (Crux.Root.advance root) in
+  let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
   ignore (run_runtime_ok runtime (Crux.Post_commit.start initial_post));
   let rec await_started attempts =
     if !started then ()
@@ -926,7 +926,7 @@ let test_cleanup_failure_precedence () =
   await_started 100;
   Crux.Root.request_stop root;
   let stop_post =
-    match Crux.Root.advance root with
+    match run_ok (Crux.Root.advance root) with
     | Ok (Crux.Root.Stopped { post_commit }) -> post_commit
     | _ -> Alcotest.fail "root did not enter stop teardown"
   in
@@ -971,7 +971,7 @@ let test_source_opening_defect () =
   let root =
     Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 description
   in
-  let _, initial_post = committed (Crux.Root.advance root) in
+  let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
   match run_runtime_ok runtime (Crux.Post_commit.start initial_post) with
   | Crux.Post_commit.Crash_settled settlement ->
       Alcotest.(check bool) "source opening is primary" true
@@ -1028,7 +1028,7 @@ let test_source_opening_failures_do_not_block_admission () =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
       (Crux.both sink (Crux.both (source ()) (source ())))
   in
-  let _, initial_post = committed (Crux.Root.advance root) in
+  let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
   (match await_post_start switch clock runtime initial_post with
   | Crux.Post_commit.Admitted -> ()
   | Crux.Post_commit.Stop_settled
@@ -1038,7 +1038,7 @@ let test_source_opening_failures_do_not_block_admission () =
     if remaining = 0 then
       Alcotest.fail "source terminals did not reach ingress"
     else
-      match Crux.Root.advance root with
+      match run_ok (Crux.Root.advance root) with
       | Ok
           (Crux.Root.Committed
             { output = ((model, _), _); post_commit }) ->
@@ -1057,7 +1057,7 @@ let test_source_opening_failures_do_not_block_admission () =
   Alcotest.(check int) "both terminal actions admitted" 2
     (await_model 100);
   Crux.Root.request_stop root;
-  (match Crux.Root.advance root with
+  (match run_ok (Crux.Root.advance root) with
   | Ok (Crux.Root.Stopped { post_commit }) ->
       ignore
         (run_runtime_ok runtime
@@ -1095,7 +1095,7 @@ let test_stop_cancels_source_opening () =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
       (Crux.both machine source)
   in
-  let _, initial_post = committed (Crux.Root.advance root) in
+  let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
   let pending =
     Eta_test.Async.fork_run switch runtime
       (Crux.Post_commit.start initial_post
@@ -1123,7 +1123,7 @@ let test_stop_cancels_source_opening () =
       Alcotest.fail "stop did not settle the opening batch");
   Alcotest.(check bool) "opening cancellation completed" true !cancelled;
   Alcotest.(check bool) "root closed after stop" true
-    (Crux.Root.advance root = Error Crux.Root.Closed)
+    (run_ok (Crux.Root.advance root) = Error Crux.Root.Closed)
 
 let test_post_commit_phase_order () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
@@ -1160,7 +1160,7 @@ let test_post_commit_phase_order () =
       (Crux.both machine source)
   in
   let ((_, endpoint), _), initial_post =
-    committed (Crux.Root.advance root)
+    committed (run_ok (Crux.Root.advance root))
   in
   let start_effect post_commit =
     Crux.Post_commit.start post_commit
@@ -1174,7 +1174,7 @@ let test_post_commit_phase_order () =
        (Crux.Endpoint.send endpoint 1
        |> Eta.Effect.or_die (function
             | Crux.Endpoint.Ingress_closed -> Failure "ingress closed")));
-  let _, replacement_post = committed (Crux.Root.advance root) in
+  let _, replacement_post = committed (run_ok (Crux.Root.advance root)) in
   let observer =
     let open Eta.Syntax in
     let* () = Eta.Promise.await opening_entered in
@@ -1201,7 +1201,7 @@ let test_post_commit_phase_order () =
   await_transition 100;
   Crux.Root.request_stop root;
   let stop_post =
-    match Crux.Root.advance root with
+    match run_ok (Crux.Root.advance root) with
     | Ok (Crux.Root.Stopped { post_commit }) -> post_commit
     | _ -> Alcotest.fail "root did not stop"
   in
@@ -1235,12 +1235,12 @@ let test_diagnostic_hook_failure () =
   let root =
     Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 machine
   in
-  let (_, endpoint), initial_post = committed (Crux.Root.advance root) in
+  let (_, endpoint), initial_post = committed (run_ok (Crux.Root.advance root)) in
   ignore (run_ok (Crux.Post_commit.start initial_post));
   Alcotest.(check int) "model hook is lazy" 0 !model_diagnostics;
   Alcotest.(check int) "action hook is lazy" 0 !action_diagnostics;
   ignore (run_ok (Crux.Endpoint.send endpoint 0));
-  let _, successful_post = committed (Crux.Root.advance root) in
+  let _, successful_post = committed (run_ok (Crux.Root.advance root)) in
   ignore (run_ok (Crux.Post_commit.start successful_post));
   Alcotest.(check int) "successful transition did not diagnose model" 0
     !model_diagnostics;
@@ -1248,7 +1248,7 @@ let test_diagnostic_hook_failure () =
     !action_diagnostics;
   ignore (run_ok (Crux.Endpoint.send endpoint (-1)));
   let failure, failed_post =
-    match Crux.Root.advance root with
+    match run_ok (Crux.Root.advance root) with
     | Ok (Crux.Root.Failed { failure; post_commit }) ->
         (failure, post_commit)
     | _ -> Alcotest.fail "transition defect did not fail"
@@ -1305,7 +1305,7 @@ let test_self_disposing_effect () =
     Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
       (Crux.both machine source)
   in
-  let _, initial_post = committed (Crux.Root.advance root) in
+  let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
   let start post_commit =
     Crux.Post_commit.start post_commit
     |> Eta.Effect.or_die (function
@@ -1318,7 +1318,7 @@ let test_self_disposing_effect () =
   let rec await_terminal attempts =
     if attempts = 0 then Alcotest.fail "source terminal action did not arrive"
     else
-      match Crux.Root.advance root with
+      match run_ok (Crux.Root.advance root) with
       | Ok
           (Crux.Root.Committed
             { output = ((model, _), _); post_commit }) ->
@@ -1338,7 +1338,7 @@ let test_self_disposing_effect () =
     !transition_effect_starts;
   Crux.Root.request_stop root;
   let stop_post =
-    match Crux.Root.advance root with
+    match run_ok (Crux.Root.advance root) with
     | Ok (Crux.Root.Stopped { post_commit }) -> post_commit
     | _ -> Alcotest.fail "root did not stop"
   in
@@ -1367,7 +1367,7 @@ let test_export_callback_defect () =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 description
   in
   let _, export, initial_post =
-    match committed (Crux.Root.advance root) with
+    match committed (run_ok (Crux.Root.advance root)) with
     | ((_, _), export), post_commit ->
         ((), export, post_commit)
   in
@@ -1383,7 +1383,7 @@ let test_export_callback_defect () =
   invoke ();
   invoke ();
   let failure, crash_post =
-    match Crux.Root.advance root with
+    match run_ok (Crux.Root.advance root) with
     | Ok (Crux.Root.Failed { failure; post_commit }) ->
         (failure, post_commit)
     | _ -> Alcotest.fail "export mapper defect did not latch root crash"
@@ -1732,7 +1732,7 @@ let test_hosted_resource_boundary () =
   Alcotest.(check bool) "unacquired resource was not released" false
     !acquire_released;
   Alcotest.(check bool) "acquisition failure settled root" true
-    (Crux.Root.advance acquire_root = Error Crux.Root.Closed);
+    (run_ok (Crux.Root.advance acquire_root) = Error Crux.Root.Closed);
 
   let release_root, release_driver = hosted_root () in
   let delivered = ref false in
@@ -1767,7 +1767,7 @@ let test_hosted_resource_boundary () =
   Alcotest.(check bool) "adapter received committed output" true !delivered;
   Alcotest.(check bool) "binding release ran" true !released;
   Alcotest.(check bool) "release failure left root settled" true
-    (Crux.Root.advance release_root = Error Crux.Root.Closed);
+    (run_ok (Crux.Root.advance release_root) = Error Crux.Root.Closed);
 
   let interrupt_root, interrupt_driver = hosted_root () in
   let delivery_entered = Eta.Promise.create () in
@@ -1800,7 +1800,7 @@ let test_hosted_resource_boundary () =
   Alcotest.(check bool) "interruption released binding after settlement" true
     !interrupt_released;
   Alcotest.(check bool) "interruption settled root" true
-    (Crux.Root.advance interrupt_root = Error Crux.Root.Closed)
+    (run_ok (Crux.Root.advance interrupt_root) = Error Crux.Root.Closed)
 
 let test_request_terminal_handoff_fence () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
@@ -1919,7 +1919,7 @@ let test_request_export_closes_on_owner_and_root_termination () =
       Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
         (Crux.both machine (Crux.both selector export))
     in
-    let initial, post_commit = committed (Crux.Root.advance root) in
+    let initial, post_commit = committed (run_ok (Crux.Root.advance root)) in
     ignore
       (run_runtime_ok runtime
          (Crux.Post_commit.start post_commit
@@ -1948,7 +1948,7 @@ let test_request_export_closes_on_owner_and_root_termination () =
     for _ = 1 to 10 do
       Eio.Fiber.yield ()
     done;
-    let _, request_post = committed (Crux.Root.advance root) in
+    let _, request_post = committed (run_ok (Crux.Root.advance root)) in
     ignore
       (run_runtime_ok runtime
          (Crux.Post_commit.start request_post
@@ -1980,7 +1980,7 @@ let test_request_export_closes_on_owner_and_root_termination () =
            |> Eta.Effect.or_die (function
                 | Crux.Endpoint.Ingress_closed ->
                     Failure "selector ingress closed")));
-      let _, post_commit = committed (Crux.Root.advance root) in
+      let _, post_commit = committed (run_ok (Crux.Root.advance root)) in
       ignore
         (run_runtime_ok runtime
            (Crux.Post_commit.start post_commit
@@ -1990,7 +1990,7 @@ let test_request_export_closes_on_owner_and_root_termination () =
   run_case Crux.Request.Root_stopped
     (fun runtime root _machine_endpoint _selector_endpoint ->
       Crux.Root.request_stop root;
-      match Crux.Root.advance root with
+      match run_ok (Crux.Root.advance root) with
       | Ok (Crux.Root.Stopped { post_commit }) ->
           ignore
             (run_runtime_ok runtime
@@ -2008,7 +2008,7 @@ let test_request_export_closes_on_owner_and_root_termination () =
            |> Eta.Effect.or_die (function
                 | Crux.Endpoint.Ingress_closed ->
                     Failure "machine ingress closed")));
-      let _, post_commit = committed (Crux.Root.advance root) in
+      let _, post_commit = committed (run_ok (Crux.Root.advance root)) in
       ignore
         (run_runtime_ok runtime
            (Crux.Post_commit.start post_commit
@@ -2019,7 +2019,7 @@ let test_request_export_closes_on_owner_and_root_termination () =
         if attempts = 0 then
           Alcotest.fail "request-export root did not crash"
         else
-          match Crux.Root.advance root with
+          match run_ok (Crux.Root.advance root) with
           | Ok (Crux.Root.Failed { post_commit; _ }) ->
               ignore
                 (run_runtime_ok runtime

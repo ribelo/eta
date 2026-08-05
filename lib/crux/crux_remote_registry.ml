@@ -1,4 +1,4 @@
-open Crux_graph
+open Crux_engine
 
 type slot_state =
   | Active of boundary_export

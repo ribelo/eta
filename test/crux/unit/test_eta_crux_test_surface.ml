@@ -155,7 +155,7 @@ let test_handle_bracket_cleanup () =
           ~shell:quiet_shell normal_root
           ~f:(fun _ -> Eta.Effect.unit)));
   Alcotest.(check bool) "normal bracket settled root" true
-    (match Crux.Root.advance normal_root with
+    (match run_ok runtime (Crux.Root.advance normal_root) with
     | Error Crux.Root.Closed -> true
     | _ -> false);
 

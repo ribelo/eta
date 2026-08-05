@@ -1,4 +1,4 @@
-open Crux_graph
+open Crux_engine
 
 module Failure = Crux_failure.Failure
 
@@ -315,6 +315,7 @@ module Post_commit = struct
         let* () =
           request_job_cancellations batch.cancellations
         in
+        
         let* () =
           (match batch.cancellations with
           | [] -> Eta.Effect.unit
@@ -359,9 +360,12 @@ end
 
 module Root = struct
   type 'output description = 'output t
+
   type 'output t = {
     core : root_core;
     description : 'output description;
+    signal : 'output signal_root;
+    mutable committed_frame : 'output frame option;
   }
 
   type delivery_error = Stale_endpoint
@@ -401,33 +405,65 @@ module Root = struct
         revokers = [];
       }
     in
-    {
-      core =
-        {
-          id;
-          lock = Eta.Sync_lock.create ();
-          ingress = Eta.Queue.bounded ~capacity:ingress_capacity ();
-          wake = Eta.Queue.dropping ~capacity:1 ();
-          terminal_wake = Eta.Queue.dropping ~capacity:1 ();
-          request_slots = Eta.Semaphore.make ~permits:request_capacity;
-          ingress_capacity;
-          request_capacity;
-          phase = Ready;
-          start_pending = true;
-          stop_requested = false;
-          store = Eta_signal.Owner_transaction.create_cell Cell_map.empty;
-          scopes = Int_map.singleton 0 root_scope;
-          endpoints = Int_map.empty;
-          boundary_exports = Int_map.empty;
-          failure = None;
-          failure_reported = false;
-          next_scope = 1;
-          next_endpoint = 0;
-          next_version = 0;
-          next_position = 0L;
-        };
-      description;
-    }
+    let core =
+      {
+        id;
+        lock = Eta.Sync_lock.create ();
+        ingress = Eta.Queue.bounded ~capacity:ingress_capacity ();
+        wake = Eta.Queue.dropping ~capacity:1 ();
+        terminal_wake = Eta.Queue.dropping ~capacity:1 ();
+        request_slots = Eta.Semaphore.make ~permits:request_capacity;
+        ingress_capacity;
+        request_capacity;
+        phase = Ready;
+        start_pending = true;
+        stop_requested = false;
+        scopes = Int_map.singleton 0 root_scope;
+        endpoints = Int_map.empty;
+        boundary_exports = Int_map.empty;
+        failure = None;
+        failure_reported = false;
+        next_scope = 1;
+        next_endpoint = 0;
+        next_position = 0L;
+        dispose_signal = None;
+        memo = Hashtbl.create 16;
+      }
+    in
+    let signal = create_signal_root core description in
+    core.dispose_signal <- Some signal.sig_dispose_observer;
+    { core; description; signal; committed_frame = None }
+
+  let request_stop (root : 'output t) =
+    let core = root.core in
+    let close =
+      Eta.Sync_lock.use core.lock @@ fun () ->
+      if core.phase = Closed || core.stop_requested then false
+      else (
+        core.stop_requested <- true;
+        core.start_pending <- false;
+        true)
+    in
+    if close then (
+      shutdown_ingress core;
+      ignore (Eta.Queue.try_offer_now core.terminal_wake () : _))
+
+  let terminal_event (core : root_core) =
+    Eta.Sync_lock.use core.lock @@ fun () ->
+    match core.failure with
+    | Some failure ->
+        if core.failure_reported then (
+          core.phase <- Closed;
+          Some `Closed_after_crash)
+        else (
+          core.failure_reported <- true;
+          Some (`Crash failure))
+    | None ->
+        if core.stop_requested then Some `Stop
+        else if core.start_pending then (
+          core.start_pending <- false;
+          Some `Start)
+        else None
 
   let make_batch (core : root_core) kind works cancellations =
     {
@@ -437,50 +473,6 @@ module Root = struct
       cancellations;
       started = false;
       lock = Eta.Sync_lock.create ();
-    }
-
-  let begin_advance (core : root_core) =
-    Eta.Sync_lock.use core.lock @@ fun () ->
-    match core.phase with
-    | Advancing -> Error Already_advancing
-    | Awaiting_post_commit -> Error Awaiting_post_commit
-    | Closed -> Error Closed
-    | Ready ->
-        core.phase <- Advancing;
-        Ok ()
-
-  let reset_ready (core : root_core) =
-    Eta.Sync_lock.use core.lock @@ fun () ->
-    if core.phase = Advancing then core.phase <- Ready
-
-  let terminal_event (core : root_core) =
-    Eta.Sync_lock.use core.lock @@ fun () ->
-    match core.failure with
-    | Some failure when not core.failure_reported ->
-        core.failure_reported <- true;
-        Some (`Crash failure)
-    | Some _ -> Some `Closed_after_crash
-    | None when core.stop_requested -> Some `Stop
-    | None when core.start_pending ->
-        core.start_pending <- false;
-        Some `Start
-    | None -> None
-
-  let transaction (core : root_core) =
-    {
-      root = core;
-      owner_transaction = Eta_signal.Owner_transaction.begin_ ();
-      owner_committed = false;
-      overlay = Cell_map.empty;
-      added_scopes = [];
-      removed_scopes = [];
-      added_endpoints = [];
-      works = [];
-      data_updates = [];
-      commit_hooks = [];
-      removed_jobs = [];
-      message_owner = None;
-      added_revokers = [];
     }
 
   let fail_from_exception (core : root_core) trigger exn =
@@ -499,98 +491,247 @@ module Root = struct
         post_commit = make_batch core Crash [] [];
       }
 
-  let commit (core : root_core) description transaction =
-    let output = description.eval transaction 0 in
-    let fatal_won =
-      Eta.Sync_lock.use core.lock @@ fun () -> core.failure
+  let fail_from_cause (core : root_core) trigger cause =
+    let packed =
+      Failure.Packed_cause.make ~pp_error:pp_staging_error cause
     in
-    match fatal_won with
-    | Some failure ->
-        Eta_signal.Owner_transaction.rollback transaction.owner_transaction;
-        Eta.Sync_lock.use core.lock @@ fun () ->
-        core.failure_reported <- true;
-        core.phase <- Awaiting_post_commit;
-        Failed
-          {
-            failure;
-            post_commit = make_batch core Crash [] [];
-          }
-    | None ->
-        commit_transaction transaction;
-        Eta.Sync_lock.use core.lock @@ fun () ->
-        core.phase <- Awaiting_post_commit;
-        Committed
-          {
-            output = output.value;
-            post_commit =
-              make_batch core Normal transaction.works
-                transaction.removed_jobs;
-          }
+    latch_failure_record core
+      (failure_record core ~origin:Failure.Transition ~trigger packed);
+    let failure =
+      match core.failure with
+      | Some failure -> failure
+      | None -> assert false
+    in
+    Eta.Sync_lock.use core.lock @@ fun () ->
+    core.failure_reported <- true;
+    core.phase <- Awaiting_post_commit;
+    Failed
+      {
+        failure;
+        post_commit = make_batch core Crash [] [];
+      }
 
-  let commit_attempt (core : root_core) description transaction trigger
-      before_eval =
-    try
-      before_eval ();
-      Ok (commit core description transaction)
-    with
-    | Failure_already_latched ->
-      if not transaction.owner_committed then
-        Eta_signal.Owner_transaction.rollback transaction.owner_transaction;
-      let failure =
-        match core.failure with
-        | Some failure -> failure
-        | None ->
-            invalid_arg
-              "Eta_crux: latched transition failure was not recorded"
+  (* Apply one candidate frame under the root lock. Mirrors the domain
+     lifecycle of the old commit: close scopes whose branch left the frame
+     (running their revokers and collecting their jobs), deactivate their
+     endpoints, run freshly published commit hooks in order, activate new
+     scopes and endpoints, append fresh revokers, and install machine state.
+     Fresh records (works, endpoints, hooks, revokers) are detected by
+     physical identity against the previously installed frame; scopes diff
+     by scope id. Returns the works and job cancellations for the
+     post-commit batch. *)
+  let install_frame (core : root_core) ~previous ~(frame : 'output frame) =
+    let contribution = frame.contribution in
+    let previous_contribution =
+      match previous with
+      | None -> contribution_empty
+      | Some (previous : 'output frame) -> previous.contribution
+    in
+    let fresh_works =
+      List.filter
+        (fun work -> not (List.memq work previous_contribution.works))
+        contribution.works
+    in
+    let fresh_hooks =
+      List.filter
+        (fun hook ->
+          not (List.memq hook previous_contribution.commit_hooks))
+        contribution.commit_hooks
+    in
+    let fresh_revokers =
+      List.filter
+        (fun revoker ->
+          not (List.memq revoker previous_contribution.added_revokers))
+        contribution.added_revokers
+    in
+    let scopes_with_additions =
+      List.fold_left
+        (fun scopes (scope : scope_state) -> Int_map.add scope.id scope scopes)
+        core.scopes contribution.added_scopes
+    in
+    let removed =
+      List.fold_left
+        (fun removed (scope : scope_state) ->
+          if
+            List.exists
+              (fun (candidate : scope_state) -> candidate.id = scope.id)
+              contribution.added_scopes
+          then removed
+          else Int_set.add scope.id removed)
+        Int_set.empty previous_contribution.added_scopes
+    in
+    let is_removed scope =
+      Int_set.exists
+        (fun ancestor ->
+          scope_is_descendant scopes_with_additions ~ancestor scope)
+        removed
+    in
+    let removed_jobs =
+      Int_map.fold
+        (fun _ (scope : scope_state) jobs ->
+          if is_removed scope.id then List.rev_append scope.jobs jobs
+          else jobs)
+        scopes_with_additions []
+    in
+    Int_map.iter
+      (fun _ (scope : scope_state) ->
+        if is_removed scope.id then (
+          scope.active <- false;
+          List.iter (fun revoke -> revoke ()) scope.revokers;
+          scope.revokers <- []))
+      scopes_with_additions;
+    Int_map.iter
+      (fun _ (endpoint : endpoint_core) ->
+        if is_removed endpoint.scope then endpoint.active <- false)
+      core.endpoints;
+    List.iter (fun hook -> hook ()) fresh_hooks;
+    List.iter
+      (fun (scope : scope_state) ->
+        if not (is_removed scope.id) then scope.active <- true)
+      contribution.added_scopes;
+    List.iter
+      (fun (endpoint : endpoint_core) ->
+        if not (is_removed endpoint.scope) then endpoint.active <- true)
+      contribution.endpoints;
+    List.iter
+      (fun (scope_id, revoke) ->
+        match Int_map.find_opt scope_id scopes_with_additions with
+        | Some scope when not (is_removed scope_id) ->
+            scope.revokers <- revoke :: scope.revokers
+        | Some _ | None -> ())
+      fresh_revokers;
+    core.scopes <-
+      Int_map.filter
+        (fun _ (scope : scope_state) ->
+          scope.active || not (is_removed scope.id))
+        scopes_with_additions;
+    Hashtbl.filter_map_inplace
+      (fun (scope_id, _) packed ->
+        if is_removed scope_id then None else Some packed)
+      core.memo;
+    let new_endpoints =
+      List.filter
+        (fun (endpoint : endpoint_core) ->
+          not (Int_map.mem endpoint.id core.endpoints))
+        contribution.endpoints
+    in
+    core.endpoints <-
+      List.fold_left
+        (fun endpoints (endpoint : endpoint_core) ->
+          Int_map.add endpoint.id endpoint endpoints)
+        (Int_map.filter
+           (fun _ (endpoint : endpoint_core) -> endpoint.active)
+           core.endpoints)
+        new_endpoints;
+    (fresh_works, removed_jobs)
+
+  let commit (core : root_core) root ~staging ~trigger =
+    let open Eta.Syntax in
+    let staged_sets = List.rev staging.model_sets in
+    let graph_step =
+      let* () = root.signal.sig_ensure_observer in
+      let* () =
+        staged_sets
+        |> List.map (fun set_effect ->
+               Eta.Effect.map_error
+                 (fun err -> (err :> staging_error))
+                 set_effect)
+        |> Eta.Effect.concat
       in
-      Eta.Sync_lock.use core.lock @@ fun () ->
-      core.failure_reported <- true;
-      core.phase <- Awaiting_post_commit;
-      Ok
-        (Failed
-           {
-             failure;
-             post_commit = make_batch core Crash [] [];
-           })
-    | exn ->
-      if not transaction.owner_committed then
-        Eta_signal.Owner_transaction.rollback transaction.owner_transaction;
-      Ok (fail_from_exception core trigger exn)
+      let* () = root.signal.sig_stabilize in
+      root.signal.sig_read_frame ()
+    in
+    let* step_exit = Eta.Effect.to_exit graph_step in
+    match step_exit with
+    | Eta.Exit.Error cause ->
+        Eta.Effect.sync (fun () ->
+            List.iter (fun undo -> undo ()) staging.undos)
+        |> Eta.Effect.map (fun () -> fail_from_cause core trigger cause)
+    | Eta.Exit.Ok frame -> (
+        (* A failure latched during staging or stabilization wins over the
+           candidate frame: roll back and report instead of installing. *)
+        let fatal_won =
+          Eta.Sync_lock.use core.lock @@ fun () -> core.failure
+        in
+        match fatal_won with
+        | Some failure ->
+            Eta.Effect.sync (fun () ->
+                List.iter (fun undo -> undo ()) staging.undos;
+                Eta.Sync_lock.use core.lock @@ fun () ->
+                core.failure_reported <- true;
+                core.phase <- Awaiting_post_commit;
+                Failed
+                  {
+                    failure;
+                    post_commit = make_batch core Crash [] [];
+                  })
+        | None ->
+            Eta.Effect.sync (fun () ->
+                Eta.Sync_lock.use core.lock @@ fun () ->
+                let works, cancellations =
+                  install_frame core ~previous:root.committed_frame ~frame
+                in
+            let works = List.rev_append (List.rev staging.works) works in
+                root.committed_frame <- Some frame;
+                core.phase <- Awaiting_post_commit;
+                Committed
+                  {
+                    output = frame.output;
+                    post_commit = make_batch core Normal works cancellations;
+                  }))
+
+  let begin_advance (core : root_core) =
+    Eta.Sync_lock.use core.lock @@ fun () ->
+    match core.phase with
+    | Ready ->
+        core.phase <- Advancing;
+        Ok ()
+    | Advancing -> Error Already_advancing
+    | Awaiting_post_commit -> Error Awaiting_post_commit
+    | Closed -> Error Closed
+
+  let reset_ready (core : root_core) =
+    Eta.Sync_lock.use core.lock @@ fun () ->
+    if core.phase = Advancing then core.phase <- Ready
 
   let advance root =
     let core = root.core in
     match begin_advance core with
-    | Error _ as error -> error
-    | Ok () ->
+    | Error _ as error -> Eta.Effect.sync (fun () -> error)
+    | Ok () -> (
         let event = terminal_event core in
         match event with
         | Some (`Crash failure) ->
-            Eta.Sync_lock.use core.lock @@ fun () ->
-            core.phase <- Awaiting_post_commit;
-            Ok
-              (Failed
-                 {
-                   failure;
-                   post_commit = make_batch core Crash [] [];
-                 })
+            Eta.Effect.sync (fun () ->
+                Eta.Sync_lock.use core.lock @@ fun () ->
+                core.phase <- Awaiting_post_commit;
+                Ok
+                  (Failed
+                     {
+                       failure;
+                       post_commit = make_batch core Crash [] [];
+                     }))
         | Some `Closed_after_crash ->
-            Eta.Sync_lock.use core.lock @@ fun () -> core.phase <- Closed;
-            Error Closed
+            Eta.Effect.sync (fun () ->
+                Eta.Sync_lock.use core.lock @@ fun () -> core.phase <- Closed;
+                Error Closed)
         | Some `Stop ->
-            Eta.Sync_lock.use core.lock @@ fun () ->
-            core.phase <- Awaiting_post_commit;
-            Ok (Stopped { post_commit = make_batch core Stop [] [] })
+            Eta.Effect.sync (fun () ->
+                Eta.Sync_lock.use core.lock @@ fun () ->
+                core.phase <- Awaiting_post_commit;
+                Ok (Stopped { post_commit = make_batch core Stop [] [] }))
         | Some `Start ->
-            commit_attempt core root.description (transaction core)
-              Failure.Initial_start (fun () -> ())
-        | None ->
+            let staging = create_staging () in
+            commit core root ~staging ~trigger:Failure.Initial_start
+            |> Eta.Effect.map (fun outcome -> Ok outcome)
+        | None -> (
             match Eta.Queue.poll_now core.ingress with
             | `Empty ->
                 reset_ready core;
-                Ok Idle
+                Eta.Effect.sync (fun () -> Ok Idle)
             | `Closed ->
                 reset_ready core;
-                Ok Idle
+                Eta.Effect.sync (fun () -> Ok Idle)
             | `Closed_with_error (_ : never) -> .
             | `Item (Message { endpoint; action; owner_scope }) ->
                 if
@@ -600,25 +741,44 @@ module Root = struct
                   || endpoint.generation <> endpoint.id
                 then (
                   reset_ready core;
-                  Ok (Rejected Stale_endpoint))
+                  Eta.Effect.sync (fun () -> Ok (Rejected Stale_endpoint)))
                 else
-                  let transaction = transaction core in
-                  commit_attempt core root.description transaction
-                    Failure.Endpoint_message (fun () ->
-                      transaction.message_owner <- owner_scope;
-                      endpoint.dispatch transaction action)
-
-  let request_stop root =
-    let core = root.core in
-    let close =
-      Eta.Sync_lock.use core.lock @@ fun () ->
-      if core.phase = Closed || core.stop_requested then false
-      else (
-        core.stop_requested <- true;
-        core.start_pending <- false;
-        true)
-    in
-    if close then (
-      shutdown_ingress core;
-      ignore (Eta.Queue.try_offer_now core.terminal_wake () : _))
+                  let staging = create_staging () in
+                  staging.message_owner <- owner_scope;
+                  let dispatched =
+                    try
+                      endpoint.dispatch staging action;
+                      `Dispatched
+                    with
+                    | Failure_already_latched -> `Latched
+                    | exn -> `Raised exn
+                  in
+                  (match dispatched with
+                  | `Dispatched ->
+                      commit core root ~staging
+                        ~trigger:Failure.Endpoint_message
+                      |> Eta.Effect.map (fun outcome -> Ok outcome)
+                  | `Latched ->
+                      Eta.Effect.sync (fun () ->
+                          List.iter (fun undo -> undo ()) staging.undos;
+                          let failure =
+                            match core.failure with
+                            | Some failure -> failure
+                            | None ->
+                                invalid_arg
+                                  "Eta_crux: latched transition failure was                                    not recorded"
+                          in
+                          Eta.Sync_lock.use core.lock @@ fun () ->
+                          core.failure_reported <- true;
+                          core.phase <- Awaiting_post_commit;
+                          Ok
+                            (Failed
+                               {
+                                 failure;
+                                 post_commit = make_batch core Crash [] [];
+                               }))
+                  | `Raised exn ->
+                      Eta.Effect.sync (fun () ->
+                          List.iter (fun undo -> undo ()) staging.undos;
+                          Ok (fail_from_exception core Failure.Endpoint_message exn)))))
 end

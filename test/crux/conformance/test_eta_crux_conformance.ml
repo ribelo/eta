@@ -29,19 +29,19 @@ let conformance_identity_zero_wire () =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 description
   in
   let ((_, _), export), initial_post =
-    committed (Crux.Root.advance root)
+    committed (run_ok (Crux.Root.advance root))
   in
   ignore (run_ok (Crux.Post_commit.start initial_post));
   Alcotest.(check bool) "local invocation accepted" true
     (Crux.Exported_endpoint.try_invoke export 7 = Ok (Ok (Ok ())));
   let ((model, _), _), action_post =
-    committed (Crux.Root.advance root)
+    committed (run_ok (Crux.Root.advance root))
   in
   Alcotest.(check int) "local typed payload" 7 model;
   ignore (run_ok (Crux.Post_commit.start action_post));
   Crux.Root.request_stop root;
   let stop_post =
-    match Crux.Root.advance root with
+    match run_ok (Crux.Root.advance root) with
     | Ok (Crux.Root.Stopped { post_commit }) -> post_commit
     | _ -> Alcotest.fail "root did not stop"
   in

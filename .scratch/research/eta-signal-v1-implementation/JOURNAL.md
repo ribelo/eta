@@ -984,3 +984,59 @@ nix develop -c dune runtest test/laws test/signal test/signal_map --force
 nix develop -c dune build @install
 nix develop -c dune runtest test/signal test/signal_stream test/signal_map --force
 ```
+
+## 2026-05-21 — Slice 10: Eta Crux migrates to one private Signal graph per root
+
+- The hand-rolled version-memoization engine (`crux_graph_base.ml`,
+  `crux_graph_commit.ml`, `crux_graph.ml`, `crux_assoc.ml`, 1,608 LOC) is
+  deleted. `crux_engine.ml` (new) compiles each graph-neutral description
+  into the root's private `Eta_signal.Make` graph: `return` -> const,
+  `map` -> map, `both` -> map2, `cutoff` -> a cutoff node, `bind` ->
+  `Signal.bind` with one fresh Crux scope per branch incarnation,
+  `State_machine` -> a private `Signal.Var` plus endpoint dispatch that
+  stages `Var.set` effects and dormant transition works, `Assoc` ->
+  `Package.stable_family` (the `Keyed.mapi` seam) with `Map.S`-native
+  input/output ops, data sources -> `Signal.Var`.
+- Descriptions stay graph-neutral via a packed-instance encoding: the
+  compile context carries the root's Signal instance behind a first-class
+  module and combinator boundaries cross with `Obj`, the same discipline
+  the old engine used for memo cells. OCaml has no higher-kinded type
+  variables, so a rank-2 signature encoding is impossible.
+- Compile results memoize by (scope, description identity) - the old cell
+  key. A description value used twice in one scope compiles once (one
+  machine, one endpoint), and branch reincarnations recompile because each
+  branch owns a fresh scope. The root filters memo entries whose scope left
+  the committed frame, mirroring the old store filter.
+- Advancement: select one ingress event -> validate endpoint incarnation ->
+  stage model sets and dormant effects -> one `Signal.stabilize` -> read
+  the candidate frame from the root's private output observer -> validate ->
+  install under the root lock (frame diff applies the old commit's domain
+  lifecycle: scope close with revokers and job collection, endpoint
+  activation, commit hooks in order, revoker append, machine cell refresh)
+  -> return output plus a single-use post-commit token. `Root.advance` is
+  effectful now; drivers already compose effects, and direct callers wrap
+  with a runtime. The public mli change is limited to that signature.
+- Frames carry (output, contribution) pairs. Contributions are manifests:
+  endpoints, works, scopes, commit hooks, revokers. The root diffs
+  consecutive frames: fresh records by physical identity, scopes by id.
+  A failure latched during staging or stabilization wins over the candidate
+  frame (the old fatal-won check); rollback runs the staged undos.
+- Gated nodes (machine model gate, `cutoff` combinator, source spec gate)
+  suppress on value equality AND manifest equality (`contribution_equal`:
+  scopes/endpoints by id, staged records by identity). Value-only
+  suppression froze the manifest channel: stale endpoint inputs and lost
+  scope churn. The machine's input refresh runs through an ungated watcher
+  that updates the cell during stabilization, which preserves the old
+  model_version publication gate exactly.
+- `bind` merges the selector subtree's contribution into the branch output;
+  dropping it lost the selector's endpoints and scopes.
+- `Eta_signal.Owner_transaction` is deleted (kernel module and the public
+  `eta_signal.mli` module). Crux was its only consumer.
+- Verified with:
+
+```sh
+nix develop -c dune build @install
+nix develop -c dune runtest test/crux --force
+nix develop -c dune runtest test/signal test/signal_map test/signal_stream test/laws --force
+grep -rn "Owner_transaction" lib/ test/  # empty
+```

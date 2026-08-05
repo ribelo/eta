@@ -30,7 +30,7 @@ let send endpoint action =
 
 let stop_root root =
   Crux.Root.request_stop root;
-  match Crux.Root.advance root with
+  match run_ok (Crux.Root.advance root) with
   | Ok (Crux.Root.Stopped { post_commit }) -> start post_commit
   | _ -> failwith "root did not stop"
 
@@ -136,7 +136,7 @@ let qcheck_description_identity =
           (Crux.both machine machine)
       in
       let initial_output, initial_post_commit =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       let (_, endpoint), _ = initial_output in
       start initial_post_commit;
@@ -144,7 +144,7 @@ let qcheck_description_identity =
         List.fold_left
           (fun _ action ->
             send endpoint action;
-            let output, post_commit = committed (Crux.Root.advance root) in
+            let output, post_commit = committed (run_ok (Crux.Root.advance root)) in
             start post_commit;
             output)
           initial_output actions
@@ -178,7 +178,7 @@ let qcheck_cutoff_boundary =
           (Crux.both machine parity)
       in
       let initial_output, initial_post_commit =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       let (initial_model, endpoint), _ = initial_output in
       start initial_post_commit;
@@ -186,7 +186,7 @@ let qcheck_cutoff_boundary =
         List.fold_left
           (fun (model, changes) action ->
             send endpoint action;
-            let output, post_commit = committed (Crux.Root.advance root) in
+            let output, post_commit = committed (run_ok (Crux.Root.advance root)) in
             start post_commit;
             let (new_model, _), observed_parity = output in
             if observed_parity <> new_model mod 2 then
@@ -238,7 +238,7 @@ let qcheck_assoc_key_order =
           (assoc_description input)
       in
       let ((_parent, children), post_commit) =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       start post_commit;
       List.map (fun (key, (data, _, _)) -> (key, data))
@@ -263,16 +263,16 @@ let qcheck_assoc_continuous_presence =
           (assoc_description initial)
       in
       let (((_, parent_endpoint), children), first_post) =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       start first_post;
       let _, _, retained_endpoint = Int_map.find key children in
       send parent_endpoint (Int_map.add (key + 1) 17 initial);
-      let _, update_post = committed (Crux.Root.advance root) in
+      let _, update_post = committed (run_ok (Crux.Root.advance root)) in
       start update_post;
       send retained_endpoint delta;
       let ((_, children), child_post) =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       start child_post;
       let _, model, _ = Int_map.find key children in
@@ -286,16 +286,16 @@ let qcheck_assoc_data_update =
           (assoc_description (Int_map.singleton key first))
       in
       let (((_, parent_endpoint), children), first_post) =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       start first_post;
       let _, _, child_endpoint = Int_map.find key children in
       send child_endpoint delta;
-      let _, child_post = committed (Crux.Root.advance root) in
+      let _, child_post = committed (run_ok (Crux.Root.advance root)) in
       start child_post;
       send parent_endpoint (Int_map.singleton key second);
       let ((_, children), update_post) =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       start update_post;
       let data, model, _ = Int_map.find key children in
@@ -309,28 +309,28 @@ let qcheck_assoc_remove_reenter =
           (assoc_description (Int_map.singleton key data))
       in
       let (((_, parent_endpoint), children), first_post) =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       start first_post;
       let _, _, old_endpoint = Int_map.find key children in
       send parent_endpoint Int_map.empty;
-      let _, remove_post = committed (Crux.Root.advance root) in
+      let _, remove_post = committed (run_ok (Crux.Root.advance root)) in
       start remove_post;
       send old_endpoint delta;
       let stale =
-        match Crux.Root.advance root with
+        match run_ok (Crux.Root.advance root) with
         | Ok (Crux.Root.Rejected Crux.Root.Stale_endpoint) -> true
         | _ -> false
       in
       send parent_endpoint (Int_map.singleton key data);
       let ((_, children), reenter_post) =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       start reenter_post;
       let _, _, new_endpoint = Int_map.find key children in
       send new_endpoint delta;
       let ((_, children), child_post) =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       start child_post;
       let _, model, _ = Int_map.find key children in
@@ -413,7 +413,7 @@ let make_source_harness ~spec ~mapper =
     Crux.Root.create ~ingress_capacity:16 ~request_capacity:1
       (Crux.both config (Crux.both sink source))
   in
-  let output, post_commit = committed (Crux.Root.advance root) in
+  let output, post_commit = committed (run_ok (Crux.Root.advance root)) in
   start post_commit;
   let ((_, config_endpoint), _) = output in
   { root; commands; openings; config_endpoint }
@@ -429,7 +429,7 @@ let source_send_command harness command =
 let rec await_source_commit harness attempts =
   if attempts = 0 then failwith "source action did not reach ingress"
   else
-    match Crux.Root.advance harness.root with
+    match run_ok (Crux.Root.advance harness.root) with
     | Ok (Crux.Root.Committed { output; post_commit }) ->
         start post_commit;
         output
@@ -443,13 +443,13 @@ let rec await_source_commit harness attempts =
 
 let source_update_config harness value =
   send harness.config_endpoint value;
-  let output, post_commit = committed (Crux.Root.advance harness.root) in
+  let output, post_commit = committed (run_ok (Crux.Root.advance harness.root)) in
   start post_commit;
   output
 
 let stop_source_harness harness =
   Crux.Root.request_stop harness.root;
-  match Crux.Root.advance harness.root with
+  match run_ok (Crux.Root.advance harness.root) with
   | Ok (Crux.Root.Stopped { post_commit }) -> start post_commit
   | _ -> failwith "source root did not stop"
 
@@ -502,7 +502,7 @@ let qcheck_source_terminal_outcome =
       let _, ((observations, _), _) = await_source_commit harness 100 in
       ignore (source_update_config harness (0, 2));
       let idle =
-        match Crux.Root.advance harness.root with
+        match run_ok (Crux.Root.advance harness.root) with
         | Ok Crux.Root.Idle -> true
         | _ -> false
       in
@@ -548,14 +548,14 @@ let qcheck_transition_snapshot =
         Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
           (Crux.both input machine)
       in
-      let initial, initial_post = committed (Crux.Root.advance root) in
+      let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
       start initial_post;
       let (_, input_endpoint), (_, machine_endpoint) = initial in
       send input_endpoint next_input;
-      let _, input_post = committed (Crux.Root.advance root) in
+      let _, input_post = committed (run_ok (Crux.Root.advance root)) in
       start input_post;
       send machine_endpoint action;
-      let output, action_post = committed (Crux.Root.advance root) in
+      let output, action_post = committed (run_ok (Crux.Root.advance root)) in
       let before_post = not !effect_started in
       let (observed_input, _), (observed_model, _) = output in
       start action_post;
@@ -591,15 +591,15 @@ let qcheck_one_event_advancement =
       let root =
         Crux.Root.create ~ingress_capacity:12 ~request_capacity:1 machine
       in
-      let (_, endpoint), initial_post = committed (Crux.Root.advance root) in
+      let (_, endpoint), initial_post = committed (run_ok (Crux.Root.advance root)) in
       start initial_post;
       List.iter (send endpoint) actions;
       if stop_first then (
         Crux.Root.request_stop root;
-        match Crux.Root.advance root with
+        match run_ok (Crux.Root.advance root) with
         | Ok (Crux.Root.Stopped { post_commit }) ->
             start post_commit;
-            !calls = 0 && Crux.Root.advance root = Error Crux.Root.Closed
+            !calls = 0 && run_ok (Crux.Root.advance root) = Error Crux.Root.Closed
         | _ -> false)
       else
         let expected = ref 0 in
@@ -608,7 +608,7 @@ let qcheck_one_event_advancement =
             (fun index action ->
               expected := (!expected * 31) + action;
               let (model, _), post_commit =
-                committed (Crux.Root.advance root)
+                committed (run_ok (Crux.Root.advance root))
               in
               let before_next = !calls = index + 1 in
               start post_commit;
@@ -616,7 +616,7 @@ let qcheck_one_event_advancement =
             actions
           |> List.for_all Fun.id
         in
-        let idle = Crux.Root.advance root = Ok Crux.Root.Idle in
+        let idle = run_ok (Crux.Root.advance root) = Ok Crux.Root.Idle in
         stop_root root;
         one_per_step && !calls = List.length actions && idle)
 
@@ -641,14 +641,14 @@ let qcheck_complete_output_per_commit =
       let root =
         Crux.Root.create ~ingress_capacity:12 ~request_capacity:1 machine
       in
-      let (_, endpoint), initial_post = committed (Crux.Root.advance root) in
+      let (_, endpoint), initial_post = committed (run_ok (Crux.Root.advance root)) in
       start initial_post;
       List.iter (send endpoint) actions;
       let outputs =
         List.map
           (fun _ ->
             let (model, _), post_commit =
-              committed (Crux.Root.advance root)
+              committed (run_ok (Crux.Root.advance root))
             in
             start post_commit;
             model)
@@ -693,13 +693,13 @@ let qcheck_lifecycle_once_per_interval =
         Crux.Root.create ~ingress_capacity:32 ~request_capacity:1
           (Crux.both selector selected)
       in
-      let initial, initial_post = committed (Crux.Root.advance root) in
+      let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
       start initial_post;
       let (_, endpoint), _ = initial in
       List.iter
         (fun active ->
           send endpoint active;
-          let _, post_commit = committed (Crux.Root.advance root) in
+          let _, post_commit = committed (run_ok (Crux.Root.advance root)) in
           start post_commit)
         values;
       let _, expected =
@@ -720,7 +720,7 @@ let qcheck_lifecycle_once_per_interval =
       in
       await_starts 100;
       Crux.Root.request_stop root;
-      (match Crux.Root.advance root with
+      (match run_ok (Crux.Root.advance root) with
       | Ok (Crux.Root.Stopped { post_commit }) -> start post_commit
       | _ -> failwith "lifecycle root did not stop");
       !starts = expected)
@@ -747,7 +747,7 @@ let exported_counter ~capacity =
     Crux.Root.create ~ingress_capacity:capacity ~request_capacity:1
       (Crux.both machine export)
   in
-  let output, post_commit = committed (Crux.Root.advance root) in
+  let output, post_commit = committed (run_ok (Crux.Root.advance root)) in
   start post_commit;
   (root, output)
 
@@ -783,7 +783,7 @@ let qcheck_ingress_fifo_admission =
         in
         let* first_model, post_commit =
           Eta.Effect.sync (fun () ->
-              match Crux.Root.advance root with
+              match run_ok (Crux.Root.advance root) with
               | Ok
                   (Crux.Root.Committed
                     { output = ((model, _), _); post_commit }) ->
@@ -801,7 +801,7 @@ let qcheck_ingress_fifo_admission =
       let _, (nonblocking_result, first_model) =
         run_ok (Eta.Effect.par waiting_send observe)
       in
-      let output, post_commit = committed (Crux.Root.advance root) in
+      let output, post_commit = committed (run_ok (Crux.Root.advance root)) in
       start post_commit;
       let (second_model, _), _ = output in
       stop_root root;
@@ -838,7 +838,7 @@ let qcheck_capacity_bounds =
         List.fold_left
           (fun _ _ ->
             let output, post_commit =
-              committed (Crux.Root.advance root)
+              committed (run_ok (Crux.Root.advance root))
             in
             start post_commit;
             let (model, _), _ = output in
@@ -869,7 +869,7 @@ let qcheck_endpoint_contramap =
         Crux.Root.create ~ingress_capacity:32 ~request_capacity:1 machine
       in
       let (initial_model, endpoint), initial_post =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       start initial_post;
       let contramapped =
@@ -881,7 +881,7 @@ let qcheck_endpoint_contramap =
           (fun _ value ->
             send contramapped (value, 17);
             let (model, _), post_commit =
-              committed (Crux.Root.advance root)
+              committed (run_ok (Crux.Root.advance root))
             in
             start post_commit;
             model)
@@ -925,7 +925,7 @@ let qcheck_bind_child_identity =
         Crux.Root.create ~ingress_capacity:32 ~request_capacity:1
           (bind_description ())
       in
-      let initial, initial_post = committed (Crux.Root.advance root) in
+      let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
       start initial_post;
       let ((_, selector_endpoint), (_, initial_child_endpoint)) = initial in
       let selected = ref true in
@@ -937,7 +937,7 @@ let qcheck_bind_child_identity =
             let next_selected = value mod 2 = 0 in
             send selector_endpoint next_selected;
             let output, post_commit =
-              committed (Crux.Root.advance root)
+              committed (run_ok (Crux.Root.advance root))
             in
             start post_commit;
             let _, (model, endpoint) = output in
@@ -950,7 +950,7 @@ let qcheck_bind_child_identity =
           else (
             send !child_endpoint value;
             let output, post_commit =
-              committed (Crux.Root.advance root)
+              committed (run_ok (Crux.Root.advance root))
             in
             start post_commit;
             expected_model := !expected_model + value;
@@ -974,7 +974,7 @@ let qcheck_active_disposed_states =
         Crux.Root.create ~ingress_capacity:32 ~request_capacity:1
           (bind_description ())
       in
-      let initial, initial_post = committed (Crux.Root.advance root) in
+      let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
       start initial_post;
       let ((_, selector_endpoint), (_, initial_endpoint)) = initial in
       let selected = ref true in
@@ -985,18 +985,18 @@ let qcheck_active_disposed_states =
           selected := not !selected;
           send selector_endpoint !selected;
           let output, post_commit =
-            committed (Crux.Root.advance root)
+            committed (run_ok (Crux.Root.advance root))
           in
           start post_commit;
           let _, (_, fresh_endpoint) = output in
           endpoint := fresh_endpoint;
           send old_endpoint delta;
-          (match Crux.Root.advance root with
+          (match run_ok (Crux.Root.advance root) with
           | Ok (Crux.Root.Rejected Crux.Root.Stale_endpoint) -> ()
           | _ -> failwith "disposed bind endpoint remained active");
           send fresh_endpoint delta;
           let output, post_commit =
-            committed (Crux.Root.advance root)
+            committed (run_ok (Crux.Root.advance root))
           in
           start post_commit;
           let _, (model, _) = output in
@@ -1131,19 +1131,19 @@ let qcheck_post_commit_fence =
         Crux.Root.create ~ingress_capacity:32 ~request_capacity:1 machine
       in
       let (_, endpoint), initial_post =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       let initial_fenced =
-        Crux.Root.advance root = Error Crux.Root.Awaiting_post_commit
+        run_ok (Crux.Root.advance root) = Error Crux.Root.Awaiting_post_commit
       in
       start initial_post;
       let all_fenced =
         List.for_all
           (fun action ->
             send endpoint action;
-            let _, post_commit = committed (Crux.Root.advance root) in
+            let _, post_commit = committed (run_ok (Crux.Root.advance root)) in
             let fenced =
-              Crux.Root.advance root
+              run_ok (Crux.Root.advance root)
               = Error Crux.Root.Awaiting_post_commit
             in
             start post_commit;
@@ -1193,7 +1193,7 @@ let qcheck_assoc_rollback =
         Crux.Root.create ~ingress_capacity:4 ~request_capacity:1
           (Crux.both parent children)
       in
-      let initial, initial_post = committed (Crux.Root.advance root) in
+      let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
       start initial_post;
       let ((_, parent_endpoint), initial_children) = initial in
       let retained = Int_map.find retained_key initial_children in
@@ -1201,7 +1201,7 @@ let qcheck_assoc_rollback =
         (Int_map.add failing_key (data + 1)
            (Int_map.singleton retained_key data));
       let failed_post =
-        match Crux.Root.advance root with
+        match run_ok (Crux.Root.advance root) with
         | Ok (Crux.Root.Failed { post_commit; _ }) -> post_commit
         | _ -> failwith "provisional assoc defect did not fail the root"
       in
@@ -1266,12 +1266,12 @@ let qcheck_assoc_lifecycle_order =
         Crux.Root.create ~ingress_capacity:added_count ~request_capacity:1
           (Crux.both parent children)
       in
-      let initial, initial_post = committed (Crux.Root.advance root) in
+      let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
       start initial_post;
       let ((_, parent_endpoint), old_children) = initial in
       send parent_endpoint replacement_map;
       let replacement, replacement_post =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       let _, new_children = replacement in
       let removed_before_added =
@@ -1309,13 +1309,13 @@ let qcheck_cause_classification =
         Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
           (Crux.lifecycle (Crux.return program))
       in
-      let _, initial_post = committed (Crux.Root.advance root) in
+      let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
       start initial_post;
       if fatal then (
         let rec await_failure attempts =
           if attempts = 0 then failwith "fatal owned cause was not observed"
           else
-            match Crux.Root.advance root with
+            match run_ok (Crux.Root.advance root) with
             | Ok (Crux.Root.Failed { post_commit; _ }) -> post_commit
             | Ok Crux.Root.Idle ->
                 Eio.Fiber.yield ();
@@ -1333,7 +1333,7 @@ let qcheck_cause_classification =
         | _ -> false)
       else (
         Crux.Root.request_stop root;
-        match Crux.Root.advance root with
+        match run_ok (Crux.Root.advance root) with
         | Ok (Crux.Root.Stopped { post_commit }) -> (
             match run_ok
                     (Crux.Post_commit.start post_commit
@@ -1375,20 +1375,20 @@ let qcheck_export_generation =
         Crux.Root.create ~ingress_capacity:4 ~request_capacity:1
           (Crux.both selector selected)
       in
-      let initial, initial_post = committed (Crux.Root.advance root) in
+      let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
       start initial_post;
       let ((_, selector_endpoint), initial_export) = initial in
       let _, old_export = Option.get initial_export in
       send selector_endpoint true;
       let retained_output, retained_post =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       start retained_post;
       let _, retained_export = retained_output in
       let _, retained_export = Option.get retained_export in
       let retained_same = retained_export == old_export in
       send selector_endpoint false;
-      let _, removed_post = committed (Crux.Root.advance root) in
+      let _, removed_post = committed (run_ok (Crux.Root.advance root)) in
       start removed_post;
       let old_revoked =
         Crux.Exported_endpoint.try_invoke old_export payload
@@ -1396,7 +1396,7 @@ let qcheck_export_generation =
       in
       send selector_endpoint true;
       let reentered_output, reentered_post =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       start reentered_post;
       let _, reentered_export = reentered_output in
@@ -1407,7 +1407,7 @@ let qcheck_export_generation =
         = Ok (Ok (Ok ()))
       in
       let child_model, action_post =
-        match Crux.Root.advance root with
+        match run_ok (Crux.Root.advance root) with
         | Ok
             (Crux.Root.Committed
               {
@@ -1471,7 +1471,7 @@ let qcheck_export_rebinding =
           (Crux.both selector
              (Crux.both left (Crux.both right export)))
       in
-      let initial, initial_post = committed (Crux.Root.advance root) in
+      let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
       start initial_post;
       let ((_, selector_endpoint), ((_, _), ((_, _), exported))) =
         initial
@@ -1481,13 +1481,13 @@ let qcheck_export_rebinding =
         = Ok (Ok (Ok ()))
       in
       let first_output, first_post =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       start first_post;
       let _, ((left_model, _), _) = first_output in
       send selector_endpoint false;
       let rebound_output, rebound_post =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       start rebound_post;
       let _, (_, (_, rebound_export)) = rebound_output in
@@ -1497,7 +1497,7 @@ let qcheck_export_rebinding =
         = Ok (Ok (Ok ()))
       in
       let second_output, second_post =
-        committed (Crux.Root.advance root)
+        committed (run_ok (Crux.Root.advance root))
       in
       start second_post;
       let _, (_, ((right_model, _), _)) = second_output in
@@ -2331,7 +2331,7 @@ let qcheck_malformed_frame_isolation =
         run_ok (Crux.Serialized_session.poll_outgoing peer) = None
       in
       let no_application_change =
-        Crux.Root.advance root
+        run_ok (Crux.Root.advance root)
         = Error Crux.Root.Awaiting_post_commit
       in
       Option.is_some command && rejected && no_reply
@@ -2845,7 +2845,7 @@ let controlled_source_root controlled =
     (Crux.map (Crux.both machine source) ~f:fst)
 
 let start_controlled_source root controlled =
-  let _, post_commit = committed (Crux.Root.advance root) in
+  let _, post_commit = committed (run_ok (Crux.Root.advance root)) in
   let opening_settled = Eta.Promise.create () in
   ignore
     (run_ok
@@ -2880,7 +2880,7 @@ let rec await_controlled_commit root attempts =
   if attempts = 0 then
     failwith "controlled source action did not reach ingress"
   else
-    match Crux.Root.advance root with
+    match run_ok (Crux.Root.advance root) with
     | Ok (Crux.Root.Committed { output; post_commit }) ->
         start post_commit;
         output

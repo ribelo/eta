@@ -26,7 +26,7 @@ let counter_root () =
 
 let stop runtime root =
   Crux.Root.request_stop root;
-  match Crux.Root.advance root with
+  match run_ok runtime (Crux.Root.advance root) with
   | Ok (Crux.Root.Stopped { post_commit }) -> start runtime post_commit
   | _ -> Alcotest.fail "root did not stop"
 
@@ -34,7 +34,7 @@ let race_ingress_close_vs_send_both_winners () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let send_winner_root = counter_root () in
   let (_, send_winner_endpoint), initial_post =
-    committed (Crux.Root.advance send_winner_root)
+    committed (run_ok runtime (Crux.Root.advance send_winner_root))
   in
   start runtime initial_post;
   let admitted = Eta.Promise.create () in
@@ -57,13 +57,13 @@ let race_ingress_close_vs_send_both_winners () =
   in
   Alcotest.(check bool) "admission won first arbitration" true
     (send_result = Ok ());
-  (match Crux.Root.advance send_winner_root with
+  (match run_ok runtime (Crux.Root.advance send_winner_root) with
   | Ok (Crux.Root.Stopped { post_commit }) -> start runtime post_commit
   | _ -> Alcotest.fail "send-winner root did not stop");
 
   let close_winner_root = counter_root () in
   let (_, close_winner_endpoint), initial_post =
-    committed (Crux.Root.advance close_winner_root)
+    committed (run_ok runtime (Crux.Root.advance close_winner_root))
   in
   start runtime initial_post;
   let closed = Eta.Promise.create () in
@@ -87,7 +87,7 @@ let race_ingress_close_vs_send_both_winners () =
   in
   Alcotest.(check bool) "closure won first arbitration" true
     (close_result = Error Crux.Endpoint.Ingress_closed);
-  (match Crux.Root.advance close_winner_root with
+  (match run_ok runtime (Crux.Root.advance close_winner_root) with
   | Ok (Crux.Root.Stopped { post_commit }) -> start runtime post_commit
   | _ -> Alcotest.fail "close-winner root did not stop")
 
@@ -97,7 +97,7 @@ let race_batch_start_exactly_once () =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
       (Crux.return ())
   in
-  let _, post_commit = committed (Crux.Root.advance root) in
+  let _, post_commit = committed (run_ok runtime (Crux.Root.advance root)) in
   let attempt = Eta.Effect.to_result (Crux.Post_commit.start post_commit) in
   let left, right = run_ok runtime (Eta.Effect.par attempt attempt) in
   let admitted =
@@ -149,7 +149,7 @@ let race_failure_observation_order () =
   let root =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 description
   in
-  let _, initial_post = committed (Crux.Root.advance root) in
+  let _, initial_post = committed (run_ok runtime (Crux.Root.advance root)) in
   start runtime initial_post;
   let release_both =
     let open Eta.Syntax in
@@ -161,7 +161,7 @@ let race_failure_observation_order () =
   in
   run_ok runtime release_both;
   let failure, crash_post =
-    match Crux.Root.advance root with
+    match run_ok runtime (Crux.Root.advance root) with
     | Ok (Crux.Root.Failed { failure; post_commit }) ->
         (failure, post_commit)
     | _ -> Alcotest.fail "owned failures did not latch"
@@ -205,7 +205,7 @@ let race_commit_vs_crash_both_winners () =
         (Crux.both machine export)
     in
     let ((_, endpoint), crashing_export), initial_post =
-      committed (Crux.Root.advance root)
+      committed (run_ok runtime (Crux.Root.advance root))
     in
     start runtime initial_post;
     (root, endpoint, crashing_export, before_apply)
@@ -228,7 +228,7 @@ let race_commit_vs_crash_both_winners () =
     |> Eta.Effect.or_die (function
          | Crux.Endpoint.Ingress_closed -> Failure "ingress closed"));
   let fatal_post =
-    match Crux.Root.advance fatal_root with
+    match run_ok runtime (Crux.Root.advance fatal_root) with
     | Ok (Crux.Root.Failed { post_commit; _ }) -> post_commit
     | _ -> Alcotest.fail "fatal winner did not roll back advancement"
   in
@@ -244,7 +244,7 @@ let race_commit_vs_crash_both_winners () =
     |> Eta.Effect.or_die (function
          | Crux.Endpoint.Ingress_closed -> Failure "ingress closed"));
   let committed_output, committed_post =
-    committed (Crux.Root.advance commit_root)
+    committed (run_ok runtime (Crux.Root.advance commit_root))
   in
   let (committed_model, _), _ = committed_output in
   trigger_crash commit_export;
@@ -292,7 +292,7 @@ let race_commit_atomicity () =
     Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
       (Crux.both selector selected)
   in
-  let initial, initial_post = committed (Crux.Root.advance root) in
+  let initial, initial_post = committed (run_ok runtime (Crux.Root.advance root)) in
   start runtime initial_post;
   let (_, selector_endpoint), selected_output = initial in
   Alcotest.(check bool) "initial retained branch" true
@@ -302,7 +302,7 @@ let race_commit_atomicity () =
     |> Eta.Effect.or_die (function
          | Crux.Endpoint.Ingress_closed -> Failure "ingress closed"));
   let failure, crash_post =
-    match Crux.Root.advance root with
+    match run_ok runtime (Crux.Root.advance root) with
     | Ok (Crux.Root.Failed { failure; post_commit }) ->
         (failure, post_commit)
     | _ -> Alcotest.fail "provisional graph failure did not abort commit"
@@ -361,7 +361,7 @@ let race_export_permit_vs_commit_both_winners () =
       Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
         (Crux.both selector selected)
     in
-    let initial, initial_post = committed (Crux.Root.advance root) in
+    let initial, initial_post = committed (run_ok runtime (Crux.Root.advance root)) in
     start runtime initial_post;
     let ((_, selector_endpoint), export) = initial in
     ( root,
@@ -380,7 +380,7 @@ let race_export_permit_vs_commit_both_winners () =
   let removal_post = ref None in
   during_encode :=
     (fun () ->
-      match Crux.Root.advance invoke_root with
+      match run_ok runtime (Crux.Root.advance invoke_root) with
       | Ok (Crux.Root.Committed { post_commit; _ }) ->
           removal_post := Some post_commit
       | _ -> Alcotest.fail "structural commit did not win encode barrier");
@@ -391,7 +391,7 @@ let race_export_permit_vs_commit_both_winners () =
   Alcotest.(check bool) "invocation winner pins old binding" true
     (invocation_result = Ok (Ok (Ok ())));
   start runtime (Option.get !removal_post);
-  (match Crux.Root.advance invoke_root with
+  (match run_ok runtime (Crux.Root.advance invoke_root) with
   | Ok (Crux.Root.Rejected Crux.Root.Stale_endpoint) -> ()
   | _ -> Alcotest.fail "pinned old binding did not retain old incarnation");
   stop runtime invoke_root;
@@ -401,7 +401,7 @@ let race_export_permit_vs_commit_both_winners () =
     (Crux.Endpoint.send selector_endpoint false
     |> Eta.Effect.or_die (function
          | Crux.Endpoint.Ingress_closed -> Failure "ingress closed"));
-  let _, removal_post = committed (Crux.Root.advance commit_root) in
+  let _, removal_post = committed (run_ok runtime (Crux.Root.advance commit_root)) in
   start runtime removal_post;
   Alcotest.(check bool) "commit winner revokes export" true
     (Crux.Exported_endpoint.try_invoke export 3

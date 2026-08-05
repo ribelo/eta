@@ -1,4 +1,4 @@
-open Crux_graph
+open Crux_engine
 
 module Failure = Crux_failure.Failure
 
@@ -129,44 +129,63 @@ module Exported_endpoint = struct
 
   let create target_description ~codec =
     let node = next_global "export node" in
-    make_description @@ fun transaction scope ->
-    let target = target_description.eval transaction scope in
-    let key = (scope, node) in
-    match transaction_get transaction key with
-    | Some packed ->
-        let export = (Obj.obj packed : _ t) in
-        transaction.commit_hooks <-
-          (fun () ->
-            Eta.Sync_lock.use export.lock @@ fun () ->
-            export.target <- target.value)
-          :: transaction.commit_hooks;
-        { value = export; version = target.version }
-    | None ->
-        let export =
-          {
-            identity = node;
-            root = transaction.root;
-            scope;
-            codec;
-            lock = Eta.Sync_lock.create ();
-            target = target.value;
-            active = false;
-          }
-        in
-        transaction.commit_hooks <-
-          (fun () ->
-            export.active <- true;
-            register export)
-          :: transaction.commit_hooks;
-        transaction.added_revokers <-
-          ( scope,
-            (fun () ->
-              Eta.Sync_lock.use export.lock @@ fun () ->
-              export.active <- false;
-              unregister export) )
-          :: transaction.added_revokers;
-        transaction_set transaction key export;
-        { value = export; version = fresh_version transaction.root }
+    make @@ fun ctx ->
+    let (module S) = unpack_package ctx in
+    let target_signal : ('payload Endpoint.t * contribution) S.signal =
+      unpack_signal (target_description.compile ctx)
+    in
+    let export = ref None in
+    let activation = ref None in
+    pack_signal
+      (S.map
+         (fun (target_value, (contribution : contribution)) ->
+           let export_record =
+             match !export with
+             | Some export -> export
+             | None ->
+                 let created =
+                   {
+                     identity = node;
+                     root = ctx.ctx_root;
+                     scope = ctx.ctx_scope;
+                     codec;
+                     lock = Eta.Sync_lock.create ();
+                     target = target_value;
+                     active = false;
+                   }
+                 in
+                 export := Some created;
+                 created
+           in
+           let activate, revoker =
+             match !activation with
+             | Some pair -> pair
+             | None ->
+                 let activate () =
+                   export_record.active <- true;
+                   register export_record
+                 in
+                 let revoker =
+                   ( ctx.ctx_scope,
+                     fun () ->
+                       Eta.Sync_lock.use export_record.lock @@ fun () ->
+                       export_record.active <- false;
+                       unregister export_record )
+                 in
+                 activation := Some (activate, revoker);
+                 (activate, revoker)
+           in
+           (* Publications and commits share one serialized advancement, so
+              the target refreshes land with the frame. *)
+           Eta.Sync_lock.use export_record.lock @@ fun () ->
+           export_record.target <- target_value;
+           ( export_record,
+             {
+               contribution with
+               commit_hooks = activate :: contribution.commit_hooks;
+               added_revokers = revoker :: contribution.added_revokers;
+             } ))
+         target_signal)
 
   let try_invoke export payload =
     let target =
@@ -750,43 +769,62 @@ module Request_export = struct
 
   let create target_description ~request ~response =
     let node = next_global "request export node" in
-    make_description @@ fun transaction scope ->
-    let target = target_description.eval transaction scope in
-    let key = (scope, node) in
-    match transaction_get transaction key with
-    | Some packed ->
-        let export = (Obj.obj packed : (_, _) t) in
-        transaction.commit_hooks <-
-          (fun () ->
-            Eta.Sync_lock.use export.lock @@ fun () ->
-            export.target <- target.value)
-          :: transaction.commit_hooks;
-        { value = export; version = target.version }
-    | None ->
-        let export =
-          {
-            identity = node;
-            root = transaction.root;
-            scope;
-            request_codec = request;
-            response_codec = response;
-            lock = Eta.Sync_lock.create ();
-            target = target.value;
-            active = false;
-            pending_requests = [];
-          }
-        in
-        transaction.commit_hooks <-
-          (fun () ->
-            export.active <- true;
-            register export)
-          :: transaction.commit_hooks;
-        transaction.added_revokers <-
-          ( scope,
-            (fun () -> revoke export Boundary_owner_disposed) )
-          :: transaction.added_revokers;
-        transaction_set transaction key export;
-        { value = export; version = fresh_version transaction.root }
+    make @@ fun ctx ->
+    let (module S) = unpack_package ctx in
+    let target_signal
+        : (('request * 'response Responder.t) Endpoint.t * contribution)
+          S.signal =
+      unpack_signal (target_description.compile ctx)
+    in
+    let export = ref None in
+    let activation = ref None in
+    pack_signal
+      (S.map
+         (fun (target_value, (contribution : contribution)) ->
+           let export_record =
+             match !export with
+             | Some export -> export
+             | None ->
+                 let created =
+                   {
+                     identity = node;
+                     root = ctx.ctx_root;
+                     scope = ctx.ctx_scope;
+                     request_codec = request;
+                     response_codec = response;
+                     lock = Eta.Sync_lock.create ();
+                     target = target_value;
+                     active = false;
+                     pending_requests = [];
+                   }
+                 in
+                 export := Some created;
+                 created
+           in
+           let activate, revoker =
+             match !activation with
+             | Some pair -> pair
+             | None ->
+                 let activate () =
+                   export_record.active <- true;
+                   register export_record
+                 in
+                 let revoker =
+                   ( ctx.ctx_scope,
+                     fun () -> revoke export_record Boundary_owner_disposed )
+                 in
+                 activation := Some (activate, revoker);
+                 (activate, revoker)
+           in
+           Eta.Sync_lock.use export_record.lock @@ fun () ->
+           export_record.target <- target_value;
+           ( export_record,
+             {
+               contribution with
+               commit_hooks = activate :: contribution.commit_hooks;
+               added_revokers = revoker :: contribution.added_revokers;
+             } ))
+         target_signal)
 
   let invoke export request =
     let setup =

@@ -569,7 +569,12 @@ module Root : sig
     'output description ->
     'output t
 
-  val advance : 'output t -> ('output outcome, advance_error) result
+  val advance :
+    'output t ->
+    (('output outcome, advance_error) result, 'err) Eta.Effect.t
+  (** Select one ingress event, run one stabilization of the root's private
+      signal graph, and install the committed frame. The effect is
+      synchronous work on the caller's fiber; it never blocks. *)
   val request_stop : 'output t -> unit
 end
 
