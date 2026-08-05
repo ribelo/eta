@@ -475,3 +475,27 @@ nix develop -c dune build @install
   stopped after more than twenty minutes of uninterrupted CPU before it
   printed a final result; this slice remains open, and the complete generated
   law rerun is still required before slice completion.
+
+## 2026-08-05 - Slice 5: balanced reduction
+
+- Deleted `both` from the Signal public surface and kernel implementation.
+  Pairing callers now use `map2` directly, which keeps the output cutoff
+  explicit instead of hiding it in a convenience wrapper.
+- Published `reduce_balanced ?cutoff ~identity ~combine inputs`. Construction
+  copies the input array, empty input publishes `identity`, nonempty reduction
+  builds a balanced `map2` tree, and the aggregate root is the only cell that
+  uses the caller cutoff. Internal cells use `Cutoff.never`, so a changed leaf
+  cannot be hidden by physically shared intermediate results.
+- Added contract tests proving input-copy and order behavior, exact seven-edge
+  initialization for eight inputs, exact three-edge recomputation for one
+  changed leaf, internal non-suppression with a physically shared result,
+  empty identity publication, and final-cutoff-only suppression.
+- Registered the balanced-reduction prose as SC06-SC09 in the executable-law
+  registry.
+- Verified with:
+
+```sh
+nix develop -c dune runtest test/signal/contract --force
+nix develop -c dune runtest test/signal test/signal_map --force
+nix develop -c dune build @install
+```

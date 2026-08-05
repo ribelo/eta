@@ -2797,7 +2797,7 @@ type small_graph_node =
       children : int list;
       bias : int;
     }
-  | Small_both_sum of {
+  | Small_pair_sum of {
       left : int;
       right : int;
       bias : int;
@@ -2874,7 +2874,7 @@ let small_graph_eval_all ast committed =
         | Small_all_sum { children; bias } ->
             List.fold_left (fun sum child -> sum + values.(child)) bias
               children
-        | Small_both_sum { left; right; bias } ->
+        | Small_pair_sum { left; right; bias } ->
             values.(left) + values.(right) + bias
         | Small_bind_select
             { source; even_child; odd_child; even_scale; odd_scale; bias } ->
@@ -2987,7 +2987,7 @@ let generate_small_graph_ast ~seed ~var_count ~node_count =
               }
         | 3 -> small_graph_bind_select random index
         | 4 ->
-            Small_both_sum
+            Small_pair_sum
               {
                 left = small_graph_child random index;
                 right = small_graph_child random index;
@@ -3043,9 +3043,10 @@ let small_graph_signal_of_node signals = function
       |> List.map (fun child -> signals.(child))
       |> Signal.all
       |> Signal.map (List.fold_left ( + ) bias)
-  | Small_both_sum { left; right; bias } ->
-      Signal.both signals.(left) signals.(right)
-      |> Signal.map (fun (left, right) -> left + right + bias)
+  | Small_pair_sum { left; right; bias } ->
+      Signal.map2
+        (fun left right -> left + right + bias)
+        signals.(left) signals.(right)
   | Small_bind_select
       { source; even_child; odd_child; even_scale; odd_scale; bias } ->
       Signal.bind signals.(source) (fun source_value ->
@@ -3172,7 +3173,7 @@ let run_small_graph_trace ?(initial_values = [| -1; 0; 2 |])
       signals.(index) <-
         (match node with
         | Small_var var -> Signal.Var.watch vars.(var)
-        | Small_map _ | Small_map2 _ | Small_all_sum _ | Small_both_sum _
+        | Small_map _ | Small_map2 _ | Small_all_sum _ | Small_pair_sum _
         | Small_bind_select _ ->
             small_graph_signal_of_node signals node))
     ast;

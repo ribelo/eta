@@ -221,7 +221,7 @@ let test_graph_rejects_cross_domain_effectful_apis () =
     (S.Var.value source);
   run_ok runtime (S.Observer.dispose observer)
 
-let test_n_ary_maps_both_and_all () =
+let test_n_ary_maps_and_all () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let v1 = S.Var.create 1 in
@@ -267,7 +267,7 @@ let test_n_ary_maps_both_and_all () =
       (fun a b c d e f g h i -> a + b + c + d + e + f + g + h + i)
       s1 s2 s3 s4 s5 s6 s7 s8 s9
   in
-  let pair_sum = S.both s1 s2 |> S.map (fun (a, b) -> a + b) in
+  let pair_sum = S.map2 (fun a b -> a + b) s1 s2 in
   let all_sum = S.all [ s1; s2; s3 ] |> S.map (List.fold_left ( + ) 0) in
   let combined =
     S.all [ sum3; sum4; sum5; sum6; sum7; sum8; sum9; pair_sum; all_sum ]
@@ -285,6 +285,97 @@ let test_n_ary_maps_both_and_all () =
   run_ok runtime S.stabilize;
   Alcotest.(check int) "shared source updates all combinators" 261
     (run_ok runtime (S.Observer.read observer));
+  run_ok runtime (S.Observer.dispose observer)
+
+let test_reduce_balanced_copies_input_and_preserves_order () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let vars = Array.init 8 (fun index -> S.Var.create (string_of_int index)) in
+  let inputs = Array.map S.Var.watch vars in
+  let original = inputs.(0) in
+  let replacement_var = S.Var.create "replacement" in
+  let combine_calls = ref [] in
+  let reduced =
+    S.reduce_balanced ~identity:"" inputs ~combine:(fun left right ->
+        combine_calls := (left, right) :: !combine_calls;
+        left ^ right)
+  in
+  inputs.(0) <- S.Var.watch replacement_var;
+  let observer = run_ok runtime (S.Observer.observe reduced (fun _ -> E.unit)) in
+  run_ok runtime S.stabilize;
+  Alcotest.(check string) "reduction preserves array order" "01234567"
+    (run_ok runtime (S.Observer.read observer));
+  Alcotest.(check int) "initial evaluation combines each tree edge" 7
+    (List.length !combine_calls);
+  Alcotest.(check bool) "construction retained the original input" true
+    (inputs.(0) != original);
+  run_ok runtime (S.Var.set vars.(0) "changed");
+  run_ok runtime S.stabilize;
+  Alcotest.(check string) "changed leaf preserves array order" "changed1234567"
+    (run_ok runtime (S.Observer.read observer));
+  Alcotest.(check int) "one changed leaf follows the balanced path" 10
+    (List.length !combine_calls);
+  run_ok runtime (S.Observer.dispose observer)
+
+let test_reduce_balanced_internal_cells_do_not_suppress_candidates () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let vars = Array.init 8 (fun index -> S.Var.create (ref index)) in
+  let inputs = Array.map S.Var.watch vars in
+  let shared_result = ref 0 in
+  let combine_calls = ref 0 in
+  let reduced =
+    S.reduce_balanced ~identity:shared_result inputs
+      ~combine:(fun _left _right ->
+        incr combine_calls;
+        shared_result)
+  in
+  let observer = run_ok runtime (S.Observer.observe reduced (fun _ -> E.unit)) in
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "initial internal evaluation visits every edge" 7
+    !combine_calls;
+  run_ok runtime (S.Var.set vars.(7) (ref 8));
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "same physical internal results still reach root" 10
+    !combine_calls;
+  run_ok runtime (S.Observer.dispose observer)
+
+let test_reduce_balanced_empty_and_final_cutoff () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let empty =
+    S.reduce_balanced ~identity:41 [||] ~combine:(fun left right ->
+        Alcotest.failf "empty reduction combined %d %d" left right)
+  in
+  let empty_observer =
+    run_ok runtime (S.Observer.observe empty (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "empty reduction publishes identity" 41
+    (run_ok runtime (S.Observer.read empty_observer));
+  let left_var = S.Var.create 1 in
+  let right_var = S.Var.create 2 in
+  let combine_calls = ref 0 in
+  let reduced =
+    S.reduce_balanced
+      ~cutoff:(Eta_signal.Cutoff.of_equal (fun _published _candidate -> true))
+      ~identity:0
+      [| S.Var.watch left_var; S.Var.watch right_var |]
+      ~combine:(fun left right ->
+        incr combine_calls;
+        left + right)
+  in
+  let observer = run_ok runtime (S.Observer.observe reduced (fun _ -> E.unit)) in
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "initial aggregate publishes" 3
+    (run_ok runtime (S.Observer.read observer));
+  run_ok runtime (S.Var.set left_var 10);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "final cutoff suppresses aggregate candidate" 3
+    (run_ok runtime (S.Observer.read observer));
+  Alcotest.(check int) "root still evaluates its changed child" 2
+    !combine_calls;
+  run_ok runtime (S.Observer.dispose empty_observer);
   run_ok runtime (S.Observer.dispose observer)
 
 let test_map_arity_matrix_initializes_and_coalesces () =
@@ -2353,8 +2444,13 @@ let () =
             test_graph_rejects_registered_worker_context;
           Alcotest.test_case "graph rejects cross-domain effectful APIs" `Quick
             test_graph_rejects_cross_domain_effectful_apis;
-          Alcotest.test_case "n-ary maps, both, and all" `Quick
-            test_n_ary_maps_both_and_all;
+          Alcotest.test_case "n-ary maps and all" `Quick test_n_ary_maps_and_all;
+          Alcotest.test_case "balanced reduction copies input and preserves order"
+            `Quick test_reduce_balanced_copies_input_and_preserves_order;
+          Alcotest.test_case "balanced reduction internal cells never suppress"
+            `Quick test_reduce_balanced_internal_cells_do_not_suppress_candidates;
+          Alcotest.test_case "balanced reduction empty and final cutoff" `Quick
+            test_reduce_balanced_empty_and_final_cutoff;
           Alcotest.test_case "map arity matrix initializes and coalesces"
             `Quick test_map_arity_matrix_initializes_and_coalesces;
           Alcotest.test_case "map invariants repeated children and cutoff"

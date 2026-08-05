@@ -213,7 +213,8 @@ module Make (Observer_error : Observer_error) () : sig
       {!Stream.observe} convert graph failures into typed Eta failures instead.
 
       Synchronous graph-node construction APIs include {!Var.watch}, {!const},
-      {!map}, [map2] through [map9], {!both}, {!all}, and {!bind}. They raise
+      {!map}, [map2] through [map9], {!all}, {!reduce_balanced}, and {!bind}.
+      They raise
       [Graph_error `Ambiguous_scope] when a new node would be created in a phase
       without an unambiguous dynamic scope, and [Graph_error `Invalid_scope]
       when wrapping an invalidated dynamic-scope node. Timer-backed graph
@@ -488,8 +489,8 @@ module Make (Observer_error : Observer_error) () : sig
     'b signal ->
     'c signal
   (** Map two dependencies. Without [?cutoff], the derived-value cutoff is
-      {!Cutoff.phys_equal}. The same default applies to [map3] through [map9]
-      and {!both}. Mapping functions must be pure and total; see {!map}.
+      {!Cutoff.phys_equal}. The same default applies to [map3] through [map9].
+      Mapping functions must be pure and total; see {!map}.
 
       Raises [Graph_error] on graph construction failures; see
       {!exception:Graph_error}. *)
@@ -571,23 +572,19 @@ module Make (Observer_error : Observer_error) () : sig
     'i signal ->
     'j signal
 
-  val both : 'a signal -> 'b signal -> ('a * 'b) signal
-  (** Pair two signals. The pair cutoff is {!Cutoff.phys_equal} because [both]
-      has no [?cutoff] argument. Use {!map2} with an explicit structural cutoff
-      when pair contents define the logical value:
-
-      {[
-        let pair_cutoff =
-          Eta_signal.Cutoff.of_equal (fun (left_count, left_name)
-              (right_count, right_name) ->
-            Int.equal left_count right_count
-            && String.equal left_name right_name)
-
-        let paired =
-          S.map2 ~cutoff:pair_cutoff
-            (fun count name -> (count, name))
-            count_signal name_signal
-      ]}
+  val reduce_balanced :
+    ?cutoff:'a Cutoff.t ->
+    identity:'a ->
+    combine:('a -> 'a -> 'a) ->
+    'a signal array ->
+    'a signal
+  (** Reduce signals with a balanced tree. [combine] must be associative at the
+      observation boundary, and [identity] must be its left and right identity.
+      Construction copies the input array. Reduction preserves array order, and
+      empty input publishes [identity]. Initial evaluation takes O(n)
+      combination work; one changed child takes O(log(n + 1)) combination work.
+      The final cutoff applies only to aggregate publication. Internal tree
+      cells do not suppress candidates.
 
       Raises [Graph_error] on graph construction failures; see
       {!exception:Graph_error}. *)

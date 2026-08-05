@@ -280,6 +280,10 @@ scope validity, dependency attachment, structural events, and pending-plan state
 | SC03 | `of_compare` suppresses exactly when its comparator returns zero. | `lib/signal/eta_signal.mli:127-142` | `cutoff constructors observe published then candidate` |
 | SC04 | Cutoff predicates receive the published value before the candidate. | `lib/signal/eta_signal.mli:127-142` | `cutoff constructors observe published then candidate`; `keyed_mapi_data_cutoff_receives_published_then_candidate` |
 | SC05 | Producer and observer cutoffs have distinct authority: producer suppression preserves the committed source, while observer suppression still advances the observer snapshot. | `lib/signal/eta_signal.mli:340-348,409-413` | `producer and observer cutoffs have distinct authority` |
+| SC06 | Balanced reduction copies the input array and preserves array order. | `lib/signal/eta_signal.mli:575-587` | `balanced reduction copies input and preserves order` |
+| SC07 | Empty balanced reduction publishes `identity` without combination work. | `lib/signal/eta_signal.mli:575-587` | `balanced reduction empty and final cutoff` |
+| SC08 | Initial balanced reduction combines every tree edge, while one changed child follows only its logarithmic path. | `lib/signal/eta_signal.mli:575-587` | `balanced reduction copies input and preserves order`; `balanced reduction internal cells never suppress` |
+| SC09 | Only the aggregate cell applies the final cutoff; internal cells never suppress candidates. | `lib/signal/eta_signal.mli:575-587` | `balanced reduction internal cells never suppress`; `balanced reduction empty and final cutoff` |
 
 ### Eta Signal keyed diagnostics laws
 

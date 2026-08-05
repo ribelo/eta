@@ -3490,7 +3490,26 @@ module Make (Observer_error : Observer_error) () = struct
       (Map9 (a, b, c, d, e, f_signal, g, h, i, f))
       [ P a; P b; P c; P d; P e; P f_signal; P g; P h; P i ]
 
-  let both a b = map2 (fun a b -> (a, b)) a b
+  let reduce_balanced ?(cutoff = Cutoff.phys_equal) ~identity ~combine
+      signals =
+    let inputs = Array.copy signals in
+    let length = Array.length inputs in
+    if length = 0 then const identity
+    else if length = 1 then map ~cutoff (fun value -> value) inputs.(0)
+    else
+      let rec build lower upper =
+        let span = upper - lower in
+        if span = 1 then inputs.(lower)
+        else
+          let middle = lower + (span / 2) in
+          let left = build lower middle in
+          let right = build middle upper in
+          let node_cutoff =
+            if lower = 0 && upper = length then cutoff else Cutoff.never
+          in
+          map2 ~cutoff:node_cutoff combine left right
+      in
+      build 0 length
 
   let all ?(cutoff = Cutoff.phys_equal) signals =
     new_signal ~equal:(cutoff_equal cutoff) (All signals)
