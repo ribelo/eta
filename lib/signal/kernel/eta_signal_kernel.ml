@@ -2611,6 +2611,13 @@ module Make (Observer_error : Observer_error) () = struct
         Graph.stage_cell graph lane staging
           child.keyed_child_source.graph_value candidate;
         mark_self_dirty lane (P child.keyed_child_data);
+        let reset_compute_memo signal =
+          if signal.seen_generation = current_generation lane then (
+            signal.seen_generation <- -1;
+            signal.changed_seen <- false)
+        in
+        reset_compute_memo child.keyed_child_data;
+        reset_compute_memo child.keyed_child_output;
         compute_child child)
     in
     let remove_child key =

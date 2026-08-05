@@ -597,30 +597,9 @@ let run_case matrix sample =
       dispose observer
   | _ -> invalid_arg "keyed property matrix"
 
-let shrink_sample sample =
-  let open QCheck.Iter in
-  append_l
-    [
-      map
-        (fun generated_key -> { sample with generated_key = abs generated_key })
-        (QCheck.Shrink.int sample.generated_key);
-      map
-        (fun generated_key_count ->
-          { sample with generated_key_count = max 0 generated_key_count })
-        (QCheck.Shrink.int sample.generated_key_count);
-      map
-        (fun generated_command_count ->
-          { sample with generated_command_count = max 1 generated_command_count })
-        (QCheck.Shrink.int sample.generated_command_count);
-      map
-        (fun generated_transition_count ->
-          { sample with generated_transition_count = max 1 generated_transition_count })
-        (QCheck.Shrink.int sample.generated_transition_count);
-    ]
-
 let sample_arbitrary =
   let open QCheck.Gen in
-  QCheck.make ~shrink:shrink_sample
+  QCheck.make
     ~print:(fun sample ->
       Printf.sprintf "{key=%d; keys=%d; commands=%d; transitions=%d}"
         sample.generated_key sample.generated_key_count

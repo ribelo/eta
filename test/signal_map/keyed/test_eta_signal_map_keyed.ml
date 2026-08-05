@@ -66,6 +66,35 @@ let test_keyed_mapi_retains_updates_and_removes_child () =
     (run_ok runtime (S.Observer.read observer) |> M.to_list);
   run_ok runtime (S.Observer.dispose observer)
 
+let test_keyed_mapi_child_reads_accepted_data_same_stabilization () =
+  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  let first = ref 10 in
+  let second = ref 20 in
+  let input = S.Var.create (M.set 1 first M.empty) in
+  let local = ref None in
+  let output =
+    K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data ->
+        let local_source = S.Var.create 0 in
+        local := Some local_source;
+        S.map2 (fun data local -> !data + local) data
+          (S.Var.watch local_source))
+  in
+  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  run_ok runtime S.stabilize;
+  let local_source =
+    match !local with
+    | Some source -> source
+    | None -> Alcotest.fail "missing local source"
+  in
+  run_ok runtime (S.Var.set local_source 7);
+  run_ok runtime (S.Var.set input (M.set 1 second M.empty));
+  run_ok runtime S.stabilize;
+  Alcotest.(check (list (pair int int)))
+    "accepted data and local change coalesce"
+    [ (1, 27) ]
+    (run_ok runtime (S.Observer.read observer) |> M.to_list);
+  run_ok runtime (S.Observer.dispose observer)
+
 let test_keyed_mapi_child_only_change_patches_output () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let locals = Hashtbl.create 2 in
@@ -147,6 +176,9 @@ let () =
             test_keyed_mapi_adds_child;
           Alcotest.test_case "keyed_mapi_retains_updates_and_removes_child"
             `Quick test_keyed_mapi_retains_updates_and_removes_child;
+          Alcotest.test_case
+            "keyed_mapi_child_reads_accepted_data_same_stabilization" `Quick
+            test_keyed_mapi_child_reads_accepted_data_same_stabilization;
           Alcotest.test_case "keyed_mapi_child_only_change_patches_output" `Quick
             test_keyed_mapi_child_only_change_patches_output;
           Alcotest.test_case

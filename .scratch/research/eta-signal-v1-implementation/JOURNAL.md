@@ -516,3 +516,41 @@ nix develop -c dune build @install
 nix develop -c dune runtest test/signal test/signal_map --force
 nix develop -c dune build test/laws/keyed_mapi_properties.exe
 ```
+
+## 2026-08-05 - Slice 5: same-stabilization keyed child repair
+
+- The complete generated law rerun found a real keyed-update ordering bug: when
+  a retained child local source changed before the keyed owner accepted new
+  data in the same stabilization, the child output could retain its
+  generation-local compute memo and publish old data plus new local state.
+- `update_child` now stages the accepted data source, marks the child data
+  signal dirty, and clears only the generation-local compute memo fields for
+  that data signal and child output before recomputing the child. Committed
+  generation bookkeeping remains intact, so the same generation can observe
+  the newly staged data without duplicating compute accounting.
+- Added the deterministic public regression
+  `keyed_mapi_child_reads_accepted_data_same_stabilization`, which changes a
+  child-local source and accepted keyed data before one `stabilize` and
+  requires the coalesced final value.
+- Removed the custom keyed-property shrinker. It explored tens of millions of
+  shrink steps after this failure and delayed the counterexample; the law now
+  reports the generated sample directly while preserving the same generated
+  coverage.
+- Verified with:
+
+```sh
+nix develop -c dune runtest test/signal_map/keyed test/laws --force
+nix develop -c dune runtest test/signal test/signal_map test/laws --force
+nix develop -c dune build @install @signal-economics
+```
+
+- All targeted Signal, Signal Map, generated-law, install, and economics gates
+  completed green, including
+  `keyed_mapi_retained_child_preserves_local_state` and
+  `keyed_mapi_child_reads_accepted_data_same_stabilization` over 1000 generated
+  cases each.
+- `@doc` is not a current slice gate: the OxCaml switch has no compatible
+  `odoc` package, while a mainline `odoc` attempt generated the Signal docs and
+  then failed in pre-existing non-Signal sources that use `effect` as an
+  identifier. The Signal documentation emitted only existing ambiguity
+  warnings.
