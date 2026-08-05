@@ -253,9 +253,22 @@ let enter ~hooks contract lane =
         raise exn)
 
 let leave lane access =
-  with_committed_grant (use_lock lane) (fun pending_grants ->
-      validate_access lane access;
-      release_locked pending_grants lane)
+  let granted =
+    use_lock lane @@ fun () ->
+    validate_access lane access;
+    lane.active_access <- None;
+    match take_waiting_waiter_locked lane with
+    | None ->
+        lane.busy <- false;
+        None
+    | Some waiter ->
+        lane.waiting <- lane.waiting - 1;
+        waiter.state <- Granted;
+        Some waiter
+  in
+  Option.iter
+    (fun waiter -> ignore (resolve_waiter_best_effort 1 waiter : bool))
+    granted
 
 let release_sync lane access_ref =
   match !access_ref with
