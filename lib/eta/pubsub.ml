@@ -401,6 +401,25 @@ let consume_available_locked wakeups sub =
         | None -> `Empty
         | Some reason -> close_result reason)
 
+let consume_available_unbounded_locked sub =
+  let t = sub.hub in
+  if not sub.active then `Closed
+  else
+    match find_entry t sub.cursor with
+    | Some entry ->
+        let value = entry.value in
+        sub.cursor <- sub.cursor + 1;
+        decrement_entry entry;
+        t.received <- t.received + 1;
+        drop_drained_head_entries t;
+        `Item value
+    | None ->
+        if sub.cursor < t.next_seq then
+          invalid_arg "Eta.Pubsub: subscriber cursor points behind buffer";
+        (match t.closed with
+        | None -> `Empty
+        | Some reason -> close_result reason)
+
 let enqueue_receiver contract sub =
   let #(promise, resolver) =
       contract.Runtime_contract.create_promise () in
@@ -418,17 +437,32 @@ let cancel_receiver sub (receiver : receiver) =
 
 let recv_sync contract sub =
   let rec loop () =
-    let wakeups = ref [] in
-    match
-      with_lock sub.hub @@ fun () ->
-      match consume_available_locked wakeups sub with
-      | `Empty ->
-          let promise, receiver = enqueue_receiver contract sub in
-          `Wait (promise, receiver)
-      | ((`Item _ | `Closed | `Closed_with_error _) as result) -> `Ready result
-    with
+    let outcome =
+      match sub.hub.overflow with
+      | Unbounded ->
+          with_lock sub.hub @@ fun () ->
+          (match consume_available_unbounded_locked sub with
+          | `Empty ->
+              let promise, receiver = enqueue_receiver contract sub in
+              `Wait (promise, receiver)
+          | ((`Item _ | `Closed | `Closed_with_error _) as result) ->
+              `Ready result)
+      | Drop_new _ | Backpressure _ ->
+          let wakeups = ref [] in
+          let outcome =
+            with_lock sub.hub @@ fun () ->
+            match consume_available_locked wakeups sub with
+            | `Empty ->
+                let promise, receiver = enqueue_receiver contract sub in
+                `Wait (promise, receiver)
+            | ((`Item _ | `Closed | `Closed_with_error _) as result) ->
+                `Ready result
+          in
+          resolve_wakeups !wakeups;
+          outcome
+    in
+    match outcome with
     | `Ready result ->
-        resolve_wakeups !wakeups;
         result
     | `Wait (promise, receiver) -> (
         try
