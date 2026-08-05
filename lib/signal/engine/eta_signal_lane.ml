@@ -271,7 +271,10 @@ let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
   @@ fun context ->
   let contract = Spi.Expert.contract context in
   let lane_depth =
-    Option.value (contract.Runtime_contract.local_get depth_local) ~default:0
+    match lane.owner_fiber_id with
+    | None -> 0
+    | Some _ ->
+        Option.value (contract.Runtime_contract.local_get depth_local) ~default:0
   in
   let current_fiber_id = contract.Runtime_contract.current_fiber_id () in
   if
