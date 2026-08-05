@@ -37,3 +37,11 @@
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
+
+(test
+ (name signal_properties)
+ (modules signal_properties)
+ (libraries eta eta_signal eta_signal_map eta_eio eta_test qcheck qcheck-core.runner eio_main)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

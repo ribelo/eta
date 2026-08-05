@@ -904,3 +904,35 @@ largest correctness-era cost center and is the primary perf-gate target.
 Direction is confirmed: per-stabilization work is no longer graph-wide.
 The 1.20x Jane Street evaluation is unchanged and remains deferred to the
 perf-loc gate with the recorded edge-effects feasibility investigation.
+
+## 2026-08-06 - Slice 8: committed diagnostics and fixed tombstone ring
+
+- `Eta_signal_tombstone_index` (engine/infrastructure) now owns invalid-node
+  retention: a graph-allocated circular array with 1,024 slots. Insertion is
+  one slot write with no duplicate scan (one-way node lifetimes from slice 2
+  make duplicates impossible); a full ring replaces the oldest; iteration is
+  newest first and visits at most 1,024 entries. The slice-1 counter family
+  (slot writes, evictions, iteration visits, duplicate scan steps) is wired
+  through the graph and exposed via `Extension.tombstone_counter_snapshot`.
+- Deleted `Eta_signal_debug.remember_latest` (the O(n) `List.filter` dedupe
+  on every insertion) and the `tombstone_id` invalidation port (its only
+  consumer was the dedupe).
+- Evidence:
+  - `tombstone insertion is constant` (economics): sizes 0, 1, 1,023, 1,024,
+    1,025, 100,000; slot writes == insertions, evictions == max(0, n-1024),
+    duplicate scans == 0, exact newest-first order, iteration visits ==
+    retained.
+  - `tombstone slot writes equal invalidations` (kernel): slot writes ==
+    `topology.invalidated_nodes` across bind-switch invalidations.
+  - `signal diagnostics are committed value-free and noninterfering`
+    (`test/laws/signal_properties.ml`): generated scalar/bind/keyed scripts
+    with sentinel values; plain vs diagnostic runs produce identical observer
+    traces, DOT contains no sentinel values, both runs end with an available
+    empty fiber census.
+- LAWS registry: SC16 (ring), SC17 (diagnostic noninterference).
+- Verified with:
+
+```sh
+nix develop -c dune build @install @signal-economics
+nix develop -c dune runtest test/laws test/signal test/signal_map --force
+```

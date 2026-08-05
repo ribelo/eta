@@ -387,6 +387,37 @@ let test_timer_cleanup_and_tombstone () =
   int "iteration visits" 1 tombstone.iteration_visits;
   int "duplicate scans" 0 tombstone.duplicate_scan_steps
 
+let test_tombstone_insertion_is_constant () =
+  let module T = Eta_signal_tombstone_index in
+  let check_size size =
+    let counters = T.create_counters () in
+    T.reset_counters counters;
+    let ring = T.create () in
+    for index = 1 to size do
+      T.insert counters index ring
+    done;
+    let retained = min size T.capacity in
+    let snap = T.counter_snapshot counters in
+    int (Printf.sprintf "slot writes at %d" size) size snap.slot_writes;
+    int
+      (Printf.sprintf "evictions at %d" size)
+      (max 0 (size - T.capacity))
+      snap.evictions;
+    int (Printf.sprintf "duplicate scans at %d" size) 0
+      snap.duplicate_scan_steps;
+    int (Printf.sprintf "length at %d" size) retained (T.length ring);
+    let visited = ref [] in
+    T.iter counters ~f:(fun entry -> visited := entry :: !visited) ring;
+    Alcotest.(check (list int))
+      (Printf.sprintf "newest first at %d" size)
+      (List.init retained (fun index -> size - index))
+      (List.rev !visited);
+    let snap = T.counter_snapshot counters in
+    int (Printf.sprintf "iteration visits at %d" size) retained
+      snap.iteration_visits
+  in
+  List.iter check_size [ 0; 1; 1023; 1024; 1025; 100_000 ]
+
 exception Injected
 
 let test_fault_slots () =
@@ -456,6 +487,8 @@ let () =
             test_stable_family_and_observers;
           Alcotest.test_case "timer cleanup tombstone" `Quick
             test_timer_cleanup_and_tombstone;
+          Alcotest.test_case "tombstone insertion is constant" `Quick
+            test_tombstone_insertion_is_constant;
           Alcotest.test_case "fault slots" `Quick test_fault_slots;
           Alcotest.test_case "graph-branded probe" `Quick
             test_graph_branded_probe;

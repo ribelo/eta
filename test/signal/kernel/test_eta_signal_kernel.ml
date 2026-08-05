@@ -277,6 +277,32 @@ let test_timer_reconciliation_is_boundary_driven () =
   Alcotest.(check int) "timer work released after demand loss" 0
     (S.Extension.timer_reconciliation_work_count ())
 
+let test_tombstone_slot_writes_equal_invalidated_transitions () =
+  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  let selector = S.Var.create true in
+  let selected =
+    S.bind (S.Var.watch selector) ~f:(fun use_left ->
+        if use_left then S.map succ (S.const 1) else S.const 0)
+  in
+  let observer =
+    run_ok runtime (S.Observer.observe selected ~on_update:(fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  S.Extension.reset_counters ();
+  run_ok runtime (S.Var.set selector false);
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Var.set selector true);
+  run_ok runtime S.stabilize;
+  let topology = S.Extension.topology_counter_snapshot () in
+  let tombstone = S.Extension.tombstone_counter_snapshot () in
+  Alcotest.(check bool) "switches invalidate branch nodes" true
+    (topology.invalidated_nodes > 0);
+  Alcotest.(check int) "slot writes equal invalidated transitions"
+    topology.invalidated_nodes tombstone.slot_writes;
+  Alcotest.(check int) "no duplicate scan" 0 tombstone.duplicate_scan_steps;
+  Alcotest.(check int) "no evictions under capacity" 0 tombstone.evictions;
+  run_ok runtime (S.Observer.dispose observer)
+
 let test_observer_finish_runs_exactly_once () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let idle_source = S.Var.create 1 in
@@ -348,6 +374,8 @@ let () =
             `Quick test_observer_delivery_counters_cover_plan_and_delivery;
           Alcotest.test_case "timer reconciliation is boundary driven" `Quick
             test_timer_reconciliation_is_boundary_driven;
+          Alcotest.test_case "tombstone slot writes equal invalidations" `Quick
+            test_tombstone_slot_writes_equal_invalidated_transitions;
           Alcotest.test_case "observer finish runs exactly once" `Quick
             test_observer_finish_runs_exactly_once;
         ] );
