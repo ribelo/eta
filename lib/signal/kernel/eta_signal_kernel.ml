@@ -586,6 +586,10 @@ module Graph = struct
       t.computed_nodes <-
         remember ~generation t.computed_nodes (project node)
 
+    let remember_computed_node t staging node =
+      validate_staging t staging;
+      t.computed_nodes <- node :: t.computed_nodes
+
     let computed_nodes t = t.computed_nodes
 
     let stage_bind t staging bind =
@@ -1259,6 +1263,9 @@ module Graph = struct
     State.remember_computed t.state staging
       ~generation:(generation t lane) node ~project:ops.compute_node
       ~remember:(remember_compute ops)
+
+  let remember_computed_node t _lane staging node =
+    State.remember_computed_node t.state staging node
 
   let iter_computed t _lane staging ~f =
     if not (State.require_staging t.state == staging) then
@@ -3399,8 +3406,11 @@ module Make (Observer_error : Observer_error) () = struct
   let effective_var_value (type a) (var : a var) =
     Graph.read_effective graph var.graph_value
 
-  let remember_computed lane staging (P signal) =
-    Graph.remember_computed graph lane staging compute_ops (P signal)
+  let remember_computed lane staging (P signal as packed) =
+    let generation = current_generation lane in
+    if signal.computed_generation <> generation then (
+      signal.computed_generation <- generation;
+      Graph.remember_computed_node graph lane staging packed)
 
   let signal_current_snapshot signal =
     Transaction.current signal.snapshot
@@ -3455,6 +3465,17 @@ module Make (Observer_error : Observer_error) () = struct
   let stage_single_dependency_version lane staging signal child =
     update_signal_staging lane staging signal (fun snapshot ->
         Signal_snapshot.with_dependency_versions snapshot
+          [ (child.id, effective_signal_version child) ])
+
+  let stage_map_value_and_dependency lane staging signal child value =
+    update_signal_staging lane staging signal (fun snapshot ->
+        let current = signal_current_snapshot signal in
+        let published =
+          Signal_snapshot.publish
+            ~advance_version:(checked_succ "signal version")
+            ~current snapshot value
+        in
+        Signal_snapshot.with_dependency_versions published
           [ (child.id, effective_signal_version child) ])
 
   let effective_signal_value signal =
@@ -4594,25 +4615,23 @@ module Make (Observer_error : Observer_error) () = struct
    fun lane staging signal child f ->
     let child_value, child_changed = compute lane staging child in
     let snapshot = signal_effective_snapshot signal in
-    if
-      signal.dirty
-      || not (Signal_snapshot.is_initialized snapshot)
-      || child_changed
-      || single_dependency_changed signal child
+    let initialized = Signal_snapshot.is_initialized snapshot in
+    let dependency_changed = single_dependency_changed signal child in
+    if signal.dirty || (not initialized) || child_changed || dependency_changed
     then (
-      stage_single_dependency_version lane staging signal child;
       Graph.bump_counter graph lane Graph.Recompute_count;
       Scheduler.note_cutoff_call scheduler_counters;
       let value = f child_value in
       let changed =
         Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
-          ~initialized:(Signal_snapshot.is_initialized snapshot)
-          ~current:(Signal_snapshot.value snapshot) ~next:value
+          ~initialized ~current:(Signal_snapshot.value snapshot) ~next:value
       in
-      if changed then stage_signal lane staging signal value;
+      if changed then
+        stage_map_value_and_dependency lane staging signal child value
+      else if dependency_changed || not initialized then
+        stage_single_dependency_version lane staging signal child;
       (if changed then value else current_or_raise signal), changed)
-    else
-      (current_or_raise signal, false)
+    else (current_or_raise signal, false)
 
   and compute_uncached_generic :
       type a. graph_lane -> Graph.staging -> a signal -> a * bool =
