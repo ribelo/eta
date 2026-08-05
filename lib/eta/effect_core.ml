@@ -322,7 +322,6 @@ and eval_async : type a err.
     | Async_interrupt_claimed | Async_closed -> raise exn
   in
   try
-    contract.Runtime_contract.cancel_sub @@ fun _cancel_context ->
     let interrupted_during_register =
       try
         contract.Runtime_contract.protect (fun () ->
@@ -342,10 +341,16 @@ and eval_async : type a err.
     in
     match interrupted_during_register with
     | Some exit -> exit
-    | None ->
-        (try contract.Runtime_contract.await_promise promise with
-        | exn when Runtime_core.is_cancellation contract exn ->
-            on_interruption exn)
+    | None -> (
+        match Atomic.get state with
+        | Async_resolved exit -> exit
+        | Async_registered _ ->
+            (try
+               contract.Runtime_contract.cancel_sub @@ fun _cancel_context ->
+               contract.Runtime_contract.await_promise promise
+             with exn when Runtime_core.is_cancellation contract exn ->
+               on_interruption exn)
+        | Async_pending | Async_interrupt_claimed | Async_closed -> assert false)
   with
   | exn when Runtime_core.is_cancellation contract exn -> raise exn
   | exn ->
