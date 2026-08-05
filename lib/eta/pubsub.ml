@@ -57,6 +57,10 @@ type ('a, 'err) blocking_publish_outcome =
   | Blocking_wait of
       'err publish_out Runtime_contract.promise * ('a, 'err) publisher
 
+type ('a, 'err) recv_outcome =
+  | Recv_ready of ('a, 'err) recv_result
+  | Recv_wait of unit Runtime_contract.promise * receiver
+
 type ('a, 'err) entry = {
   seq : int;
   value : 'a;
@@ -461,9 +465,9 @@ let recv_sync contract sub =
           (match consume_available_unbounded_locked sub with
           | `Empty ->
               let promise, receiver = enqueue_receiver contract sub in
-              `Wait (promise, receiver)
+              Recv_wait (promise, receiver)
           | ((`Item _ | `Closed | `Closed_with_error _) as result) ->
-              `Ready result)
+              Recv_ready result)
       | Drop_new _ | Backpressure _ ->
           let wakeups = ref [] in
           let outcome =
@@ -471,17 +475,17 @@ let recv_sync contract sub =
             match consume_available_locked wakeups sub with
             | `Empty ->
                 let promise, receiver = enqueue_receiver contract sub in
-                `Wait (promise, receiver)
+                Recv_wait (promise, receiver)
             | ((`Item _ | `Closed | `Closed_with_error _) as result) ->
-                `Ready result
+                Recv_ready result
           in
           resolve_wakeups !wakeups;
           outcome
     in
     match outcome with
-    | `Ready result ->
+    | Recv_ready result ->
         result
-    | `Wait (promise, receiver) -> (
+    | Recv_wait (promise, receiver) -> (
         try
           contract.Runtime_contract.await_promise promise;
           loop ()
