@@ -47,6 +47,10 @@ type ('a, 'err) wakeup =
   | Wake_sender of ('a, 'err) sender * 'err send_result
   | Wake_receiver of ('a, 'err) receiver * ('a, 'err) recv_result
 
+type ('result, 'waiter) locked_outcome =
+  | Locked_ready of 'result
+  | Locked_wait of 'result Runtime_contract.promise * 'waiter
+
 type stats = {
   depth : int;
   sent : int;
@@ -360,13 +364,13 @@ let send_sync contract (t : ('a, 'err) t) value =
     match send_locked wakeups t value with
     | `Full ->
         let promise, sender = enqueue_sender contract t value in
-        `Wait (promise, sender)
-    | result -> `Ready result
+        Locked_wait (promise, sender)
+    | result -> Locked_ready result
   with
-  | `Ready result ->
+  | Locked_ready result ->
       resolve_wakeups !wakeups;
       result
-  | `Wait (promise, sender) -> (
+  | Locked_wait (promise, sender) -> (
       try contract.Runtime_contract.await_promise promise
       with exn when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
         let cancel_wakeups = ref [] in
@@ -382,13 +386,13 @@ let recv_sync contract (t : ('a, 'err) t) =
     match recv_locked wakeups t with
     | `Empty ->
         let promise, receiver = enqueue_receiver contract t in
-        `Wait (promise, receiver)
-    | result -> `Ready result
+        Locked_wait (promise, receiver)
+    | result -> Locked_ready result
   with
-  | `Ready result ->
+  | Locked_ready result ->
       resolve_wakeups !wakeups;
       result
-  | `Wait (promise, receiver) -> (
+  | Locked_wait (promise, receiver) -> (
       try
         match contract.Runtime_contract.await_promise promise with
         | `Item _ as result ->
