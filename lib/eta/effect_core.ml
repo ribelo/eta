@@ -72,6 +72,12 @@ type ('a, +'err) t =
         leaf_name : string option;
       }
       -> ('a, 'err) t
+  (* [Effect.sync] is the universal way to lift ordinary OCaml computation into
+     an effect, so it gets its own constructor rather than reusing [Custom].
+     [Custom] would need a closure to carry the exception handling and a 3-word
+     block to carry an always-[None] [leaf_name]; interpreting [Sync] directly in
+     [eval] costs one 2-word block and no closure. *)
+  | Sync : (unit -> 'a) -> ('a, 'err) t
   | Map :
       {
         inner : ('a, 'err) t;
@@ -84,10 +90,25 @@ type ('a, +'err) t =
         k : 'a -> ('b, 'err) t;
       }
       -> ('b, 'err) t
+  (* Like [Sync], this exists to avoid paying a closure plus a [Custom] block per
+     construction. [preserve] would allocate a closure capturing both [inner] and
+     [handler] and then a [Custom] block to hold it; one node holds the same two
+     fields. *)
+  | Bind_error :
+      {
+        inner : ('a, 'err1) t;
+        handler : 'err1 -> ('a, 'err2) t;
+      }
+      -> ('a, 'err2) t
+
+let bind_error_leaf_name = "Effect.bind_error"
 
 let leaf_name : type a err. (a, err) t -> string option = function
   | Custom { leaf_name; _ } -> leaf_name
-  | Pure _ | Fail _ | Map _ | Bind _ -> None
+  (* [bind_error] was a named [Custom], and the name is observable through
+     [Effect.name] and [describe], so it is reported unchanged. *)
+  | Bind_error _ -> Some bind_error_leaf_name
+  | Pure _ | Fail _ | Map _ | Bind _ | Sync _ -> None
 
 let make ?leaf_name eval =
   Custom { eval; leaf_name }
@@ -102,11 +123,51 @@ let[@inline always] [@zero_alloc opt] exit_to_value frame = function
 let[@cold] [@zero_alloc assume error] exit_of_exn frame exn =
   Exit.Error (Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn)
 
+let combine_stripped combine causes =
+  match List.filter_map Fun.id causes with
+  | [] -> None
+  | causes -> Some (combine causes)
+
+let rec stripped_uncatchable : type err mapped. err Cause.t -> mapped Cause.t option =
+  (* ZIO [catchAll]/[foldZIO] and eff-ts [catch]/[findError] select one
+     recoverable [Fail]; they do not traverse a composite cause running one
+     recovery eff per leaf. Eta keeps the additional local invariant that
+     defects, interruption, and finalizer diagnostics are not caught. If any of
+     those uncatchable leaves remain, return them without invoking the handler:
+     handler side effects must not run when the operation is still going to
+     fail, and old typed failures cannot be preserved across [bind_error]'s new
+     error type without running the handler. *)
+  function
+  | Cause.Fail _ -> None
+  | Cause.Die die -> Some (Cause.Die die)
+  | Cause.Interrupt id -> Some (Cause.Interrupt id)
+  | Cause.Finalizer cause -> Some (Cause.Finalizer cause)
+  | Cause.Sequential causes ->
+      combine_stripped Cause.sequential (List.map stripped_uncatchable causes)
+  | Cause.Concurrent causes ->
+      combine_stripped Cause.concurrent (List.map stripped_uncatchable causes)
+  | Cause.Suppressed { primary; finalizer } -> (
+      match stripped_uncatchable primary with
+      | None -> Some (Cause.finalizer finalizer)
+      | Some primary -> Some (Cause.suppressed ~primary ~finalizer))
+
+let rec first_typed_failure : type err. err Cause.t -> err option = function
+  | Cause.Fail err -> Some err
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.find_map first_typed_failure causes
+  | Cause.Suppressed { primary; _ } -> first_typed_failure primary
+  | Cause.Die _ | Cause.Interrupt _ | Cause.Finalizer _ -> None
+
 let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
  fun frame -> function
   | Pure value -> ok value
   | Fail err -> error (Cause.Fail err)
   | Custom { eval; _ } -> eval frame
+  | Sync f -> (
+      try ok (f ()) with
+      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+          raise exn
+      | exn -> exit_of_exn frame exn)
   | Map { inner; f; _ } -> (
       match eval frame inner with
       | Exit.Ok value -> ok (f value)
@@ -115,6 +176,16 @@ let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
       match eval frame inner with
       | Exit.Ok value -> eval frame (k value)
       | Exit.Error _ as err -> err)
+  | Bind_error { inner; handler } -> (
+      match eval frame inner with
+      | Exit.Ok value -> ok value
+      | Exit.Error cause -> (
+          match stripped_uncatchable cause with
+          | Some cause -> error cause
+          | None -> (
+              match first_typed_failure cause with
+              | Some err -> eval frame (handler err)
+              | None -> invalid_arg "Effect.bind_error: empty composite cause")))
 
 let run_to_exit frame eff =
   try eval frame eff with
@@ -179,7 +250,10 @@ let sync_frame ?leaf_name f =
           raise exn
       | exn -> exit_of_exn frame exn)
 
-let sync f = sync_frame (fun _frame -> f ())
+(* Interpreted by [eval]'s [Sync] branch, which carries the same exception
+   handling this used to install in a per-construction closure. *)
+let sync f = Sync f
+
 let yield = sync_frame (fun frame -> fiber_yield frame)
 
 type ('a, 'err) async_state =
@@ -316,57 +390,12 @@ let concat effects =
   let sequenced = List.fold_left (fun acc eff -> seq eff acc) unit effects in
   make (fun frame -> eval frame sequenced)
 
-let combine_stripped combine causes =
-  match List.filter_map Fun.id causes with
-  | [] -> None
-  | causes -> Some (combine causes)
-
-let rec stripped_uncatchable : type err mapped. err Cause.t -> mapped Cause.t option =
-  (* ZIO [catchAll]/[foldZIO] and eff-ts [catch]/[findError] select one
-     recoverable [Fail]; they do not traverse a composite cause running one
-     recovery eff per leaf. Eta keeps the additional local invariant that
-     defects, interruption, and finalizer diagnostics are not caught. If any of
-     those uncatchable leaves remain, return them without invoking the handler:
-     handler side effects must not run when the operation is still going to
-     fail, and old typed failures cannot be preserved across [bind_error]'s new
-     error type without running the handler. *)
-  function
-  | Cause.Fail _ -> None
-  | Cause.Die die -> Some (Cause.Die die)
-  | Cause.Interrupt id -> Some (Cause.Interrupt id)
-  | Cause.Finalizer cause -> Some (Cause.Finalizer cause)
-  | Cause.Sequential causes ->
-      combine_stripped Cause.sequential (List.map stripped_uncatchable causes)
-  | Cause.Concurrent causes ->
-      combine_stripped Cause.concurrent (List.map stripped_uncatchable causes)
-  | Cause.Suppressed { primary; finalizer } -> (
-      match stripped_uncatchable primary with
-      | None -> Some (Cause.finalizer finalizer)
-      | Some primary -> Some (Cause.suppressed ~primary ~finalizer))
-
-let rec first_typed_failure : type err. err Cause.t -> err option = function
-  | Cause.Fail err -> Some err
-  | Cause.Sequential causes | Cause.Concurrent causes ->
-      List.find_map first_typed_failure causes
-  | Cause.Suppressed { primary; _ } -> first_typed_failure primary
-  | Cause.Die _ | Cause.Interrupt _ | Cause.Finalizer _ -> None
-
 let bind_error :
     type a err1 err2. (err1 -> (a, err2) t) -> (a, err1) t -> (a, err2) t =
  fun (handler) eff ->
  match eff with
   | Pure value -> Pure value
-  | _ ->
-      preserve ~leaf_name:"Effect.bind_error" eff @@ fun frame ->
-      match eval frame eff with
-      | Exit.Ok value -> ok value
-      | Exit.Error cause -> (
-          match stripped_uncatchable cause with
-          | Some cause -> error cause
-          | None -> (
-              match first_typed_failure cause with
-              | Some err -> eval frame (handler err)
-              | None -> invalid_arg "Effect.bind_error: empty composite cause"))
+  | _ -> Bind_error { inner = eff; handler }
 
 let catch_some (handler) eff =
   match eff with
@@ -596,6 +625,13 @@ let describe eff =
     | Pure _ -> line depth "Pure"
     | Fail _ -> line depth "Fail"
     | Custom { leaf_name = None; _ } -> line depth "Custom"
+    (* A [sync] leaf was a [Custom] with no [leaf_name] before it got its own
+       constructor, and [describe] is public output, so it keeps rendering the
+       same. Renaming it to "Sync" would be a user-visible change. *)
+    | Sync _ -> line depth "Custom"
+    (* Was a named [Custom]; render identically, and as before do not walk the
+       inner effect, which a [Custom] never exposed. *)
+    | Bind_error _ -> line depth (Printf.sprintf "Custom(%S)" bind_error_leaf_name)
     | Custom { leaf_name = Some name; _ } ->
         line depth (Printf.sprintf "Custom(%S)" name)
     | Map { inner; _ } ->
