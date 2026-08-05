@@ -309,7 +309,7 @@ module Drain_counter : sig
   val await_zero : ?name:string -> t -> (unit, 'err) Eta.Effect.t
   (** Wait until the counter reaches zero. This is useful for producer/consumer
       adapters that need a non-polling drain signal while still exposing the
-      wait as an Eta eff.
+      wait as an Eta effect.
 
       @raise Invalid_argument if [incr_by] or [decr_by] receive a negative
       count, or if [decr_by] would decrement below zero. *)

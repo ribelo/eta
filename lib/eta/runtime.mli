@@ -67,10 +67,10 @@ end
     call. *)
 
 val run : 'err t -> ('a, 'err) Effect.t -> ('a, 'err) Exit.t
-(** Run an eff to completion. *)
+(** Run an effect to completion. *)
 
 val run_exn : 'err t -> ('a, 'err) Effect.t -> 'a
-(** Run an eff and raise on non-success. Prefer {!run} when
+(** Run an effect and raise on non-success. Prefer {!run} when
     inspecting failures.
 
     - [Cause.Die] defects are re-raised with their captured backtrace.

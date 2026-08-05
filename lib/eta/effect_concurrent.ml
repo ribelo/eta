@@ -264,7 +264,7 @@ let par_eval left right frame =
 let par left right =
   make ~leaf_name:"Effect.par" (par_eval left right)
 
-(** Fork [eff] as a child that publishes its exit to a fresh promise; the
+(** Fork [effect] as a child that publishes its exit to a fresh promise; the
     returned [await] reads the published value once [par_run_forks] has
     confirmed every child finished. A failing child raises through
     {!exit_to_value} inside its fork, where [par_run_forks] aggregates the

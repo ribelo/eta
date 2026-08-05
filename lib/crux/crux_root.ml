@@ -18,13 +18,13 @@ type post_commit = {
 
 let work_failure_effect (root : root_core) (work : work) =
   let open Eta.Syntax in
-  let effect =
+  let program =
     match work.payload with
-    | Program effect -> effect
+    | Program program -> program
     | Source_open _ ->
         invalid_arg "Eta_crux: source opening admitted as a running program"
   in
-  let* exit = Eta.Effect.to_exit effect in
+  let* exit = Eta.Effect.to_exit program in
   match exit with
   | Eta.Exit.Ok () -> Eta.Effect.unit
   | Eta.Exit.Error cause when Eta.Cause.is_interrupt_only cause ->
@@ -142,7 +142,7 @@ let await_job_settlement (jobs : owned_job list) =
   |> List.map (fun (job : owned_job) -> Eta.Promise.await job.settled)
   |> Eta.Effect.concat
 
-let widen_never effect = Eta.Effect.map_error absurd effect
+let widen_never eff = Eta.Effect.map_error absurd eff
 
 let open_sources (root : root_core) works =
   let openings =
@@ -159,11 +159,11 @@ let open_sources (root : root_core) works =
            |> Eta.Effect.map (function
                 | Eta.Exit.Ok running ->
                     Option.map
-                      (fun effect ->
+                      (fun program ->
                         {
                           work with
                           trigger = Failure.Source_producer;
-                          payload = Program effect;
+                          payload = Program program;
                         })
                       running
                 | Eta.Exit.Error cause

@@ -334,7 +334,7 @@ module Controlled = struct
       call.resume exit;
       Ok ())
 
-  let effect controlled input =
+  let eff controlled input =
     Eta.Effect.async ~register:(fun resume ->
         let call =
           {

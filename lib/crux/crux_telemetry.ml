@@ -22,7 +22,7 @@ let advancement_boundaries =
 
 let timed_if_metrics operation =
   let open Eta.Syntax in
-  let* effect, enabled, started_ms =
+  let* eff, enabled, started_ms =
     Eta.Spi.Expert.make ~leaf_name:"Eta_crux.advance"
       (fun context ->
         let enabled =
@@ -35,7 +35,7 @@ let timed_if_metrics operation =
         in
         Eta.Exit.Ok (operation (), enabled, started_ms))
   in
-  let* result = effect in
+  let* result = eff in
   let+ duration_ms =
     Eta.Spi.Expert.make ~leaf_name:"Eta_crux.advance"
       (fun context ->
@@ -51,11 +51,11 @@ let timed_if_metrics operation =
   in
   (result, duration_ms)
 
-let with_span ?(attrs = []) name effect =
+let with_span ?(attrs = []) name eff =
   Observability.named name
-    (Observability.annotate_all attrs effect)
+    (Observability.annotate_all attrs eff)
 
-let advance effect = with_span "eta_crux.advance" effect
+let advance eff = with_span "eta_crux.advance" eff
 
 let point ?(attrs = []) ~name ~unit_ ~kind value =
   Observability.metric ~attrs ~name ~unit_ ~kind value
@@ -83,20 +83,20 @@ let advancement ~trigger ~outcome ~duration_ms =
              (Eta.Capabilities.Float duration_ms));
       ])
 
-let post_commit effect =
-  with_span "eta_crux.post_commit" effect
+let post_commit eff =
+  with_span "eta_crux.post_commit" eff
 
-let delivery effect =
-  with_span "eta_crux.driver.delivery" effect
+let delivery eff =
+  with_span "eta_crux.driver.delivery" eff
 
-let request effect =
-  with_span "eta_crux.driver.request" effect
+let request eff =
+  with_span "eta_crux.driver.request" eff
 
-let session_replace effect =
-  with_span "eta_crux.session.replace" effect
+let session_replace eff =
+  with_span "eta_crux.session.replace" eff
 
-let root_teardown effect =
-  with_span "eta_crux.root.teardown" effect
+let root_teardown eff =
+  with_span "eta_crux.root.teardown" eff
 
 let root_started () =
   Observability.log_info "eta_crux.root.started"

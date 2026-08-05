@@ -36,7 +36,7 @@ module Runtime : sig
     ('a, 'err) Eta.Effect.t ->
     on_result:(('a, 'err) Eta.Exit.t -> unit) ->
     unit
-  (** Schedule [eff] on the JavaScript host and invoke [on_result] from a
+  (** Schedule [effect] on the JavaScript host and invoke [on_result] from a
       later microtask/timer turn.
 
       Exceptions raised by [on_result] are not re-raised to the caller of

@@ -133,7 +133,7 @@ let test_basic_observe_stabilize_read done_ =
   let signal = Signal.Var.watch source |> Signal.map (fun value -> value * 2) in
   let events = ref [] in
   let eff =
-    let* observer = Signal.Observer.observe signal (record_observer events) in
+    let* observer = Signal.Observer.observe ~on_update:(record_observer events) signal in
     let* () = Signal.stabilize in
     let* () = Signal.Var.set source 2 in
     let* () = Signal.stabilize in
@@ -156,8 +156,10 @@ let test_bind_branch_detaches_stale_dependency done_ =
   let left = Signal.Var.create 10 in
   let right = Signal.Var.create 20 in
   let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+    Signal.bind
+      ~f:(fun use_left ->
         if use_left then Signal.Var.watch left else Signal.Var.watch right)
+      (Signal.Var.watch choose_left)
   in
   let eff =
     let* observer = Signal.Observer.observe selected ~on_update:(fun _ -> E.unit) in
@@ -180,8 +182,10 @@ let test_bind_selects_initialized_external_bind done_ =
   let driver = Signal.Var.create 0 in
   let leaf = Signal.Var.create 10 in
   let external_signal =
-    Signal.bind (Signal.Var.watch driver) (fun offset ->
+    Signal.bind
+      ~f:(fun offset ->
         Signal.Var.watch leaf |> Signal.map (fun value -> value + offset + 1))
+      (Signal.Var.watch driver)
   in
   let eff =
     let* external_observer =
@@ -190,7 +194,7 @@ let test_bind_selects_initialized_external_bind done_ =
     let* () = Signal.stabilize in
     let* external_initial = Signal.Observer.read external_observer in
     let* () = Signal.Observer.dispose external_observer in
-    let selected = Signal.bind (Signal.const true) (fun _ -> external_signal) in
+    let selected = Signal.bind ~f:(fun _ -> external_signal) (Signal.const true) in
     let* selected_observer =
       Signal.Observer.observe selected ~on_update:(fun _ -> E.unit)
     in
@@ -390,12 +394,13 @@ let test_invalidated_bind_rhs_observer_read done_ =
   let right = Signal.Var.create 20 in
   let captured_left = ref None in
   let selected =
-    Signal.bind (Signal.Var.watch use_left) (fun active ->
+    Signal.bind ~f:(fun active ->
         if active then (
           let branch = Signal.Var.watch left |> Signal.map (fun value -> value) in
           captured_left := Some branch;
           branch)
         else Signal.Var.watch right)
+      (Signal.Var.watch use_left)
   in
   let eff =
     let* selected_observer =
@@ -503,12 +508,13 @@ let test_stream_invalid_scope_closes_with_error done_ =
   let branch_source = Signal.Var.create 0 in
   let captured = ref None in
   let selected =
-    Signal.bind (Signal.Var.watch use_branch) (fun active ->
+    Signal.bind ~f:(fun active ->
         if active then (
           let branch = Signal.Var.watch branch_source in
           captured := Some branch;
           branch)
         else Signal.const 42)
+      (Signal.Var.watch use_branch)
   in
   let eff =
     let* selected_observer =
@@ -552,7 +558,7 @@ let test_stream_invalid_scope_closes_with_error done_ =
            fail "stream invalid scope"
              "expected buffered branch updates before invalid-scope error");
       expect_fail "stream closes with invalid scope"
-        (function `Invalid_scope -> true | _ -> false)
+        (function `Invalid_scope -> true)
         stream_exit;
       expect_fail "stream observer read invalidated"
         (function `Invalid_scope -> true | _ -> false)
@@ -579,7 +585,7 @@ let test_observer_callback_timeout_releases_stabilization done_ =
     else E.unit
   in
   let eff =
-    let* observer = Signal.Observer.observe (Signal.Var.watch source) callback in
+    let* observer = Signal.Observer.observe ~on_update:callback (Signal.Var.watch source) in
     let* () = Signal.stabilize in
     let* () = Signal.Var.set source 1 in
     let* () = E.sync (fun () -> block_next := true) in

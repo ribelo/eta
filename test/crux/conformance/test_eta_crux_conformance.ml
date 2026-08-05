@@ -1,7 +1,7 @@
 module Crux = Eta_crux
 
-let run_ok effect =
-  Eta_test.Run.run effect |> fun result ->
+let run_ok eff =
+  Eta_test.Run.run eff |> fun result ->
   Eta_test.Expect.expect_ok result.exit
 
 let committed = function
@@ -275,8 +275,8 @@ let conformance_identity_serialized_equivalence () =
 
 let test_session_loss_requests () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
-  let run_ok effect =
-    Eta.Runtime.run runtime effect
+  let run_ok eff =
+    Eta.Runtime.run runtime eff
     |> Eta_test.Expect.expect_ok
   in
   let operation =
@@ -382,8 +382,8 @@ let test_session_loss_requests () =
 
 let test_serialized_receive_wakes_await () =
   Eta_test.with_test_clock @@ fun switch clock runtime ->
-  let run_ok effect =
-    Eta.Runtime.run runtime effect
+  let run_ok eff =
+    Eta.Runtime.run runtime eff
     |> Eta_test.Expect.expect_ok
   in
   let started = Eta.Promise.create () in
@@ -515,8 +515,8 @@ let test_session_loss_settles_pending_delivery () =
 
 let test_session_loss_settles_replacement () =
   Eta_test.with_test_clock @@ fun switch _clock runtime ->
-  let run_ok effect =
-    Eta.Runtime.run runtime effect
+  let run_ok eff =
+    Eta.Runtime.run runtime eff
     |> Eta_test.Expect.expect_ok
   in
   let old_candidate, old_peer =
@@ -608,8 +608,8 @@ let test_session_loss_settles_replacement () =
 
 let test_raising_response_decoder_is_fatal () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
-  let run_ok effect =
-    Eta.Runtime.run runtime effect
+  let run_ok eff =
+    Eta.Runtime.run runtime eff
     |> Eta_test.Expect.expect_ok
   in
   let response_codec =
@@ -760,8 +760,8 @@ let test_raising_response_decoder_is_fatal () =
 
 let conformance_serialized_request_export () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
-  let run_ok effect =
-    Eta.Runtime.run runtime effect
+  let run_ok eff =
+    Eta.Runtime.run runtime eff
     |> Eta_test.Expect.expect_ok
   in
   let machine =

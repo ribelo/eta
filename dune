@@ -74,3 +74,12 @@
 (alias
  (name signal-economics)
  (deps (alias test/signal/economics/signal-economics)))
+
+; Umbrella acceptance gate for the Eta Signal V1 contract: deterministic
+; economics, atomic-pass laws, and the model fuzz smoke run.
+(alias
+ (name signal-gates)
+ (deps
+  (alias_rec signal-atomic-laws)
+  (alias_rec signal-economics)
+  (alias_rec signal-model-fuzz-smoke)))

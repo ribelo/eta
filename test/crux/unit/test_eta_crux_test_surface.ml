@@ -1,11 +1,11 @@
 module Crux = Eta_crux
 module Crux_test = Eta_crux_test
 
-let run_ok runtime effect =
-  Eta.Runtime.run runtime effect |> Eta_test.Expect.expect_ok
+let run_ok runtime eff =
+  Eta.Runtime.run runtime eff |> Eta_test.Expect.expect_ok
 
-let inject_ok runtime effect =
-  effect
+let inject_ok runtime eff =
+  eff
   |> Eta.Effect.or_die (function
        | Crux_test.Handle.No_output ->
            Failure "test injection has no output"
@@ -110,7 +110,7 @@ let test_handle_exclusive_ownership () =
       Crux_test.Test_shell.pp_error = Format.pp_print_string;
       deliver =
         (fun delivery ->
-          Eta_test.Controlled.effect deliveries delivery);
+          Eta_test.Controlled.eff deliveries delivery);
       request_event = (fun _ -> Eta.Effect.unit);
       crash_detected = (fun _ -> Eta.Effect.unit);
     }

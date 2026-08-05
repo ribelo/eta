@@ -44,28 +44,28 @@ let resource recorder =
     ~acquire:
       (Eta.Effect.sync (fun () -> record recorder Acquire)
       |> Eta.Effect.bind (fun () ->
-             Eta_test.Controlled.effect recorder.acquire ()))
+             Eta_test.Controlled.eff recorder.acquire ()))
     ~release:(fun () ->
       Eta.Effect.sync (fun () -> record recorder Release)
       |> Eta.Effect.bind (fun () ->
-             Eta_test.Controlled.effect recorder.release ()))
+             Eta_test.Controlled.eff recorder.release ()))
     ~deliver:(fun () delivery ->
       Eta.Effect.sync (fun () ->
           record recorder (Deliver delivery))
       |> Eta.Effect.bind (fun () ->
-             Eta_test.Controlled.effect recorder.deliver
+             Eta_test.Controlled.eff recorder.deliver
                delivery))
     ~request_event:(fun () event ->
       Eta.Effect.sync (fun () ->
           record recorder (Request_event event))
       |> Eta.Effect.bind (fun () ->
-             Eta_test.Controlled.effect
+             Eta_test.Controlled.eff
                recorder.request_event event))
     ~crash_detected:(fun () failure ->
       Eta.Effect.sync (fun () ->
           record recorder (Crash_detected failure))
       |> Eta.Effect.bind (fun () ->
-             Eta_test.Controlled.effect
+             Eta_test.Controlled.eff
                recorder.crash_detected failure))
 
 let acquire_control recorder = recorder.acquire

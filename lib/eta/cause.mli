@@ -8,9 +8,9 @@
     [Sequential] preserves ordered failures from sequential composition.
     [Concurrent] preserves failures observed from parallel composition.
     [Finalizer] marks diagnostic failures produced while cleaning up after a
-    successful primary eff; ordinary [Effect.bind_error] leaves failures under
+    successful primary effect; ordinary [Effect.bind_error] leaves failures under
     this node untouched. Same-domain typed finalizer failures retain their error
-    value and capture-time rendering after leaving the cleanup eff, but are no
+    value and capture-time rendering after leaving the cleanup effect, but are no
     longer part of the typed error channel.
     Portable conversion drops the value and keeps that rendered string.
     [Suppressed] preserves a primary failure together with a finalizer failure

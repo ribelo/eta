@@ -33,4 +33,7 @@
   test_eta_signal_timer
   eta_signal_timer
   eta_signal_timer_policy)
- (libraries eta eta_eio eta_test eta_signal_engine alcotest eio_main))
+ (libraries eta eta_eio eta_test eta_signal_engine alcotest eio_main)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

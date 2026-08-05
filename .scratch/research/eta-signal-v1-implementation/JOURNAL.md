@@ -1068,3 +1068,29 @@ grep -rn "Owner_transaction" lib/ test/  # empty
 nix develop -c dune build @install
 nix develop -c dune runtest test/signal test/signal_map test/signal_stream test/laws test/crux --force
 ```
+
+## 2026-05-21 — Slice 12: correctness acceptance gates
+
+- New umbrella alias `@signal-gates` (root dune): signal-atomic-laws +
+  signal-economics + signal-model-fuzz-smoke. Green.
+- OCaml 5.4 made `effect` a hard keyword in every identifier position; the
+  repo carried pre-existing `effect` value identifiers that OxCaml 5.2.0+ox
+  accepts. Renamed value identifiers `effect` -> `eff` across 37 files
+  (comment/string spans restored verbatim after the pass; public
+  `Eta_test.Controlled.effect` is now `Eta_test.Controlled.eff`).
+- test/signal_jsoo migrated to the V1 API: `Observer.observe ~on_update`
+  labels, `Signal.bind ~f:` argument order, narrowed `stream_exit`
+  predicates.
+- `test_eta_signal_timer` and `test_chat_audio_laws` now pin
+  `EIO_BACKEND posix` like their sibling suites (sandbox denies io_uring;
+  failure was pre-existing environment fragility on the mainline track).
+- Gates all green:
+  - `nix develop -c dune build @install`
+  - `nix develop -c dune build @signal-gates`
+  - `nix develop -c dune runtest --force` (76 suites)
+  - `nix develop -c eta-oxcaml-test-shipped`
+  - `nix develop .#mainline -c eta-mainline-test-shipped`
+  - `nix develop .#ocaml54 -c eta-ocaml54-test-erg`
+- `test_eta_blocking` "shutdown detach" flaked twice under concurrent gate
+  load (pre-existing timing assertion, files untouched by this slice);
+  passes standalone and in a clean full rerun.

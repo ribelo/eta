@@ -1,7 +1,7 @@
 module Crux = Eta_crux
 
-let run_ok runtime effect =
-  Eta.Runtime.run runtime effect |> Eta_test.Expect.expect_ok
+let run_ok runtime eff =
+  Eta.Runtime.run runtime eff |> Eta_test.Expect.expect_ok
 
 let committed = function
   | Ok (Crux.Root.Committed { output; post_commit }) ->

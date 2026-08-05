@@ -15,14 +15,14 @@ module Trace_context = Trace_context
 val with_error_pp :
   (Format.formatter -> 'err -> unit) -> ('a, 'err) Effect.t -> ('a, 'err) Effect.t
 (** Pretty-print typed failures for observability span status and exception
-    events on the wrapped eff. The printer is scoped to this eff's error
+    events on the wrapped effect. The printer is scoped to this effect's error
     channel. Output is rendered at most once per span status or exception
     event. The printer must be total; a raising [error_pp] becomes a defect
     through the ordinary capture path. When no printer is installed, the
     default ["<typed failure>"] status text is used. *)
 
 val suppress_observability : ('a, 'err) Effect.t -> ('a, 'err) Effect.t
-(** Run the wrapped eff without emitting tracer, logger, or meter events
+(** Run the wrapped effect without emitting tracer, logger, or meter events
     from inside the subtree.
 
     This is intended for observability exporters and other observer backends
@@ -66,7 +66,7 @@ val annotate : key:string -> value:string -> ('a, 'err) Effect.t -> ('a, 'err) E
 (** Attach a string attribute to the active span. If no span is active, the
     attribute is buffered and attached to the next span opened by the same
     fiber. The same annotation is also included in defect diagnostics produced
-    by the wrapped eff. *)
+    by the wrapped effect. *)
 
 val annotate_all : (string * string) list -> ('a, 'err) Effect.t -> ('a, 'err) Effect.t
 (** Attach several span attributes with the same semantics as {!annotate}. The
@@ -95,7 +95,7 @@ val with_result_attrs :
   err_attrs:('err -> (string * string) list) ->
   ('a, 'err) Effect.t ->
   ('a, 'err) Effect.t
-(** Attach attributes derived from the eff outcome to the active span and
+(** Attach attributes derived from the effect outcome to the active span and
     preserve the original result.
 
     [ok_attrs] is evaluated after success. [err_attrs] is evaluated for every
@@ -106,7 +106,7 @@ val with_result_attrs :
     suppressed finalizer defect.
 
     The attributes are recorded only when a span is active at the point the
-    wrapped eff settles. Put this combinator inside {!named} or {!fn} when
+    wrapped effect settles. Put this combinator inside {!named} or {!fn} when
     the attributes should land on that span:
 
     {[
@@ -257,7 +257,7 @@ val metric_update :
   kind:Capabilities.metric_kind ->
   Capabilities.metric_value ->
   (unit, 'err) Effect.t
-(** Records a runtime metric observation, not part of the eff's success value
+(** Records a runtime metric observation, not part of the effect's success value
     or typed error channel. Numeric instruments use [Number _]; frequency uses
     [Category _]. Runtimes without a meter may ignore it. Prefer the typed
     helpers below for ordinary instrumentation. *)

@@ -340,9 +340,9 @@ let finish_delivery delivery =
 
 let deliver delivery events =
   let open Eta.Syntax in
-  let effect =
+  let run =
     let* () = delivery.cleanup.run_pending_cleanup () in
     let* () = delivery.run_events events in
     delivery.mark_complete ()
   in
-  Eta.Effect.on_exit (fun _ -> finish_delivery delivery) effect
+  Eta.Effect.on_exit (fun _ -> finish_delivery delivery) run

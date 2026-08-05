@@ -17,8 +17,8 @@ end
 let register_cleanup cleanup =
   cleanup_actions := cleanup :: !cleanup_actions
 
-let run_ok runtime effect =
-  Eta.Runtime.run runtime effect
+let run_ok runtime eff =
+  Eta.Runtime.run runtime eff
   |> Eta_test.Expect.expect_ok
 
 let send runtime endpoint action =

@@ -204,9 +204,9 @@ let owned_context_local =
   Eta.Runtime_contract.create_local
     ~inheritance:Eta.Runtime_contract.Inherit ()
 
-let with_owned_context root scope effect =
+let with_owned_context root scope eff =
   Eta.Spi.Expert.with_local owned_context_local
-    ({ root; scope } : owned_context) effect
+    ({ root; scope } : owned_context) eff
 
 let current_owned_context () =
   Eta.Spi.Expert.current_local owned_context_local
@@ -536,11 +536,11 @@ module State_machine = struct
       let self =
         ({ Endpoint.core = endpoint; encode = Obj.repr } : action Endpoint.t)
       in
-      let model, effect =
+      let model, eff =
         apply_action ~self ~input:(Obj.obj input) ~model:(Obj.obj model)
           ~action:(Obj.obj action)
       in
-      (Obj.repr model, effect)
+      (Obj.repr model, eff)
     in
     let diagnostics =
       Option.map
@@ -568,7 +568,7 @@ module State_machine = struct
         active = false;
         dispatch =
           (fun staging action ->
-            let model, effect =
+            let model, eff =
               try
                 cell.apply endpoint ~input:cell.current_input
                   ~model:cell.current_model ~action
@@ -629,7 +629,7 @@ module State_machine = struct
                   | None -> endpoint.scope);
                 origin = Failure.Owned_work;
                 trigger = Failure.Transition_effect;
-                payload = Program effect;
+                payload = Program eff;
               }
               :: staging.works);
       }
@@ -682,7 +682,7 @@ let lifecycle effect_description =
   let staged = ref None in
   pack_signal
     (S.map
-       (fun (effect, (contribution : contribution)) ->
+       (fun (eff, (contribution : contribution)) ->
          let work =
            match !staged with
            | Some work -> work
@@ -692,7 +692,7 @@ let lifecycle effect_description =
                    scope = ctx.ctx_scope;
                    origin = Failure.Owned_work;
                    trigger = Failure.Lifecycle_program;
-                   payload = Program effect;
+                   payload = Program eff;
                  }
                in
                staged := Some work;

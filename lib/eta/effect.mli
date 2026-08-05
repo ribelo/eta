@@ -14,7 +14,7 @@
     concrete handles into functions that construct effects. Eta does not own a
     ZIO-style environment or layer graph.
 
-    This signature is intentionally a facade over Eta's eff algebra and
+    This signature is intentionally a facade over Eta's effect algebra and
     structured concurrency. Keep
     implementation-only representation details out of this file:
     if a helper is needed only by Runtime or private modules, put it behind a
@@ -55,7 +55,7 @@ val flatten_result : (('a, 'err) result, 'err) t -> ('a, 'err) t
     succeeds with a [result]. *)
 
 val sync : (unit -> 'a) -> ('a, 'err) t
-(** [sync f] lifts an OCaml function into an eff. The optional
+(** [sync f] lifts an OCaml function into an effect. The optional
     [eta_observability] package provides named tracing spans.
 
     Ordinary OCaml exceptions raised by [f] are unchecked defects and surface
@@ -127,8 +127,8 @@ val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
 
     For total pure functions, [map] obeys identity and composition under Eta's
     observable exit and event behavior:
-    [map Fun.id eff = eff], and
-    [map f (map g eff) = map (fun value -> f (g value)) eff]. *)
+    [map Fun.id effect = effect], and
+    [map f (map g effect) = map (fun value -> f (g value)) effect]. *)
 
 val bind : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
 (** Primitive dependent sequencing.
@@ -140,8 +140,8 @@ val bind : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
 
     For total continuations, [pure] and [bind] obey left identity, right
     identity, and associativity under Eta's observable exit and event behavior:
-    [bind f (pure value) = f value], [bind pure eff = eff], and
-    [bind g (bind f eff) = bind (fun value -> bind g (f value)) eff]. *)
+    [bind f (pure value) = f value], [bind pure effect = effect], and
+    [bind g (bind f effect) = bind (fun value -> bind g (f value)) effect]. *)
 
 val ( >>= ) : ('a, 'err) t -> ('a -> ('b, 'err) t) -> ('b, 'err) t
 (** Infix spelling of {!bind}. It is kept for advanced/library code; examples
@@ -187,7 +187,7 @@ val par : ('a, 'err) t -> ('b, 'err) t -> ('a * 'b, 'err) t
     Fail-fast: the first child failure cancels the sibling and the
     cause propagates upward.
 
-    This is eff concurrency on the current runtime substrate, not CPU
+    This is effect concurrency on the current runtime substrate, not CPU
     parallelism. Use the optional [eta_par] package for worker-domain offload
     or explicit fork-join parallel algorithms. *)
 
@@ -265,7 +265,7 @@ val acquire_all_par :
     interruption. Release failures use the existing finalizer cause semantics. *)
 
 val uninterruptible : ('a, 'err) t -> ('a, 'err) t
-(** Defer parent cancellation while running the wrapped eff.
+(** Defer parent cancellation while running the wrapped effect.
 
     This maps to backend cancellation protection. It does not turn
     interruption into a typed failure, and it does not catch defects. *)
@@ -274,7 +274,7 @@ val interruptible : ('a, 'err) t -> ('a, 'err) t
 (** Re-enable parent cancellation within a dynamically enclosing
     {!uninterruptible}. Masks stack: the innermost mask wins, and outside a mask
     this is identity. Pending interruption is delivered at entry, at successful
-    exit, or by a cancellation checkpoint in the wrapped eff, at most once.
+    exit, or by a cancellation checkpoint in the wrapped effect, at most once.
     Restoration listens to both the mask-entry parent and the entry-time current
     cancellation context. When they compete, the reason from the first
     cancellation call executed wins.
@@ -286,12 +286,12 @@ val bind_error :
   ('err1 -> ('a, 'err2) t) -> ('a, 'err1) t -> ('a, 'err2) t
 (** Bind over the typed error channel (data-last, pipeline-friendly).
 
-    [bind_error handler eff] does not handle unchecked defects, interruption, or
+    [bind_error handler effect] does not handle unchecked defects, interruption, or
     cleanup/finalizer failures. One recovery decision is made from the cause:
     the handler is not run per [Fail] leaf.
 
     If any uncatchable defect, interruption, or finalizer diagnostic remains,
-    the handler is not invoked and the eff stays failed with those diagnostics.
+    the handler is not invoked and the effect stays failed with those diagnostics.
     If only typed failures remain, the handler runs once with the first typed
     failure in cause order. Use [all_settled] when every branch outcome matters.
 
@@ -302,7 +302,7 @@ val catch_some :
   ('err -> ('a, 'err) t option) -> ('a, 'err) t -> ('a, 'err) t
 (** Selectively handle a typed failure without changing the error row.
 
-    [catch_some handler eff] has the same catchability boundary as
+    [catch_some handler effect] has the same catchability boundary as
     {!bind_error}: only failed exits whose cause tree contains recoverable
     typed failures and no defects, interruption, or finalizer diagnostics.
 
@@ -314,20 +314,20 @@ val fold :
   ok:('a -> 'b) -> error:('err -> 'b) -> ('a, 'err) t -> ('b, 'outer) t
 (** Pure both-channel fold; mirrors [Result.fold].
 
-    [fold ~ok ~error eff] maps success with [ok] and catchable typed failure
+    [fold ~ok ~error effect] maps success with [ok] and catchable typed failure
     with [error], succeeding with the pure result. Defects, interruption, and
     finalizer diagnostics are not folded. If [ok] or [error] raises, the
     exception is an unchecked defect.
 
     For total pure functions it is coherent with [map] and [bind_error]:
-    [fold ~ok ~error eff =
-     bind_error (fun err -> pure (error err)) (map ok eff)]. *)
+    [fold ~ok ~error effect =
+     bind_error (fun err -> pure (error err)) (map ok effect)]. *)
 
 val or_else : (unit -> ('a, 'err2) t) -> ('a, 'err1) t -> ('a, 'err2) t
 (** Recover from any typed failure with a lazy fallback effect.
 
-    [or_else fallback eff] is shorthand for
-    [bind_error (fun _ -> fallback ()) eff]. Successful values pass through
+    [or_else fallback effect] is shorthand for
+    [bind_error (fun _ -> fallback ()) effect]. Successful values pass through
     without evaluating [fallback]. The fallback runs only for catchable typed
     failures. Defects, interruption, and finalizer diagnostics are not handled,
     matching {!bind_error}. *)
@@ -335,38 +335,38 @@ val or_else : (unit -> ('a, 'err2) t) -> ('a, 'err1) t -> ('a, 'err2) t
 val when_ : bool -> ('a, 'err) t -> ('a option, 'err) t
 (** Conditionally run an effect.
 
-    [when_ condition eff] runs [eff] when [condition] is [true] and maps its
-    success to [Some value]. When [condition] is [false], [eff] is not
+    [when_ condition effect] runs [effect] when [condition] is [true] and maps its
+    success to [Some value]. When [condition] is [false], [effect] is not
     evaluated and the result is [None]. Typed failures, defects,
-    interruption, and finalizer diagnostics from [eff] propagate normally when
+    interruption, and finalizer diagnostics from [effect] propagate normally when
     the effect runs. *)
 
 val unless : bool -> ('a, 'err) t -> ('a option, 'err) t
 (** Conditionally run an effect when a condition is false.
 
-    [unless condition eff] is [when_ (not condition) eff]. *)
+    [unless condition effect] is [when_ (not condition) effect]. *)
 
 val when_effect : (bool, 'err) t -> ('a, 'err) t -> ('a option, 'err) t
 (** Conditionally run an effect after evaluating an effectful predicate.
 
-    [when_effect condition eff] evaluates [condition] first. If it succeeds
-    with [true], [eff] runs and its success is returned as [Some value]. If it
-    succeeds with [false], [eff] is not evaluated and the result is [None].
+    [when_effect condition effect] evaluates [condition] first. If it succeeds
+    with [true], [effect] runs and its success is returned as [Some value]. If it
+    succeeds with [false], [effect] is not evaluated and the result is [None].
     Predicate failures and diagnostics fail normally; source failures and
-    diagnostics fail normally when [eff] runs. *)
+    diagnostics fail normally when [effect] runs. *)
 
 val unless_effect : (bool, 'err) t -> ('a, 'err) t -> ('a option, 'err) t
 (** Conditionally run an effect after an effectful predicate succeeds with
     [false].
 
-    [unless_effect condition eff] evaluates [condition] first, then behaves as
+    [unless_effect condition effect] evaluates [condition] first, then behaves as
     {!unless}. Predicate failures and diagnostics fail normally. *)
 
 val filter_or_fail :
   ('a -> bool) -> if_false:('a -> 'err) -> ('a, 'err) t -> ('a, 'err) t
 (** Assert a predicate on a successful value.
 
-    [filter_or_fail predicate ~if_false eff] preserves [eff]'s success value
+    [filter_or_fail predicate ~if_false effect] preserves [effect]'s success value
     when [predicate value] is [true]. When [predicate value] is [false], it
     fails with [if_false value] in Eta's typed error channel. Source typed
     failures, defects, interruption, and finalizer diagnostics propagate
@@ -376,14 +376,14 @@ val filter_or_fail :
 val discard : ('a, 'err) t -> (unit, 'err) t
 (** Discard a successful value; every cause propagates unchanged.
 
-    [discard eff] is [map (fun _ -> ()) eff]. Typed failures, defects,
+    [discard effect] is [map (fun _ -> ()) effect]. Typed failures, defects,
     interruption, and finalizer diagnostics are not recovered. Prefer this
     when only the success payload is unwanted. *)
 
 val ignore_errors : ('a, 'err1) t -> (unit, 'err2) t
 (** Discard a successful value and suppress typed failures.
 
-    [ignore_errors eff] succeeds with [()] when [eff] succeeds or fails only
+    [ignore_errors effect] succeeds with [()] when [effect] succeeds or fails only
     with typed failures. Defects, interruption, and finalizer diagnostics
     remain visible. Use it for best-effort cleanup, refresh, or notification
     effects; use {!discard} when typed failures must still fail the workflow. *)
@@ -391,8 +391,8 @@ val ignore_errors : ('a, 'err1) t -> (unit, 'err2) t
 val to_result : ('a, 'err1) t -> (('a, 'err1) result, 'err2) t
 (** Materialize the typed failure channel into an ordinary OCaml [result].
 
-    [to_result eff] succeeds with [Ok value] when [eff] succeeds and with
-    [Error err] when [eff] fails with a typed failure. Defects, interruption,
+    [to_result effect] succeeds with [Ok value] when [effect] succeeds and with
+    [Error err] when [effect] fails with a typed failure. Defects, interruption,
     and finalizer diagnostics are not captured; they remain failed Eta causes.
     Use this when a workflow should keep going and handle success/failure as
     data without leaving Eta's runtime boundary. *)
@@ -407,8 +407,8 @@ val to_option : ('a, 'err1) t -> ('a option, 'err2) t
 val to_exit : ('a, 'err1) t -> (('a, 'err1) Exit.t, 'err2) t
 (** Materialize the full Eta exit as a success value.
 
-    [to_exit eff] succeeds with [Exit.Ok value] when [eff] succeeds and with
-    [Exit.Error cause] when [eff] fails with a typed failure, defect,
+    [to_exit effect] succeeds with [Exit.Ok value] when [effect] succeeds and with
+    [Exit.Error cause] when [effect] fails with a typed failure, defect,
     interruption, or finalizer diagnostic. *)
 
 val map_error : ('err1 -> 'err2) -> ('a, 'err1) t -> ('a, 'err2) t
@@ -422,7 +422,7 @@ val map_error : ('err1 -> 'err2) -> ('a, 'err1) t -> ('a, 'err2) t
 val or_die : ('err -> exn) -> ('a, 'err) t -> ('a, 'outer) t
 (** Convert typed failures into unchecked defects.
 
-    [or_die to_exn eff] preserves successful values. On failure, every
+    [or_die to_exn effect] preserves successful values. On failure, every
     [Cause.Fail err] in the primary cause tree becomes a [Cause.Die] built from
     [to_exn err]. [Sequential] and [Concurrent] structure is preserved.
     Existing defects, interruption, and finalizer diagnostics are preserved.
@@ -524,7 +524,7 @@ val delay : Duration.t -> ('a, 'err) t -> ('a, 'err) t
 val timed : ('a, 'err) t -> (Duration.t * 'a, 'err) t
 (** Measure an effect with the active monotonic runtime clock.
 
-    On success, [timed eff] returns [(elapsed, value)]. Typed failures,
+    On success, [timed effect] returns [(elapsed, value)]. Typed failures,
     defects, interruption, and finalizer diagnostics are preserved as the
     original failed outcome. *)
 
@@ -550,22 +550,22 @@ val repeat :
 val forever : ('a, 'err) t -> ('b, 'err) t
 (** Repeat an effect forever, discarding every successful value.
 
-    [forever eff] runs [eff], discards a successful value, and immediately
+    [forever effect] runs [effect], discards a successful value, and immediately
     repeats after every success. The returned effect never succeeds. A typed
-    failure, defect, interruption, or finalizer diagnostic from [eff] stops the
+    failure, defect, interruption, or finalizer diagnostic from [effect] stops the
     loop and propagates normally. *)
 
 val finally : (unit, 'cleanup_err) t -> ('a, 'err) t -> ('a, 'err) t
-(** [finally cleanup eff] runs [cleanup] after [eff] settles, on success,
+(** [finally cleanup effect] runs [cleanup] after [effect] settles, on success,
     typed failure, unchecked defect, or cancellation.
 
-    [cleanup] runs in a cancellation-protected cleanup frame. If [eff]
+    [cleanup] runs in a cancellation-protected cleanup frame. If [effect]
     succeeds but [cleanup] fails, the cleanup failure is reported as
     [Cause.Finalizer]. If both fail, the cleanup failure is reported as a
     suppressed finalizer failure under the primary cause, matching
     {!acquire_release} finalizer reporting.
 
-    This is for one-shot cleanup around an eff. Use {!with_resource} for
+    This is for one-shot cleanup around an effect. Use {!with_resource} for
     body-bounded resource lifetimes, or {!acquire_release} and {!with_scope} when
     the resource should live until an enclosing runtime or scope boundary. *)
 
@@ -573,7 +573,7 @@ val on_exit :
   (('a, 'err) Exit.t -> (unit, 'cleanup_err) t) ->
   ('a, 'err) t ->
   ('a, 'err) t
-(** [on_exit cleanup eff] runs [cleanup] with the full exit of [eff].
+(** [on_exit cleanup effect] runs [cleanup] with the full exit of [effect].
 
     On success, [cleanup] receives [Exit.Ok value]. On typed failure,
     unchecked defect, or interruption, it receives [Exit.Error cause].
@@ -585,7 +585,7 @@ val on_error :
   ('err Cause.t -> (unit, 'cleanup_err) t) ->
   ('a, 'err) t ->
   ('a, 'err) t
-(** [on_error cleanup eff] runs [cleanup cause] only when [eff] exits with an
+(** [on_error cleanup effect] runs [cleanup cause] only when [effect] exits with an
     error cause that is not interruption-only.
 
     This includes typed failures, unchecked defects, composite failures, and
@@ -596,7 +596,7 @@ val on_interrupt :
   (Cause.interrupt_id option -> (unit, 'cleanup_err) t) ->
   ('a, 'err) t ->
   ('a, 'err) t
-(** [on_interrupt cleanup eff] runs [cleanup interrupt_id] only when [eff] exits
+(** [on_interrupt cleanup effect] runs [cleanup interrupt_id] only when [effect] exits
     with an interruption-only cause.
 
     If the interruption cause is composite, [interrupt_id] is the first
@@ -608,7 +608,7 @@ val acquire_release :
   release:('a -> (unit, 'release_err) t) ->
   ('a, 'err) t
 (** Acquire a resource and register [release] to run when the current runtime
-    boundary, scope, supervisor scope, or daemon body exits. The release eff
+    boundary, scope, supervisor scope, or daemon body exits. The release effect
     runs on success and on typed failure; release failures are reported as
     [Cause.Finalizer] after a successful body or suppressed onto the primary
     failure after a failed body.

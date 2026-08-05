@@ -53,7 +53,10 @@
   eta_test_backend_eio
   base64
   qcheck
-  qcheck-core.runner))
+  qcheck-core.runner)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))
 
 (test
  (name test_speech_laws)

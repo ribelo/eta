@@ -3,11 +3,11 @@ module Int_map = Map.Make (Int)
 
 let shared_runtime : Crux.never Eta.Runtime.t option ref = ref None
 
-let run_ok effect =
+let run_ok eff =
   match !shared_runtime with
   | None -> failwith "law runtime is not installed"
   | Some runtime ->
-      Eta.Runtime.run runtime effect |> Eta_test.Expect.expect_ok
+      Eta.Runtime.run runtime eff |> Eta_test.Expect.expect_ok
 
 let committed = function
   | Ok (Crux.Root.Committed { output; post_commit }) ->
@@ -2906,7 +2906,7 @@ let observe_controlled_effects inputs =
       inputs
       |> List.map (fun input ->
              Eta.Spi.daemon
-               (Eta_test.Controlled.effect controlled input
+               (Eta_test.Controlled.eff controlled input
                |> Eta.Effect.ignore_errors))
       |> Eta.Effect.concat
     in
@@ -2947,7 +2947,7 @@ let observe_controlled_effects inputs =
   let fifo_and_one_shot = run_ok observation in
   let cancellation =
     let loser =
-      Eta_test.Controlled.effect controlled max_int
+      Eta_test.Controlled.eff controlled max_int
       |> Eta.Effect.or_die (fun error -> Failure error)
       |> Eta.Effect.map (fun () -> `Unexpected)
     in

@@ -1,11 +1,11 @@
 module Crux = Eta_crux
 
-let run_ok effect =
-  let outcome = Eta_test.Run.run effect in
+let run_ok eff =
+  let outcome = Eta_test.Run.run eff in
   Eta_test.Expect.expect_ok outcome.exit
 
-let run_runtime_ok runtime effect =
-  Eta.Runtime.run runtime effect |> Eta_test.Expect.expect_ok
+let run_runtime_ok runtime eff =
+  Eta.Runtime.run runtime eff |> Eta_test.Expect.expect_ok
 
 let committed = function
   | Ok (Crux.Root.Committed committed) ->

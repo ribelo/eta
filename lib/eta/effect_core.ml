@@ -129,9 +129,9 @@ let combine_stripped combine causes =
   | causes -> Some (combine causes)
 
 let rec stripped_uncatchable : type err mapped. err Cause.t -> mapped Cause.t option =
-  (* ZIO [catchAll]/[foldZIO] and eff-ts [catch]/[findError] select one
+  (* ZIO [catchAll]/[foldZIO] and effect-ts [catch]/[findError] select one
      recoverable [Fail]; they do not traverse a composite cause running one
-     recovery eff per leaf. Eta keeps the additional local invariant that
+     recovery effect per leaf. Eta keeps the additional local invariant that
      defects, interruption, and finalizer diagnostics are not caught. If any of
      those uncatchable leaves remain, return them without invoking the handler:
      handler side effects must not run when the operation is still going to
