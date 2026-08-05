@@ -7,6 +7,11 @@ type ('a, 'err) state =
   | Pending of ('a, 'err) waiter list
   | Settled of ('a, 'err) Exit.t
 
+type ('a, 'err) await_outcome =
+  | Await_settled of ('a, 'err) Exit.t
+  | Await_pending of
+      ('a, 'err) Exit.t Runtime_contract.promise * ('a, 'err) waiter
+
 type ('a, 'err) t = {
   lock : Sync_lock.t;
   mutable state : ('a, 'err) state;
@@ -26,19 +31,19 @@ let remove_waiter t waiter =
 let await t =
   Effect_erasure.public_runtime ~leaf_name:"Promise.await" t
   @@ fun contract t ->
-  let #(backend_promise, resolver) =
-      contract.Runtime_contract.create_promise () in
-  let waiter = { contract; resolver } in
   match
     with_lock t @@ fun () ->
     match t.state with
-    | Settled exit -> `Settled exit
+    | Settled exit -> Await_settled exit
     | Pending waiters ->
+        let #(backend_promise, resolver) =
+            contract.Runtime_contract.create_promise () in
+        let waiter = { contract; resolver } in
         t.state <- Pending (waiter :: waiters);
-        `Await
+        Await_pending (backend_promise, waiter)
   with
-  | `Settled exit -> exit
-  | `Await -> (
+  | Await_settled exit -> exit
+  | Await_pending (backend_promise, waiter) -> (
       try contract.Runtime_contract.await_promise backend_promise with exn ->
         match contract.Runtime_contract.cancellation_reason exn with
         | Some _ -> (
