@@ -89,6 +89,11 @@ type stats = {
 type ('a, 'err) poll_result =
   [ `Item of 'a | `Empty | `Closed | `Closed_with_error of 'err ]
 
+type ('a, 'err) blocking_take_result =
+  | Take_item of 'a
+  | Take_closed
+  | Take_closed_with_error of 'err
+
 let validate_strategy constructor = function
   | Unbounded -> ()
   | Dropping { capacity } | Sliding { capacity } | Backpressure { capacity } ->
@@ -561,11 +566,13 @@ let send t value =
        | true -> Effect.unit
        | false -> Effect.fail `Dropped)
 
-let take_value wakeups t =
+let take_value_raw wakeups t =
   let value = Stdlib.Queue.take t.values in
   t.received <- saturating_succ t.received;
   admit_waiting_senders_locked wakeups t;
-  `Item value
+  value
+
+let take_value wakeups t = `Item (take_value_raw wakeups t)
 
 let poll_sync t =
   with_committed_wakeups_sync t @@ fun wakeups ->
@@ -689,12 +696,14 @@ let take_sync contract t =
   let rec loop () =
     match
       with_committed_wakeups_sync t @@ fun wakeups ->
-        if t.shutdown then Locked_ready `Closed
+        if t.shutdown then Locked_ready Take_closed
         else if not (Stdlib.Queue.is_empty t.values) then
-          Locked_ready (take_value wakeups t)
+          Locked_ready (Take_item (take_value_raw wakeups t))
         else
           match t.closed with
-          | Some reason -> Locked_ready (close_result reason)
+          | Some Clean -> Locked_ready Take_closed
+          | Some (Error error) ->
+              Locked_ready (Take_closed_with_error error)
           | None ->
               let promise, receiver = enqueue_receiver contract t in
               Locked_wait (promise, receiver)
@@ -704,13 +713,13 @@ let take_sync contract t =
         try
           contract.Runtime_contract.await_promise promise;
           match take_receiver_reservation receiver with
-          | Some value -> `Item value
+          | Some value -> Take_item value
           | None -> loop ()
         with exn
           when Option.is_some
                  (contract.Runtime_contract.cancellation_reason exn) ->
           match take_receiver_reservation receiver with
-          | Some value -> `Item value
+          | Some value -> Take_item value
           | None ->
               with_lock_during_cancel contract t (fun () ->
                   cancel_receiver t receiver);
@@ -721,10 +730,9 @@ let take_sync contract t =
 let take t =
   Effect_erasure.public_sync ~leaf_name:"Queue.take" t take_sync
   |> Effect.bind (function
-       | `Item value -> Effect.pure value
-       | `Empty -> invariant_failed "blocking take returned Empty"
-       | `Closed -> Effect.fail `Closed
-       | `Closed_with_error error -> Effect.fail (`Closed_with_error error))
+       | Take_item value -> Effect.pure value
+       | Take_closed -> Effect.fail `Closed
+       | Take_closed_with_error error -> Effect.fail (`Closed_with_error error))
 
 let close_with reason t =
   with_committed_wakeups_sync_global t
