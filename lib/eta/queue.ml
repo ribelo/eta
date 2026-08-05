@@ -67,6 +67,10 @@ type ('a, 'err) wakeup =
   | Wake_receiver of 'a receiver
   | Wake_shutdown of shutdown_waiter
 
+type ('result, 'signal, 'waiter) locked_outcome =
+  | Locked_ready of 'result
+  | Locked_wait of 'signal Runtime_contract.promise * 'waiter
+
 type stats = {
   capacity : int option;
   depth : int;
@@ -496,11 +500,11 @@ let offer_sync contract t value =
       match offer_locked wakeups t value with
       | `Full ->
           let promise, sender = enqueue_sender contract t value in
-          `Wait (promise, sender)
-      | result -> `Ready result
+          Locked_wait (promise, sender)
+      | result -> Locked_ready result
   with
-  | `Ready result -> result
-  | `Wait (promise, sender) -> (
+  | Locked_ready result -> result
+  | Locked_wait (promise, sender) -> (
       try contract.Runtime_contract.await_promise promise
       with exn
         when Option.is_some
@@ -664,13 +668,13 @@ let enqueue_shutdown_waiter contract t =
 let await_shutdown_sync contract t =
   match
     with_committed_wakeups_sync t @@ fun _wakeups ->
-      if t.shutdown then `Ready
+      if t.shutdown then Locked_ready ()
       else
         let promise, waiter = enqueue_shutdown_waiter contract t in
-        `Wait (promise, waiter)
+        Locked_wait (promise, waiter)
   with
-  | `Ready -> ()
-  | `Wait (promise, waiter) -> (
+  | Locked_ready () -> ()
+  | Locked_wait (promise, waiter) -> (
       try contract.Runtime_contract.await_promise promise
       with exn
         when Option.is_some
@@ -685,18 +689,18 @@ let take_sync contract t =
   let rec loop () =
     match
       with_committed_wakeups_sync t @@ fun wakeups ->
-        if t.shutdown then `Ready `Closed
+        if t.shutdown then Locked_ready `Closed
         else if not (Stdlib.Queue.is_empty t.values) then
-          `Ready (take_value wakeups t)
+          Locked_ready (take_value wakeups t)
         else
           match t.closed with
-          | Some reason -> `Ready (close_result reason)
+          | Some reason -> Locked_ready (close_result reason)
           | None ->
               let promise, receiver = enqueue_receiver contract t in
-              `Wait (promise, receiver)
+              Locked_wait (promise, receiver)
     with
-    | `Ready result -> result
-    | `Wait (promise, receiver) -> (
+    | Locked_ready result -> result
+    | Locked_wait (promise, receiver) -> (
         try
           contract.Runtime_contract.await_promise promise;
           match take_receiver_reservation receiver with
