@@ -3443,6 +3443,20 @@ module Make (Observer_error : Observer_error) () = struct
         Signal_snapshot.with_dependency_versions snapshot
           (dependency_versions lane dependencies))
 
+  let single_dependency_changed signal child =
+    match
+      Signal_snapshot.dependency_versions (signal_current_snapshot signal)
+    with
+    | [ (id, version) ] ->
+        signal_id_int id <> signal_id_int child.id
+        || not (Int.equal version (effective_signal_version child))
+    | [] | _ :: _ :: _ -> true
+
+  let stage_single_dependency_version lane staging signal child =
+    update_signal_staging lane staging signal (fun snapshot ->
+        Signal_snapshot.with_dependency_versions snapshot
+          [ (child.id, effective_signal_version child) ])
+
   let effective_signal_value signal =
     match Signal_snapshot.value (signal_effective_snapshot signal) with
     | Some value -> value
@@ -4580,14 +4594,13 @@ module Make (Observer_error : Observer_error) () = struct
    fun lane staging signal child f ->
     let child_value, child_changed = compute lane staging child in
     let snapshot = signal_effective_snapshot signal in
-    let dependencies = [ P child ] in
     if
       signal.dirty
       || not (Signal_snapshot.is_initialized snapshot)
       || child_changed
-      || dependencies_changed lane signal dependencies
+      || single_dependency_changed signal child
     then (
-      stage_dependency_versions lane staging signal dependencies;
+      stage_single_dependency_version lane staging signal child;
       Graph.bump_counter graph lane Graph.Recompute_count;
       Scheduler.note_cutoff_call scheduler_counters;
       let value = f child_value in
