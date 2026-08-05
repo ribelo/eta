@@ -52,6 +52,11 @@ type ('a, 'err) unbounded_publish_outcome =
   | Publish_ready of 'err publish_out
   | Publish_wake of 'err publish_out * ('a, 'err) wakeup list
 
+type ('a, 'err) blocking_publish_outcome =
+  | Blocking_ready of 'err publish_out
+  | Blocking_wait of
+      'err publish_out Runtime_contract.promise * ('a, 'err) publisher
+
 type ('a, 'err) entry = {
   seq : int;
   value : 'a;
@@ -287,24 +292,25 @@ let publish_sync_slow contract t value =
   match
     with_lock t @@ fun () ->
     match t.closed with
-    | Some reason -> `Ready (close_result reason)
+    | Some reason -> Blocking_ready (close_result reason)
     | None -> (
         let subscriber_count = active_subscriber_count t in
         match t.overflow with
         | Drop_new _ when subscriber_count > 0 && not (capacity_available t) ->
             t.dropped <- t.dropped + subscriber_count;
-            `Ready (`Published { subscriber_count; dropped = subscriber_count })
+            Blocking_ready
+              (`Published { subscriber_count; dropped = subscriber_count })
         | Backpressure _ when subscriber_count > 0 && not (capacity_available t)
           ->
             let promise, publisher = enqueue_publisher contract t value in
-            `Wait (promise, publisher)
+            Blocking_wait (promise, publisher)
         | Unbounded | Drop_new _ | Backpressure _ ->
-            `Ready (`Published (admit_value_locked wakeups t value)))
+            Blocking_ready (`Published (admit_value_locked wakeups t value)))
   with
-  | `Ready result ->
+  | Blocking_ready result ->
       resolve_wakeups !wakeups;
       result
-  | `Wait (promise, publisher) -> (
+  | Blocking_wait (promise, publisher) -> (
       try contract.Runtime_contract.await_promise promise
       with exn when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
         let cancel_wakeups = ref [] in
