@@ -53,7 +53,7 @@ let signal_dynamic iterations =
   let left = Signal.Var.create 0 in
   let right = Signal.Var.create 0 in
   let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+    Signal.bind (Signal.Var.watch choose_left) ~f:(fun use_left ->
         if use_left then Signal.Var.watch left else Signal.Var.watch right)
     |> Signal.map (fun n -> n + 1)
   in

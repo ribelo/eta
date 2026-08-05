@@ -188,7 +188,7 @@ let run_trace stdenv ops =
       (Signal.Var.watch source_b)
   in
   let selected =
-    Signal.bind (Signal.Var.watch choose_a) (fun use_a ->
+    Signal.bind (Signal.Var.watch choose_a) ~f:(fun use_a ->
         if use_a then Signal.Var.watch source_a else Signal.Var.watch source_b)
   in
   let output =

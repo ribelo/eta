@@ -894,7 +894,7 @@ let test_diagnostic_dot_options_expose_public_metadata () =
   let timer = run_ok runtime (S.Time.interval (Eta.Duration.ms 50)) in
   let branch = S.Var.create true in
   let scoped =
-    S.bind (S.Var.watch branch) (fun enabled ->
+    S.bind (S.Var.watch branch) ~f:(fun enabled ->
         if enabled then S.const 1 else S.const 0)
   in
   let observer =
@@ -957,7 +957,7 @@ let test_invalidated_branch_diagnostics_are_retained () =
   let choose_left = S.Var.create true in
   let captured_left = ref None in
   let selected =
-    S.bind (S.Var.watch choose_left) (fun use_left ->
+    S.bind (S.Var.watch choose_left) ~f:(fun use_left ->
         if use_left then
           let signal = S.const 10 |> S.map (fun value -> value + 1) in
           captured_left := Some signal;
@@ -1037,8 +1037,8 @@ let test_diagnostics_stay_read_only_after_nested_bind_replacement () =
   let right = S.Var.create 100 in
   let captured_left = ref None in
   let selected =
-    S.bind (S.Var.watch choose_left) (fun use_left ->
-        S.bind (S.Var.watch offset) (fun offset ->
+    S.bind (S.Var.watch choose_left) ~f:(fun use_left ->
+        S.bind (S.Var.watch offset) ~f:(fun offset ->
             let signal =
               if use_left then S.Var.watch left |> S.map (( + ) offset)
               else S.Var.watch right |> S.map (( + ) offset)
@@ -1107,7 +1107,7 @@ let test_invalid_observer_diagnostics_survive_tombstone_eviction () =
   let selector = S.Var.create 0 in
   let first_branch = ref None in
   let selected =
-    S.bind (S.Var.watch selector) (fun index ->
+    S.bind (S.Var.watch selector) ~f:(fun index ->
         let signal = S.const index |> S.map (fun value -> value) in
         if index = 0 then first_branch := Some signal;
         signal)
@@ -1487,7 +1487,7 @@ let test_bind_self_cycle_is_typed_failure () =
   let trigger = S.Var.create () in
   let holder = ref None in
   let cyclic =
-    S.bind (S.Var.watch trigger) (fun () ->
+    S.bind (S.Var.watch trigger) ~f:(fun () ->
         match !holder with
         | Some signal -> signal
         | None -> Alcotest.fail "cycle holder was not initialized")
@@ -2219,7 +2219,7 @@ let test_stream_invalid_scope_closes_queue_with_invalid_scope () =
   let branch_source = S.Var.create 0 in
   let captured = ref None in
   let selected =
-    S.bind (S.Var.watch use_branch) (fun active ->
+    S.bind (S.Var.watch use_branch) ~f:(fun active ->
         if active then (
           let branch = S.Var.watch branch_source in
           captured := Some branch;

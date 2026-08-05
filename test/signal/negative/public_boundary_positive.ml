@@ -16,7 +16,7 @@ let _map9 =
     a_signal
 
 let _bind =
-  A.bind (A.const true) (fun active ->
+  A.bind (A.const true) ~f:(fun active ->
       if active then A.const 1 else A.const 0)
 
 let _observe =

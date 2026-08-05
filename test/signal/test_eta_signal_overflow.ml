@@ -264,7 +264,7 @@ let test_time_timer_start_generation_overflow_is_precommit_failure () =
   let timer_signal = run_ok rt (Test_signal.Time.interval (Duration.ms 10)) in
   Test_signal.Overflow.set_timer_generation timer_signal max_int;
   let selected =
-    Test_signal.bind (Test_signal.Var.watch use_timer) (fun active ->
+    Test_signal.bind (Test_signal.Var.watch use_timer) ~f:(fun active ->
         if active then timer_signal else Test_signal.const (-1))
   in
   let observer =
@@ -286,7 +286,7 @@ let test_external_timer_stop_generation_overflow_is_precommit_failure () =
   let use_timer = Test_signal.Var.create true in
   let timer_signal = run_ok rt (Test_signal.Time.interval (Duration.ms 10)) in
   let selected =
-    Test_signal.bind (Test_signal.Var.watch use_timer) (fun active ->
+    Test_signal.bind (Test_signal.Var.watch use_timer) ~f:(fun active ->
         if active then timer_signal else Test_signal.const (-1))
   in
   let observer =

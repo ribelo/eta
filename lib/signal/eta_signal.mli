@@ -599,7 +599,8 @@ module Make (Observer_error : Observer_error) () : sig
       Raises [Graph_error] on graph construction failures; see
       {!exception:Graph_error}. *)
 
-  val bind : ?cutoff:'b Cutoff.t -> 'a signal -> ('a -> 'b signal) -> 'b signal
+  val bind :
+    ?cutoff:'b Cutoff.t -> f:('a -> 'b signal) -> 'a signal -> 'b signal
   (** Dynamically select a signal from the current value of another signal.
       Nodes created by an inactive branch are invalidated when that branch is
       replaced; observing a captured inactive-branch node fails with

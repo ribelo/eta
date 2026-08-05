@@ -205,7 +205,7 @@ let run_trace name ops =
       (Signal.Var.watch source_b)
   in
   let selected =
-    Signal.bind (Signal.Var.watch choose_a) (fun use_a ->
+    Signal.bind (Signal.Var.watch choose_a) ~f:(fun use_a ->
         if use_a then Signal.Var.watch source_a else Signal.Var.watch source_b)
   in
   let output =
@@ -609,7 +609,7 @@ let run_timer_bind_model_trace name ~seed =
     run_ok runtime (Signal.Time.interval (Eta.Duration.ms 10))
   in
   let selected =
-    Signal.bind (Signal.Var.watch timer_choice) (function
+    Signal.bind (Signal.Var.watch timer_choice) ~f:(function
       | Bind_inactive -> Signal.const (-1)
       | Bind_now -> now_timer
       | Bind_after -> after_timer
@@ -1087,7 +1087,7 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
     let bind_inner_calls = ref 0 in
     let bound =
       Signal.bind ~cutoff:(Eta_signal.Cutoff.of_equal int_list_equal)
-        (Signal.const ()) (fun () ->
+        (Signal.const ()) ~f:(fun () ->
           source_signal
           |> Signal.map (fun value ->
                  incr bind_inner_calls;
@@ -1651,8 +1651,8 @@ let test_dynamic_cycle_preserves_snapshot_matches_model () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let a_target = Signal.Var.create (Signal.const 1) in
   let b_target = Signal.Var.create (Signal.const 10) in
-  let a = Signal.bind (Signal.Var.watch a_target) (fun signal -> signal) in
-  let b = Signal.bind (Signal.Var.watch b_target) (fun signal -> signal) in
+  let a = Signal.bind (Signal.Var.watch a_target) ~f:(fun signal -> signal) in
+  let b = Signal.bind (Signal.Var.watch b_target) ~f:(fun signal -> signal) in
   let a_updates = ref [] in
   let b_updates = ref [] in
   let record updates update =
@@ -2121,7 +2121,7 @@ let run_bind_branch_demand_trace name ops =
            value)
   in
   let selected =
-    Signal.bind (Signal.Var.watch choose_a) (fun use_a ->
+    Signal.bind (Signal.Var.watch choose_a) ~f:(fun use_a ->
         if use_a then branch_signal source_a recomputes_a
         else branch_signal source_b recomputes_b)
   in
@@ -2310,14 +2310,14 @@ let run_nested_bind_trace name ops =
   let inner_choose = Signal.Var.create true in
   let external_offset = Signal.Var.create 5 in
   let external_bind =
-    Signal.bind (Signal.Var.watch external_offset) (fun offset ->
+    Signal.bind (Signal.Var.watch external_offset) ~f:(fun offset ->
         Signal.Var.watch source_a
         |> Signal.map (fun value -> value + offset))
   in
   let selected =
-    Signal.bind (Signal.Var.watch choose) (function
+    Signal.bind (Signal.Var.watch choose) ~f:(function
       | 0 ->
-          Signal.bind (Signal.Var.watch inner_choose) (fun use_a ->
+          Signal.bind (Signal.Var.watch inner_choose) ~f:(fun use_a ->
               if use_a then
                 Signal.Var.watch source_a
                 |> Signal.map (fun value -> value + 1)
@@ -2484,7 +2484,7 @@ let run_retained_branch_trace name ops =
   let choose_left = Signal.Var.create true in
   let retained_slots = ref [] in
   let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun choose_left ->
+    Signal.bind (Signal.Var.watch choose_left) ~f:(fun choose_left ->
         let side = retained_side_of_bool choose_left in
         let signal =
           match side with
@@ -3049,7 +3049,7 @@ let small_graph_signal_of_node signals = function
         signals.(left) signals.(right)
   | Small_bind_select
       { source; even_child; odd_child; even_scale; odd_scale; bias } ->
-      Signal.bind signals.(source) (fun source_value ->
+      Signal.bind signals.(source) ~f:(fun source_value ->
           if source_value mod 2 = 0 then
             Signal.map
               (fun value -> (value * even_scale) + bias)

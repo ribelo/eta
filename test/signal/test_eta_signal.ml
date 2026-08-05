@@ -573,7 +573,7 @@ let test_observer_graph_order_after_bind_switch_uses_new_inner () =
   let data = Signal.Var.create 1 in
   let upstream_ref = ref None in
   let dynamic =
-    Signal.bind (Signal.Var.watch selector) (fun use_upstream ->
+    Signal.bind (Signal.Var.watch selector) ~f:(fun use_upstream ->
         if use_upstream then
           match !upstream_ref with
           | Some upstream -> upstream
@@ -963,7 +963,7 @@ let test_observer_observe_invalidated_before_transfer_fails () =
   let use_branch = Signal.Var.create true in
   let captured = ref None in
   let selected =
-    Signal.bind (Signal.Var.watch use_branch) (fun active ->
+    Signal.bind (Signal.Var.watch use_branch) ~f:(fun active ->
         if active then (
           let branch = Signal.const 1 in
           captured := Some branch;
@@ -1024,7 +1024,7 @@ let test_bind_switches_after_unnecessary_source_change () =
   let watched = Signal.Var.watch source in
   let selector_calls = ref [] in
   let bound =
-    Signal.bind watched (fun value ->
+    Signal.bind watched ~f:(fun value ->
         selector_calls := value :: !selector_calls;
         Signal.const ("branch " ^ string_of_int value))
   in
@@ -1066,7 +1066,7 @@ let test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes () =
   let left_calls = ref 0 in
   let right_calls = ref 0 in
   let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+    Signal.bind (Signal.Var.watch choose_left) ~f:(fun use_left ->
         if use_left then
           Signal.Var.watch left
           |> Signal.map (fun value ->
@@ -1118,7 +1118,7 @@ let test_bind_rejects_reused_dynamic_scope_inner () =
   let watched = Signal.Var.watch source in
   let captured = ref None in
   let selected =
-    Signal.bind watched (fun _ ->
+    Signal.bind watched ~f:(fun _ ->
         match !captured with
         | Some stale -> stale
         | None ->
@@ -1155,7 +1155,7 @@ let test_bind_rejects_root_wrapper_over_reused_dynamic_scope_inner () =
   let captured = ref None in
   let wrapper = ref None in
   let selected =
-    Signal.bind watched (fun value ->
+    Signal.bind watched ~f:(fun value ->
         match !wrapper with
         | Some wrapped when value = 1 -> wrapped
         | _ ->
@@ -1197,7 +1197,7 @@ let test_bind_rejects_new_scope_wrapper_over_reused_dynamic_scope_inner () =
   let watched = Signal.Var.watch source in
   let captured = ref None in
   let selected =
-    Signal.bind watched (fun value ->
+    Signal.bind watched ~f:(fun value ->
         match !captured with
         | Some stale when value = 1 ->
             Signal.map (fun value -> value ^ " wrapped") stale
@@ -1235,9 +1235,9 @@ let test_bind_accepts_ancestor_dynamic_scope_inner () =
   let inner_source = Signal.Var.create 0 in
   let inner_watch = Signal.Var.watch inner_source in
   let selected =
-    Signal.bind (Signal.Var.watch outer_source) (fun _ ->
+    Signal.bind (Signal.Var.watch outer_source) ~f:(fun _ ->
         let ancestor = Signal.map (fun value -> value + 10) inner_watch in
-        Signal.bind inner_watch (fun _ -> ancestor))
+        Signal.bind inner_watch ~f:(fun _ -> ancestor))
   in
   let observer =
     run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
@@ -1261,7 +1261,7 @@ let test_nested_bind_switches_newly_reachable_inner_same_stabilization () =
   let captured_left = ref None in
   let stale_left_recomputes = ref 0 in
   let inner =
-    Signal.bind (Signal.Var.watch inner_right) (fun use_right ->
+    Signal.bind (Signal.Var.watch inner_right) ~f:(fun use_right ->
         if use_right then Signal.Var.watch right
         else
           let branch =
@@ -1292,7 +1292,7 @@ let test_nested_bind_switches_newly_reachable_inner_same_stabilization () =
   Alcotest.(check int) "inner branch observer initialized" 1 !left_callbacks;
   run_ok rt (Signal.Observer.dispose priming_observer);
   let outer =
-    Signal.bind (Signal.Var.watch outer_enabled) (fun enabled ->
+    Signal.bind (Signal.Var.watch outer_enabled) ~f:(fun enabled ->
         if enabled then inner else Signal.const (-1))
   in
   let outer_observer =
@@ -1324,7 +1324,7 @@ let test_bind_switch_invalidates_external_derived_branch_dependents () =
   let right = Signal.Var.create 20 in
   let captured_left = ref None in
   let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+    Signal.bind (Signal.Var.watch choose_left) ~f:(fun use_left ->
         if use_left then (
           let signal = Signal.Var.watch left |> Signal.map (fun value -> value) in
           captured_left := Some signal;
@@ -1369,7 +1369,7 @@ let test_bind_switch_skips_stale_branch_observer_before_invalidation () =
   let captured_left = ref None in
   let stale_branch_recomputes = ref 0 in
   let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+    Signal.bind (Signal.Var.watch choose_left) ~f:(fun use_left ->
         if use_left then (
           let signal =
             Signal.Var.watch left
@@ -1421,7 +1421,7 @@ let test_dynamic_scope_invalidation_skips_callback () =
   let left = Signal.Var.create 0 in
   let captured_left = ref None in
   let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+    Signal.bind (Signal.Var.watch choose_left) ~f:(fun use_left ->
         if use_left then (
           let signal = Signal.Var.watch left |> Signal.map Fun.id in
           captured_left := Some signal;
@@ -1472,7 +1472,7 @@ let test_commit_skips_invalidated_staged_entries () =
   let right = Signal.Var.create 20 in
   let captured_left = ref None in
   let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+    Signal.bind (Signal.Var.watch choose_left) ~f:(fun use_left ->
         if use_left then (
           let signal = Signal.Var.watch left |> Signal.map (fun value -> value) in
           captured_left := Some signal;
@@ -1526,7 +1526,7 @@ let test_bind_selector_failure_preserves_previous_branch () =
   let fail_selector = ref true in
   let fail_inner = ref false in
   let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+    Signal.bind (Signal.Var.watch choose_left) ~f:(fun use_left ->
         if use_left then Signal.Var.watch left
         else if !fail_selector then failwith "selector"
         else
@@ -1579,7 +1579,7 @@ let test_bind_switch_is_not_committed_when_later_pure_node_fails () =
   let bad = Signal.Var.create 0 in
   let left_inner = ref None in
   let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+    Signal.bind (Signal.Var.watch choose_left) ~f:(fun use_left ->
         if use_left then
           let signal = Signal.Var.watch left |> Signal.map (fun value -> value) in
           left_inner := Some signal;
@@ -1723,7 +1723,7 @@ let test_time_timer_start_failure_retries_necessary_timer () =
   let use_timer = Signal.Var.create false in
   let timer = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let selected =
-    Signal.bind (Signal.Var.watch use_timer) (fun enabled ->
+    Signal.bind (Signal.Var.watch use_timer) ~f:(fun enabled ->
         if enabled then timer else Signal.const 0)
   in
   let observer =
@@ -1766,7 +1766,7 @@ let test_time_timer_start_failure_preserves_pending_observer_event () =
   let use_timer = Signal.Var.create false in
   let timer = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let selected =
-    Signal.bind (Signal.Var.watch use_timer) (fun enabled ->
+    Signal.bind (Signal.Var.watch use_timer) ~f:(fun enabled ->
         if enabled then timer else Signal.const (-1))
   in
   let events = ref [] in
@@ -1823,7 +1823,7 @@ let test_time_timer_start_failure_runs_invalidated_stream_cleanup () =
   let timer = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let captured_old = ref None in
   let selected =
-    Signal.bind (Signal.Var.watch use_old) (fun old ->
+    Signal.bind (Signal.Var.watch use_old) ~f:(fun old ->
         if old then (
           let branch = Signal.Var.watch old_source |> Signal.map Fun.id in
           captured_old := Some branch;
@@ -1877,7 +1877,7 @@ let test_time_timer_start_failure_rolls_back_unstarted_timers () =
   let unstarted = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let failing = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let observed =
-    Signal.bind (Signal.Var.watch use_timers) (fun enabled ->
+    Signal.bind (Signal.Var.watch use_timers) ~f:(fun enabled ->
         if enabled then Signal.all [ failing; unstarted ]
         else Signal.const [ 0; 0 ])
   in
@@ -2703,7 +2703,7 @@ let test_time_now_update_on_start_demand_drop_does_not_queue_source () =
     |> Signal.map Signal.Time.to_ms
   in
   let selected =
-    Signal.bind (Signal.Var.watch use_timer) (fun use_timer ->
+    Signal.bind (Signal.Var.watch use_timer) ~f:(fun use_timer ->
         if use_timer then now_signal else Signal.const (-1))
   in
   let observer =
@@ -2943,7 +2943,7 @@ let test_time_invalidated_timer_cancel_runs_outside_graph_lifecycle () =
          _after_graph_lifecycle_exit ->
   let use_timer = Signal.Var.create true in
   let selected =
-    Signal.bind (Signal.Var.watch use_timer) (fun active ->
+    Signal.bind (Signal.Var.watch use_timer) ~f:(fun active ->
         if active then run_ok rt (Signal.Time.interval (Duration.days 1))
         else Signal.const 0)
   in
@@ -2970,7 +2970,7 @@ let test_time_timer_cancel_failure_preserves_committed_snapshot () =
          _after_graph_lifecycle_exit ->
   let use_timer = Signal.Var.create true in
   let selected =
-    Signal.bind (Signal.Var.watch use_timer) (fun active ->
+    Signal.bind (Signal.Var.watch use_timer) ~f:(fun active ->
         if active then run_ok rt (Signal.Time.interval (Duration.days 1))
         else Signal.const 42)
   in
@@ -3008,7 +3008,7 @@ let test_time_invalidated_timer_cancels_sleeping_daemon () =
   let use_timer = Signal.Var.create true in
   let created_timers = ref 0 in
   let selected =
-    Signal.bind (Signal.Var.watch use_timer) (fun use_timer ->
+    Signal.bind (Signal.Var.watch use_timer) ~f:(fun use_timer ->
         if use_timer then (
           incr created_timers;
           run_ok rt (Signal.Time.interval (Duration.days 1)))

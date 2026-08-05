@@ -65,7 +65,10 @@ module Make (Observer_error : Observer_error) () : sig
   val const : 'a -> 'a signal
 
   val bind :
-    ?cutoff:'b Eta_signal_cutoff.t -> 'a signal -> ('a -> 'b signal) -> 'b signal
+    ?cutoff:'b Eta_signal_cutoff.t ->
+    f:('a -> 'b signal) ->
+    'a signal ->
+    'b signal
 
   val stabilize : (unit, stabilize_error) Eta.Effect.t
   val stats : unit -> (stats, graph_error) Eta.Effect.t

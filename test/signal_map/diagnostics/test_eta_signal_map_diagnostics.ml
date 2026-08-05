@@ -318,7 +318,7 @@ let test_keyed_dot_scope_selection_shows_keyed_nodes () =
   H.dispose runtime observer;
   let active = H.S.Var.create true in
   let dynamic =
-    H.S.bind (H.S.Var.watch active) (fun active ->
+    H.S.bind (H.S.Var.watch active) ~f:(fun active ->
         if active then
           H.K.mapi (H.S.Var.watch input) ~f:(fun ~key:_ ~data -> data)
         else H.S.const H.M.empty)

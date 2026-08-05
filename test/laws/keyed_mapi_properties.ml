@@ -538,7 +538,7 @@ let run_case matrix sample =
       let nested_input = S.Var.create M.empty in
       let nested_output = ref None in
       let owner =
-        S.bind (S.Var.watch choose) (fun active ->
+        S.bind (S.Var.watch choose) ~f:(fun active ->
             if active then (
               let nested =
                 K.mapi (S.Var.watch nested_input) ~f:(fun ~key:_ ~data -> data)

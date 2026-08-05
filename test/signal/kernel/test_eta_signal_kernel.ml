@@ -44,7 +44,7 @@ let test_preflight_orders_owner_before_descendant () =
   let source = S.Var.create 1 in
   let descendant = ref None in
   let owner =
-    S.bind (S.Var.watch source) (fun value ->
+    S.bind (S.Var.watch source) ~f:(fun value ->
         let child = S.const value |> S.map Fun.id in
         descendant := Some child;
         child)

@@ -284,6 +284,7 @@ scope validity, dependency attachment, structural events, and pending-plan state
 | SC07 | Empty balanced reduction publishes `identity` without combination work. | `lib/signal/eta_signal.mli:575-587` | `balanced reduction empty and final cutoff` |
 | SC08 | Initial balanced reduction combines every tree edge, while one changed child follows only its logarithmic path. | `lib/signal/eta_signal.mli:575-587` | `balanced reduction copies input and preserves order`; `balanced reduction internal cells never suppress` |
 | SC09 | Only the aggregate cell applies the final cutoff; internal cells never suppress candidates. | `lib/signal/eta_signal.mli:575-587` | `balanced reduction internal cells never suppress`; `balanced reduction empty and final cutoff` |
+| SC10 | `bind` exposes one labeled selector argument before its signal argument. | `lib/signal/eta_signal.mli:602-620` | `bind switch detaches stale dependency`; `bind selects initialized external bind`; public boundary positive typecheck |
 
 ### Eta Signal keyed diagnostics laws
 

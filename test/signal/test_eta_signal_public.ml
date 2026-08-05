@@ -162,7 +162,7 @@ let test_bind_switch_detaches_stale_dependency () =
   let left = Signal.Var.create 10 in
   let right = Signal.Var.create 20 in
   let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+    Signal.bind (Signal.Var.watch choose_left) ~f:(fun use_left ->
         if use_left then Signal.Var.watch left else Signal.Var.watch right)
   in
   let observer =
@@ -187,7 +187,7 @@ let test_bind_can_select_initialized_external_bind () =
   let driver = S.Var.create 0 in
   let leaf = S.Var.create 10 in
   let external_signal =
-    S.bind (S.Var.watch driver) (fun offset ->
+    S.bind (S.Var.watch driver) ~f:(fun offset ->
         S.Var.watch leaf |> S.map (fun value -> value + offset + 1))
   in
   let external_observer =
@@ -197,7 +197,7 @@ let test_bind_can_select_initialized_external_bind () =
   Alcotest.(check int) "external initialized" 11
     (run_ok runtime (S.Observer.read external_observer));
   run_ok runtime (S.Observer.dispose external_observer);
-  let selected = S.bind (S.const true) (fun _ -> external_signal) in
+  let selected = S.bind (S.const true) ~f:(fun _ -> external_signal) in
   let selected_observer =
     run_ok runtime (S.Observer.observe selected (fun _ -> E.unit))
   in
@@ -560,7 +560,7 @@ let test_captured_branch_observer_invalidates_without_owner_observer () =
   let right = S.Var.create 20 in
   let captured_left = ref None in
   let selected =
-    S.bind (S.Var.watch choose_left) (fun use_left ->
+    S.bind (S.Var.watch choose_left) ~f:(fun use_left ->
         if use_left then (
           let branch = S.Var.watch left in
           captured_left := Some branch;
@@ -599,7 +599,7 @@ let test_captured_branch_observer_invalidates_after_owner_gc () =
   let make_and_drop_owner () =
     let external_signal = S.const 0 in
     let selected =
-      S.bind (S.Var.watch choose_left) (fun use_left ->
+      S.bind (S.Var.watch choose_left) ~f:(fun use_left ->
           if use_left then (
             let branch = S.Var.watch left in
             captured_left := Some branch;

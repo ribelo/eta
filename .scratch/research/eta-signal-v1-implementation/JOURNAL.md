@@ -499,3 +499,20 @@ nix develop -c dune runtest test/signal/contract --force
 nix develop -c dune runtest test/signal test/signal_map --force
 nix develop -c dune build @install
 ```
+
+## 2026-08-05 - Slice 5: labeled bind selector
+
+- Changed public `bind` to the specification's shape:
+  `bind ?cutoff ~f source`. The old positional selector path was deleted.
+- Migrated Signal, Signal Map, law, model, overflow, negative-boundary, and
+  bench call sites to the labeled selector. The overflow harness now exposes
+  the same argument order.
+- Registered the scalar-algebra API shape as SC10 in the executable-law
+  registry.
+- Verified with:
+
+```sh
+nix develop -c dune build @install
+nix develop -c dune runtest test/signal test/signal_map --force
+nix develop -c dune build test/laws/keyed_mapi_properties.exe
+```

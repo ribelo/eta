@@ -155,7 +155,7 @@ let test_keyed_removal_discards_nested_bind_switch_to_top_scope () =
   let output =
     K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data:_ ->
         let branch =
-          S.bind (S.Var.watch switch_source) (fun use_right ->
+          S.bind (S.Var.watch switch_source) ~f:(fun use_right ->
               if use_right then right else left)
         in
         nested_bind := Some branch;
@@ -215,7 +215,7 @@ let test_keyed_removal_invalidates_nested_bind_provisional_scope () =
   let output =
     K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data:_ ->
         let branch =
-          S.bind (S.Var.watch switch_source) (fun use_right ->
+          S.bind (S.Var.watch switch_source) ~f:(fun use_right ->
               if use_right then
                 let provisional = S.map (fun value -> value + 1) right in
                 provisional_branch := Some provisional;
@@ -271,10 +271,10 @@ let test_keyed_removal_clears_nested_bind_pending_state () =
   let output =
     K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data:_ ->
         let outer =
-          S.bind (S.Var.watch outer_source) (fun use_inner ->
+          S.bind (S.Var.watch outer_source) ~f:(fun use_inner ->
               if use_inner then
                 let inner =
-                  S.bind (S.Var.watch inner_source) (fun use_right ->
+                  S.bind (S.Var.watch inner_source) ~f:(fun use_right ->
                       if use_right then right else left)
                 in
                 inner_bind := Some inner;
@@ -337,7 +337,7 @@ let test_keyed_removal_nested_bind_topology_survives_callback_defect () =
   let output =
     K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data:_ ->
         let branch =
-          S.bind (S.Var.watch switch_source) (fun use_right ->
+          S.bind (S.Var.watch switch_source) ~f:(fun use_right ->
               if use_right then right else left)
         in
         nested_bind := Some branch;
@@ -423,7 +423,7 @@ let test_keyed_bind_remove_switch_churn_has_bounded_topology () =
             else
               S.bind
                 (S.Var.watch switches.(key).(level - 1))
-                (fun use_deeper ->
+                ~f:(fun use_deeper ->
                 if use_deeper then build (level - 1) else data)
           in
           build depth)

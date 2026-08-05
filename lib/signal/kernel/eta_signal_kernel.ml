@@ -3515,8 +3515,8 @@ module Make (Observer_error : Observer_error) () = struct
     new_signal ~equal:(cutoff_equal cutoff) (All signals)
       (List.map (fun s -> P s) signals)
 
-  let bind ?(cutoff = Cutoff.phys_equal) source selector =
-    make_bind ~equal:(cutoff_equal cutoff) source selector
+  let bind ?(cutoff = Cutoff.phys_equal) ~f source =
+    make_bind ~equal:(cutoff_equal cutoff) source f
 
   let observer_count_plan =
     Graph.observer_count_plan ~active:observer_active
