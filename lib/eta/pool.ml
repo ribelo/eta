@@ -203,6 +203,10 @@ type 'conn reservation =
   | Reserve_use of 'conn entry
   | Reserve_wait
 
+type 'conn health_outcome =
+  | Health_healthy of 'conn entry
+  | Health_rejected of 'conn entry
+
 let reserve t =
   with_lock t @@ fun () ->
   if t.shutting_down then Reserve_shutdown
@@ -435,8 +439,8 @@ let reject_entry ?(release_permit = true) t entry =
 
 let check_health t entry =
   span t "eta.pool.health_check" (t.health_check entry.conn)
-  |> Effect.map (fun () -> `Healthy entry)
-  |> Effect.bind_error (fun _ -> Effect.pure (`Rejected entry))
+  |> Effect.map (fun () -> Health_healthy entry)
+  |> Effect.bind_error (fun _ -> Effect.pure (Health_rejected entry))
 
 let make_entry t conn =
   let now = if t.expires_entries then now_ms t else 0 in
@@ -490,10 +494,10 @@ let state_of_reservation = function
   | Reserve_open_new -> Effect.pure Open_entry
 
 let health_transition t ~disarm = function
-  | `Healthy entry ->
+  | Health_healthy entry ->
       disarm ();
       emit_gauges t |> Effect.map (fun () -> Entry_acquired entry)
-  | `Rejected entry ->
+  | Health_rejected entry ->
       disarm ();
       reject_entry ~release_permit:false t entry
       |> Effect.map (fun () -> Reserve_slot)
