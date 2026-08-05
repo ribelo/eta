@@ -4023,14 +4023,22 @@ module Make (Observer_error : Observer_error) () = struct
       timer_state_port timer
 
   type staged_bind_invalidation_view = {
-    invalidated_ids : (signal_id, unit) Hashtbl.t;
+    mutable invalidated_ids : (signal_id, unit) Hashtbl.t option;
     invalidated_nodes : packed_signal list;
   }
 
   let staged_bind_invalidates view (P signal) =
-    match view.invalidated_nodes with
-    | [] -> false
-    | _ :: _ -> Hashtbl.mem view.invalidated_ids signal.id
+    match view.invalidated_ids with
+    | None -> false
+    | Some invalidated_ids -> Hashtbl.mem invalidated_ids signal.id
+
+  let invalidated_id_table view =
+    match view.invalidated_ids with
+    | Some invalidated_ids -> invalidated_ids
+    | None ->
+        let invalidated_ids = Hashtbl.create 16 in
+        view.invalidated_ids <- Some invalidated_ids;
+        invalidated_ids
 
   let preflight_signal_commit lane staging invalidations (P signal) =
     if
@@ -4045,23 +4053,31 @@ module Make (Observer_error : Observer_error) () = struct
         ~current ~staged
 
   let collect_staged_bind_invalidations lane staging =
-    let invalidated_ids = Hashtbl.create 16 in
+    let invalidated_ids = ref None in
     let invalidated_nodes = ref [] in
     let plan =
       Graph.staged_bind_invalidation_plan
         ~init:(invalidated_ids, invalidated_nodes)
         ~staged_switch:(packed_bind_staged_switch lane staging)
-        ~collect_old_scope:(fun (seen, collected) ~owner scope ->
+        ~collect_old_scope:(fun (seen_ref, collected) ~owner scope ->
+          let seen =
+            match !seen_ref with
+            | Some seen -> seen
+            | None ->
+                let seen = Hashtbl.create 16 in
+                seen_ref := Some seen;
+                seen
+          in
           let P owner_signal = owner in
           collect_scope_invalidations_into ~exclude_signal_id:owner_signal.id
             seen collected scope;
-          (seen, collected))
+          (seen_ref, collected))
     in
     let (invalidated_ids, invalidated_nodes) =
       graph_result_or_raise
         (Graph.collect_staged_bind_switch_invalidations graph lane staging plan)
     in
-    { invalidated_ids; invalidated_nodes = !invalidated_nodes }
+    { invalidated_ids = !invalidated_ids; invalidated_nodes = !invalidated_nodes }
 
   let discard_invalid_staged_binds lane staging invalidations =
     let hooks = ref [] in
@@ -4152,7 +4168,8 @@ module Make (Observer_error : Observer_error) () = struct
                 (fun child ->
                   collect_scope_invalidations_into
                     ~exclude_signal_id:owner.id
-                    invalidations.invalidated_ids invalidated_nodes
+                    (invalidated_id_table invalidations)
+                    invalidated_nodes
                     child.keyed_child_scope)
                 plan.keyed_plan_removals)
       plans;
