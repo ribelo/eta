@@ -48,6 +48,10 @@ type ('a, 'err) wakeup =
   | Wake_receiver of receiver
   | Wake_publisher of ('a, 'err) publisher * 'err publish_out
 
+type ('a, 'err) unbounded_publish_outcome =
+  | Publish_ready of 'err publish_out
+  | Publish_wake of 'err publish_out * ('a, 'err) wakeup list
+
 type ('a, 'err) entry = {
   seq : int;
   value : 'a;
@@ -316,16 +320,16 @@ let publish_sync contract t value =
       match
         with_lock t @@ fun () ->
         match t.closed with
-        | Some reason -> `Ready (close_result reason)
+        | Some reason -> Publish_ready (close_result reason)
         | None when t.waiting_receivers = 0 ->
-            `Ready (`Published (admit_value_without_wake_locked t value))
+            Publish_ready (`Published (admit_value_without_wake_locked t value))
         | None ->
             let wakeups = ref [] in
             let result = `Published (admit_value_locked wakeups t value) in
-            `Wake (result, !wakeups)
+            Publish_wake (result, !wakeups)
       with
-      | `Ready result -> result
-      | `Wake (result, wakeups) ->
+      | Publish_ready result -> result
+      | Publish_wake (result, wakeups) ->
           resolve_wakeups wakeups;
           result)
 
