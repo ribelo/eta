@@ -422,3 +422,24 @@ nix develop -c dune runtest test/signal test/signal_map --force
 ```sh
 nix develop -c dune runtest test/signal test/signal_map --force
 ```
+
+## 2026-08-05 - Slice 4: keyed-bind churn regression
+
+- Added `test_keyed_bind_remove_switch_churn_has_bounded_topology`. The
+  generated matrix exercises representative cycle counts through 128, key
+  counts through 32, and nested-bind depths through 8. Each cycle stages nested
+  bind switches and removes every keyed child in the same stabilization, then
+  re-enters the same keys and proves fresh scope identities.
+- Every removal and re-entry endpoint checks the committed output, keyed
+  pending state, all per-class work-ledger counts, scope validity, and the
+  bounded invalid-node tombstone count. Scenario cleanup removes the generated
+  children before the next matrix point.
+- This is the fifth N2 scenario. Exact tombstone slot-write/eviction counters
+  remain part of the diagnostics-storage replacement slice; this regression
+  already fixes the frontier-closure and bounded-retention behavior needed for
+  that gate.
+- Verified with:
+
+```sh
+nix develop -c dune runtest test/signal test/signal_map --force
+```

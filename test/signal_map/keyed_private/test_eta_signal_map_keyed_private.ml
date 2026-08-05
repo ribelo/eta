@@ -384,6 +384,121 @@ let test_keyed_removal_nested_bind_topology_survives_callback_defect () =
     (T.dependent_edge_count_token (T.signal_token right));
   run_ok runtime (S.Observer.dispose observer)
 
+let expect_quiescent_churn_endpoint output =
+  Alcotest.(check bool) "keyed plan cleared" false (T.pending output);
+  Alcotest.(check int) "source work drained" 0 (T.work_count T.Sources);
+  Alcotest.(check int) "scheduler work drained" 0 (T.work_count T.Scheduler);
+  Alcotest.(check int) "observer delivery drained" 0
+    (T.work_count T.Observer_delivery);
+  Alcotest.(check int) "timer work drained" 0
+    (T.work_count T.Timer_reconciliation);
+  Alcotest.(check int) "cleanup work drained" 0 (T.work_count T.Cleanup)
+
+let test_keyed_bind_remove_switch_churn_has_bounded_topology () =
+  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  let cycle_counts = [ 1; 2; 8; 32; 128 ] in
+  let key_counts = [ 1; 2; 8; 32 ] in
+  let depths = [ 1; 2; 8 ] in
+  let scenario_label cycle_count key_count depth =
+    Printf.sprintf "c=%d k=%d d=%d" cycle_count key_count depth
+  in
+  let input_map key_count cycle =
+    List.init key_count (fun key -> (key, (key * 1_000) + cycle))
+    |> List.fold_left (fun map (key, value) -> M.set key value map) M.empty
+  in
+  let output_list key_count cycle =
+    List.init key_count (fun key -> (key, (key * 1_000) + cycle))
+  in
+  let run_scenario cycle_count key_count depth =
+    let label = scenario_label cycle_count key_count depth in
+    let input = S.Var.create (input_map key_count 0) in
+    let switches =
+      Array.init key_count (fun _ ->
+          Array.init depth (fun _ -> S.Var.create false))
+    in
+    let output =
+      K.mapi (S.Var.watch input) ~f:(fun ~key ~data ->
+          let rec build level =
+            if level <= 0 then data
+            else
+              S.bind
+                (S.Var.watch switches.(key).(level - 1))
+                (fun use_deeper ->
+                if use_deeper then build (level - 1) else data)
+          in
+          build depth)
+    in
+    let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+    let entry_scope key =
+      match T.entry_identity output key with
+      | Some identity -> identity.keyed_scope_token
+      | None -> Alcotest.failf "%s: missing committed entry %d" label key
+    in
+    let assert_endpoint expected_list =
+      Alcotest.(check (list (pair int int))) (label ^ " output baseline")
+        expected_list
+        (run_ok runtime (S.Observer.read observer) |> M.to_list);
+      expect_quiescent_churn_endpoint output
+    in
+    run_ok runtime S.stabilize;
+    assert_endpoint (output_list key_count 0);
+    for cycle = 1 to cycle_count do
+      let previous_scopes = List.init key_count entry_scope in
+      let switch_value = cycle land 1 = 1 in
+      Array.iter
+        (Array.iter (fun source ->
+             run_ok runtime (S.Var.set source switch_value)))
+        switches;
+      run_ok runtime (S.Var.set input M.empty);
+      run_ok runtime S.stabilize;
+      assert_endpoint [];
+      List.iteri
+        (fun key scope ->
+          Alcotest.(check bool)
+            (Printf.sprintf "%s: removal invalidates key %d" label key)
+            false (T.scope_valid scope))
+        previous_scopes;
+      let stats = run_ok runtime (S.stats ()) in
+      Alcotest.(check bool)
+        (Printf.sprintf "%s: tombstones bounded at removal" label)
+        true (stats.S.dead_node_count <= 1_024);
+      run_ok runtime (S.Var.set input (input_map key_count cycle));
+      run_ok runtime S.stabilize;
+      assert_endpoint (output_list key_count cycle);
+      List.iteri
+        (fun key old_scope ->
+          let new_scope = entry_scope key in
+          Alcotest.(check bool)
+            (Printf.sprintf "%s: re-entry key %d has fresh scope" label key)
+            true (old_scope != new_scope);
+          Alcotest.(check bool)
+            (Printf.sprintf "%s: re-entry key %d is valid" label key)
+            true (T.scope_valid new_scope))
+        previous_scopes
+    done;
+    let stats = run_ok runtime (S.stats ()) in
+    Alcotest.(check bool) (label ^ " live child baseline") true
+      (stats.S.keyed.committed_child_count >= key_count);
+    Alcotest.(check bool) (label ^ " tombstones stay bounded") true
+      (stats.S.dead_node_count <= 1_024);
+    run_ok runtime (S.Var.set input M.empty);
+    run_ok runtime S.stabilize;
+    expect_quiescent_churn_endpoint output;
+    for key = 0 to key_count - 1 do
+      Alcotest.(check bool)
+        (Printf.sprintf "%s: cleanup removes key %d" label key)
+        true (T.entry_identity output key = None)
+    done;
+    run_ok runtime (S.Observer.dispose observer)
+  in
+  List.iter
+    (fun cycle_count ->
+      List.iter
+        (fun key_count ->
+          List.iter (run_scenario cycle_count key_count) depths)
+        key_counts)
+    cycle_counts
+
 let () =
   Alcotest.run "eta_signal_map_keyed_private"
     [
@@ -409,5 +524,8 @@ let () =
             "keyed_removal_nested_bind_topology_survives_callback_defect"
             `Quick
             test_keyed_removal_nested_bind_topology_survives_callback_defect;
+          Alcotest.test_case
+            "keyed_bind_remove_switch_churn_has_bounded_topology" `Quick
+            test_keyed_bind_remove_switch_churn_has_bounded_topology;
         ] );
     ]
