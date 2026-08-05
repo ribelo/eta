@@ -50,6 +50,8 @@ workload runs in a fresh process pinned to one logical CPU.
 ## Constraints
 
 - Preserve all Signal V1 semantics and executable laws.
+- Target OxCaml `5.2.0+ox` only. OxCaml modes, stack allocation, unboxed
+  layouts, and zero-allocation checks are available for production changes.
 - Use Nix/OxCaml for every build and test claim.
 - Keep the branch linear over `master`.
 - An optimization must explain a general source-level cost. Do not fit map
