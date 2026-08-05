@@ -203,6 +203,10 @@ let run_scope_body ?sw ?internal_cancel frame (body) =
 type ('a, 'err) async_state =
   | Async_pending
   | Async_registered of (unit, 'err) t option
+  | Async_waiting of {
+      canceler : (unit, 'err) t option;
+      resolver : ('a, 'err) Exit.t Runtime_contract.resolver;
+    }
   | Async_resolved of ('a, 'err) Exit.t
   | Async_interrupt_claimed
   | Async_closed
@@ -268,7 +272,6 @@ and eval_async : type a err.
     (a, err) Exit.t =
  fun frame register ->
   let contract = frame.runtime.contract in
-  let promise, resolver = contract.Runtime_contract.create_promise () in
   let state = Atomic.make Async_pending in
   let resume exit =
     let resolved = Async_resolved exit in
@@ -276,6 +279,8 @@ and eval_async : type a err.
       let observed = Atomic.get state in
       match observed with
       | Async_pending | Async_registered _ ->
+          if not (Atomic.compare_and_set state observed resolved) then claim ()
+      | Async_waiting { resolver; _ } ->
           if Atomic.compare_and_set state observed resolved then
             contract.Runtime_contract.resolve_promise resolver exit
           else claim ()
@@ -286,7 +291,7 @@ and eval_async : type a err.
   let rec close () =
     let observed = Atomic.get state in
     match observed with
-    | Async_pending | Async_registered _ ->
+    | Async_pending | Async_registered _ | Async_waiting _ ->
         if not (Atomic.compare_and_set state observed Async_closed) then close ()
     | Async_resolved _ | Async_interrupt_claimed | Async_closed -> ()
   in
@@ -298,7 +303,7 @@ and eval_async : type a err.
           Atomic.compare_and_set state observed Async_interrupt_claimed
         then raise exn
         else on_interruption exn
-    | Async_registered canceler ->
+    | Async_registered canceler | Async_waiting { canceler; _ } ->
         if
           Atomic.compare_and_set state observed Async_interrupt_claimed
         then
@@ -322,35 +327,38 @@ and eval_async : type a err.
     | Async_interrupt_claimed | Async_closed -> raise exn
   in
   try
-    let interrupted_during_register =
-      try
-        contract.Runtime_contract.protect (fun () ->
-            let canceler = register resume in
-            let observed = Atomic.get state in
-            match observed with
-            | Async_pending ->
-                ignore
-                  (Atomic.compare_and_set state observed
-                     (Async_registered canceler))
-            | Async_resolved _ -> ()
-            | Async_registered _ | Async_interrupt_claimed | Async_closed ->
-                assert false);
-        None
-      with exn when Runtime_core.is_cancellation contract exn ->
-        Some (on_interruption exn)
+    let settled_after_race () =
+      match Atomic.get state with
+      | Async_resolved exit -> exit
+      | Async_pending | Async_registered _ | Async_waiting _
+      | Async_interrupt_claimed | Async_closed ->
+          assert false
     in
-    match interrupted_during_register with
-    | Some exit -> exit
-    | None -> (
-        match Atomic.get state with
-        | Async_resolved exit -> exit
-        | Async_registered _ ->
-            (try
-               contract.Runtime_contract.cancel_sub @@ fun _cancel_context ->
-               contract.Runtime_contract.await_promise promise
-             with exn when Runtime_core.is_cancellation contract exn ->
-               on_interruption exn)
-        | Async_pending | Async_interrupt_claimed | Async_closed -> assert false)
+    let run () =
+      let canceler =
+        contract.Runtime_contract.protect (fun () -> register resume)
+      in
+      match Atomic.get state with
+      | Async_resolved exit -> exit
+      | Async_pending ->
+          let registered = Async_registered canceler in
+          if Atomic.compare_and_set state Async_pending registered then
+            let promise, resolver =
+              contract.Runtime_contract.create_promise ()
+            in
+            let waiting = Async_waiting { canceler; resolver } in
+            if Atomic.compare_and_set state registered waiting then
+              contract.Runtime_contract.cancel_sub @@ fun _cancel_context ->
+              contract.Runtime_contract.await_promise promise
+            else settled_after_race ()
+          else settled_after_race ()
+      | Async_registered _ | Async_waiting _ | Async_interrupt_claimed
+      | Async_closed ->
+          assert false
+    in
+    (try run () with
+    | exn when Runtime_core.is_cancellation contract exn ->
+        on_interruption exn)
   with
   | exn when Runtime_core.is_cancellation contract exn -> raise exn
   | exn ->
