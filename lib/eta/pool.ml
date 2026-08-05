@@ -197,32 +197,31 @@ let take_expired_idle_locked t =
   expired
 
 type 'conn reservation =
-  [ `Close_expired of 'conn entry list
-  | `Open_new
-  | `Shutdown
-  | `Use of 'conn entry
-  | `Wait
-  ]
+  | Reserve_close_expired of 'conn entry list
+  | Reserve_open_new
+  | Reserve_shutdown
+  | Reserve_use of 'conn entry
+  | Reserve_wait
 
 let reserve t =
   with_lock t @@ fun () ->
-  if t.shutting_down then `Shutdown
+  if t.shutting_down then Reserve_shutdown
   else
     let expired = if t.expires_entries then take_expired_idle_locked t else [] in
     match expired with
-    | _ :: _ -> `Close_expired expired
+    | _ :: _ -> Reserve_close_expired expired
     | [] -> (
         match t.idle with
         | entry :: rest ->
             t.idle <- rest;
             t.idle_count <- t.idle_count - 1;
             t.active <- t.active + 1;
-            `Use entry
+            Reserve_use entry
         | [] when t.total < t.max_size ->
             t.total <- t.total + 1;
             t.active <- t.active + 1;
-            `Open_new
-        | [] -> `Wait)
+            Reserve_open_new
+        | [] -> Reserve_wait)
 
 let wait_for_shutdown t =
   Effect.sync (fun () ->
@@ -483,12 +482,12 @@ let yield_for_slot () =
   Exit.Ok ()
 
 let state_of_reservation = function
-  | `Shutdown -> Effect.fail `Pool_shutdown
-  | `Wait ->
+  | Reserve_shutdown -> Effect.fail `Pool_shutdown
+  | Reserve_wait ->
       yield_for_slot () |> Effect.map (fun () -> Reserve_slot)
-  | `Close_expired entries -> Effect.pure (Close_expired_entries entries)
-  | `Use entry -> Effect.pure (Check_reserved_entry entry)
-  | `Open_new -> Effect.pure Open_entry
+  | Reserve_close_expired entries -> Effect.pure (Close_expired_entries entries)
+  | Reserve_use entry -> Effect.pure (Check_reserved_entry entry)
+  | Reserve_open_new -> Effect.pure Open_entry
 
 let health_transition t ~disarm = function
   | `Healthy entry ->
