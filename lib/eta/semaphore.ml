@@ -146,49 +146,52 @@ let cleanup_waiter contract t waiter =
   | Claimed | Cancelled -> ());
   resolve_wakeups !wakeups
 
+let acquire_with_contract contract t n =
+  (* Uncontended fast path: grab the permit without building the waiter
+     machinery. The promise/waiter are only needed once we actually have
+     to park. Building them after the locked attempt is safe because
+     creating a promise and allocating the waiter do not suspend, so no
+     other fiber can run between the failed attempt and the re-check
+     below under the lock. *)
+  let local_ wakeups = ref [] in
+  if with_lock t @@ fun () -> acquire_locked wakeups t n then (
+    resolve_wakeups !wakeups;
+    ())
+  else (
+    resolve_wakeups !wakeups;
+    let #(promise, resolver) =
+      contract.Runtime_contract.create_promise ()
+    in
+    let waiter = { permits = n; contract; resolver; state = Waiting } in
+    let local_ wakeups = ref [] in
+    let acquisition =
+      with_lock t @@ fun () ->
+      if acquire_locked wakeups t n then `Acquired
+      else (
+        Stdlib.Queue.push waiter t.waiters;
+        `Waiting)
+    in
+    resolve_wakeups !wakeups;
+    match acquisition with
+    | `Acquired -> ()
+    | `Waiting -> (
+        try
+          contract.Runtime_contract.await_promise promise;
+          with_lock t @@ fun () ->
+          match waiter.state with
+          | Resolved_unclaimed -> waiter.state <- Claimed
+          | Waiting | Claimed | Cancelled -> ()
+        with exn ->
+          (match contract.Runtime_contract.cancellation_reason exn with
+          | Some _ -> cleanup_waiter contract t waiter
+          | None -> ());
+          raise exn))
+
 let acquire t n =
   validate_request "acquire" t n;
   Effect_erasure.effect_to_public
-    (Effect_core.sync_frame ~leaf_name:"Semaphore.acquire" (fun frame ->
-         let contract = frame.Effect_core.runtime.Runtime_core.contract in
-         (* Uncontended fast path: grab the permit without building the waiter
-            machinery. The promise/waiter are only needed once we actually have
-            to park. Building them after the locked attempt is safe because
-            creating a promise and allocating the waiter do not suspend, so no
-            other fiber can run between the failed attempt and the re-check
-            below under the lock. *)
-         let local_ wakeups = ref [] in
-         if with_lock t @@ fun () -> acquire_locked wakeups t n then (
-           resolve_wakeups !wakeups;
-           ())
-         else (
-           resolve_wakeups !wakeups;
-           let #(promise, resolver) =
-      contract.Runtime_contract.create_promise () in
-           let waiter = { permits = n; contract; resolver; state = Waiting } in
-           let local_ wakeups = ref [] in
-           let acquisition =
-             with_lock t @@ fun () ->
-             if acquire_locked wakeups t n then `Acquired
-             else (
-               Stdlib.Queue.push waiter t.waiters;
-               `Waiting)
-           in
-           resolve_wakeups !wakeups;
-           match acquisition with
-           | `Acquired -> ()
-           | `Waiting -> (
-               try
-                 contract.Runtime_contract.await_promise promise;
-                 with_lock t @@ fun () ->
-                 match waiter.state with
-                 | Resolved_unclaimed -> waiter.state <- Claimed
-                 | Waiting | Claimed | Cancelled -> ()
-               with exn ->
-                 (match contract.Runtime_contract.cancellation_reason exn with
-                 | Some _ -> cleanup_waiter contract t waiter
-                 | None -> ());
-                 raise exn))))
+    (Effect_core.sync_contract2 ~leaf_name:"Semaphore.acquire" t n
+       acquire_with_contract)
 
 let with_permits_or_abort t n ~abort (f) =
   (* [claimed] means this combinator owns a granted permit. The finalizer is the
