@@ -65,6 +65,6 @@ let unlock t =
   | Some _ -> invalid_arg "Eta.Sync_lock: unlock from non-owner domain"
   | None -> invalid_arg "Eta.Sync_lock: unlock of unlocked lock"
 
-let use t f =
+let use t (f @ local once) =
   lock t;
   Fun.protect ~finally:(fun () -> unlock t) f

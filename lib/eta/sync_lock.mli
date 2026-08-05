@@ -14,7 +14,7 @@
 type t
 
 val create : unit -> t
-val use : t -> (unit -> 'a) -> 'a
+val use : t -> (unit -> 'a) @ local once -> 'a
 (** Run a short synchronous critical section. Raises [Invalid_argument] if the
     current domain already owns [t]. *)
 

@@ -39,13 +39,14 @@ let waiting t =
 let cancelled_waiters t =
   Sync_lock.use t.mutex @@ fun () -> t.cancelled_waiters
 
-let with_lock t f =
+let with_lock t (f @ local once) =
   Sync_lock.use t.mutex f
 
 let with_lock_during_cancel contract t f =
   contract.Runtime_contract.protect (fun () -> with_lock t f)
 
-let add_wakeup wakeups wakeup = wakeups := wakeup :: !wakeups
+let add_wakeup (wakeups @ local) wakeup =
+  wakeups := wakeup :: !wakeups
 
 let resolve_wakeup = function
   | Wake_waiter waiter ->
@@ -104,14 +105,14 @@ let[@inline always] acquire_locked wakeups t n =
 
 let try_acquire t n =
   validate_request "try_acquire" t n;
-  let wakeups = ref [] in
+  let local_ wakeups = ref [] in
   let acquired = with_lock t @@ fun () -> acquire_locked wakeups t n in
   resolve_wakeups !wakeups;
   acquired
 
 let release t n =
   if n <= 0 then invalid_arg "Eta.Semaphore.release: n must be > 0";
-  let wakeups = ref [] in
+  let local_ wakeups = ref [] in
   with_lock t
     (fun () ->
       if t.available + n > t.max_permits then
@@ -156,7 +157,7 @@ let acquire t n =
             creating a promise and allocating the waiter do not suspend, so no
             other fiber can run between the failed attempt and the re-check
             below under the lock. *)
-         let wakeups = ref [] in
+         let local_ wakeups = ref [] in
          if with_lock t @@ fun () -> acquire_locked wakeups t n then (
            resolve_wakeups !wakeups;
            ())
@@ -165,7 +166,7 @@ let acquire t n =
            let #(promise, resolver) =
       contract.Runtime_contract.create_promise () in
            let waiter = { permits = n; contract; resolver; state = Waiting } in
-           let wakeups = ref [] in
+           let local_ wakeups = ref [] in
            let acquisition =
              with_lock t @@ fun () ->
              if acquire_locked wakeups t n then `Acquired
