@@ -186,7 +186,8 @@ let run_result_timeout ?pool ?name ?on_cancel ~timeout ~on_timeout f =
   Expert.make
     @@ fun context ->
   let contract = Expert.contract context in
-  let completed, resolver = contract.Runtime_contract.create_promise () in
+  let #(completed, resolver) =
+      contract.Runtime_contract.create_promise () in
   let resolved = Atomic.make false in
   let started = Atomic.make false in
   let resolve_once exit =

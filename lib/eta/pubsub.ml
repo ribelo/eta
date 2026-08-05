@@ -260,7 +260,8 @@ let cleanup_locked wakeups t =
   admit_waiting_publishers_locked wakeups t
 
 let enqueue_publisher contract t value =
-  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
   let publisher = { value; contract; resolver; active = true } in
   Stdlib.Queue.add publisher t.publishers;
   t.waiting_publishers <- t.waiting_publishers + 1;
@@ -374,7 +375,8 @@ let consume_available_locked wakeups sub =
         | Some reason -> close_result reason)
 
 let enqueue_receiver contract sub =
-  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
   let receiver = { contract; resolver; active = true } in
   Stdlib.Queue.add receiver sub.receivers;
   sub.hub.waiting_receivers <- sub.hub.waiting_receivers + 1;

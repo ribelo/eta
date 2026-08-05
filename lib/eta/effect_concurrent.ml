@@ -55,7 +55,8 @@ let rec is_interrupt_with_id : type err. Cause.interrupt_id -> err Cause.t -> bo
     be the wrapper's first action. *)
 let fork_after_registration frame ~sw forks =
   let contract = frame.runtime.contract in
-  let start, release = contract.Runtime_contract.create_promise () in
+  let #(start, release) =
+      contract.Runtime_contract.create_promise () in
   List.iter
     (fun fork ->
       fiber_fork frame ~sw (fun () ->
@@ -232,11 +233,11 @@ type ('a, 'b) par_pair = { left : 'a; right : 'b }
 
 let par_pair frame left right =
   let contract = frame.runtime.contract in
-  let left_result, left_resolver =
-    contract.Runtime_contract.create_promise ()
+  let #(left_result, left_resolver) =
+      contract.Runtime_contract.create_promise ()
   in
-  let right_result, right_resolver =
-    contract.Runtime_contract.create_promise ()
+  let #(right_result, right_resolver) =
+      contract.Runtime_contract.create_promise ()
   in
   par_run_forks frame
     ~forks:
@@ -272,7 +273,8 @@ let par left right =
     that actually published. *)
 let promise_fork frame eff =
   let contract = frame.runtime.contract in
-  let result, resolver = contract.Runtime_contract.create_promise () in
+  let #(result, resolver) =
+      contract.Runtime_contract.create_promise () in
   let fork internal_cancel sw =
     contract.Runtime_contract.resolve_promise resolver
       (exit_to_value frame (run_child ~internal_cancel frame sw eff))

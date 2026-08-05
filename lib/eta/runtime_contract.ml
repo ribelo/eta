@@ -60,7 +60,7 @@ type t = {
   await_cancel : 'a. unit -> 'a;
   yield : unit -> unit;
   check : unit -> unit;
-  create_promise : 'a. unit -> 'a promise * 'a resolver;
+  create_promise : 'a. unit -> #('a promise * 'a resolver);
   resolve_promise : 'a. 'a resolver -> 'a -> unit;
   await_promise : 'a. 'a promise -> 'a;
   create_stream : 'a. int -> 'a stream;
@@ -273,7 +273,7 @@ let of_runtime (module R : RUNTIME) =
       (fun (type a) () ->
         ensure_owner_domain ();
         let raw_promise, raw_resolver = R.create_promise () in
-        (promise raw_promise, resolver raw_resolver));
+        #(promise raw_promise, resolver raw_resolver));
     resolve_promise =
       (fun (type a) (resolver : a resolver) (value : a) ->
         Sync_lock.check_no_runtime_operation ();

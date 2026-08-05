@@ -57,7 +57,8 @@ let incr counter = incr_by counter 1
 let decr counter = decr_by counter 1
 
 let enqueue_waiter contract counter =
-  let promise, resolver = contract.Eta.Runtime_contract.create_promise () in
+  let #(promise, resolver) =
+      contract.Eta.Runtime_contract.create_promise () in
   let waiter = { contract; resolver; active = true } in
   counter.waiters <- waiter :: counter.waiters;
   (promise, waiter)

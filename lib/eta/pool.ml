@@ -590,8 +590,8 @@ let create ?(name = "eta.pool") ?kind ~max_size ?max_idle ?idle_lifetime
          let shutdown_contract =
            frame.Effect_core.runtime.Runtime_core.contract
          in
-         let shutdown_requested, shutdown_resolver =
-           shutdown_contract.Runtime_contract.create_promise ()
+         let #(shutdown_requested, shutdown_resolver) =
+      shutdown_contract.Runtime_contract.create_promise ()
          in
          {
            name;

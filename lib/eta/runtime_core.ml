@@ -246,8 +246,8 @@ let wait_active_zero runtime =
       Sync_lock.use runtime.active_lock @@ fun () ->
       if P_atomic.get runtime.active = 0 then None
       else
-        let promise, resolver =
-          runtime.contract.Runtime_contract.create_promise ()
+        let #(promise, resolver) =
+      runtime.contract.Runtime_contract.create_promise ()
         in
         let waiter = { drain_resolver = resolver; drain_active = true } in
         runtime.active_waiters := waiter :: !(runtime.active_waiters);

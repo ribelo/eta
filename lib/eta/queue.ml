@@ -431,7 +431,8 @@ let cancel_shutdown_waiter (t : ('a, 'err) t) waiter =
     compact_cancelled_shutdown_waiters_locked t)
 
 let enqueue_sender contract (t : ('a, 'err) t) value =
-  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
   let sender =
     { value; contract; resolver; active = true; result = None; notified = false }
   in
@@ -606,7 +607,8 @@ let take_up_to t ~max =
        | `Closed_with_error error -> Effect.fail (`Closed_with_error error))
 
 let enqueue_receiver contract t =
-  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
   let receiver =
     { contract; resolver; active = true; notified = false; reserved = None }
   in
@@ -622,7 +624,8 @@ let take_receiver_reservation (receiver : 'a receiver) =
       Some value
 
 let enqueue_shutdown_waiter contract t =
-  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
   let waiter =
     {
       shutdown_contract = contract;

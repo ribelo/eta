@@ -26,7 +26,8 @@ let remove_waiter t waiter =
 let await t =
   Effect_erasure.public_runtime ~leaf_name:"Promise.await" t
   @@ fun contract t ->
-  let backend_promise, resolver = contract.Runtime_contract.create_promise () in
+  let #(backend_promise, resolver) =
+      contract.Runtime_contract.create_promise () in
   let waiter = { contract; resolver } in
   match
     with_lock t @@ fun () ->

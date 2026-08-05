@@ -260,14 +260,16 @@ let with_lock_during_cancel contract t f =
   contract.Runtime_contract.protect (fun () -> with_lock t f)
 
 let enqueue_sender contract (t : ('a, 'err) t) value =
-  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
   let sender = { value; contract; resolver; active = true } in
   Stdlib.Queue.push sender t.senders;
   t.waiting_senders <- t.waiting_senders + 1;
   (promise, sender)
 
 let enqueue_receiver contract (t : ('a, 'err) t) =
-  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
   let receiver = { contract; resolver; state = Waiting } in
   Stdlib.Queue.push receiver t.receivers;
   t.waiting_receivers <- t.waiting_receivers + 1;

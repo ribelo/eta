@@ -54,7 +54,8 @@ module Make (B : Backend) = struct
     Spi.Expert.make ~leaf_name:"test.interruptible.observe-cancellation-reason"
     @@ fun context ->
     let contract = Spi.Expert.contract context in
-    let promise, _resolver = contract.Runtime_contract.create_promise () in
+    let #(promise, _resolver) =
+      contract.Runtime_contract.create_promise () in
     blocked := true;
     try contract.Runtime_contract.await_promise promise with exn ->
       observed_reason := contract.Runtime_contract.cancellation_reason exn;

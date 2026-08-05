@@ -219,7 +219,8 @@ let test_erased_tokens_reject_foreign_runtime_contract () =
     Runtime_contract.of_runtime
       (module Direct_runtime : Runtime_contract.RUNTIME)
   in
-  let promise, resolver = first.Runtime_contract.create_promise () in
+  let #(promise, resolver) =
+      first.Runtime_contract.create_promise () in
   check_foreign_token_rejected "resolver" (fun () ->
       second.Runtime_contract.resolve_promise resolver 1);
   check_foreign_token_rejected "promise" (fun () ->
@@ -262,7 +263,8 @@ let test_erased_runtime_contract_rejects_foreign_domain_operations () =
     Runtime_contract.of_runtime
       (module Direct_runtime : Runtime_contract.RUNTIME)
   in
-  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
   let stream = contract.Runtime_contract.create_stream 1 in
   let local = Runtime_contract.create_local () in
   let check_foreign label f =
@@ -275,9 +277,11 @@ let test_erased_runtime_contract_rejects_foreign_domain_operations () =
   check_foreign "yield" (fun () -> contract.Runtime_contract.yield ());
   check_foreign "check" (fun () -> contract.Runtime_contract.check ());
   check_foreign "create_promise" (fun () ->
-      ignore (contract.Runtime_contract.create_promise () : int
-                Runtime_contract.promise
-                * int Runtime_contract.resolver));
+      let #(_promise, _resolver) =
+        (contract.Runtime_contract.create_promise () :
+          #(int Runtime_contract.promise * int Runtime_contract.resolver))
+      in
+      ());
   check_foreign "await_promise" (fun () ->
       ignore (contract.Runtime_contract.await_promise promise : int));
   check_foreign "create_stream" (fun () ->
@@ -302,7 +306,8 @@ let test_erased_runtime_contract_allows_foreign_domain_resolution () =
     Runtime_contract.of_runtime
       (module Direct_runtime : Runtime_contract.RUNTIME)
   in
-  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
   run_in_domain (fun () -> contract.Runtime_contract.resolve_promise resolver 42);
   Alcotest.(check int)
     "foreign resolution observed on owner" 42

@@ -58,7 +58,7 @@ type t = {
   await_cancel : 'a. unit -> 'a;
   yield : unit -> unit;
   check : unit -> unit;
-  create_promise : 'a. unit -> 'a promise * 'a resolver;
+  create_promise : 'a. unit -> #('a promise * 'a resolver);
   resolve_promise : 'a. 'a resolver -> 'a -> unit;
   await_promise : 'a. 'a promise -> 'a;
   create_stream : 'a. int -> 'a stream;

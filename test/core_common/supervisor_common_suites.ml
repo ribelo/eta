@@ -1258,8 +1258,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let cleanup_finished = ref false in
     let finalizer_count = ref 0 in
     let reason_observed = ref false in
-    let cancel_ready, publish_cancel = contract.Runtime_contract.create_promise () in
-    let release_cleanup, release = contract.Runtime_contract.create_promise () in
+    let #(cancel_ready, publish_cancel) =
+      contract.Runtime_contract.create_promise () in
+    let #(release_cleanup, release) =
+      contract.Runtime_contract.create_promise () in
     let returned_before_settlement, cleanup_was_pending =
       contract.Runtime_contract.run_scope @@ fun sw ->
       contract.Runtime_contract.fork sw (fun () ->
@@ -1315,13 +1317,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let cleanup_finished = ref false in
     let finalizer_count = ref 0 in
     let reason_observed = ref false in
-    let target_ready, publish_target = contract.Runtime_contract.create_promise () in
-    let child_ready, publish_child = contract.Runtime_contract.create_promise () in
-    let target_done, publish_target_done =
+    let #(target_ready, publish_target) =
+      contract.Runtime_contract.create_promise () in
+    let #(child_ready, publish_child) =
+      contract.Runtime_contract.create_promise () in
+    let #(target_done, publish_target_done) =
       contract.Runtime_contract.create_promise ()
     in
-    let release_cleanup, release = contract.Runtime_contract.create_promise () in
-    let release_body, release_target_body =
+    let #(release_cleanup, release) =
+      contract.Runtime_contract.create_promise () in
+    let #(release_body, release_target_body) =
       contract.Runtime_contract.create_promise ()
     in
     let returned_before_settlement, cleanup_was_pending, cleanup_started_in_time,

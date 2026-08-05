@@ -150,7 +150,8 @@ let resolve_waiters contract waiters =
    between "observed full" and "registered waiter". *)
 let register_waiter_locked contract t =
   compact_waiters_locked t;
-  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
   let waiter = { resolver; active = true } in
   t.waiters <- waiter :: t.waiters;
   (promise, waiter)
@@ -472,7 +473,8 @@ let run_started ~scope ~contract ~runner ~emit ~now_ms ~submitted_at t name
   | Detach_started ->
       let promise =
         protect_started @@ fun () ->
-        let promise, resolver = contract.Runtime_contract.create_promise () in
+        let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
         let resolved = Atomic.make false in
         let resolve_once result =
           if Atomic.compare_and_set resolved false true then

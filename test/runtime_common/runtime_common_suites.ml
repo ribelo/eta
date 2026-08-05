@@ -845,7 +845,8 @@ module Make (B : Runtime_backend.S) = struct
       let result =
         contract.Rc.local_with_binding local 42 (fun () ->
             contract.Rc.run_scope @@ fun sw ->
-            let promise, resolver = contract.Rc.create_promise () in
+            let #(promise, resolver) =
+      contract.Rc.create_promise () in
             contract.Rc.fork sw (fun () ->
                 contract.Rc.resolve_promise resolver
                   (contract.Rc.local_get local));
@@ -890,12 +891,14 @@ module Make (B : Runtime_backend.S) = struct
         contract.Rc.local_with_binding fiber_local 99 @@ fun () ->
         let child =
           contract.Rc.run_scope @@ fun sw ->
-          let promise, resolver = contract.Rc.create_promise () in
+          let #(promise, resolver) =
+      contract.Rc.create_promise () in
           contract.Rc.fork sw (fun () ->
               contract.Rc.resolve_promise resolver (observe contract));
           contract.Rc.await_promise promise
         in
-        let promise, resolver = contract.Rc.create_promise () in
+        let #(promise, resolver) =
+      contract.Rc.create_promise () in
         contract.Rc.fork_daemon contract.Rc.root_scope (fun () ->
             contract.Rc.resolve_promise resolver (observe contract);
             `Stop_daemon);
@@ -924,7 +927,8 @@ module Make (B : Runtime_backend.S) = struct
         check_owner_domain owner "protect callback");
     contract.Rc.run_scope ~name:"same-domain conformance" (fun child_scope ->
         check_owner_domain owner "run_scope callback";
-        let promise, resolver = contract.Rc.create_promise () in
+        let #(promise, resolver) =
+      contract.Rc.create_promise () in
         contract.Rc.fork child_scope (fun () ->
             check_owner_domain owner "fork callback";
             contract.Rc.resolve_promise resolver (Domain.self ()));
@@ -939,7 +943,8 @@ module Make (B : Runtime_backend.S) = struct
         contract.Rc.stream_add stream (Domain.self ());
         expect_owner_domain owner "stream take_nonblocking stayed on owner"
           (Option.get (contract.Rc.stream_take_nonblocking stream)));
-    let daemon_promise, daemon_resolver = contract.Rc.create_promise () in
+    let #(daemon_promise, daemon_resolver) =
+      contract.Rc.create_promise () in
     contract.Rc.fork_daemon contract.Rc.root_scope (fun () ->
         check_owner_domain owner "daemon callback";
         contract.Rc.resolve_promise daemon_resolver (Domain.self ());
@@ -972,7 +977,8 @@ module Make (B : Runtime_backend.S) = struct
 
   let test_runtime_contract_resolve_wakes_live_waiter () =
     B.with_runtime_contract @@ fun _ctx contract ->
-    let promise, resolver = contract.Rc.create_promise () in
+    let #(promise, resolver) =
+      contract.Rc.create_promise () in
     let waiter_started, waiter_started_resolver = B.create_promise () in
     let waiter_result, waiter_result_resolver = B.create_promise () in
     contract.Rc.run_scope ~name:"live resolver conformance"
@@ -993,9 +999,12 @@ module Make (B : Runtime_backend.S) = struct
 
   let test_runtime_contract_resolve_after_waiter_cancellation () =
     B.with_runtime_contract @@ fun _ctx contract ->
-    let promise, resolver = contract.Rc.create_promise () in
-    let started, started_resolver = contract.Rc.create_promise () in
-    let cancelled, cancelled_resolver = contract.Rc.create_promise () in
+    let #(promise, resolver) =
+      contract.Rc.create_promise () in
+    let #(started, started_resolver) =
+      contract.Rc.create_promise () in
+    let #(cancelled, cancelled_resolver) =
+      contract.Rc.create_promise () in
     contract.Rc.run_scope ~name:"resolver cancellation conformance"
       (fun child_scope ->
         contract.Rc.fork child_scope (fun () ->
@@ -1018,7 +1027,8 @@ module Make (B : Runtime_backend.S) = struct
 
   let test_runtime_contract_canceled_waiter_does_not_strand_live_waiter () =
     B.with_runtime_contract @@ fun _ctx contract ->
-    let promise, resolver = contract.Rc.create_promise () in
+    let #(promise, resolver) =
+      contract.Rc.create_promise () in
     let canceled_started, canceled_started_resolver = B.create_promise () in
     let canceled_done, canceled_done_resolver = B.create_promise () in
     let live_started, live_started_resolver = B.create_promise () in
@@ -1309,20 +1319,20 @@ module Make (B : Runtime_backend.S) = struct
                 contract.Rc.local_with_binding local 5 (fun () ->
                     let child =
                       contract.Rc.run_scope @@ fun sw ->
-                      let started, started_resolver =
-                        contract.Rc.create_promise ()
+                      let #(started, started_resolver) =
+      contract.Rc.create_promise ()
                       in
-                      let observe, observe_resolver =
-                        contract.Rc.create_promise ()
+                      let #(observe, observe_resolver) =
+      contract.Rc.create_promise ()
                       in
-                      let bound, bound_resolver =
-                        contract.Rc.create_promise ()
+                      let #(bound, bound_resolver) =
+      contract.Rc.create_promise ()
                       in
-                      let release, release_resolver =
-                        contract.Rc.create_promise ()
+                      let #(release, release_resolver) =
+      contract.Rc.create_promise ()
                       in
-                      let result, result_resolver =
-                        contract.Rc.create_promise ()
+                      let #(result, result_resolver) =
+      contract.Rc.create_promise ()
                       in
                       contract.Rc.fork sw (fun () ->
                           contract.Rc.resolve_promise started_resolver ();

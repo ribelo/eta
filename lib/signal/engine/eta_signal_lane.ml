@@ -197,7 +197,8 @@ let use_lock_during_cancel contract lane f =
   contract.Runtime_contract.protect (fun () -> use_lock lane f)
 
 let enqueue_waiter ~hooks contract lane =
-  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
   let waiter =
     { contract; resolver; state = Waiting; notified = false }
   in

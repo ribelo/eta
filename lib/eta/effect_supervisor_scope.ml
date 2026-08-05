@@ -89,7 +89,8 @@ let rec interpret_supervisor_scope :
       let value = interpret_supervisor_scope frame scope in
       interpret_supervisor_scope frame (k value)
   | Supervisor_start (supervisor, child_scope) ->
-      let promise, resolver = contract.Runtime_contract.create_promise () in
+      let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
       let resolved = Atomic.make false in
       let cancel_requested = Atomic.make false in
       let resolve value =

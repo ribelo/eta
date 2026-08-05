@@ -402,10 +402,11 @@ let test_acquire_all_par_sibling_failure_rollback done_ =
 let cancel_from_parent_when started batch =
   Eta.Spi.Expert.make @@ fun context ->
   let contract = Eta.Spi.Expert.contract context in
-  let cancel_ready, cancel_ready_resolver =
-    contract.Runtime_contract.create_promise ()
+  let #(cancel_ready, cancel_ready_resolver) =
+      contract.Runtime_contract.create_promise ()
   in
-  let result, result_resolver = contract.Runtime_contract.create_promise () in
+  let #(result, result_resolver) =
+      contract.Runtime_contract.create_promise () in
   contract.Runtime_contract.run_scope
     ~name:"acquire_all_par parent interruption"
     (fun sw ->
@@ -517,7 +518,8 @@ let test_runtime_locals_cross_fork done_ =
     let result =
       contract.Runtime_contract.local_with_binding local 42 (fun () ->
           contract.Runtime_contract.run_scope @@ fun sw ->
-          let promise, resolver = contract.Runtime_contract.create_promise () in
+          let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
           contract.Runtime_contract.fork sw (fun () ->
               contract.Runtime_contract.resolve_promise resolver
                 (contract.Runtime_contract.local_get local));
@@ -546,12 +548,14 @@ let test_runtime_local_inheritance_kinds done_ =
       contract.Runtime_contract.local_with_binding fiber_local 99 @@ fun () ->
       let child =
         contract.Runtime_contract.run_scope @@ fun sw ->
-        let promise, resolver = contract.Runtime_contract.create_promise () in
+        let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
         contract.Runtime_contract.fork sw (fun () ->
             contract.Runtime_contract.resolve_promise resolver (observe ()));
         contract.Runtime_contract.await_promise promise
       in
-      let promise, resolver = contract.Runtime_contract.create_promise () in
+      let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
       contract.Runtime_contract.fork_daemon
         contract.Runtime_contract.root_scope (fun () ->
           contract.Runtime_contract.resolve_promise resolver (observe ());
@@ -593,11 +597,12 @@ let test_runtime_resolve_wakes_live_waiter done_ =
   let eff =
     Eta.Spi.Expert.make @@ fun context ->
     let contract = Eta.Spi.Expert.contract context in
-    let promise, resolver = contract.Runtime_contract.create_promise () in
-    let waiter_started, waiter_started_resolver =
+    let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
+    let #(waiter_started, waiter_started_resolver) =
       contract.Runtime_contract.create_promise ()
     in
-    let waiter_result, waiter_result_resolver =
+    let #(waiter_result, waiter_result_resolver) =
       contract.Runtime_contract.create_promise ()
     in
     let result =
@@ -623,11 +628,12 @@ let test_runtime_resolve_after_waiter_cancellation done_ =
   let eff =
     Eta.Spi.Expert.make @@ fun context ->
     let contract = Eta.Spi.Expert.contract context in
-    let promise, resolver = contract.Runtime_contract.create_promise () in
-    let started, started_resolver =
+    let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
+    let #(started, started_resolver) =
       contract.Runtime_contract.create_promise ()
     in
-    let cancelled, cancelled_resolver =
+    let #(cancelled, cancelled_resolver) =
       contract.Runtime_contract.create_promise ()
     in
     contract.Runtime_contract.run_scope
@@ -669,17 +675,18 @@ let test_runtime_canceled_waiter_does_not_strand_live_waiter done_ =
   let eff =
     Eta.Spi.Expert.make @@ fun context ->
     let contract = Eta.Spi.Expert.contract context in
-    let promise, resolver = contract.Runtime_contract.create_promise () in
-    let canceled_started, canceled_started_resolver =
+    let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
+    let #(canceled_started, canceled_started_resolver) =
       contract.Runtime_contract.create_promise ()
     in
-    let canceled_done, canceled_done_resolver =
+    let #(canceled_done, canceled_done_resolver) =
       contract.Runtime_contract.create_promise ()
     in
-    let live_started, live_started_resolver =
+    let #(live_started, live_started_resolver) =
       contract.Runtime_contract.create_promise ()
     in
-    let live_result, live_result_resolver =
+    let #(live_result, live_result_resolver) =
       contract.Runtime_contract.create_promise ()
     in
     let result =
@@ -1102,20 +1109,20 @@ let tests =
             contract.Runtime_contract.local_with_binding local 5 (fun () ->
                 let child =
                   contract.Runtime_contract.run_scope @@ fun sw ->
-                  let started, started_resolver =
-                    contract.Runtime_contract.create_promise ()
+                  let #(started, started_resolver) =
+      contract.Runtime_contract.create_promise ()
                   in
-                  let observe, observe_resolver =
-                    contract.Runtime_contract.create_promise ()
+                  let #(observe, observe_resolver) =
+      contract.Runtime_contract.create_promise ()
                   in
-                  let bound, bound_resolver =
-                    contract.Runtime_contract.create_promise ()
+                  let #(bound, bound_resolver) =
+      contract.Runtime_contract.create_promise ()
                   in
-                  let release, release_resolver =
-                    contract.Runtime_contract.create_promise ()
+                  let #(release, release_resolver) =
+      contract.Runtime_contract.create_promise ()
                   in
-                  let result, result_resolver =
-                    contract.Runtime_contract.create_promise ()
+                  let #(result, result_resolver) =
+      contract.Runtime_contract.create_promise ()
                   in
                   contract.Runtime_contract.fork sw (fun () ->
                       contract.Runtime_contract.resolve_promise started_resolver
@@ -1755,10 +1762,10 @@ let runtime_cancel_request_probe =
   let finalizer_count = ref 0 in
   let reason_observed = ref false in
   try
-    let cancel_ready, publish_cancel =
+    let #(cancel_ready, publish_cancel) =
       contract.Runtime_contract.create_promise ()
     in
-    let release_cleanup, release =
+    let #(release_cleanup, release) =
       contract.Runtime_contract.create_promise ()
     in
     let returned_before_settlement, cleanup_was_pending =
@@ -1817,19 +1824,19 @@ let runtime_fail_scope_request_probe =
   let finalizer_count = ref 0 in
   let reason_observed = ref false in
   try
-    let target_ready, publish_target =
+    let #(target_ready, publish_target) =
       contract.Runtime_contract.create_promise ()
     in
-    let child_ready, publish_child =
+    let #(child_ready, publish_child) =
       contract.Runtime_contract.create_promise ()
     in
-    let target_done, publish_target_done =
+    let #(target_done, publish_target_done) =
       contract.Runtime_contract.create_promise ()
     in
-    let release_cleanup, release =
+    let #(release_cleanup, release) =
       contract.Runtime_contract.create_promise ()
     in
-    let release_body, release_target_body =
+    let #(release_body, release_target_body) =
       contract.Runtime_contract.create_promise ()
     in
     let returned_before_settlement, cleanup_was_pending, cleanup_started_in_time,

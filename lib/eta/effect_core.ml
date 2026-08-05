@@ -343,8 +343,8 @@ and eval_async : type a err.
       | Async_pending ->
           let registered = Async_registered canceler in
           if Atomic.compare_and_set state Async_pending registered then
-            let promise, resolver =
-              contract.Runtime_contract.create_promise ()
+            let #(promise, resolver) =
+      contract.Runtime_contract.create_promise ()
             in
             let waiting = Async_waiting { canceler; resolver } in
             if Atomic.compare_and_set state registered waiting then
@@ -407,8 +407,8 @@ let never : 'a 'err. ('a, 'err) t =
     {
       eval =
         (fun frame ->
-          let promise, _resolver =
-            frame.runtime.contract.Runtime_contract.create_promise ()
+          let #(promise, _resolver) =
+      frame.runtime.contract.Runtime_contract.create_promise ()
           in
           try ok (frame.runtime.contract.Runtime_contract.await_promise promise)
           with

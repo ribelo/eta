@@ -162,7 +162,8 @@ let acquire t n =
            ())
          else (
            resolve_wakeups !wakeups;
-           let promise, resolver = contract.Runtime_contract.create_promise () in
+           let #(promise, resolver) =
+      contract.Runtime_contract.create_promise () in
            let waiter = { permits = n; contract; resolver; state = Waiting } in
            let wakeups = ref [] in
            let acquisition =

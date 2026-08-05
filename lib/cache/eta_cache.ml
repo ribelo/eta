@@ -192,7 +192,8 @@ module Make (Key : Key) = struct
       t.contract.Runtime_contract.resolve_promise pending.resolver exit)
 
   let make_pending t =
-    let promise, resolver = t.contract.Runtime_contract.create_promise () in
+    let #(promise, resolver) =
+      t.contract.Runtime_contract.create_promise () in
     { promise; resolver; resolved = false }
 
   let new_pending_entry_locked t key =
