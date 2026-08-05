@@ -53,6 +53,8 @@ main Dune workspace.
 
 ## Decisions so far
 
+- [Incremental layered baseline](issues/02-incremental-layered-baseline.md) — use the zero-allocation raw static core and measure each adapter as a separate baseline layer.
+
 ## Not yet specified
 
 - The raw kernel representation depends on the candidate comparison.
