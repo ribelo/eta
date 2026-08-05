@@ -13,12 +13,13 @@ change input-map topology.
 
 ## Metrics
 
-- **Primary**: `signal_map_child_10k_words` (words/op, lower is better).
-- **Secondary**: child-change wall time; scalar depth-one allocation and wall
+- **Primary**: `signal_map_child_10k_wall_ns` (ns/op, lower is better).
+- **Secondary**: child-change allocation; scalar depth-one allocation and wall
   time; membership-churn allocation and wall time.
 
-Allocation is deterministic and is the primary metric. Wall time is a tradeoff
-monitor. Rotate the primary metric after a path reaches a measured floor.
+Allocation was the first primary metric. It fell from 1,419,614.50 to 8,333.08
+words per operation and is now a regression guard. The current target is the
+median of three in-process wall-time samples.
 
 ## How to Run
 

@@ -9,9 +9,10 @@ nix develop -c dune build --profile release bench/signal_compare/compare.exe >/d
 measure() {
   local workload=$1
   local prefix=$2
-  local row
-  row=$(taskset -c "$cpu" "$exe" --only "$workload" --samples 1 | tail -n 1)
-  IFS=, read -r _name _operations _sample wall words <<<"$row"
+  local rows wall words
+  rows=$(taskset -c "$cpu" "$exe" --only "$workload" --samples 3 | tail -n 3)
+  wall=$(cut -d, -f4 <<<"$rows" | sort -n | sed -n '2p')
+  words=$(cut -d, -f5 <<<"$rows" | sort -n | sed -n '2p')
   printf 'METRIC %s_wall_ns=%s\n' "$prefix" "$wall"
   printf 'METRIC %s_words=%s\n' "$prefix" "$words"
 }
