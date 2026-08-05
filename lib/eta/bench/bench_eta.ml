@@ -30,6 +30,7 @@ open Eta
 let int_sink = ref 0
 let bool_sink = ref false
 let one = Sys.opaque_identity 1
+let effect_async = Sys.opaque_identity Effect.async
 
 (* One runtime serves every row, so every row must present the same typed error
    channel. Each workload absorbs its own typed failures into a defect here,
@@ -88,6 +89,23 @@ let sync_chain n =
     else Effect.bind (fun _ -> go (i - 1)) (Effect.sync (fun () -> i))
   in
   go n
+
+(* Callback bridges are allowed to resolve before registration returns. This is
+   a real path for adapters over APIs that report an already-available result,
+   and it isolates Eta's registration/state/promise protocol from scheduler
+   wakeup cost. [effect_async] is opaque so the compiler cannot specialize the
+   implementation to this benchmark's synchronous callback. *)
+let async_immediate_chain n =
+  let rec go i acc =
+    if i = 0 then Effect.pure acc
+    else
+      effect_async
+        ~register:(fun resume ->
+          resume (Exit.Ok i);
+          None)
+      |> Effect.bind (fun value -> go (i - 1) (acc + value))
+  in
+  go n 0
 
 (* One catch per iteration, looped, so the row is not swamped by the cost of
    entering the runtime. *)
@@ -501,6 +519,8 @@ let core_workloads rt =
     row "map.prebuilt" (fun () -> run_int rt prebuilt_map);
     row "map.build_run" (fun () -> run_int rt (map_nested n (Effect.pure 0)));
     row "sync" (fun () -> run_int rt (sync_chain n));
+    row "async_immediate.build_run" (fun () ->
+        run_int rt (async_immediate_chain n));
     row "catch_success" (fun () -> run_int rt (catch_success_chain n));
     row "catch_failure" (fun () -> run_int rt (catch_failure_chain n));
     row "tap_error_failure" (fun () -> run_int rt (tap_error_chain n));
