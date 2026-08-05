@@ -270,12 +270,10 @@ let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
   Spi.Expert.make ~leaf_name
   @@ fun context ->
   let contract = Spi.Expert.contract context in
-  let lane_depth =
-    Option.value (contract.Runtime_contract.local_get depth_local) ~default:0
-  in
+  let _ = depth_local in
   let current_fiber_id = contract.Runtime_contract.current_fiber_id () in
   if
-    can_reenter ~lane_depth ~owner_fiber_id:lane.owner_fiber_id
+    can_reenter ~lane_depth:0 ~owner_fiber_id:lane.owner_fiber_id
       ~current_fiber_id
   then
     try
@@ -294,14 +292,13 @@ let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
       let access = enter ~hooks contract lane in
       access_ref := Some access;
       lane.owner_fiber_id <- Some current_fiber_id;
-      contract.Runtime_contract.local_with_binding depth_local 1 (fun () ->
-          let exit =
-            match Spi.Expert.eval context (after_acquired ()) with
-            | Eta.Exit.Ok () -> Eta.Exit.Ok (f access)
-            | Eta.Exit.Error cause -> Eta.Exit.Error cause
-          in
-          release_sync lane access_ref;
-          exit)
+      let exit =
+        match Spi.Expert.eval context (after_acquired ()) with
+        | Eta.Exit.Ok () -> Eta.Exit.Ok (f access)
+        | Eta.Exit.Error cause -> Eta.Exit.Error cause
+      in
+      release_sync lane access_ref;
+      exit
     with
     | exn when Option.is_some (contract.Runtime_contract.cancellation_reason exn)
       ->
