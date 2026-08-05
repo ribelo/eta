@@ -152,6 +152,12 @@ let emit_invalidated t =
 let with_lock t f =
   Sync_lock.use t.mutex f
 
+let get_ref value = !value
+let set_ref_some reference value = reference := Some value
+
+let shutting_down t =
+  Sync_lock.use t.mutex (fun () -> t.shutting_down)
+
 let invariant_violation field =
   invalid_arg ("Eta.Pool invariant violated: " ^ field ^ " underflow")
 
@@ -512,7 +518,7 @@ let open_entry t =
 
 let next_state t = function
   | Reserve_slot ->
-      Effect.sync (fun () -> reserve t) |> Effect.bind state_of_reservation
+      Effect_erasure.plain_sync1 t reserve |> Effect.bind state_of_reservation
   | Close_expired_entries entries ->
       close_expired_entries_before_retry t entries
   | Check_reserved_entry entry -> check_reserved_entry t entry
@@ -531,7 +537,7 @@ let with_lease t body =
   let checkout () =
     let acquired = ref None in
     let release_acquired =
-      Effect.sync (fun () -> !acquired)
+      Effect_erasure.plain_sync1 acquired get_ref
       |> Effect.bind (function
            | None -> Effect.unit
            | Some lease -> release_lease ~release_permit:false lease)
@@ -541,10 +547,10 @@ let with_lease t body =
          (span t "eta.pool.acquire" (acquire_entry t)
          |> Effect.bind (fun entry ->
                 let lease = make_lease t entry in
-                Effect.sync (fun () -> acquired := Some lease)
+                Effect_erasure.plain_sync2 acquired lease set_ref_some
                 |> Effect.bind (fun () -> body lease))))
   in
-  Effect.sync (fun () -> Sync_lock.use t.mutex (fun () -> t.shutting_down))
+  Effect_erasure.plain_sync1 t shutting_down
   |> Effect.bind (function
        | true -> Effect.fail `Pool_shutdown
        | false ->
