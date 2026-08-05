@@ -106,7 +106,7 @@ let run_claimed runner event =
     | None -> Eta.Effect.unit
     | Some callback ->
         let* () = runner.run_callback event callback in
-        let* () = Eta.Effect.sync (fun () -> delivered := true) in
+        delivered := true;
         runner.acknowledge event
   in
   Eta.Effect.on_exit
