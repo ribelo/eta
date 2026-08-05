@@ -22,7 +22,7 @@ type waiter = {
 }
 
 type t = {
-  lock : Sync_lock.t option;
+  lock : Sync_lock.t;
   waiters : waiter Stdlib.Queue.t;
   mutable busy : bool;
   mutable waiting : int;
@@ -40,9 +40,9 @@ type hooks = {
 let hooks ~note_waiter_enqueued ~note_waiter_compaction =
   { note_waiter_enqueued; note_waiter_compaction }
 
-let create ?(single_domain = false) () =
+let create () =
   {
-    lock = if single_domain then None else Some (Sync_lock.create ());
+    lock = Sync_lock.create ();
     waiters = Stdlib.Queue.create ();
     busy = false;
     waiting = 0;
@@ -65,10 +65,7 @@ let can_reenter ~lane_depth ~owner_fiber_id ~current_fiber_id =
   | Some owner_fiber_id -> owner_fiber_id = current_fiber_id
   | None -> false
 
-let use_lock lane f =
-  match lane.lock with
-  | None -> f ()
-  | Some lock -> Sync_lock.use lock f
+let use_lock lane f = Sync_lock.use lane.lock f
 
 let invariant_failed message =
   invalid_arg ("Eta_signal lane invariant failed: " ^ message)
@@ -256,22 +253,9 @@ let enter ~hooks contract lane =
         raise exn)
 
 let leave lane access =
-  let granted =
-    use_lock lane @@ fun () ->
-    validate_access lane access;
-    lane.active_access <- None;
-    match take_waiting_waiter_locked lane with
-    | None ->
-        lane.busy <- false;
-        None
-    | Some waiter ->
-        lane.waiting <- lane.waiting - 1;
-        waiter.state <- Granted;
-        Some waiter
-  in
-  Option.iter
-    (fun waiter -> ignore (resolve_waiter_best_effort 1 waiter : bool))
-    granted
+  with_committed_grant (use_lock lane) (fun pending_grants ->
+      validate_access lane access;
+      release_locked pending_grants lane)
 
 let release_sync lane access_ref =
   match !access_ref with
@@ -286,10 +270,12 @@ let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
   Spi.Expert.make ~leaf_name
   @@ fun context ->
   let contract = Spi.Expert.contract context in
-  let _ = depth_local in
+  let lane_depth =
+    Option.value (contract.Runtime_contract.local_get depth_local) ~default:0
+  in
   let current_fiber_id = contract.Runtime_contract.current_fiber_id () in
   if
-    can_reenter ~lane_depth:0 ~owner_fiber_id:lane.owner_fiber_id
+    can_reenter ~lane_depth ~owner_fiber_id:lane.owner_fiber_id
       ~current_fiber_id
   then
     try
@@ -308,13 +294,14 @@ let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
       let access = enter ~hooks contract lane in
       access_ref := Some access;
       lane.owner_fiber_id <- Some current_fiber_id;
-      let exit =
-        match Spi.Expert.eval context (after_acquired ()) with
-        | Eta.Exit.Ok () -> Eta.Exit.Ok (f access)
-        | Eta.Exit.Error cause -> Eta.Exit.Error cause
+      let release_lane =
+        Effect.sync (fun () -> release_sync lane access_ref)
       in
-      release_sync lane access_ref;
-      exit
+      contract.Runtime_contract.local_with_binding depth_local 1 (fun () ->
+          Spi.Expert.eval context
+            (after_acquired ()
+            |> Effect.bind (fun () -> Effect.sync (fun () -> f access))
+            |> Effect.on_exit (fun _exit -> release_lane)))
     with
     | exn when Option.is_some (contract.Runtime_contract.cancellation_reason exn)
       ->

@@ -781,7 +781,7 @@ module Graph = struct
 
     let create () =
       {
-        lane = Eta_signal_lane.create ~single_domain:true ();
+        lane = Eta_signal_lane.create ();
         owner_domain = Domain.self ();
         next_node_id = 0;
         next_scope_id = 1;
