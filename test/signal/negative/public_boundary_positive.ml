@@ -20,7 +20,7 @@ let _bind =
       if active then A.const 1 else A.const 0)
 
 let _observe =
-  A.Observer.observe a_signal (fun _update -> Eta.Effect.unit)
+  A.Observer.observe a_signal ~on_update:(fun _update -> Eta.Effect.unit)
 
 let _read
     (observer : int A.Observer.t) :

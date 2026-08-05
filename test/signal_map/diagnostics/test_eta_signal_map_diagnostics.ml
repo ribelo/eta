@@ -23,7 +23,7 @@ module Harness () = struct
   let run_exit runtime eff = Eta.Runtime.run runtime (widen eff)
 
   let observe runtime signal callback =
-    run_ok runtime (S.Observer.observe signal callback)
+    run_ok runtime (S.Observer.observe signal ~on_update:callback)
 
   let stabilize runtime = run_ok runtime S.stabilize
   let set runtime source value = run_ok runtime (S.Var.set source value)

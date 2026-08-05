@@ -125,7 +125,7 @@ let test_make_no_error_first_use () =
   in
   let observer =
     run_no_error_ok runtime
-      (No_error_signal.Observer.observe doubled (fun _ -> E.unit))
+      (No_error_signal.Observer.observe doubled ~on_update:(fun _ -> E.unit))
   in
   run_no_error_ok runtime No_error_signal.stabilize;
   Alcotest.(check int) "initial read" 2
@@ -142,7 +142,7 @@ let test_basic_observe_stabilize_read () =
   let doubled = Signal.Var.watch source |> Signal.map (fun value -> value * 2) in
   let updates = ref [] in
   let observer =
-    run_ok runtime (Signal.Observer.observe doubled (record updates))
+    run_ok runtime (Signal.Observer.observe doubled ~on_update:(record updates))
   in
   run_ok runtime Signal.stabilize;
   run_ok runtime (Signal.Var.set source 2);
@@ -166,7 +166,7 @@ let test_bind_switch_detaches_stale_dependency () =
         if use_left then Signal.Var.watch left else Signal.Var.watch right)
   in
   let observer =
-    run_ok runtime (Signal.Observer.observe selected (fun _ -> E.unit))
+    run_ok runtime (Signal.Observer.observe selected ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime Signal.stabilize;
   run_ok runtime (Signal.Var.set choose_left false);
@@ -191,7 +191,7 @@ let test_bind_can_select_initialized_external_bind () =
         S.Var.watch leaf |> S.map (fun value -> value + offset + 1))
   in
   let external_observer =
-    run_ok runtime (S.Observer.observe external_signal (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe external_signal ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   Alcotest.(check int) "external initialized" 11
@@ -199,7 +199,7 @@ let test_bind_can_select_initialized_external_bind () =
   run_ok runtime (S.Observer.dispose external_observer);
   let selected = S.bind (S.const true) ~f:(fun _ -> external_signal) in
   let selected_observer =
-    run_ok runtime (S.Observer.observe selected (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe selected ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   Alcotest.(check int) "selected initialized external bind" 11
@@ -241,7 +241,7 @@ let test_interval_catches_up_with_test_clock () =
   Eta_test.with_test_clock @@ fun _sw clock runtime ->
   let interval = run_ok runtime (Signal.Time.interval (Eta.Duration.ms 10)) in
   let observer =
-    run_ok runtime (Signal.Observer.observe interval (fun _ -> E.unit))
+    run_ok runtime (Signal.Observer.observe interval ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime Signal.stabilize;
   Alcotest.(check int) "initial interval" 0
@@ -258,7 +258,7 @@ let test_deadline_uses_monotonic_time () =
     run_ok runtime (Signal.Time.now ~every:(Eta.Duration.ms 1) ())
   in
   let now_observer =
-    run_ok runtime (Signal.Observer.observe now_signal (fun _ -> E.unit))
+    run_ok runtime (Signal.Observer.observe now_signal ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime Signal.stabilize;
   let start = run_ok runtime (Signal.Observer.read now_observer) in
@@ -272,7 +272,7 @@ let test_deadline_uses_monotonic_time () =
     run_ok runtime (Signal.Time.deadline ~every:(Eta.Duration.ms 1) deadline)
   in
   let due_observer =
-    run_ok runtime (Signal.Observer.observe due (fun _ -> E.unit))
+    run_ok runtime (Signal.Observer.observe due ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime Signal.stabilize;
   Alcotest.(check bool) "initial deadline" false
@@ -309,7 +309,7 @@ let test_deadline_rejects_foreign_monotonic_time () =
   in
   let now_signal = run_ok rt_a (S.Time.now ~every:(Eta.Duration.ms 1) ()) in
   let now_observer =
-    run_ok rt_a (S.Observer.observe now_signal (fun _ -> E.unit))
+    run_ok rt_a (S.Observer.observe now_signal ~on_update:(fun _ -> E.unit))
   in
   run_ok rt_a S.stabilize;
   let foreign_timestamp = run_ok rt_a (S.Observer.read now_observer) in
@@ -349,7 +349,7 @@ let test_generated_deadlines_preserve_runtime_provenance () =
     Eta_test.Test_clock.set_time clock_a now_ms;
     let now_signal = run_ok rt_a (S.Time.now ~every:(Eta.Duration.days 1) ()) in
     let observer =
-      run_ok rt_a (S.Observer.observe now_signal (fun _ -> E.unit))
+      run_ok rt_a (S.Observer.observe now_signal ~on_update:(fun _ -> E.unit))
     in
     run_ok rt_a S.stabilize;
     let timestamp = run_ok rt_a (S.Observer.read observer) in
@@ -404,7 +404,7 @@ let test_step_bounds_large_late_wake () =
            value + missed))
   in
   let observer =
-    run_ok runtime (Signal.Observer.observe step (fun _ -> E.unit))
+    run_ok runtime (Signal.Observer.observe step ~on_update:(fun _ -> E.unit))
   in
   wait_until "step late wake" (fun () -> !sleep_calls >= 2);
   Alcotest.(check int) "step update calls" 1 !applied;
@@ -437,9 +437,9 @@ let test_timer_runtime_mismatch_on_observe () =
     expect_exact_runtime_mismatch
       (label ^ " observe from another runtime")
       (Eta.Runtime.run rt_b
-         (widen (S.Observer.observe timer (fun _ -> E.unit))));
+         (widen (S.Observer.observe timer ~on_update:(fun _ -> E.unit))));
     let keep_alive =
-      run_ok rt_a (S.Observer.observe timer (fun _ -> E.unit))
+      run_ok rt_a (S.Observer.observe timer ~on_update:(fun _ -> E.unit))
     in
     Fun.protect
       ~finally:(fun () -> run_ok rt_a (S.Observer.dispose keep_alive))
@@ -448,7 +448,7 @@ let test_timer_runtime_mismatch_on_observe () =
         expect_runtime_mismatch_with_cleanup_mismatch
           (label ^ " active observe from another runtime")
           (Eta.Runtime.run rt_b
-             (widen (S.Observer.observe timer (fun _ -> E.unit)))))
+             (widen (S.Observer.observe timer ~on_update:(fun _ -> E.unit)))))
   in
   let interval = run_ok rt_a (S.Time.interval (Eta.Duration.ms 10)) in
   check_mismatch "interval timer" interval;
@@ -480,7 +480,7 @@ let test_mixed_runtime_mismatch_does_not_poison_same_runtime_timer () =
   let wrong_runtime_timer = run_ok rt_a (S.Time.interval (Eta.Duration.ms 10)) in
   let same_runtime_timer = run_ok rt_b (S.Time.interval (Eta.Duration.ms 10)) in
   let wrong_runtime_observer =
-    run_ok rt_a (S.Observer.observe wrong_runtime_timer (fun _ -> E.unit))
+    run_ok rt_a (S.Observer.observe wrong_runtime_timer ~on_update:(fun _ -> E.unit))
   in
   let wrong_runtime_observer_active = ref true in
   let dispose_wrong_runtime_observer () =
@@ -495,13 +495,13 @@ let test_mixed_runtime_mismatch_does_not_poison_same_runtime_timer () =
       expect_runtime_mismatch_with_cleanup_mismatch "mixed runtime observe"
         (Eta.Runtime.run rt_b
            (widen
-              (S.Observer.observe same_runtime_timer (fun _ -> E.unit))));
+              (S.Observer.observe same_runtime_timer ~on_update:(fun _ -> E.unit))));
       Alcotest.(check int)
         "failed observe did not start same-runtime sleeper" 0
         (Eta_test.Test_clock.sleeper_count clock_b);
       dispose_wrong_runtime_observer ();
       let same_runtime_observer =
-        run_ok rt_b (S.Observer.observe same_runtime_timer (fun _ -> E.unit))
+        run_ok rt_b (S.Observer.observe same_runtime_timer ~on_update:(fun _ -> E.unit))
       in
       Fun.protect
         ~finally:(fun () ->
@@ -533,10 +533,10 @@ let test_dispose_reports_timer_runtime_mismatch () =
   in
   let timer = run_ok rt_a (S.Time.interval (Eta.Duration.ms 10)) in
   let keep_alive =
-    run_ok rt_a (S.Observer.observe timer (fun _ -> E.unit))
+    run_ok rt_a (S.Observer.observe timer ~on_update:(fun _ -> E.unit))
   in
   let disposed_from_wrong_runtime =
-    run_ok rt_a (S.Observer.observe timer (fun _ -> E.unit))
+    run_ok rt_a (S.Observer.observe timer ~on_update:(fun _ -> E.unit))
   in
   Fun.protect
     ~finally:(fun () ->
@@ -568,7 +568,7 @@ let test_captured_branch_observer_invalidates_without_owner_observer () =
         else S.Var.watch right)
   in
   let selected_observer =
-    run_ok runtime (S.Observer.observe selected (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe selected ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   let branch =
@@ -578,7 +578,7 @@ let test_captured_branch_observer_invalidates_without_owner_observer () =
   in
   run_ok runtime (S.Observer.dispose selected_observer);
   let branch_observer =
-    run_ok runtime (S.Observer.observe branch (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe branch ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   Alcotest.(check int) "branch initialized" 10
@@ -607,7 +607,7 @@ let test_captured_branch_observer_invalidates_after_owner_gc () =
           else S.Var.watch right)
     in
     let selected_observer =
-      run_ok runtime (S.Observer.observe selected (fun _ -> E.unit))
+      run_ok runtime (S.Observer.observe selected ~on_update:(fun _ -> E.unit))
     in
     run_ok runtime S.stabilize;
     Alcotest.(check int) "selected initialized through external branch" 0
@@ -625,7 +625,7 @@ let test_captured_branch_observer_invalidates_after_owner_gc () =
     | None -> Alcotest.fail "expected captured branch"
   in
   let branch_observer =
-    run_ok runtime (S.Observer.observe branch (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe branch ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   Alcotest.(check int) "captured branch initialized after owner gc" 10
@@ -644,7 +644,7 @@ let test_observer_failure_retries_pending_delivery () =
   let fail_next_change = ref false in
   let observer =
     run_ok runtime
-      (S.Observer.observe (S.Var.watch source) (fun update ->
+      (S.Observer.observe (S.Var.watch source) ~on_update:(fun update ->
            match update with
            | S.Initialized _ -> record updates update
            | S.Changed _ when !fail_next_change ->
@@ -676,7 +676,7 @@ let test_stream_overflow_does_not_block_graph_progress () =
   in
   let observer_updates = ref [] in
   let ordinary_observer =
-    run_ok runtime (S.Observer.observe signal (record observer_updates))
+    run_ok runtime (S.Observer.observe signal ~on_update:(record observer_updates))
   in
   run_ok runtime S.stabilize;
   let before_drop = run_ok runtime (S.stats ()) in

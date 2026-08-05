@@ -133,7 +133,7 @@ let test_signal_version_overflow_does_not_publish_partial_snapshot () =
   let events = ref [] in
   let observer =
     run_ok rt
-      (Test_signal.Observer.observe signal (fun update ->
+      (Test_signal.Observer.observe signal ~on_update:(fun update ->
            Effect.sync (fun () -> events := update :: !events)))
   in
   run_ok rt Test_signal.stabilize;
@@ -249,7 +249,7 @@ let test_time_timer_generation_overflow_fails_loudly () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Test_signal.Time.interval (Duration.ms 10)) in
   let observer =
-    run_ok rt (Test_signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Test_signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
   Test_signal.Overflow.set_timer_generation signal max_int;
@@ -268,7 +268,7 @@ let test_time_timer_start_generation_overflow_is_precommit_failure () =
         if active then timer_signal else Test_signal.const (-1))
   in
   let observer =
-    run_ok rt (Test_signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Test_signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Test_signal.stabilize;
   Alcotest.(check int) "initial inactive branch" (-1)
@@ -290,7 +290,7 @@ let test_external_timer_stop_generation_overflow_is_precommit_failure () =
         if active then timer_signal else Test_signal.const (-1))
   in
   let observer =
-    run_ok rt (Test_signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Test_signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Test_signal.stabilize;
   wait_for_sleepers clock 1;

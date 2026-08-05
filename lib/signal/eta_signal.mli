@@ -400,17 +400,18 @@ module Make (Observer_error : Observer_error) () : sig
 
     val observe :
       ?cutoff:'a Cutoff.t ->
-      ?on_finish:(observer_finish -> unit) list ->
+      ?on_finish:(observer_finish -> unit) ->
+      ?on_update:('a update -> (unit, observer_error) Eta.Effect.t) ->
       'a signal ->
-      ('a update -> (unit, observer_error) Eta.Effect.t) ->
       ('a t, graph_error) Eta.Effect.t
     (** Create a lifecycle handle for observing [signal]. Registering an
         observer does not run its callback; the first explicit stabilization
         initializes observed values and callbacks run after a consistent
-        snapshot is published. If an observer is disposed before its callback is
-        delivered, the collected callback is skipped. [?on_finish] runs exactly
-        once after disposal or dynamic-scope invalidation. Disposal clears
-        pending delivery before the hook runs.
+        snapshot is published. An observer without [?on_update] still owns
+        demand and current committed state. If an observer is disposed before
+        its callback is delivered, the collected callback is skipped.
+        [?on_finish] runs exactly once after disposal or dynamic-scope
+        invalidation. Disposal clears pending delivery before the hook runs.
 
         Without [?cutoff], observer callback emission uses {!Cutoff.phys_equal}.
         The observer's current value still advances to the latest stabilized
@@ -442,10 +443,6 @@ module Make (Observer_error : Observer_error) () : sig
 
         Returns [`Invalid_scope] when the observer was invalidated because its
         dynamic-scope signal was replaced. *)
-
-    val unsafe_read_exn : 'a t -> 'a
-    (** Synchronous read for tests and debugging. Raises when the observer is
-        disposed or not initialized; normal consumers should prefer {!read}. *)
 
     val dispose : 'a t -> (unit, graph_error) Eta.Effect.t
     (** Dispose an observer lifecycle handle. Disposal is idempotent. Pending

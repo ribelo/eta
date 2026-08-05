@@ -606,3 +606,43 @@ nix develop -c dune runtest test/signal/economics --force
   with specification 8.1 (single `?on_finish`, labeled optional
   `?on_update`, delete `Observer.unsafe_read_exn`), then final gates and
   slice completion.
+
+## 2026-08-06 - Slice 6: public observer API matches specification 8.1
+
+- `Observer.observe` now has the specification shape:
+  `?cutoff -> ?on_finish:(observer_finish -> unit) -> ?on_update:(...) ->
+  'a signal -> ...`. `on_finish` is one hook instead of a list, and the
+  update callback is a labeled optional. An observer without `?on_update`
+  installs a no-op callback, keeping candidate admission, publication,
+  delivery accounting, and exactly-once finish uniform while still owning
+  demand and current committed state (specification 8.1).
+- Deleted public `Observer.unsafe_read_exn` per resolved issue 13. The
+  deletion orphaned the private chain `Observer_lifecycle.unsafe_read_value_exn`
+  and `Value.unsafe_read_exn`, which are removed in the same change. Typed
+  `Observer.read` already covers every invalid state (`Uninitialized`,
+  `Disposed`, `Invalid_scope`), so no probe replacement was needed.
+- Migrated all 300+ call sites in lib and test code to the labeled form
+  `observe signal ~on_update:callback` (labeled arguments commute, so no
+  site needed argument reordering). The overflow harness signature and
+  implementation alias were updated to the new shape.
+- Replaced the contract test `observer unsafe read reports invalid state`
+  with `observer read reports invalid state` (typed `read` over
+  uninitialized, stabilized, and disposed states) and added
+  `observer without on_update owns demand`, which proves a demand-only
+  observer initializes and keeps recomputing across source updates.
+- LAWS.md: corrected SC11-SC13 source spans after the doc edit and added
+  SC14 for the demand-only claim with its named contract test. Updated one
+  stale PRD coverage row whose test reference was renamed by this change;
+  the PRD's overall "active implementation target" status predates the V1
+  specification and is slice-11 documentation debt.
+- Verified with:
+
+```sh
+nix develop -c dune build @install @signal-economics
+nix develop -c dune runtest test/signal test/signal_map test/laws --force
+nix develop -c dune runtest test/signal/economics --force
+```
+
+- `test/signal_jsoo` call sites were migrated but remain unverified on this
+  track; the OxCaml switch does not build js_of_ocaml targets. Mainline
+  verification is scheduled in slice 12.

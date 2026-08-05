@@ -454,7 +454,7 @@ let test_unnecessary_root_nodes_are_gc_reclaimable () =
       |> Signal.map (fun value -> value * 2)
     in
     let observer =
-      run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+      run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
     in
     run_ok rt Signal.stabilize;
     run_ok rt (Signal.Observer.dispose observer);
@@ -505,7 +505,7 @@ let test_recompute_order_is_topological () =
       left right
   in
   let observer =
-    run_ok rt (Signal.Observer.observe total (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe total ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   Alcotest.(check (list string))
@@ -533,13 +533,13 @@ let test_observer_graph_order_precedes_reverse_registration_fail_fast () =
   let upstream_events = ref [] in
   let downstream_observer =
     run_ok rt
-      (Signal.Observer.observe downstream (function
+      (Signal.Observer.observe downstream ~on_update:(function
         | Signal.Initialized _ -> Effect.unit
         | Changed _ -> Effect.fail `Observer_failed))
   in
   let upstream_observer =
     run_ok rt
-      (Signal.Observer.observe upstream (function
+      (Signal.Observer.observe upstream ~on_update:(function
         | Signal.Initialized _ -> Effect.unit
         | Changed { new_value; _ } ->
             Effect.sync (fun () ->
@@ -587,13 +587,13 @@ let test_observer_graph_order_after_bind_switch_uses_new_inner () =
   let upstream_events = ref [] in
   let dynamic_observer =
     run_ok rt
-      (Signal.Observer.observe dynamic (function
+      (Signal.Observer.observe dynamic ~on_update:(function
         | Signal.Initialized _ -> Effect.unit
         | Changed _ -> Effect.fail `Observer_failed))
   in
   let upstream_observer =
     run_ok rt
-      (Signal.Observer.observe upstream (function
+      (Signal.Observer.observe upstream ~on_update:(function
         | Signal.Initialized _ -> Effect.unit
         | Changed { new_value; _ } ->
             Effect.sync (fun () ->
@@ -643,7 +643,7 @@ let test_observer_dispose_after_active_check_skips_callback () =
     expect_exit_ok "marker observer registration"
       (Runtime.run rt
          (widen
-            (Signal.Observer.observe signal (function
+            (Signal.Observer.observe signal ~on_update:(function
               | Signal.Changed _ when !arm_dispose ->
                   Effect.sync (fun () ->
                       Cleanup_interrupt_runtime.after_local_binding_count :=
@@ -667,7 +667,7 @@ let test_observer_dispose_after_active_check_skips_callback () =
     expect_exit_ok "target observer registration"
       (Runtime.run rt
          (widen
-            (Signal.Observer.observe signal (fun _ ->
+            (Signal.Observer.observe signal ~on_update:(fun _ ->
                  Effect.sync (fun () -> target_callback_ran := true)))))
   in
   target_ref := Some target;
@@ -733,7 +733,7 @@ let test_observer_registration_skips_callbacks_until_returned () =
         expect_exit_ok "observer registration"
           (Runtime.run rt
              (widen
-                (Signal.Observer.observe signal (fun _ ->
+                (Signal.Observer.observe signal ~on_update:(fun _ ->
                      Effect.sync (fun () ->
                          incr callback_count;
                          if not !observe_returned then
@@ -789,7 +789,7 @@ let test_observer_activation_waits_for_transfer_before_callbacks () =
         expect_exit_ok "observer registration"
           (Runtime.run rt
              (widen
-                (Signal.Observer.observe signal (fun _ ->
+                (Signal.Observer.observe signal ~on_update:(fun _ ->
                      Effect.sync (fun () ->
                          incr callback_count;
                          if not !observe_returned then
@@ -849,7 +849,7 @@ let test_observer_registration_abort_interruption_runs_timer_cleanup () =
     Some (7, fun () -> raise Cleanup_interrupt);
   let result =
     Runtime.run rt
-      (widen (Signal.Observer.observe timer (fun _ -> Effect.unit)))
+      (widen (Signal.Observer.observe timer ~on_update:(fun _ -> Effect.unit)))
   in
   Cleanup_interrupt_runtime.interrupt_on_protect_count := None;
   (match result with
@@ -898,7 +898,7 @@ let observer_observe_with_protect_interrupt target =
   let result =
     Runtime.run rt
       (widen
-         (Signal.Observer.observe signal (fun _update ->
+         (Signal.Observer.observe signal ~on_update:(fun _update ->
               Effect.sync (fun () -> incr callbacks))))
   in
   Cleanup_interrupt_runtime.interrupt_on_protect_count := None;
@@ -973,7 +973,7 @@ let test_observer_observe_invalidated_before_transfer_fails () =
   let selected_observer =
     expect_exit_ok "selected observer registration"
       (Runtime.run rt
-         (widen (Signal.Observer.observe selected (fun _ -> Effect.unit))))
+         (widen (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))))
   in
   ignore
     (expect_exit_ok "initial stabilize"
@@ -1005,7 +1005,7 @@ let test_observer_observe_invalidated_before_transfer_fails () =
     (fun () ->
       match
         Runtime.run rt
-          (widen (Signal.Observer.observe branch (fun _ -> Effect.unit)))
+          (widen (Signal.Observer.observe branch ~on_update:(fun _ -> Effect.unit)))
       with
       | Exit.Error (Cause.Fail `Invalid_scope) -> ()
       | Exit.Error cause ->
@@ -1029,10 +1029,10 @@ let test_bind_switches_after_unnecessary_source_change () =
         Signal.const ("branch " ^ string_of_int value))
   in
   let source_observer =
-    run_ok rt (Signal.Observer.observe watched (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe watched ~on_update:(fun _ -> Effect.unit))
   in
   let bound_observer =
-    run_ok rt (Signal.Observer.observe bound (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe bound ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   Alcotest.(check string) "initial branch" "branch 0"
@@ -1047,7 +1047,7 @@ let test_bind_switches_after_unnecessary_source_change () =
   Alcotest.(check (list int))
     "unnecessary bind not reselected" [ 0 ] (List.rev !selector_calls);
   let reobserved =
-    run_ok rt (Signal.Observer.observe bound (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe bound ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   Alcotest.(check string) "reobserved branch is current" "branch 1"
@@ -1079,7 +1079,7 @@ let test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes () =
                  value))
   in
   let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   let before_switch = run_ok rt (Signal.stats ()) in
@@ -1131,7 +1131,7 @@ let test_bind_rejects_reused_dynamic_scope_inner () =
             signal)
   in
   let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   Alcotest.(check string) "initial branch" "branch 0"
@@ -1168,7 +1168,7 @@ let test_bind_rejects_root_wrapper_over_reused_dynamic_scope_inner () =
             signal)
   in
   let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   Alcotest.(check string) "initial branch" "branch 0"
@@ -1211,7 +1211,7 @@ let test_bind_rejects_new_scope_wrapper_over_reused_dynamic_scope_inner () =
             signal)
   in
   let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   Alcotest.(check string) "initial branch" "branch 0"
@@ -1240,7 +1240,7 @@ let test_bind_accepts_ancestor_dynamic_scope_inner () =
         Signal.bind inner_watch ~f:(fun _ -> ancestor))
   in
   let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "initial ancestor inner" 10
@@ -1274,7 +1274,7 @@ let test_nested_bind_switches_newly_reachable_inner_same_stabilization () =
           branch)
   in
   let priming_observer =
-    run_ok rt (Signal.Observer.observe inner (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe inner ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   let left_branch =
@@ -1285,7 +1285,7 @@ let test_nested_bind_switches_newly_reachable_inner_same_stabilization () =
   let left_callbacks = ref 0 in
   let left_observer =
     run_ok rt
-      (Signal.Observer.observe left_branch (fun _ ->
+      (Signal.Observer.observe left_branch ~on_update:(fun _ ->
            Effect.sync (fun () -> incr left_callbacks)))
   in
   run_ok rt Signal.stabilize;
@@ -1296,7 +1296,7 @@ let test_nested_bind_switches_newly_reachable_inner_same_stabilization () =
         if enabled then inner else Signal.const (-1))
   in
   let outer_observer =
-    run_ok rt (Signal.Observer.observe outer (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe outer ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "outer initially uses fallback" (-1)
@@ -1332,7 +1332,7 @@ let test_bind_switch_invalidates_external_derived_branch_dependents () =
         else Signal.Var.watch right)
   in
   let selected_observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   let captured =
@@ -1342,7 +1342,7 @@ let test_bind_switch_invalidates_external_derived_branch_dependents () =
   in
   let wrapped = Signal.map (fun value -> value + 1) captured in
   let wrapped_observer =
-    run_ok rt (Signal.Observer.observe wrapped (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe wrapped ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "wrapped branch initialized" 11
@@ -1384,7 +1384,7 @@ let test_bind_switch_skips_stale_branch_observer_before_invalidation () =
         else Signal.Var.watch right)
   in
   let initial_selected_observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   let captured =
@@ -1394,13 +1394,13 @@ let test_bind_switch_skips_stale_branch_observer_before_invalidation () =
   in
   run_ok rt (Signal.Observer.dispose initial_selected_observer);
   let branch_observer =
-    run_ok rt (Signal.Observer.observe captured (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe captured ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "branch observer initialized" 10
     (run_ok rt (Signal.Observer.read branch_observer));
   let selected_observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt (Signal.Var.set left 11);
   run_ok rt (Signal.Var.set choose_left false);
@@ -1429,7 +1429,7 @@ let test_dynamic_scope_invalidation_skips_callback () =
         else Signal.const 0)
   in
   let selected_observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   let branch =
@@ -1440,7 +1440,7 @@ let test_dynamic_scope_invalidation_skips_callback () =
   let branch_callbacks = ref 0 in
   let branch_observer =
     run_ok rt
-      (Signal.Observer.observe branch (fun _ ->
+      (Signal.Observer.observe branch ~on_update:(fun _ ->
            Effect.sync (fun () -> incr branch_callbacks)))
   in
   run_ok rt Signal.stabilize;
@@ -1480,7 +1480,7 @@ let test_commit_skips_invalidated_staged_entries () =
         else Signal.Var.watch right)
   in
   let selected_observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   let captured =
@@ -1489,7 +1489,7 @@ let test_commit_skips_invalidated_staged_entries () =
     | None -> Alcotest.fail "expected captured bind RHS signal"
   in
   let branch_observer =
-    run_ok rt (Signal.Observer.observe captured (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe captured ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt (Signal.Var.set left 11);
   run_ok rt (Signal.Var.set choose_left false);
@@ -1536,7 +1536,7 @@ let test_bind_selector_failure_preserves_previous_branch () =
                  value))
   in
   let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "initial left branch" 1
@@ -1593,10 +1593,10 @@ let test_bind_switch_is_not_committed_when_later_pure_node_fails () =
            value)
   in
   let selected_observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   let failing_observer =
-    (run_ok rt (Signal.Observer.observe failing (fun _ -> Effect.unit))
+    (run_ok rt (Signal.Observer.observe failing ~on_update:(fun _ -> Effect.unit))
       : int Signal.observer)
   in
   run_ok rt Signal.stabilize;
@@ -1613,7 +1613,7 @@ let test_bind_switch_is_not_committed_when_later_pure_node_fails () =
     (Eta_eio.Runtime.run rt (widen Signal.stabilize));
   run_ok rt (Signal.Observer.dispose failing_observer);
   let old_inner_observer =
-    run_ok rt (Signal.Observer.observe old_inner (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe old_inner ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt (Signal.Observer.dispose old_inner_observer);
   run_ok rt (Signal.Observer.dispose selected_observer)
@@ -1628,7 +1628,7 @@ let test_dispose_unlinks_observer_from_graph () =
     Gc.finalise (fun _ -> finalized := true) payload;
     let observer =
       run_ok rt
-        (Signal.Observer.observe (Signal.Var.watch source) (fun _ ->
+        (Signal.Observer.observe (Signal.Var.watch source) ~on_update:(fun _ ->
              Effect.sync (fun () -> ignore (Bytes.get payload 0))))
     in
     run_ok rt (Signal.Observer.dispose observer)
@@ -1653,7 +1653,7 @@ let test_observer_callback_interruption_releases_phase () =
   let cancel_ctx = ref None in
   let observer =
     run_ok rt
-      (Signal.Observer.observe (Signal.Var.watch source) (fun _ ->
+      (Signal.Observer.observe (Signal.Var.watch source) ~on_update:(fun _ ->
            if !block_callback then (
              block_callback := false;
              Effect.sync (fun () -> Eio.Promise.resolve started_resolver ())
@@ -1727,7 +1727,7 @@ let test_time_timer_start_failure_retries_necessary_timer () =
         if enabled then timer else Signal.const 0)
   in
   let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "initial non-timer branch" 0
@@ -1779,7 +1779,7 @@ let test_time_timer_start_failure_preserves_pending_observer_event () =
   in
   let observer =
     run_ok rt
-      (Signal.Observer.observe selected (fun update ->
+      (Signal.Observer.observe selected ~on_update:(fun update ->
            Effect.sync (fun () -> events := update :: !events)))
   in
   run_ok rt Signal.stabilize;
@@ -1831,7 +1831,7 @@ let test_time_timer_start_failure_runs_invalidated_stream_cleanup () =
         else timer)
   in
   let selected_observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   let old_branch =
@@ -1882,7 +1882,7 @@ let test_time_timer_start_failure_rolls_back_unstarted_timers () =
         else Signal.const [ 0; 0 ])
   in
   let observer =
-    run_ok rt (Signal.Observer.observe observed (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe observed ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   fail_next_now := true;
@@ -2055,7 +2055,7 @@ let test_queued_graph_operation_cancellation_does_not_run () =
            n)
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   let stabilizer =
     Eio.Fiber.fork_promise ~sw (fun () ->
@@ -2110,7 +2110,7 @@ let test_stats_report_lane_waiters () =
            n)
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   let stabilizer =
     Eio.Fiber.fork_promise ~sw (fun () ->
@@ -2160,7 +2160,7 @@ let test_active_graph_operation_interruption_releases_lane () =
            n)
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   let cancel_ctx = ref None in
   let stabilizer =
@@ -2205,7 +2205,7 @@ let test_nested_runtime_graph_read_reenters_graph_lane () =
   let observer =
     expect_exit_ok "observe"
       (Runtime.run rt_a
-         (widen (Signal.Observer.observe signal (fun _ -> Effect.unit))))
+         (widen (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))))
   in
   ignore
     (expect_exit_ok "stabilize" (Runtime.run rt_a (widen Signal.stabilize))
@@ -2238,7 +2238,7 @@ let test_observer_read_waits_for_graph_lane () =
            value)
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   block_once := true;
@@ -2279,7 +2279,7 @@ let test_time_interval_construction_waits_for_graph_lane () =
            value)
   in
   ignore
-    (run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    (run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
       : int Signal.observer);
   let stabilizer =
     Eio.Fiber.fork_promise ~sw (fun () ->
@@ -2320,7 +2320,7 @@ let test_observer_delivery_acknowledgement_uses_graph_lane () =
     expect_exit_ok "observer registration"
       (Runtime.run rt
          (widen
-            (Signal.Observer.observe observed (fun _update ->
+            (Signal.Observer.observe observed ~on_update:(fun _update ->
                  Effect.sync (fun () ->
                      count_before_ack :=
                        Some !Cleanup_interrupt_runtime.local_binding_count)))))
@@ -2373,7 +2373,7 @@ let test_time_interval_catches_up_after_late_sleep () =
   with_late_timer_wake @@ fun rt sleep_calls release ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_until "late interval wake rescheduled" (fun () -> !sleep_calls >= 2);
   run_ok rt Signal.stabilize;
@@ -2461,7 +2461,7 @@ let test_time_step_replay_catch_up_yields_between_batches () =
     run_ok rt (Signal.Time.step_replay ~every:(Duration.ms 10) ~initial:0 succ)
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_until "catch-up timer attempted next sleep" (fun () -> !sleep_calls >= 2);
   Alcotest.(check bool)
@@ -2484,7 +2484,7 @@ let test_time_step_replay_saturated_catch_up_yields_without_completion () =
            value + 1))
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_until "saturated step_replay catch-up yielded" (fun () ->
       !yield_calls >= 3);
@@ -2511,7 +2511,7 @@ let test_time_step_saturated_catch_up_runs_once () =
            if value > max_int - missed then max_int else value + missed))
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_until "saturated step catch-up processed" (fun () ->
       !applied >= 1);
@@ -2539,7 +2539,7 @@ let test_time_large_catch_up_applies_beyond_old_cap () =
   @@ fun rt sleep_calls yield_calls logger ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_until "large catch-up processed" (fun () -> !sleep_calls >= 2);
   Alcotest.(check int) "large interval catch-up coalesced" 0 !yield_calls;
@@ -2558,7 +2558,7 @@ let test_time_interval_saturated_catch_up_coalesces () =
   @@ fun rt sleep_calls yield_calls logger ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 1)) in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_until "saturated interval catch-up processed" (fun () ->
       !sleep_calls >= 1);
@@ -2581,7 +2581,7 @@ let test_time_deadline_saturated_catch_up_does_not_overflow () =
     run_ok rt (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 2))
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_until "saturated deadline timer woke" (fun () -> !sleep_calls >= 1);
   run_ok rt Signal.stabilize;
@@ -2653,7 +2653,7 @@ let test_time_timer_dispose_before_cancel_install_exits_daemon () =
   @@ fun sw clock rt daemon_started release_daemon ->
   let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   Eio.Promise.await daemon_started;
   Alcotest.(check int) "uncancellable start has not installed a sleeper" 0
@@ -2707,7 +2707,7 @@ let test_time_now_update_on_start_demand_drop_does_not_queue_source () =
         if use_timer then now_signal else Signal.const (-1))
   in
   let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   observer_ref := Some observer;
   run_ok rt Signal.stabilize;
@@ -2743,7 +2743,7 @@ let test_time_timer_becomes_inert_after_dispose () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
   run_ok rt (Signal.Observer.dispose observer);
@@ -2757,7 +2757,7 @@ let test_time_timer_dispose_cancels_sleeping_daemon () =
   Eta_test.with_test_clock @@ fun sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
   run_ok rt (Signal.Observer.dispose observer);
@@ -2792,7 +2792,7 @@ let test_time_timer_wrong_runtime_dispose_cleanup_is_retryable () =
   in
   let signal = run_ok rt_a (Signal.Time.interval (Duration.days 1)) in
   let observer =
-    run_ok rt_a (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt_a (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_for_sleepers clock_a 1;
   expect_exact_runtime_mismatch "timer dispose from wrong runtime"
@@ -2925,7 +2925,7 @@ let test_time_timer_cancel_runs_outside_graph_lifecycle () =
          _after_graph_lifecycle_exit ->
   let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
   run_ok rt (Signal.Observer.dispose observer);
@@ -2948,7 +2948,7 @@ let test_time_invalidated_timer_cancel_runs_outside_graph_lifecycle () =
         else Signal.const 0)
   in
   let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   wait_for_sleepers clock 1;
@@ -2977,7 +2977,7 @@ let test_time_timer_cancel_failure_preserves_committed_snapshot () =
   let callback_values = ref [] in
   let observer =
     run_ok rt
-      (Signal.Observer.observe selected (function
+      (Signal.Observer.observe selected ~on_update:(function
         | Signal.Initialized value | Changed { new_value = value; _ } ->
             Effect.sync (fun () ->
                 callback_values := value :: !callback_values)))
@@ -3015,7 +3015,7 @@ let test_time_invalidated_timer_cancels_sleeping_daemon () =
         else Signal.const 0)
   in
   let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   wait_for_sleepers clock 1;
@@ -3060,7 +3060,7 @@ let test_time_step_like_skips_f_after_demand_drop_before_user_code () =
                  value + 1))
     in
     let observer =
-      run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+      run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
     in
     wait_for_sleepers clock 1;
     run_ok rt Signal.stabilize;
@@ -3109,7 +3109,7 @@ let test_time_timer_dispose_during_step_prevents_update () =
            value + 1))
   in
   let first_observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   observer_ref := Some first_observer;
   wait_for_sleepers clock 1;
@@ -3120,7 +3120,7 @@ let test_time_timer_dispose_during_step_prevents_update () =
   Eta_test.Async.yield ();
   Alcotest.(check bool) "step disposed observer" true !disposed_during_step;
   let second_observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "unnecessary timer step did not update source" 0
@@ -3135,7 +3135,7 @@ let test_time_now_backward_clock_refresh_overrides_pending_update () =
     |> Signal.map Signal.Time.to_ms
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
   run_ok rt Signal.stabilize;
@@ -3179,7 +3179,7 @@ let test_time_deadline_catches_up_without_daemon_yield () =
     run_ok rt (Signal.Time.after ~every:(Duration.ms 10) (Duration.ms 100))
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   Fun.protect
     ~finally:(fun () ->
@@ -3199,7 +3199,7 @@ let test_time_interval_catches_up_arithmetically_without_daemon_yield () =
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   Fun.protect
     ~finally:(fun () ->
@@ -3220,7 +3220,7 @@ let test_time_interval_does_not_recount_saturated_due () =
   now_ms := max_int - 1;
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 1)) in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   Fun.protect
     ~finally:(fun () ->
@@ -3255,7 +3255,7 @@ let test_time_deadline_refresh_retries_after_downstream_defect () =
       deadline
   in
   let observer =
-    run_ok rt (Signal.Observer.observe checked (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe checked ~on_update:(fun _ -> Effect.unit))
   in
   Fun.protect
     ~finally:(fun () ->
@@ -3289,7 +3289,7 @@ let test_time_interval_refresh_retries_after_downstream_defect () =
       interval
   in
   let observer =
-    run_ok rt (Signal.Observer.observe checked (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe checked ~on_update:(fun _ -> Effect.unit))
   in
   Fun.protect
     ~finally:(fun () ->
@@ -3320,7 +3320,7 @@ let test_time_active_deadline_refreshes_before_daemon_runs () =
     run_ok rt (Signal.Time.after ~every:(Duration.ms 5) (Duration.ms 10))
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   Fun.protect
     ~finally:(fun () ->
@@ -3345,7 +3345,7 @@ let test_time_deadline_on_demand_finish_cancels_running_daemon () =
     run_ok rt (Signal.Time.after ~every:(Duration.days 1) (Duration.ms 5))
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
   run_ok rt Signal.stabilize;
@@ -3378,7 +3378,7 @@ let test_time_active_interval_refreshes_before_daemon_runs () =
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 5)) in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   Fun.protect
     ~finally:(fun () ->
@@ -3409,7 +3409,7 @@ let test_time_step_does_not_catch_up_without_daemon_progress () =
     Signal.map2 (fun interval step -> (interval, step)) interval step
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   Fun.protect
     ~finally:(fun () ->
@@ -3437,7 +3437,7 @@ let test_time_step_replay_does_not_catch_up_without_daemon_progress () =
     Signal.map2 (fun interval step -> (interval, step)) interval step
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   Fun.protect
     ~finally:(fun () ->
@@ -3468,7 +3468,7 @@ let test_time_step_does_not_run_f_inside_stabilize () =
            else x + 1))
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   Fun.protect
     ~finally:(fun () ->
@@ -3498,7 +3498,7 @@ let test_time_active_timer_refresh_does_not_restart_pure_pass () =
     Signal.map2 (fun value due -> if due then value else 0) mapped deadline
   in
   let observer =
-    run_ok rt (Signal.Observer.observe combined (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe combined ~on_update:(fun _ -> Effect.unit))
   in
   Fun.protect
     ~finally:(fun () ->
@@ -3526,7 +3526,7 @@ let test_time_step_function () =
          (fun ~missed:_ n -> n * 2))
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
   run_ok rt Signal.stabilize;
@@ -3552,7 +3552,7 @@ let test_time_step_defect_logs_daemon_diagnostic_and_restarts () =
            n + 1))
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
   run_ok rt Signal.stabilize;
@@ -3597,7 +3597,7 @@ let test_time_step_replay_defect_logs_step_replay_diagnostic_kind () =
            failwith "time step_replay defect"))
   in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal ~on_update:(fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
   run_ok rt Signal.stabilize;
@@ -3701,7 +3701,7 @@ let test_registering_timer_demand_does_not_restart_active_pure_closures () =
       (Signal.Var.watch source)
   in
   let observer =
-    run_ok rt (Signal.Observer.observe mapped (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe mapped ~on_update:(fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
   pure_runs := 0;
@@ -3709,7 +3709,7 @@ let test_registering_timer_demand_does_not_restart_active_pure_closures () =
   let observe_timer =
     Eio.Fiber.fork_promise ~sw (fun () ->
         Eta_eio.Runtime.run rt
-          (widen (Signal.Observer.observe timer (fun _ -> Effect.unit))))
+          (widen (Signal.Observer.observe timer ~on_update:(fun _ -> Effect.unit))))
   in
   let stabilize =
     Eio.Fiber.fork_promise ~sw (fun () ->
@@ -3747,7 +3747,7 @@ let test_stream_bridge_interrupted_publish_does_not_duplicate () =
     expect_exit_ok "marker observer registration"
       (Runtime.run rt
          (widen
-            (Signal.Observer.observe signal (fun _update ->
+            (Signal.Observer.observe signal ~on_update:(fun _update ->
                  Effect.sync (fun () ->
                      if !arm_interrupt then
                        (* From this marker callback, the marker ack, stream
@@ -4044,7 +4044,7 @@ let test_stream_bridge_full_queue_failure_releases_phase () =
   let fail_next = ref false in
   let failing_observer =
     run_ok rt
-      (Signal.Observer.observe signal (function
+      (Signal.Observer.observe signal ~on_update:(function
         | Signal.Changed _ when !fail_next -> Effect.fail `Observer_failed
         | _ -> Effect.unit))
   in
@@ -4083,7 +4083,7 @@ let test_stream_bridge_dispose_during_observer_phase_is_deterministic () =
   let dispose_bridge = ref false in
   let disposer =
     run_ok rt
-      (Signal.Observer.observe signal (function
+      (Signal.Observer.observe signal ~on_update:(function
         | Signal.Changed _ when !dispose_bridge ->
             Signal.Observer.dispose bridge_observer
             |> Effect.or_die (fun err -> Signal.Graph_error err)

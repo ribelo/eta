@@ -26,7 +26,7 @@ let test_affected_child_notification_avoids_scan () =
   S.Extension.add_dirty_listener right_child right_listener;
   let combined = S.map2 ( + ) left_child right_child in
   let observer =
-    run_ok runtime (S.Observer.observe combined (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe combined ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   left_notifications := 0;
@@ -49,7 +49,7 @@ let test_preflight_orders_owner_before_descendant () =
         descendant := Some child;
         child)
   in
-  let observer = run_ok runtime (S.Observer.observe owner (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe owner ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   let descendant =
     match !descendant with
@@ -74,7 +74,7 @@ let test_demand_loss_removes_unclaimed_scheduler_work () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let source = S.Var.create 1 in
   let signal = S.Var.watch source |> S.map succ in
-  let observer = run_ok runtime (S.Observer.observe signal (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe signal ~on_update:(fun _ -> E.unit)) in
   Alcotest.(check bool) "scheduler has initialization work" false
     (S.Extension.scheduler_empty ());
   run_ok runtime (S.Observer.dispose observer);
@@ -87,7 +87,7 @@ let test_quiescent_stabilize_is_constant () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let source = S.Var.create 1 in
   let signal = S.Var.watch source |> S.map succ in
-  let observer = run_ok runtime (S.Observer.observe signal (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe signal ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   S.Extension.reset_counters ();
   let generation_before = run_ok runtime (S.Extension.generation ()) in
@@ -113,7 +113,7 @@ let test_dirty_diamond_settles_dependencies_first () =
   let left = S.map succ shared in
   let right = S.map succ shared in
   let total = S.map2 ( + ) left right in
-  let observer = run_ok runtime (S.Observer.observe total (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe total ~on_update:(fun _ -> E.unit)) in
   let order = ref [] in
   let listen label signal =
     S.Extension.add_dirty_listener signal (fun () ->
@@ -144,7 +144,7 @@ let test_dirty_diamond_settles_dependencies_first () =
 let test_timer_work_blocks_quiescent_stabilize () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let timer = run_ok runtime (S.Time.interval (Eta.Duration.ms 10)) in
-  let observer = run_ok runtime (S.Observer.observe timer (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe timer ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   Alcotest.(check int) "demanded timer owns reconciliation work" 1
     (S.Extension.timer_reconciliation_work_count ());
@@ -205,9 +205,9 @@ let test_observer_delivery_counters_cover_plan_and_delivery () =
   let unrelated_signal =
     S.Var.watch unrelated_source |> S.map (fun value -> value + 10)
   in
-  let observer = run_ok runtime (S.Observer.observe signal (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe signal ~on_update:(fun _ -> E.unit)) in
   let unrelated_observer =
-    run_ok runtime (S.Observer.observe unrelated_signal (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe unrelated_signal ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   S.Extension.reset_counters ();

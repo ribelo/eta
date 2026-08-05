@@ -55,9 +55,9 @@ module Make (Observer_error : Observer_error) () : sig
 
     val observe :
       ?cutoff:'a Eta_signal_cutoff.t ->
-      ?on_finish:(observer_finish -> unit) list ->
+      ?on_finish:(observer_finish -> unit) ->
+      ?on_update:('a update -> (unit, observer_error) Eta.Effect.t) ->
       'a signal ->
-      ('a update -> (unit, observer_error) Eta.Effect.t) ->
       ('a t, graph_error) Eta.Effect.t
 
     val read : 'a t -> ('a, observer_read_error) Eta.Effect.t

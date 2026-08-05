@@ -200,13 +200,13 @@ let test_graph_rejects_cross_domain_effectful_apis () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let source = S.Var.create 1 in
   let signal = S.Var.watch source in
-  let observer = run_ok runtime (S.Observer.observe signal (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe signal ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   expect_die "cross-domain Var.set"
     (run_effect_in_foreign_domain (S.Var.set source 2));
   expect_die "cross-domain Observer.observe"
     (run_effect_in_foreign_domain
-       (S.Observer.observe signal (fun _ -> E.unit)));
+       (S.Observer.observe signal ~on_update:(fun _ -> E.unit)));
   expect_die "cross-domain Observer.read"
     (run_effect_in_foreign_domain (S.Observer.read observer));
   expect_die "cross-domain Observer.dispose"
@@ -273,7 +273,7 @@ let test_n_ary_maps_and_all () =
     S.all [ sum3; sum4; sum5; sum6; sum7; sum8; sum9; pair_sum; all_sum ]
     |> S.map (List.fold_left ( + ) 0)
   in
-  let observer = run_ok runtime (S.Observer.observe combined (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe combined ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   Alcotest.(check int) "initial combined n-ary value" 170
     (run_ok runtime (S.Observer.read observer));
@@ -301,7 +301,7 @@ let test_reduce_balanced_copies_input_and_preserves_order () =
         left ^ right)
   in
   inputs.(0) <- S.Var.watch replacement_var;
-  let observer = run_ok runtime (S.Observer.observe reduced (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe reduced ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   Alcotest.(check string) "reduction preserves array order" "01234567"
     (run_ok runtime (S.Observer.read observer));
@@ -330,7 +330,7 @@ let test_reduce_balanced_internal_cells_do_not_suppress_candidates () =
         incr combine_calls;
         shared_result)
   in
-  let observer = run_ok runtime (S.Observer.observe reduced (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe reduced ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   Alcotest.(check int) "initial internal evaluation visits every edge" 7
     !combine_calls;
@@ -348,7 +348,7 @@ let test_reduce_balanced_empty_and_final_cutoff () =
         Alcotest.failf "empty reduction combined %d %d" left right)
   in
   let empty_observer =
-    run_ok runtime (S.Observer.observe empty (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe empty ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   Alcotest.(check int) "empty reduction publishes identity" 41
@@ -365,7 +365,7 @@ let test_reduce_balanced_empty_and_final_cutoff () =
         incr combine_calls;
         left + right)
   in
-  let observer = run_ok runtime (S.Observer.observe reduced (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe reduced ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   Alcotest.(check int) "initial aggregate publishes" 3
     (run_ok runtime (S.Observer.read observer));
@@ -423,7 +423,7 @@ let test_map_arity_matrix_initializes_and_coalesces () =
   in
   let events = ref [] in
   let observer =
-    run_ok runtime (S.Observer.observe (S.all mapped) (record events))
+    run_ok runtime (S.Observer.observe (S.all mapped) ~on_update:(record events))
   in
   run_ok runtime S.stabilize;
   Alcotest.(check (list int))
@@ -486,10 +486,10 @@ let test_map_invariants_repeated_children_cutoff_and_final_values () =
   in
   let combined = S.all [ repeated_map2; repeated_map9; cutoff_map9; two_inputs ] in
   let first_observer =
-    run_ok runtime (S.Observer.observe combined (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe combined ~on_update:(fun _ -> E.unit))
   in
   let second_observer =
-    run_ok runtime (S.Observer.observe combined (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe combined ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   let after_initial = run_ok runtime (S.stats ()) in
@@ -535,7 +535,7 @@ let test_repeated_constructor_slots_are_distinct_edges () =
   let base = S.Var.watch source in
   let repeated = S.map2 (fun left _right -> left) base base in
   let observer =
-    run_ok runtime (S.Observer.observe repeated (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe repeated ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   let options : S.dot_options =
@@ -563,7 +563,7 @@ let test_explicit_stabilization_boundary () =
   let source = S.Var.create 1 in
   let derived = S.Var.watch source |> S.map (fun value -> value * 10) in
   let updates = ref [] in
-  let observer = run_ok runtime (S.Observer.observe derived (record updates)) in
+  let observer = run_ok runtime (S.Observer.observe derived ~on_update:(record updates)) in
   expect_fail "read before first stabilization" (( = ) `Uninitialized_observer)
     (run runtime (S.Observer.read observer));
   run_ok runtime (S.Var.set source 2);
@@ -595,12 +595,12 @@ let test_functor_instances_stabilize_independently () =
   let second_events = ref 0 in
   let first_observer =
     run_ok runtime
-      (First.Observer.observe (First.Var.watch first_source) (fun _ ->
+      (First.Observer.observe (First.Var.watch first_source) ~on_update:(fun _ ->
            E.sync (fun () -> incr first_events)))
   in
   let second_observer =
     run_ok runtime
-      (Second.Observer.observe (Second.Var.watch second_source) (fun _ ->
+      (Second.Observer.observe (Second.Var.watch second_source) ~on_update:(fun _ ->
            E.sync (fun () -> incr second_events)))
   in
   run_ok runtime First.stabilize;
@@ -636,7 +636,7 @@ let test_observer_read_does_not_force_recompute () =
            incr recomputes;
            value)
   in
-  let observer = run_ok runtime (S.Observer.observe signal (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe signal ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   let after_stabilize = run_ok runtime (S.stats ()) in
   run_ok runtime (S.Var.set source 2);
@@ -689,12 +689,9 @@ let test_observer_graph_delivery_order_is_deterministic () =
       E.sync (fun () -> events := label :: !events)
     in
     let observe = function
-      | "upstream" -> S.Observer.observe upstream (record "upstream")
-      | "downstream" ->
-          S.Observer.observe downstream (record "downstream")
-      | "independent" ->
-          S.Observer.observe independent (record "independent")
-      | unexpected ->
+      | "upstream" -> S.Observer.observe upstream ~on_update:(record "upstream")      | "downstream" ->
+          S.Observer.observe downstream ~on_update:(record "downstream")      | "independent" ->
+          S.Observer.observe independent ~on_update:(record "independent")      | unexpected ->
           Alcotest.failf "unexpected observer label %S" unexpected
     in
     let observers =
@@ -738,10 +735,7 @@ let test_observer_graph_delivery_order_is_deterministic () =
       E.sync (fun () -> events := label :: !events)
     in
     let observe = function
-      | "left" -> S.Observer.observe left (record "left")
-      | "middle" -> S.Observer.observe middle (record "middle")
-      | "right" -> S.Observer.observe right (record "right")
-      | unexpected ->
+      | "left" -> S.Observer.observe left ~on_update:(record "left")      | "middle" -> S.Observer.observe middle ~on_update:(record "middle")      | "right" -> S.Observer.observe right ~on_update:(record "right")      | unexpected ->
           Alcotest.failf "unexpected observer label %S" unexpected
     in
     let observers =
@@ -771,14 +765,11 @@ let test_observer_graph_delivery_order_is_deterministic () =
     E.sync (fun () -> events := label :: !events)
   in
   let same_first =
-    run_ok runtime (S.Observer.observe watched (record "same-1"))
-  in
+    run_ok runtime (S.Observer.observe watched ~on_update:(record "same-1"))  in
   let same_second =
-    run_ok runtime (S.Observer.observe watched (record "same-2"))
-  in
+    run_ok runtime (S.Observer.observe watched ~on_update:(record "same-2"))  in
   let independent_observer =
-    run_ok runtime (S.Observer.observe independent (record "independent"))
-  in
+    run_ok runtime (S.Observer.observe independent ~on_update:(record "independent"))  in
   let observers = [ same_first; same_second; independent_observer ] in
   let expected = [ "same-1"; "same-2"; "independent" ] in
   run_ok runtime S.stabilize;
@@ -816,10 +807,7 @@ let test_observer_plan_orders_a_c_b_counterexample_all_registrations () =
       E.sync (fun () -> events := label :: !events)
     in
     let observe = function
-      | "A" -> S.Observer.observe owner (record "A")
-      | "B" -> S.Observer.observe selected (record "B")
-      | "C" -> S.Observer.observe unrelated (record "C")
-      | unexpected -> Alcotest.failf "unexpected observer label %S" unexpected
+      | "A" -> S.Observer.observe owner ~on_update:(record "A")      | "B" -> S.Observer.observe selected ~on_update:(record "B")      | "C" -> S.Observer.observe unrelated ~on_update:(record "C")      | unexpected -> Alcotest.failf "unexpected observer label %S" unexpected
     in
     let observers =
       List.map (fun label -> run_ok runtime (observe label)) registration_order
@@ -847,23 +835,42 @@ let test_observer_plan_orders_a_c_b_counterexample_all_registrations () =
       ([ "C"; "B"; "A" ], [ "C"; "B"; "A" ]);
     ]
 
-let test_observer_unsafe_read_exn_reports_invalid_state () =
+let test_observer_read_reports_invalid_state () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let source = S.Var.create 1 in
   let observer =
-    run_ok runtime (S.Observer.observe (S.Var.watch source) (fun _ -> E.unit))
+    run_ok runtime
+      (S.Observer.observe ~on_update:(fun _ -> E.unit) (S.Var.watch source))
   in
-  Alcotest.check_raises "unsafe read before stabilize"
-    (Invalid_argument "Eta_signal observer is not initialized")
-    (fun () -> ignore (S.Observer.unsafe_read_exn observer : int));
+  expect_fail "read before stabilize reports uninitialized"
+    (function
+      | `Uninitialized_observer -> true
+      | _ -> false)
+    (run runtime (S.Observer.read observer));
   run_ok runtime S.stabilize;
-  Alcotest.(check int) "unsafe read stabilized value" 1
-    (S.Observer.unsafe_read_exn observer);
+  Alcotest.(check int) "read stabilized value" 1
+    (run_ok runtime (S.Observer.read observer));
   run_ok runtime (S.Observer.dispose observer);
-  Alcotest.check_raises "unsafe read after dispose"
-    (Invalid_argument "Eta_signal observer is disposed")
-    (fun () -> ignore (S.Observer.unsafe_read_exn observer : int))
+  expect_fail "read after dispose reports disposed"
+    (function
+      | `Disposed_observer -> true
+      | _ -> false)
+    (run runtime (S.Observer.read observer))
+
+let test_observer_without_on_update_owns_demand () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let derived = S.map (fun value -> value * 2) (S.Var.watch source) in
+  let observer = run_ok runtime (S.Observer.observe derived) in
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "demand-only observer reads computed value" 2
+    (run_ok runtime (S.Observer.read observer));
+  run_ok runtime (S.Var.set source 5);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "demand-only observer holds demand across updates" 10
+    (run_ok runtime (S.Observer.read observer))
 
 let test_diagnostics_track_observation_and_disposal () =
   let module S = Eta_signal.Make (Observer_error) () in
@@ -880,7 +887,7 @@ let test_diagnostics_track_observation_and_disposal () =
   run_ok runtime (S.Var.set source 2);
   let signal = S.Var.watch source |> S.map (fun value -> value + 1) in
   let observer =
-    run_ok runtime (S.Observer.observe signal (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe signal ~on_update:(fun _ -> E.unit))
   in
   let after_observe = run_ok runtime (S.stats ()) in
   Alcotest.(check bool) "observe records necessary transition" true
@@ -967,13 +974,13 @@ let test_diagnostic_dot_options_expose_public_metadata () =
         if enabled then S.const 1 else S.const 0)
   in
   let observer =
-    run_ok runtime (S.Observer.observe observed (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe observed ~on_update:(fun _ -> E.unit))
   in
   let timer_observer =
-    run_ok runtime (S.Observer.observe timer (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe timer ~on_update:(fun _ -> E.unit))
   in
   let scoped_observer =
-    run_ok runtime (S.Observer.observe scoped (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe scoped ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   run_ok runtime (S.Var.set source 2);
@@ -1034,7 +1041,7 @@ let test_invalidated_branch_diagnostics_are_retained () =
         else S.const 20)
   in
   let observer =
-    run_ok runtime (S.Observer.observe selected (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe selected ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   let branch =
@@ -1043,7 +1050,7 @@ let test_invalidated_branch_diagnostics_are_retained () =
     | None -> Alcotest.fail "expected captured bind branch"
   in
   let branch_observer =
-    run_ok runtime (S.Observer.observe branch (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe branch ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   let before_switch = run_ok runtime (S.stats ()) in
@@ -1117,7 +1124,7 @@ let test_diagnostics_stay_read_only_after_nested_bind_replacement () =
             signal))
   in
   let selected_observer =
-    run_ok runtime (S.Observer.observe selected (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe selected ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   let branch =
@@ -1126,7 +1133,7 @@ let test_diagnostics_stay_read_only_after_nested_bind_replacement () =
     | None -> Alcotest.fail "expected captured nested bind branch"
   in
   let branch_observer =
-    run_ok runtime (S.Observer.observe branch (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe branch ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   let after_initial = run_ok runtime (S.stats ()) in
@@ -1182,7 +1189,7 @@ let test_invalid_observer_diagnostics_survive_tombstone_eviction () =
         signal)
   in
   let selected_observer =
-    run_ok runtime (S.Observer.observe selected (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe selected ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   let branch =
@@ -1191,7 +1198,7 @@ let test_invalid_observer_diagnostics_survive_tombstone_eviction () =
     | None -> Alcotest.fail "expected first dynamic branch"
   in
   let branch_observer =
-    run_ok runtime (S.Observer.observe branch (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe branch ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   for index = 1 to 1_100 do
@@ -1225,8 +1232,7 @@ let test_default_cutoff_is_physical_equality () =
   let source = S.Var.create initial in
   let events = ref [] in
   let observer =
-    run_ok runtime (S.Observer.observe (S.Var.watch source) (record events))
-  in
+    run_ok runtime (S.Observer.observe (S.Var.watch source) ~on_update:(record events))  in
   run_ok runtime S.stabilize;
   run_ok runtime (S.Var.set source next);
   run_ok runtime S.stabilize;
@@ -1259,7 +1265,7 @@ let test_default_physical_cutoff_suppresses_in_place_mutation () =
   let callbacks = ref 0 in
   let observer =
     run_ok runtime
-      (S.Observer.observe mapped (fun update ->
+      (S.Observer.observe mapped ~on_update:(fun update ->
            E.sync (fun () ->
                incr callbacks;
                events := update :: !events)))
@@ -1297,7 +1303,7 @@ let test_source_cutoff_forces_same_block_propagation () =
            Array.get value 0)
   in
   let observer =
-    run_ok runtime (S.Observer.observe mapped (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe mapped ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   Array.set block 0 2;
@@ -1314,7 +1320,7 @@ let test_cutoff_constructors_observe_published_then_candidate () =
   let read_after_set cutoff initial candidate =
     let source = S.Var.create ~cutoff initial in
     let observer =
-      run_ok runtime (S.Observer.observe (S.Var.watch source) (fun _ -> E.unit))
+      run_ok runtime (S.Observer.observe (S.Var.watch source) ~on_update:(fun _ -> E.unit))
     in
     run_ok runtime S.stabilize;
     run_ok runtime (S.Var.set source candidate);
@@ -1336,7 +1342,7 @@ let test_cutoff_constructors_observe_published_then_candidate () =
            Array.get value 0)
   in
   let physical_observer =
-    run_ok runtime (S.Observer.observe physical_mapped (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe physical_mapped ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   run_ok runtime (S.Var.set physical_source [| 0 |]);
@@ -1382,7 +1388,7 @@ let test_producer_and_observer_cutoffs_have_distinct_authority () =
   let producer_source = S.Var.create ~cutoff:Eta_signal.Cutoff.always 0 in
   let producer_observer =
     run_ok runtime
-      (S.Observer.observe (S.Var.watch producer_source) (fun update ->
+      (S.Observer.observe (S.Var.watch producer_source) ~on_update:(fun update ->
            E.sync (fun () -> producer_events := update :: !producer_events)))
   in
   run_ok runtime S.stabilize;
@@ -1397,7 +1403,7 @@ let test_producer_and_observer_cutoffs_have_distinct_authority () =
   let observer =
     run_ok runtime
       (S.Observer.observe ~cutoff:Eta_signal.Cutoff.always
-         (S.Var.watch observer_source) (fun update ->
+         (S.Var.watch observer_source) ~on_update:(fun update ->
            E.sync (fun () -> observer_events := update :: !observer_events)))
   in
   run_ok runtime S.stabilize;
@@ -1426,7 +1432,7 @@ let test_equality_defects_preserve_committed_snapshots () =
          (fun value -> value)
   in
   let cutoff_observer =
-    run_ok runtime (S.Observer.observe cutoff_signal (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe cutoff_signal ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   run_ok runtime (S.Var.set cutoff_source 2);
@@ -1445,7 +1451,7 @@ let test_equality_defects_preserve_committed_snapshots () =
       1
   in
   let source_observer =
-    run_ok runtime (S.Observer.observe (S.Var.watch source) (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe (S.Var.watch source) ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   run_ok runtime (S.Var.set source 2);
@@ -1469,8 +1475,7 @@ let test_equality_defects_preserve_committed_snapshots () =
               if !observer_equal_fails then failwith "observer equality";
               false))
          (S.Var.watch observer_source)
-         (record observer_events))
-  in
+         ~on_update:(record observer_events))  in
   run_ok runtime S.stabilize;
   run_ok runtime (S.Var.set observer_source 2);
   expect_die "observer equality defect" (run runtime S.stabilize);
@@ -1500,7 +1505,7 @@ let test_ambiguous_scope_failures_are_typed () =
            value)
   in
   let pure_observer =
-    run_ok runtime (S.Observer.observe pure_signal (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe pure_signal ~on_update:(fun _ -> E.unit))
   in
   expect_ambiguous "pure node construction" S.stabilize;
   run_ok runtime (S.Observer.dispose pure_observer);
@@ -1512,7 +1517,7 @@ let test_ambiguous_scope_failures_are_typed () =
     |> S.map (fun value -> value + S.Var.value hidden_source)
   in
   let var_value_observer =
-    run_ok runtime (S.Observer.observe var_value_signal (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe var_value_signal ~on_update:(fun _ -> E.unit))
   in
   expect_ambiguous "pure Var.value" S.stabilize;
   run_ok runtime (S.Observer.dispose var_value_observer);
@@ -1526,7 +1531,7 @@ let test_ambiguous_scope_failures_are_typed () =
            value)
   in
   let create_watch_observer =
-    run_ok runtime (S.Observer.observe create_watch_signal (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe create_watch_signal ~on_update:(fun _ -> E.unit))
   in
   expect_ambiguous "pure Var.watch after Var.create" S.stabilize;
   run_ok runtime (S.Observer.dispose create_watch_observer);
@@ -1534,7 +1539,7 @@ let test_ambiguous_scope_failures_are_typed () =
   let observer_callback_source = S.Var.create 1 in
   let observer_callback_observer =
     run_ok runtime
-      (S.Observer.observe (S.Var.watch observer_callback_source) (fun _ ->
+      (S.Observer.observe (S.Var.watch observer_callback_source) ~on_update:(fun _ ->
            ignore (S.const 1 : int S.signal);
            E.unit))
   in
@@ -1544,7 +1549,7 @@ let test_ambiguous_scope_failures_are_typed () =
   let observer_effect_source = S.Var.create 1 in
   let observer_effect_observer =
     run_ok runtime
-      (S.Observer.observe (S.Var.watch observer_effect_source) (fun _ ->
+      (S.Observer.observe (S.Var.watch observer_effect_source) ~on_update:(fun _ ->
            E.sync (fun () -> ignore (S.const 1 : int S.signal))))
   in
   expect_ambiguous "observer effect construction" S.stabilize;
@@ -1562,7 +1567,7 @@ let test_bind_self_cycle_is_typed_failure () =
         | None -> Alcotest.fail "cycle holder was not initialized")
   in
   holder := Some cyclic;
-  let observer = run_ok runtime (S.Observer.observe cyclic (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe cyclic ~on_update:(fun _ -> E.unit)) in
   expect_fail "self cycle" (( = ) `Cycle) (run runtime S.stabilize);
   run_ok runtime (S.Observer.dispose observer)
 
@@ -1573,7 +1578,7 @@ let test_reentrant_stabilization_is_typed_failure () =
   let nested = ref None in
   let observer =
     run_ok runtime
-      (S.Observer.observe (S.Var.watch source) (fun _ ->
+      (S.Observer.observe (S.Var.watch source) ~on_update:(fun _ ->
            E.to_exit S.stabilize
            |> E.bind (fun exit -> E.sync (fun () -> nested := Some exit))))
   in
@@ -1599,10 +1604,10 @@ let test_reentrant_stabilization_preserves_outer_delivery_phase () =
     |> E.bind (fun exit -> E.sync (fun () -> nested := exit :: !nested))
   in
   let first_observer =
-    run_ok runtime (S.Observer.observe observed (fun _ -> record_nested ()))
+    run_ok runtime (S.Observer.observe observed ~on_update:(fun _ -> record_nested ()))
   in
   let second_observer =
-    run_ok runtime (S.Observer.observe observed (fun _ -> record_nested ()))
+    run_ok runtime (S.Observer.observe observed ~on_update:(fun _ -> record_nested ()))
   in
   run_ok runtime S.stabilize;
   let is_reentrant = function
@@ -1641,7 +1646,7 @@ let test_pure_failure_preserves_snapshot_and_retries () =
            value)
   in
   let initial_observer =
-    run_ok runtime (S.Observer.observe initially_failing (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe initially_failing ~on_update:(fun _ -> E.unit))
   in
   expect_die "initial pure failure" (run runtime S.stabilize);
   expect_fail "read after failed initial stabilization"
@@ -1658,7 +1663,7 @@ let test_pure_failure_preserves_snapshot_and_retries () =
            if value = 2 then failwith "contract pure failure";
            value)
   in
-  let observer = run_ok runtime (S.Observer.observe signal (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe signal ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   run_ok runtime (S.Var.set source 2);
   expect_die "pure failure" (run runtime S.stabilize);
@@ -1681,7 +1686,7 @@ let test_observer_phase_mutation_is_delayed () =
   let observer_ref = ref None in
   let observer =
     run_ok runtime
-      (S.Observer.observe signal (fun update ->
+      (S.Observer.observe signal ~on_update:(fun update ->
            record updates update
            |> E.bind (fun () ->
                   match (!observer_ref, update) with
@@ -1731,13 +1736,12 @@ let test_observer_lifecycle_changes_inside_callback () =
   let late_ref = ref None in
   let primary =
     run_ok runtime
-      (S.Observer.observe signal (fun update ->
+      (S.Observer.observe signal ~on_update:(fun update ->
            record primary_events update
            |> E.bind (fun () ->
                   match (!primary_ref, update) with
                   | Some primary, S.Initialized _ ->
-                      S.Observer.observe signal (record late_events)
-                      |> E.map_error (fun _ -> `Observer_failed)
+                      S.Observer.observe signal ~on_update:(record late_events)                      |> E.map_error (fun _ -> `Observer_failed)
                       |> E.bind (fun late ->
                              E.sync (fun () -> late_ref := Some late)
                              |> E.bind (fun () ->
@@ -1773,7 +1777,7 @@ let test_observer_dispose_skips_collected_event () =
   let later_observer = ref None in
   let first_observer =
     run_ok runtime
-      (S.Observer.observe observed (fun _ ->
+      (S.Observer.observe observed ~on_update:(fun _ ->
            let open Eta.Syntax in
            let* () = E.sync (fun () -> events := "first" :: !events) in
            match !later_observer with
@@ -1784,7 +1788,7 @@ let test_observer_dispose_skips_collected_event () =
   in
   let second_observer =
     run_ok runtime
-      (S.Observer.observe observed (fun _ ->
+      (S.Observer.observe observed ~on_update:(fun _ ->
            E.sync (fun () -> events := "second" :: !events)))
   in
   later_observer := Some second_observer;
@@ -1813,12 +1817,11 @@ let test_observer_finish_hook_runs_exactly_once () =
   let observer =
     run_ok runtime
       (S.Observer.observe
-         ~on_finish:
-           [ (fun reason -> finish_reasons := reason :: !finish_reasons) ]
-         signal
-         (fun _update ->
+         ~on_finish:(fun reason -> finish_reasons := reason :: !finish_reasons)
+         ~on_update:(fun _update ->
            incr callback_count;
-           E.unit))
+           E.unit)
+         signal)
   in
   run_ok runtime (S.Observer.dispose observer);
   run_ok runtime (S.Observer.dispose observer);
@@ -1863,16 +1866,16 @@ let test_observer_callbacks_read_consistent_published_snapshot () =
   in
   let left_handle =
     run_ok runtime
-      (S.Observer.observe left (fun _ ->
+      (S.Observer.observe left ~on_update:(fun _ ->
            S.Var.set source 100
            |> E.map_error (fun _ -> `Observer_failed)
            |> E.bind (fun () -> record_snapshot "left")))
   in
   let right_handle =
-    run_ok runtime (S.Observer.observe right (fun _ -> record_snapshot "right"))
+    run_ok runtime (S.Observer.observe right ~on_update:(fun _ -> record_snapshot "right"))
   in
   let total_handle =
-    run_ok runtime (S.Observer.observe total (fun _ -> record_snapshot "total"))
+    run_ok runtime (S.Observer.observe total ~on_update:(fun _ -> record_snapshot "total"))
   in
   left_observer := Some left_handle;
   right_observer := Some right_handle;
@@ -1907,7 +1910,7 @@ let test_observer_failure_commits_snapshot_and_retries_delivery () =
   let fail_next_change = ref false in
   let observer =
     run_ok runtime
-      (S.Observer.observe watched (fun update ->
+      (S.Observer.observe watched ~on_update:(fun update ->
            match update with
            | S.Initialized _ -> record delivered update
            | S.Changed _ when !fail_next_change ->
@@ -1917,7 +1920,7 @@ let test_observer_failure_commits_snapshot_and_retries_delivery () =
   in
   let later_observer =
     run_ok runtime
-      (S.Observer.observe watched (fun update ->
+      (S.Observer.observe watched ~on_update:(fun update ->
            match update with
            | S.Initialized _ -> E.unit
            | S.Changed _ -> record later_delivered update))
@@ -1974,7 +1977,7 @@ let test_observer_callback_failure_channels_are_distinct () =
   let typed_source = S.Var.create 1 in
   let typed_observer =
     run_ok runtime
-      (S.Observer.observe (S.Var.watch typed_source) (fun _update ->
+      (S.Observer.observe (S.Var.watch typed_source) ~on_update:(fun _update ->
            E.fail `Observer_failed))
   in
   expect_fail "observer typed failure"
@@ -1985,7 +1988,7 @@ let test_observer_callback_failure_channels_are_distinct () =
   let defect_source = S.Var.create 1 in
   let defect_observer =
     run_ok runtime
-      (S.Observer.observe (S.Var.watch defect_source) (fun _update ->
+      (S.Observer.observe (S.Var.watch defect_source) ~on_update:(fun _update ->
            failwith "contract callback construction defect"))
   in
   expect_die "callback construction defect" (run runtime S.stabilize);
@@ -2004,10 +2007,10 @@ let test_derived_demand_reactivates_fresh () =
            value + 1)
   in
   let single_source_observer =
-    run_ok runtime (S.Observer.observe single_watched (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe single_watched ~on_update:(fun _ -> E.unit))
   in
   let single_observer =
-    run_ok runtime (S.Observer.observe single (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe single ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   Alcotest.(check int) "single derived initial value" 1
@@ -2021,7 +2024,7 @@ let test_derived_demand_reactivates_fresh () =
   Alcotest.(check int) "unnecessary single derived did not recompute" 1
     !single_calls;
   let single_reobserved =
-    run_ok runtime (S.Observer.observe single (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe single ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   Alcotest.(check int) "reobserved single derived value is fresh" 2
@@ -2047,10 +2050,10 @@ let test_derived_demand_reactivates_fresh () =
            value * 10)
   in
   let chain_source_observer =
-    run_ok runtime (S.Observer.observe chain_watched (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe chain_watched ~on_update:(fun _ -> E.unit))
   in
   let second_observer =
-    run_ok runtime (S.Observer.observe second (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe second ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   Alcotest.(check int) "initial chain value" 10
@@ -2065,7 +2068,7 @@ let test_derived_demand_reactivates_fresh () =
   Alcotest.(check int) "unnecessary first did not recompute" 1 !first_calls;
   Alcotest.(check int) "unnecessary second did not recompute" 1 !second_calls;
   let chain_reobserved =
-    run_ok runtime (S.Observer.observe second (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe second ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   Alcotest.(check int) "reactivated chain value is fresh" 20
@@ -2091,7 +2094,7 @@ let test_demand_boundary_for_derived_nodes_and_timers () =
   Alcotest.(check int) "unobserved derived node did not recompute" 0
     !recomputes;
   let derived_observer =
-    run_ok runtime (S.Observer.observe derived (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe derived ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   Alcotest.(check int) "observed derived node recomputed" 1 !recomputes;
@@ -2101,8 +2104,7 @@ let test_demand_boundary_for_derived_nodes_and_timers () =
     (Eta_test.Test_clock.sleeper_count clock);
   let timer_updates = ref [] in
   let timer_observer =
-    run_ok runtime (S.Observer.observe timer (record timer_updates))
-  in
+    run_ok runtime (S.Observer.observe timer ~on_update:(record timer_updates))  in
   wait_until "timer sleeper" (fun () ->
       Eta_test.Test_clock.sleeper_count clock >= 1);
   run_ok runtime S.stabilize;
@@ -2130,7 +2132,7 @@ let test_time_invalid_intervals_fail_cleanly () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let now_signal = run_ok runtime (S.Time.now ~every:(Eta.Duration.ms 1) ()) in
   let now_observer =
-    run_ok runtime (S.Observer.observe now_signal (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe now_signal ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   let future_deadline =
@@ -2160,7 +2162,7 @@ let test_time_deadline_validation_errors () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let now_signal = run_ok runtime (S.Time.now ~every:(Eta.Duration.ms 1) ()) in
   let now_observer =
-    run_ok runtime (S.Observer.observe now_signal (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe now_signal ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   let now = run_ok runtime (S.Observer.read now_observer) in
@@ -2202,7 +2204,7 @@ let test_time_now_uses_single_clock_snapshot_per_stabilization () =
   in
   let pair = S.map2 (fun left right -> (left, right)) left right in
   let observer =
-    run_ok runtime (S.Observer.observe pair (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe pair ~on_update:(fun _ -> E.unit))
   in
   Fun.protect
     ~finally:(fun () -> run_ok runtime (S.Observer.dispose observer))
@@ -2325,7 +2327,7 @@ let test_stream_invalid_scope_closes_queue_with_invalid_scope () =
         else S.const 42)
   in
   let selected_observer =
-    run_ok runtime (S.Observer.observe selected (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe selected ~on_update:(fun _ -> E.unit))
   in
   run_ok runtime S.stabilize;
   let branch =
@@ -2344,7 +2346,7 @@ let test_stream_invalid_scope_closes_queue_with_invalid_scope () =
   let before_failed_observe = run_ok runtime (S.stats ()) in
   expect_fail "invalidated branch cannot be observed again"
     (( = ) `Invalid_scope)
-    (run runtime (S.Observer.observe branch (fun _ -> E.unit)));
+    (run runtime (S.Observer.observe branch ~on_update:(fun _ -> E.unit)));
   let after_failed_observe = run_ok runtime (S.stats ()) in
   Alcotest.(check int) "failed stale observe does not add active observer"
     before_failed_observe.S.active_observer_count
@@ -2567,8 +2569,10 @@ let () =
             "observer plan orders A/C/B counterexample all registrations"
             `Quick
             test_observer_plan_orders_a_c_b_counterexample_all_registrations;
-          Alcotest.test_case "observer unsafe read reports invalid state"
-            `Quick test_observer_unsafe_read_exn_reports_invalid_state;
+          Alcotest.test_case "observer read reports invalid state" `Quick
+            test_observer_read_reports_invalid_state;
+          Alcotest.test_case "observer without on_update owns demand" `Quick
+            test_observer_without_on_update_owns_demand;
           Alcotest.test_case "diagnostics track observation and disposal"
             `Quick test_diagnostics_track_observation_and_disposal;
           Alcotest.test_case "diagnostic dot options expose metadata" `Quick

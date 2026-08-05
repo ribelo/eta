@@ -3534,14 +3534,15 @@ module Make (Observer_error : Observer_error) () = struct
         (fun observer token update ->
           callback (delivery observer token update))
 
-    let observe ?cutoff ?(on_finish = []) signal callback =
+    let observe ?cutoff ?on_finish ?(on_update = fun _ -> Effect.unit) signal
+        =
       let on_finish =
-        List.map
-          (fun hook reason -> hook (finish_of_lifecycle reason))
-          on_finish
+        match on_finish with
+        | None -> []
+        | Some hook -> [ (fun reason -> hook (finish_of_lifecycle reason)) ]
       in
       observe_delivery_callback ?cutoff ~on_finish signal
-        (fun _observer _token update -> callback update)
+        (fun _observer _token update -> on_update update)
 
     let read observer =
       with_graph_lane_sync (fun () ->
@@ -3550,13 +3551,6 @@ module Make (Observer_error : Observer_error) () = struct
               Observer_snapshot.value (observer_current_snapshot live))
             observer.obs_state)
       |> Effect.flatten_result
-
-    let unsafe_read_exn observer =
-      ensure_graph_context ();
-      Observer_lifecycle.unsafe_read_value_exn
-        ~value_of_live:(fun live ->
-          Observer_snapshot.value (observer_current_snapshot live))
-        observer.obs_state
 
     let dispose observer = dispose_observer_effect observer
   end

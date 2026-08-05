@@ -39,6 +39,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   module Observer = struct
     type 'a t = 'a observer
+    type observer_finish = [ `Disposed | `Invalid_scope ]
 
     let observe = S.Observer.observe
     let read = S.Observer.read

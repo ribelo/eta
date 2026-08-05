@@ -158,7 +158,7 @@ let observe runtime output actual_updates =
     E.sync (fun () ->
         actual_updates := observed_of_signal_update update :: !actual_updates)
   in
-  run_ok runtime (Signal.Observer.observe output record)
+  run_ok runtime (Signal.Observer.observe output ~on_update:record)
 
 let dispose runtime observer =
   Option.iter

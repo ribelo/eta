@@ -132,7 +132,7 @@ let run_case matrix sample =
     in
     let observer =
       run_ok
-        (S.Observer.observe output (fun _update ->
+        (S.Observer.observe output ~on_update:(fun _update ->
              incr observer_events;
              E.unit))
     in
@@ -198,7 +198,7 @@ let run_case matrix sample =
         RK.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data ->
             S.map (fun data -> data.value) data)
       in
-      let observer = run_ok (S.Observer.observe output (fun _ -> E.unit)) in
+      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
       stabilize ();
       let before =
         match RK.Testing.entry_identity output first with
@@ -284,7 +284,7 @@ let run_case matrix sample =
             same := Some (mapped, mapped);
             S.map2 ( + ) mapped mapped)
       in
-      let observer = run_ok (S.Observer.observe output (fun _ -> E.unit)) in
+      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
       stabilize ();
       (match !same with
        | Some (left, right) -> require name (left == right) "description duplicated"
@@ -320,7 +320,7 @@ let run_case matrix sample =
         K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data ->
             S.map (fun data -> data.id) data)
       in
-      let observer = run_ok (S.Observer.observe output (fun _ -> E.unit)) in
+      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
       stabilize ();
       set input (one original);
       stabilize ();
@@ -445,7 +445,7 @@ let run_case matrix sample =
               (fun data local -> data.value + (local mod 1))
               data (S.Var.watch source))
       in
-      let observer = run_ok (S.Observer.observe output (fun _ -> E.unit)) in
+      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
       stabilize ();
       let root = read observer in
       set (Option.get !local) 7;
@@ -509,7 +509,7 @@ let run_case matrix sample =
               failwith "builder";
             data)
       in
-      let observer = run_ok (S.Observer.observe output (fun _ -> E.unit)) in
+      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
       stabilize ();
       set input (M.set other (box 2 20) (one (box 1 10)));
       require name (expect_defect (run_exit S.stabilize)) "missing builder defect";
@@ -519,7 +519,7 @@ let run_case matrix sample =
         (fun data ->
           require name
             (expect_invalid_scope
-               (run_exit (S.Observer.observe data (fun _ -> E.unit))))
+               (run_exit (S.Observer.observe data ~on_update:(fun _ -> E.unit))))
             "provisional scope remains valid")
         !captured;
       let first_tokens = !captured in
@@ -547,7 +547,7 @@ let run_case matrix sample =
               nested)
             else S.const M.empty)
       in
-      let observer = run_ok (S.Observer.observe owner (fun _ -> E.unit)) in
+      let observer = run_ok (S.Observer.observe owner ~on_update:(fun _ -> E.unit)) in
       stabilize ();
       set nested_input (one (box 1 10));
       set choose false;

@@ -32,7 +32,7 @@ let test_keyed_mapi_commit_removes_before_additions () =
   let output = K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data -> data) in
   let events = ref [] in
   T.set_event_recorder output (fun event -> events := !events @ [ event ]);
-  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   events := [];
   let removed =
@@ -72,7 +72,7 @@ let test_keyed_mapi_preflight_failure_preserves_committed_snapshot () =
         if key = 2 then provisional_data := Some data;
         data)
   in
-  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   let before =
     match T.entry_identity output 1 with
@@ -109,7 +109,7 @@ let test_keyed_mapi_atomic_fault_rolls_back_topology () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let input = S.Var.create (M.set 1 10 M.empty) in
   let output = K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data -> data) in
-  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   let before =
     match T.entry_identity output 1 with
@@ -161,7 +161,7 @@ let test_keyed_removal_discards_nested_bind_switch_to_top_scope () =
         nested_bind := Some branch;
         S.map Fun.id branch)
   in
-  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   let branch =
     match !nested_bind with
@@ -225,7 +225,7 @@ let test_keyed_removal_invalidates_nested_bind_provisional_scope () =
         nested_bind := Some branch;
         branch)
   in
-  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   T.reset_counters ();
   run_ok runtime (S.Var.set switch_source true);
@@ -284,7 +284,7 @@ let test_keyed_removal_clears_nested_bind_pending_state () =
         outer_bind := Some outer;
         outer)
   in
-  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   let outer = Option.get !outer_bind in
   let outer_token = T.signal_token outer in
@@ -346,7 +346,7 @@ let test_keyed_removal_nested_bind_topology_survives_callback_defect () =
   let fail_delivery = ref false in
   let observer =
     run_ok runtime
-      (S.Observer.observe output (fun _ ->
+      (S.Observer.observe output ~on_update:(fun _ ->
            if !fail_delivery then failwith "delivery defect" else E.unit))
   in
   run_ok runtime S.stabilize;
@@ -428,7 +428,7 @@ let test_keyed_bind_remove_switch_churn_has_bounded_topology () =
           in
           build depth)
     in
-    let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+    let observer = run_ok runtime (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
     let entry_scope key =
       match T.entry_identity output key with
       | Some identity -> identity.keyed_scope_token

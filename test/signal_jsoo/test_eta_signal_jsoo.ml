@@ -159,7 +159,7 @@ let test_bind_branch_detaches_stale_dependency done_ =
         if use_left then Signal.Var.watch left else Signal.Var.watch right)
   in
   let eff =
-    let* observer = Signal.Observer.observe selected (fun _ -> E.unit) in
+    let* observer = Signal.Observer.observe selected ~on_update:(fun _ -> E.unit) in
     let* () = Signal.stabilize in
     let* () = Signal.Var.set choose_left false in
     let* () = Signal.stabilize in
@@ -184,14 +184,14 @@ let test_bind_selects_initialized_external_bind done_ =
   in
   let eff =
     let* external_observer =
-      Signal.Observer.observe external_signal (fun _ -> E.unit)
+      Signal.Observer.observe external_signal ~on_update:(fun _ -> E.unit)
     in
     let* () = Signal.stabilize in
     let* external_initial = Signal.Observer.read external_observer in
     let* () = Signal.Observer.dispose external_observer in
     let selected = Signal.bind (Signal.const true) (fun _ -> external_signal) in
     let* selected_observer =
-      Signal.Observer.observe selected (fun _ -> E.unit)
+      Signal.Observer.observe selected ~on_update:(fun _ -> E.unit)
     in
     let* () = Signal.stabilize in
     let* selected_initial = Signal.Observer.read selected_observer in
@@ -226,7 +226,7 @@ let test_timer_runtime_mismatch_on_observe_with_owner_demand done_ =
   in
   let setup =
     let* timer = Signal.Time.interval (Eta.Duration.ms 10) in
-    let* keep_alive = Signal.Observer.observe timer (fun _ -> E.unit) in
+    let* keep_alive = Signal.Observer.observe timer ~on_update:(fun _ -> E.unit) in
     let+ () = Signal.stabilize in
     (timer, keep_alive)
   in
@@ -237,7 +237,7 @@ let test_timer_runtime_mismatch_on_observe_with_owner_demand done_ =
               ("expected Ok, got " ^ pp_cause cause))
     | Eta.Exit.Ok (timer, keep_alive) ->
         Eta_jsoo.Runtime.run rt_b
-          (widen (Signal.Observer.observe timer (fun _ -> E.unit)))
+          (widen (Signal.Observer.observe timer ~on_update:(fun _ -> E.unit)))
           ~on_result:(fun mismatch_result ->
             Eta_jsoo.Runtime.run rt_a
               (widen (Signal.Observer.dispose keep_alive))
@@ -254,7 +254,7 @@ let test_failure_and_defect_propagation done_ =
   let observer_failure =
     let source = Signal.Var.create 1 in
     let* observer =
-      Signal.Observer.observe (Signal.Var.watch source) (fun _ ->
+      Signal.Observer.observe (Signal.Var.watch source) ~on_update:(fun _ ->
           E.fail `Observer_failed)
     in
     let* exit = E.to_exit Signal.stabilize in
@@ -269,7 +269,7 @@ let test_failure_and_defect_propagation done_ =
              if value = 2 then failwith "signal defect";
              value)
     in
-    let* observer = Signal.Observer.observe signal (fun _ -> E.unit) in
+    let* observer = Signal.Observer.observe signal ~on_update:(fun _ -> E.unit) in
     let* () = Signal.stabilize in
     let* () = Signal.Var.set source 2 in
     let* exit = E.to_exit Signal.stabilize in
@@ -302,7 +302,7 @@ let test_time_nodes_require_explicit_stabilization done_ =
     let combined =
       Signal.map2 (fun interval now -> (interval, now)) interval now
     in
-    let* observer = Signal.Observer.observe combined (fun _ -> E.unit) in
+    let* observer = Signal.Observer.observe combined ~on_update:(fun _ -> E.unit) in
     let* () = Signal.stabilize in
     let* initial = Signal.Observer.read observer in
     let* () = E.sync (fun () -> Manual_clock.advance clock (Eta.Duration.ms 10)) in
@@ -331,8 +331,7 @@ let test_stream_bridge_emits_and_closes done_ =
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
   let eff =
-    let* observer, stream = Signal.Stream.observe signal in
-    let* () = Signal.stabilize in
+    let* observer, stream = Signal.Stream.observe signal ~on_update:in    let* () = Signal.stabilize in
     let* first = Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect in
     let* () = Signal.Var.set source 2 in
     let* () = Signal.stabilize in
@@ -352,8 +351,7 @@ let test_stream_bridge_full_queue_drops_without_blocking done_ =
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
   let eff =
-    let* observer, stream = Signal.Stream.observe ~capacity:1 signal in
-    let* () = Signal.stabilize in
+    let* observer, stream = Signal.Stream.observe ~capacity:1 signal ~on_update:in    let* () = Signal.stabilize in
     let* () = Signal.Var.set source 2 in
     let* stabilize_exit =
       E.to_exit
@@ -398,7 +396,7 @@ let test_invalidated_bind_rhs_observer_read done_ =
   in
   let eff =
     let* selected_observer =
-      Signal.Observer.observe selected (fun _ -> E.unit)
+      Signal.Observer.observe selected ~on_update:(fun _ -> E.unit)
     in
     let* () = Signal.stabilize in
     let branch =
@@ -407,7 +405,7 @@ let test_invalidated_bind_rhs_observer_read done_ =
       | None -> fail "invalidated bind RHS" "expected captured branch signal"
     in
     let* branch_observer =
-      Signal.Observer.observe branch (fun _ -> E.unit)
+      Signal.Observer.observe branch ~on_update:(fun _ -> E.unit)
     in
     let* () = Signal.stabilize in
     let* initial_branch = Signal.Observer.read branch_observer in
@@ -438,7 +436,7 @@ let test_interval_dispose_stops_sleeping_daemon done_ =
   in
   let eff =
     let* interval = Signal.Time.interval (Eta.Duration.ms 10) in
-    let* observer = Signal.Observer.observe interval (fun _ -> E.unit) in
+    let* observer = Signal.Observer.observe interval ~on_update:(fun _ -> E.unit) in
     let* () = wait_for_sleepers clock 1 20 in
     let* () = Signal.Observer.dispose observer in
     let* () =
@@ -461,7 +459,7 @@ let test_interval_restarts_after_reobserve done_ =
   let eff =
     let* interval = Signal.Time.interval (Eta.Duration.ms 10) in
     let* first_observer =
-      Signal.Observer.observe interval (fun _ -> E.unit)
+      Signal.Observer.observe interval ~on_update:(fun _ -> E.unit)
     in
     let* () = wait_for_sleepers clock 1 20 in
     let* () = Signal.Observer.dispose first_observer in
@@ -473,7 +471,7 @@ let test_interval_restarts_after_reobserve done_ =
       E.sync (fun () -> Manual_clock.sleeper_count clock)
     in
     let* second_observer =
-      Signal.Observer.observe interval (fun _ -> E.unit)
+      Signal.Observer.observe interval ~on_update:(fun _ -> E.unit)
     in
     let* () = wait_for_sleepers clock 1 20 in
     let* () = Signal.stabilize in
@@ -511,7 +509,7 @@ let test_stream_invalid_scope_closes_with_error done_ =
   in
   let eff =
     let* selected_observer =
-      Signal.Observer.observe selected (fun _ -> E.unit)
+      Signal.Observer.observe selected ~on_update:(fun _ -> E.unit)
     in
     let* () = Signal.stabilize in
     let branch =

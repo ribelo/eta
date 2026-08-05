@@ -65,9 +65,6 @@ module Lifecycle : sig
     ('a, [> `Disposed_observer | `Invalid_scope | `No_current_value
          | `Uninitialized_observer ])
     result
-
-  val unsafe_read_value_exn :
-    value_of_live:('live -> 'a Value.t) -> ('live, 'a Value.t) t -> 'a
 end
 
 type ('observer, 'live, 'value) activation_port

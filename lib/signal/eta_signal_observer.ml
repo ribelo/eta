@@ -84,11 +84,6 @@ module Value = struct
     | Failed_without_current -> Error `No_current_value
     | Uninitialized -> Error `Uninitialized_observer
 
-  let unsafe_read_exn = function
-    | Current value -> value
-    | Uninitialized | Failed_without_current ->
-        invalid_arg "Eta_signal observer is not initialized"
-
   let label = function
     | Uninitialized -> "uninitialized"
     | Current _ -> "current"
@@ -176,15 +171,6 @@ module Lifecycle = struct
     | Disposed _ -> Error `Disposed_observer
     | Invalid_scope _ -> Error `Invalid_scope
     | Active live -> Value.read (value_of_live live)
-
-  let unsafe_read_value_exn ~value_of_live = function
-    | Registering _ ->
-        invalid_arg "Eta_signal observer registration has not completed"
-    | Disposed _ ->
-        invalid_arg "Eta_signal observer is disposed"
-    | Invalid_scope _ ->
-        invalid_arg "Eta_signal observer scope is invalid"
-    | Active live -> Value.unsafe_read_exn (value_of_live live)
 end
 
 type ('observer, 'live, 'value) activation_port = {

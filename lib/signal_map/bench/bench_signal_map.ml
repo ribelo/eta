@@ -272,7 +272,7 @@ let set runtime source value = run_ok runtime (S.Var.set source value)
 let read runtime observer = run_ok runtime (S.Observer.read observer)
 
 let observe runtime signal =
-  run_ok runtime (S.Observer.observe signal (fun _update -> E.unit))
+  run_ok runtime (S.Observer.observe signal ~on_update:(fun _update -> E.unit))
 
 let dispose runtime observer = run_ok runtime (S.Observer.dispose observer)
 

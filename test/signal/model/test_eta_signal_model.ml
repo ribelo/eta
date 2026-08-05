@@ -216,7 +216,7 @@ let run_trace name ops =
     E.sync (fun () ->
         actual_updates := observed_of_signal_update update :: !actual_updates)
   in
-  let observer = run_ok runtime (Signal.Observer.observe output record) in
+  let observer = run_ok runtime (Signal.Observer.observe output ~on_update:record) in
   let model = create_model () in
   List.iteri
     (fun index op ->
@@ -308,7 +308,7 @@ let timer_model_observe runtime signal state =
   | Some _ -> ()
   | None ->
       state.timer_observer <-
-        Some (run_ok runtime (Signal.Observer.observe signal (fun _ -> E.unit)));
+        Some (run_ok runtime (Signal.Observer.observe signal ~on_update:(fun _ -> E.unit)));
       state.timer_current <- None
 
 let timer_model_dispose runtime state =
@@ -616,7 +616,7 @@ let run_timer_bind_model_trace name ~seed =
       | Bind_interval -> interval_timer)
   in
   let observer =
-    run_ok runtime (Signal.Observer.observe selected (fun _ -> E.unit))
+    run_ok runtime (Signal.Observer.observe selected ~on_update:(fun _ -> E.unit))
   in
   let check_demand label =
     if !active_choice = Bind_interval then (
@@ -713,7 +713,7 @@ let test_coalesced_sets_match_model () =
     E.sync (fun () ->
         updates := observed_of_signal_update update :: !updates)
   in
-  let observer = run_ok runtime (Signal.Observer.observe signal record) in
+  let observer = run_ok runtime (Signal.Observer.observe signal ~on_update:record) in
   let model_pending = ref 0 in
   let model_current = ref None in
   let model_recomputes = ref 0 in
@@ -877,7 +877,7 @@ let test_effectful_update_trace_matches_model () =
     let actual_updates = ref [] in
     let observer =
       run_ok runtime
-        (Signal.Observer.observe combined (fun update ->
+        (Signal.Observer.observe combined ~on_update:(fun update ->
              E.sync (fun () ->
                  actual_updates :=
                    observed_of_signal_update update :: !actual_updates)))
@@ -1012,7 +1012,7 @@ let test_source_equality_trace_matches_model () =
     let updates = ref [] in
     let observer =
       run_ok runtime
-        (Signal.Observer.observe (Signal.Var.watch source) (fun update ->
+        (Signal.Observer.observe (Signal.Var.watch source) ~on_update:(fun update ->
              E.sync (fun () ->
                  updates := observed_of_signal_update update :: !updates)))
     in
@@ -1103,26 +1103,23 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
       E.sync (fun () -> incr callback_count)
     in
     let physical_observer =
-      run_ok runtime (Signal.Observer.observe physical (count physical_callbacks))
-    in
+      run_ok runtime (Signal.Observer.observe physical ~on_update:(count physical_callbacks))    in
     let structural_observer =
       run_ok runtime
-        (Signal.Observer.observe structural (count structural_callbacks))
-    in
+        (Signal.Observer.observe structural ~on_update:(count structural_callbacks))    in
     let structural_downstream_observer =
       run_ok runtime
-        (Signal.Observer.observe structural_downstream (fun update ->
+        (Signal.Observer.observe structural_downstream ~on_update:(fun update ->
              E.sync (fun () ->
                  structural_downstream_updates :=
                    observed_of_signal_update update
                    :: !structural_downstream_updates)))
     in
     let bound_observer =
-      run_ok runtime (Signal.Observer.observe bound (count bound_callbacks))
-    in
+      run_ok runtime (Signal.Observer.observe bound ~on_update:(count bound_callbacks))    in
     let normal_observer =
       run_ok runtime
-        (Signal.Observer.observe source_signal (fun update ->
+        (Signal.Observer.observe source_signal ~on_update:(fun update ->
              E.sync (fun () ->
                  normal_updates :=
                    observed_of_signal_update update :: !normal_updates)))
@@ -1130,7 +1127,7 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
     let suppressed_observer =
       run_ok runtime
         (Signal.Observer.observe ~cutoff:Eta_signal.Cutoff.always source_signal
-           (fun _update -> E.sync (fun () -> incr suppressed_callbacks)))
+           ~on_update:(fun _update -> E.sync (fun () -> incr suppressed_callbacks)))
     in
     let pending = ref 0 in
     let committed = ref 0 in
@@ -1284,7 +1281,7 @@ let test_observer_phase_mutation_matches_model () =
                |> E.map_error (fun _ -> `Observer_failed)
            | Initialized _ | Changed _ -> E.unit)
   in
-  let observer = run_ok runtime (Signal.Observer.observe signal callback) in
+  let observer = run_ok runtime (Signal.Observer.observe signal ~on_update:callback) in
   let model_pending = ref 1 in
   let model_current = ref None in
   let model_updates = ref [] in
@@ -1362,8 +1359,7 @@ let test_observer_failure_retry_matches_model () =
     in
     let first_observer =
       run_ok runtime
-        (Signal.Observer.observe signal (record first_delivered_updates))
-    in
+        (Signal.Observer.observe signal ~on_update:(record first_delivered_updates))    in
     let second_callback update =
       if !next_delivery_outcome = `Die then (
         next_delivery_outcome := `Ok;
@@ -1377,8 +1373,7 @@ let test_observer_failure_retry_matches_model () =
               observed_of_signal_update update :: !second_delivered_updates)
     in
     let second_observer =
-      run_ok runtime (Signal.Observer.observe signal second_callback)
-    in
+      run_ok runtime (Signal.Observer.observe signal ~on_update:second_callback)    in
     let model_pending = ref 0 in
     let model_current = ref None in
     let model_next_outcome = ref `Ok in
@@ -1578,7 +1573,7 @@ let run_pure_failure_trace name ops =
     E.sync (fun () ->
         actual_updates := observed_of_signal_update update :: !actual_updates)
   in
-  let observer = run_ok runtime (Signal.Observer.observe signal record) in
+  let observer = run_ok runtime (Signal.Observer.observe signal ~on_update:record) in
   let model_pending = ref 1 in
   let model_current = ref None in
   let model_updates = ref [] in
@@ -1660,11 +1655,9 @@ let test_dynamic_cycle_preserves_snapshot_matches_model () =
         updates := observed_of_signal_update update :: !updates)
   in
   let a_observer =
-    run_ok runtime (Signal.Observer.observe a (record a_updates))
-  in
+    run_ok runtime (Signal.Observer.observe a ~on_update:(record a_updates))  in
   let b_observer =
-    run_ok runtime (Signal.Observer.observe b (record b_updates))
-  in
+    run_ok runtime (Signal.Observer.observe b ~on_update:(record b_updates))  in
   let model_a = ref None in
   let model_b = ref None in
   let model_a_updates = ref [] in
@@ -1768,8 +1761,7 @@ let test_dispose_demand_matches_model () =
       label (List.rev !model) (List.rev !actual)
   in
   let preinit_observer =
-    run_ok runtime (Signal.Observer.observe signal (record preinit_updates))
-  in
+    run_ok runtime (Signal.Observer.observe signal ~on_update:(record preinit_updates))  in
   run_ok runtime (Signal.Observer.dispose preinit_observer);
   model_pending := 1;
   run_ok runtime (Signal.Var.set source 1);
@@ -1782,8 +1774,7 @@ let test_dispose_demand_matches_model () =
   expect_disposed_observer "disposed uninitialized read" runtime
     (Signal.Observer.read preinit_observer);
   let first_observer =
-    run_ok runtime (Signal.Observer.observe signal (record first_updates))
-  in
+    run_ok runtime (Signal.Observer.observe signal ~on_update:(record first_updates))  in
   stabilize_model ~demanded:true first_model_current first_model_updates;
   run_ok runtime Signal.stabilize;
   Alcotest.(check int) "initial recompute" !model_recomputes !recomputes;
@@ -1802,8 +1793,7 @@ let test_dispose_demand_matches_model () =
   check_updates "disposed observer receives no update" first_model_updates
     first_updates;
   let second_observer =
-    run_ok runtime (Signal.Observer.observe signal (record second_updates))
-  in
+    run_ok runtime (Signal.Observer.observe signal ~on_update:(record second_updates))  in
   stabilize_model ~demanded:true second_model_current second_model_updates;
   run_ok runtime Signal.stabilize;
   Alcotest.(check int) "reobserve recomputes latest pending value"
@@ -1875,8 +1865,7 @@ let lifecycle_observe runtime signal slot =
   | None ->
       let observer =
         run_ok runtime
-          (Signal.Observer.observe signal (lifecycle_record slot))
-      in
+          (Signal.Observer.observe signal ~on_update:(lifecycle_record slot))      in
       slot.actual_observer <- Some observer;
       slot.model_active <- true;
       slot.model_current <- None
@@ -2151,7 +2140,7 @@ let run_bind_branch_demand_trace name ops =
     E.sync (fun () ->
         updates := observed_of_signal_update update :: !updates)
   in
-  let observer = run_ok runtime (Signal.Observer.observe selected record) in
+  let observer = run_ok runtime (Signal.Observer.observe selected ~on_update:record) in
   let model = create_bind_demand_model () in
   List.iteri
     (fun index op ->
@@ -2334,7 +2323,7 @@ let run_nested_bind_trace name ops =
     E.sync (fun () ->
         updates := observed_of_signal_update update :: !updates)
   in
-  let observer = run_ok runtime (Signal.Observer.observe selected record) in
+  let observer = run_ok runtime (Signal.Observer.observe selected ~on_update:record) in
   let model = create_nested_bind_model () in
   List.iteri
     (fun index op ->
@@ -2502,7 +2491,7 @@ let run_retained_branch_trace name ops =
   in
   let selected_observer =
     run_ok runtime
-      (Signal.Observer.observe selected (fun _ -> E.unit))
+      (Signal.Observer.observe selected ~on_update:(fun _ -> E.unit))
   in
   let model = create_retained_branch_model () in
   let check_retained_slot label index slot =
@@ -2514,7 +2503,7 @@ let run_retained_branch_trace name ops =
       let updates = ref [] in
       let observer =
         run_ok runtime
-          (Signal.Observer.observe slot.retained_signal (fun update ->
+          (Signal.Observer.observe slot.retained_signal ~on_update:(fun update ->
                E.sync (fun () ->
                    updates :=
                      observed_of_signal_update update :: !updates)))
@@ -2530,7 +2519,7 @@ let run_retained_branch_trace name ops =
     else
       expect_graph_error (slot_label ^ " stale observe")
         (( = ) `Invalid_scope) runtime
-        (Signal.Observer.observe slot.retained_signal (fun _ -> E.unit))
+        (Signal.Observer.observe slot.retained_signal ~on_update:(fun _ -> E.unit))
   in
   let check_retained_branches label =
     List.iteri (check_retained_slot label) !retained_slots
@@ -2725,15 +2714,15 @@ let run_diamond_trace name ops =
   left_observer :=
     Some
       (run_ok runtime
-         (Signal.Observer.observe left (read_callback_snapshot "left")));
+         (Signal.Observer.observe left ~on_update:(read_callback_snapshot "left")));
   right_observer :=
     Some
       (run_ok runtime
-         (Signal.Observer.observe right (read_callback_snapshot "right")));
+         (Signal.Observer.observe right ~on_update:(read_callback_snapshot "right")));
   output_observer :=
     Some
       (run_ok runtime
-         (Signal.Observer.observe output (read_callback_snapshot "output")));
+         (Signal.Observer.observe output ~on_update:(read_callback_snapshot "output")));
   let model = create_diamond_model () in
   List.iteri
     (fun index op ->
@@ -3103,8 +3092,7 @@ let small_graph_observe runtime signals observer =
       let actual_observer =
         run_ok runtime
           (Signal.Observer.observe ?cutoff signals.(observer.small_observed_node)
-             (small_graph_record observer))
-      in
+             ~on_update:(small_graph_record observer))      in
       observer.small_actual_observer <- Some actual_observer;
       observer.small_model_active <- true;
       observer.small_model_current <- None

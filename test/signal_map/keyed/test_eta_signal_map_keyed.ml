@@ -34,7 +34,7 @@ let test_keyed_mapi_adds_child () =
     K.mapi (S.Var.watch input) ~f:(fun ~key ~data ->
         S.map (fun value -> key + value) data)
   in
-  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   run_ok runtime (S.Var.set input (M.set 2 10 M.empty));
   run_ok runtime S.stabilize;
@@ -53,7 +53,7 @@ let test_keyed_mapi_retains_updates_and_removes_child () =
         incr builds;
         S.map (fun value -> !value) data)
   in
-  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   run_ok runtime (S.Var.set input (M.set 1 second M.empty));
   run_ok runtime S.stabilize;
@@ -79,7 +79,7 @@ let test_keyed_mapi_child_reads_accepted_data_same_stabilization () =
         S.map2 (fun data local -> !data + local) data
           (S.Var.watch local_source))
   in
-  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   let local_source =
     match !local with
@@ -105,7 +105,7 @@ let test_keyed_mapi_child_only_change_patches_output () =
         Hashtbl.add locals key local;
         S.map2 ( + ) data (S.Var.watch local))
   in
-  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   run_ok runtime (S.Var.set (Hashtbl.find locals 1) 5);
   run_ok runtime S.stabilize;
@@ -125,7 +125,7 @@ let test_keyed_mapi_builder_defect_rolls_back_and_retries () =
         if !fail then failwith "builder";
         data)
   in
-  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   run_ok runtime (S.Var.set input (M.set 1 10 M.empty));
   expect_defect "builder defect" (run_exit runtime S.stabilize);
@@ -154,7 +154,7 @@ let test_keyed_mapi_cutoff_defect_rolls_back_and_retries () =
            false))
       (S.Var.watch input) ~f:(fun ~key:_ ~data -> S.map ( ! ) data)
   in
-  let observer = run_ok runtime (S.Observer.observe output (fun _ -> E.unit)) in
+  let observer = run_ok runtime (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
   run_ok runtime S.stabilize;
   run_ok runtime (S.Var.set input (M.set 1 new_data M.empty));
   expect_defect "cutoff defect" (run_exit runtime S.stabilize);

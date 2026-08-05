@@ -27,7 +27,7 @@ let signal_static iterations =
   let right = Signal.map (fun n -> n * 3) shared in
   let total = Signal.map2 ( + ) left right in
   let observer =
-    run_effect (Signal.Observer.observe total (fun _ -> Effect.unit))
+    run_effect (Signal.Observer.observe total ~on_update:(fun _ -> Effect.unit))
   in
   run_effect Signal.stabilize;
   for i = 1 to iterations do
@@ -58,7 +58,7 @@ let signal_dynamic iterations =
     |> Signal.map (fun n -> n + 1)
   in
   let observer =
-    run_effect (Signal.Observer.observe selected (fun _ -> Effect.unit))
+    run_effect (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
   in
   run_effect Signal.stabilize;
   for i = 1 to iterations do
