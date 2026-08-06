@@ -1,0 +1,7 @@
+(lang dune 3.22)
+
+(name eta_signal_generic_value_storage_probe)
+
+(package
+ (name eta_signal_generic_value_storage_probe)
+ (allow_empty))

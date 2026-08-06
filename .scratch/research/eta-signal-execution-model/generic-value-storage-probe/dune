@@ -1,0 +1,10 @@
+(env
+ (release
+  (ocamlopt_flags -O3)))
+
+(executable
+ (name probe)
+ (libraries incremental unix)
+ (foreign_stubs
+  (language c)
+  (names consume_stubs)))
