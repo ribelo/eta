@@ -60,6 +60,7 @@ main Dune workspace.
 - [Candidate kernel seams](issues/05-candidate-kernel-seams.md) — use direct synchronous propagation as the primary hypothesis, falsify immutable plans with a static probe, and defer the private claim versus edge-cursor seam to adapter prototypes.
 - [Value-propagation kernel](issues/06-value-propagation-kernel.md) — retain direct propagation after it passes all static gates at 4 words per operation, and reject depth-dependent immutable snapshots.
 - [Failure and rollback model](issues/07-failure-and-rollback-model.md) — use a sparse undo journal of node indices with an O(1) commit, and falsify lazy epoch rollback with a cutoff counterexample.
+- [Dynamic topology and keyed work](issues/08-dynamic-topology-and-keyed-work.md) — use owner-local shadow capsules with an O(1) verdict commit and affected-only rollback and cleanup.
 - [Node identity and index lifecycle](issues/15-node-identity-and-index-lifecycle.md) — reuse dense slots with generation-safe handles and per-pass quarantine, while active journals retain immediate slot integers.
 - [Generic typed value storage](issues/16-generic-typed-value-storage.md) — pack existential typed nodes with embedded undo values, preserve the four-word path for immediate and boxed values, and reject erased or closure-packed storage.
 
