@@ -57,6 +57,7 @@ main Dune workspace.
 - [Incremental layered baseline](issues/02-incremental-layered-baseline.md) — use the zero-allocation raw static core and measure each adapter as a separate baseline layer.
 - [Eta execution-cost decomposition](issues/03-eta-cost-decomposition.md) — reject the current `729 + 68d`-word raw planner and keep Effect, lane, runtime, observer, and timer costs separate.
 - [Performance acceptance matrix](issues/04-performance-acceptance-matrix.md) — require behavior and affected-work eligibility, layered allocation ceilings, and fresh paired wall-time comparisons before ranking eligible candidates.
+- [Candidate kernel seams](issues/05-candidate-kernel-seams.md) — use direct synchronous propagation as the primary hypothesis, falsify immutable plans with a static probe, and defer the private claim versus edge-cursor seam to adapter prototypes.
 
 ## Not yet specified
 
