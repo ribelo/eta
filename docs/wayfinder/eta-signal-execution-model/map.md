@@ -67,8 +67,6 @@ main Dune workspace.
 
 ## Not yet specified
 
-- The need and interface for a general Eta runtime primitive depend on the
-  effect-seam prototypes.
 - Additional workload classes can become necessary when the behavior census
   finds a capability without a matched benchmark.
 

@@ -1,0 +1,11 @@
+(env
+ (release
+  (ocamlopt_flags -O3)))
+
+(executable
+ (name probe)
+ (libraries unix))
+
+(executable
+ (name reference_probe)
+ (libraries eta eta_eio eta_signal eio_main unix))
