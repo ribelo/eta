@@ -59,10 +59,10 @@ main Dune workspace.
 - [Performance acceptance matrix](issues/04-performance-acceptance-matrix.md) — require behavior and affected-work eligibility, layered allocation ceilings, and fresh paired wall-time comparisons before ranking eligible candidates.
 - [Candidate kernel seams](issues/05-candidate-kernel-seams.md) — use direct synchronous propagation as the primary hypothesis, falsify immutable plans with a static probe, and defer the private claim versus edge-cursor seam to adapter prototypes.
 - [Value-propagation kernel](issues/06-value-propagation-kernel.md) — retain direct propagation after it passes all static gates at 4 words per operation, and reject depth-dependent immutable snapshots.
+- [Failure and rollback model](issues/07-failure-and-rollback-model.md) — use a sparse undo journal of node indices with an O(1) commit, and falsify lazy epoch rollback with a cutoff counterexample.
 
 ## Not yet specified
 
-- The raw kernel representation depends on the candidate comparison.
 - The need and interface for a general Eta runtime primitive depend on the
   effect-seam prototypes.
 - Additional workload classes can become necessary when the behavior census

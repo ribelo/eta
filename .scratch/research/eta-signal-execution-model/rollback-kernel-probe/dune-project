@@ -1,0 +1,7 @@
+(lang dune 3.22)
+
+(name eta_signal_rollback_kernel_probe)
+
+(package
+ (name eta_signal_rollback_kernel_probe)
+ (allow_empty))

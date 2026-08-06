@@ -1,0 +1,7 @@
+(env
+ (release
+  (ocamlopt_flags -O3)))
+
+(executable
+ (name probe)
+ (libraries incremental unix))

@@ -13,6 +13,7 @@ backlog/
 !.scratch/research/
 !.scratch/research/**
 .scratch/research/**/_build/
+.scratch/research/**/__pycache__/
 .scratch/research/**/_opam/
 .scratch/research/**/*.install
 docs/big-picture/
