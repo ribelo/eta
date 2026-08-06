@@ -4,31 +4,35 @@ Date: 2026-08-06
 
 ## Scope
 
-This report records partial evidence for the
+This report answers the
 [Timer and observer edge protocols](../../../docs/wayfinder/eta-signal-execution-model/issues/10-timer-and-observer-edges.md)
 ticket.
 
 The report models post-commit timer, observer, cleanup, and stream work.
-It does not execute the private `Execution.run` seam from issue 09.
+It also executes the selected protocol through the private `Execution.run` seam
+and an Eta/Eio runtime.
 
-The durable probe is in
+The state-model probe is in
 [`edge-protocol-probe/`](edge-protocol-probe/).
-The probe is throwaway code and does not change the production Signal engine.
+The integrated probe is in
+[`edge-seam-probe/`](edge-seam-probe/).
+Both probes are throwaway code and do not change the production Signal engine.
 
 ## Current result
 
-The state model supports one private post-commit driver with opaque edge
-batches.
+One private post-commit driver with opaque edge batches passes the applicable
+behavior, affected-work, allocation, and wall-time gates.
 
-The following paragraphs describe the candidate protocol.
-They do not describe an executed Eta seam.
+The state-model probe isolates the edge protocols.
+The integrated probe composes the same model with the issue 09 execution seam.
+The state-model probe supplies the timer-ballast and exact affected-work checks.
 
 The synchronous kernel publishes values, topology, observer cursors, and edge
 work under `Execution.run`.
 The post-commit driver then owns every claim and terminal transition.
 
-Timer operations, finish hooks, observer callbacks, and stream publication run
-outside the graph lane.
+Timer starts, timer stops, finish hooks, observer callbacks, and stream
+publication run outside the graph lane.
 The driver enters the lane only to claim work or publish a terminal result.
 
 Do not add an edge cursor to the package adapter.
@@ -56,8 +60,8 @@ Only the kernel and the post-commit driver can construct or inspect this batch.
 The public adapter receives only the final Eta effect.
 It cannot select work order, retain a claim, or acknowledge a stale claim.
 
-The candidate obtains the active runtime through the same interpreter context
-as `Execution.run`.
+The driver obtains the active runtime through the same interpreter context as
+`Execution.run`.
 It does not accept an independent runtime argument.
 
 The `Execution.run` interface stays unchanged:
@@ -74,7 +78,7 @@ The cancellation checkpoint stays immediately before publication.
 
 ## Phase order
 
-The candidate protocol uses this order:
+The selected protocol uses this order:
 
 1. The kernel completes pure planning.
 2. The kernel calls the cancellation checkpoint.
@@ -151,7 +155,7 @@ A stale wake does nothing.
 A wake never calls `stabilize`.
 
 Timer starts and cancellation functions run outside the lane.
-The candidate must still run these operations on the owner domain.
+The driver still runs these operations on the owner domain.
 
 A failed start leaves no installed daemon and requeues the mismatch.
 The candidate must keep the committed snapshot after a failed stop.
@@ -271,7 +275,7 @@ minor words + major words - promoted words
 The reference executable uses the public engine at commit `d04d6e2b`.
 Production Signal sources have no change from that commit to this branch.
 
-The candidate executable measures the isolated synchronous state machines.
+The state-model executable measures the isolated synchronous state machines.
 Issue 09 already measures the selected Eta execution adapter.
 
 ## Component diagnostics
@@ -296,41 +300,116 @@ The pinned-reference rows use related complete public operations:
 
 The timer cycle reaches all three timer edges in one operation.
 
-The candidate and reference rows do not have the same adapter boundary.
+The state-model and reference rows do not have the same adapter boundary.
 They cannot close the issue 04 acceptance rows.
 
 The numbers rank state representations only.
-The next prototype must use the actual `Execution.run` and Eta/Eio adapter.
-It must run the same operation tape on both sides.
 
 Complete samples are in
 [`results.csv`](edge-protocol-probe/results.csv).
 Process medians are in
 [`summary.csv`](edge-protocol-probe/summary.csv).
 
+## Integrated Eta/Eio evidence
+
+The integrated probe copies the selected issue 09 `Execution.run` driver.
+The driver gets the active runtime from `Eta.Spi.Expert`.
+It uses the production graph-lane module and the Eio runtime contract.
+
+Observer callbacks are Eta effects.
+The delivery finalizer settles the exact token under `Execution.run`.
+Typed failures, defects, and interruptions keep unacknowledged delivery
+pending.
+
+Timer starts use `Eta.Spi.daemon`.
+The daemon gets its cancellation handle from the active runtime contract.
+Timer creation stores the real runtime identity.
+Reconciliation uses `Runtime_contract.same_runtime` before it claims work.
+
+The integrated checks cover these observations:
+
+| Observation | Result |
+|---|---|
+| Typed callback failure | Eta returns `Cause.Fail`, and the exact token stays pending. |
+| Callback defect | Eta returns `Cause.Die`, and the exact token stays pending. |
+| Callback interruption | Eio interruption escapes, and the protected finalizer restores the exact token. |
+| Callback retry | A later stabilization acknowledges the retained token. |
+| Disposal | The finish hook runs outside the lane and runs once. |
+| Runtime provenance | A foreign Eta runtime cannot register, stabilize, or wake a timer. |
+| Timer initialization | Stabilization initializes an observer without a timer wake. |
+| Registration failure | Start failure and post-install cancellation remove observer demand and daemon state. |
+| Start and stop retry | Injected start and stop defects keep exact retry state. |
+| Daemon failure | A failed daemon loop requeues live demand, and stabilization restarts it. |
+| Timer generation fence | Demand loss rejects a late wake before stop retry. |
+| Demand reentry | Demand that returns across a fenced stop starts a new generation. |
+| Immediate disposal | A timer reaches `Inactive` without exposing `Starting`. |
+| Timer lifecycle | One Eta daemon starts, wakes, publishes through stabilization, and stops. |
+| Lane release | Observer callbacks, finish hooks, timer starts, and timer stops run outside the lane. |
+
+The command runs these checks:
+
+```sh
+nix develop -c \
+  .scratch/research/eta-signal-execution-model/edge-seam-probe/_build/default/probe.exe \
+  --check
+```
+
+## Matched edge rows
+
+The integrated harness uses the three pinned-reference operation tapes.
+Setup, final state checks, and teardown stay outside each measured operation.
+
+| Row | Smallest graph | One measured operation |
+|---|---|---|
+| Observer failure and retry | one source and one observer | set, failed stabilization, successful retry |
+| Observer disposal | one source and one observer | register, dispose |
+| Timer cycle | one interval timer and one observer | start, wake, stabilize, dispose, stop |
+
+The release run used three fresh candidate and reference process pairs.
+Each process reported nine samples.
+The candidate and reference calibrated their operation counts independently.
+
+| Row | Candidate words | Reference words | Allocation ratio | Candidate wall-time range | Reference wall-time range | Largest wall ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| Observer failure and retry | 2,752 | 10,504 | 0.262 | 3,763.65-3,821.79 ns | 12,230.45-12,300.55 ns | 0.311 |
+| Observer disposal | 903 | 6,188 | 0.146 | 1,288.26-1,316.10 ns | 8,162.47-8,247.79 ns | 0.161 |
+| Timer cycle | 7,005 | 21,185 | 0.331 | 9,979.46-10,059.38 ns | 27,395.11-27,507.48 ns | 0.366 |
+
+All allocation rows stay below the pinned reference.
+All candidate wall-time medians stay below the reference in all three pairs.
+Thus, all three rows pass the issue 04 Eta-only edge gates.
+
+Complete samples are in
+[`results.csv`](edge-seam-probe/results.csv).
+Process medians are in
+[`summary.csv`](edge-seam-probe/summary.csv).
+
 ## Limits
 
-The prototype does not implement `Execution.run`, Eta effects, graph topology,
-or observer-plan construction.
+The integrated probe uses a scalar projection instead of the complete graph
+kernel.
+It does not construct dynamic topology or a multi-observer topological plan.
 Issues 08 and 11 own those integrated paths.
 
-The prototype uses integer runtime identities.
-Production code must use `Runtime_contract.same_runtime`.
+The state-model probe uses integer runtime identities.
+The integrated probe uses `Runtime_contract.same_runtime`.
 
-The prototype injects timer wakes.
-It does not implement a real clock or daemon scheduler.
+The state-model probe injects timer wakes.
+The integrated probe uses an Eta daemon and the same deterministic Eio clock as
+the reference.
 
 The reference disposal operation includes observer registration.
-The candidate disposal operation also creates, publishes, and disposes one
-observer.
+The state-model disposal operation also publishes an observer value.
+The integrated candidate registers graph demand and uses the same
+register-and-dispose tape as the reference.
 
 The stream row checks send, drop, and acknowledgement only.
 The existing `eta_signal_stream` tests remain authoritative for queue closure
 and cross-domain consumption.
 
-## Provisional direction
+## Decision
 
-Retain one opaque post-commit driver as the next candidate.
+Use one opaque post-commit driver.
 
 Keep timer generations, runtime provenance, observer cursors, cleanup
 aggregation, and stream acknowledgement inside this driver.
@@ -340,6 +419,3 @@ Linearize every claim and terminal result under the lane.
 
 Keep the current Eta runtime interface.
 Add no runtime primitive and expose no edge cursor.
-
-Ticket 10 remains open until an Eta/Eio prototype proves this composition.
-That prototype must close the matched failure, disposal, and timer rows.

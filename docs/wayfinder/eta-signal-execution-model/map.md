@@ -64,6 +64,7 @@ main Dune workspace.
 - [Node identity and index lifecycle](issues/15-node-identity-and-index-lifecycle.md) — reuse dense slots with generation-safe handles and per-pass quarantine, while active journals retain immediate slot integers.
 - [Generic typed value storage](issues/16-generic-typed-value-storage.md) — pack existential typed nodes with embedded undo values, preserve the four-word path for immediate and boxed values, and reject erased or closure-packed storage.
 - [Effect seam and Eta runtime](issues/09-effect-seam-and-runtime.md) — use one private serialized execution driver with a pre-publication cancellation checkpoint, keep claims opaque, and add no Eta runtime primitive.
+- [Timer and observer edges](issues/10-timer-and-observer-edges.md) — keep timer generations, runtime provenance, observer cursors, cleanup, and stream acknowledgement inside one opaque post-commit driver.
 
 ## Not yet specified
 

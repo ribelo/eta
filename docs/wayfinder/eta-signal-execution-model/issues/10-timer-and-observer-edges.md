@@ -1,7 +1,7 @@
 # Timer and observer edge protocols
 
 Type: prototype
-Status: in progress
+Status: resolved
 Blocked by: 01, 09
 
 ## Question
@@ -13,20 +13,16 @@ Preserve commit ordering, callback order, retries, cancellation, disposal,
 runtime provenance, and failure aggregation. Charge these protocols only to
 passes that use them.
 
-## Progress
+## Answer
 
-The current state model supports one private post-commit driver with opaque edge
-batches.
-
-The following protocol is a candidate.
-The current probe does not execute its Eta runtime or cancellation boundaries.
+Use one private post-commit driver with opaque edge batches.
 
 The kernel publishes the snapshot, observer cursors, and edge work under the
 selected `Execution.run` seam. The driver then owns each claim, callback,
 timer action, cleanup hook, acknowledgement, and terminal transition.
 
-User callbacks, timer operations, finish hooks, and stream publication run
-outside the graph lane. Claims and final state changes run under the lane.
+User callbacks, timer starts, timer stops, finish hooks, and stream publication
+run outside the graph lane. Claims and final state changes run under the lane.
 
 Timer demand uses a queued mismatch list. Each timer retains its creating
 runtime and one generation. Demand loss fences that generation before
@@ -42,13 +38,18 @@ invocation order and keeps observer delivery pending after cleanup failure.
 The stream bridge keeps the sealed delivery capability. Queue publication and
 acknowledgement form one cancellation-protected region.
 
-The state model allocates 105 words for observer failure and retry, 58 words for
-disposal, and 83 words for a timer start-wake-stop cycle. These component rows
-are diagnostics, not complete-operation acceptance rows.
+The integrated probe executes this protocol through the selected
+`Execution.run` driver and an Eta/Eio runtime.
+It preserves typed failures, defects, interruption, and runtime provenance.
+It uses the pre-publication cancellation boundary that issue 09 proves.
 
-The ticket remains open. The next prototype must run the same operation tapes
-through the actual `Execution.run` and Eta/Eio seam. It must also measure the
-complete candidate against the pinned reference.
+The complete candidate allocates 2,752 words for observer failure and retry,
+903 words for disposal, and 7,005 words for a timer cycle.
+These values are 14.6% to 33.1% of the pinned reference values.
+
+The largest wall-time ratios are 0.311 for failure and retry, 0.161 for
+disposal, and 0.366 for the timer cycle.
+Every row passes in all three process pairs.
 
 The interfaces, alternatives, semantic checks, performance evidence, and limits
 are in
