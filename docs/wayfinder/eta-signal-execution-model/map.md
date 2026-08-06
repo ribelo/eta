@@ -58,6 +58,7 @@ main Dune workspace.
 - [Eta execution-cost decomposition](issues/03-eta-cost-decomposition.md) — reject the current `729 + 68d`-word raw planner and keep Effect, lane, runtime, observer, and timer costs separate.
 - [Performance acceptance matrix](issues/04-performance-acceptance-matrix.md) — require behavior and affected-work eligibility, layered allocation ceilings, and fresh paired wall-time comparisons before ranking eligible candidates.
 - [Candidate kernel seams](issues/05-candidate-kernel-seams.md) — use direct synchronous propagation as the primary hypothesis, falsify immutable plans with a static probe, and defer the private claim versus edge-cursor seam to adapter prototypes.
+- [Value-propagation kernel](issues/06-value-propagation-kernel.md) — retain direct propagation after it passes all static gates at 4 words per operation, and reject depth-dependent immutable snapshots.
 
 ## Not yet specified
 
