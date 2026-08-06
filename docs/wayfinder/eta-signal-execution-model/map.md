@@ -63,6 +63,7 @@ main Dune workspace.
 - [Dynamic topology and keyed work](issues/08-dynamic-topology-and-keyed-work.md) — use owner-local shadow capsules with an O(1) verdict commit and affected-only rollback and cleanup.
 - [Node identity and index lifecycle](issues/15-node-identity-and-index-lifecycle.md) — reuse dense slots with generation-safe handles and per-pass quarantine, while active journals retain immediate slot integers.
 - [Generic typed value storage](issues/16-generic-typed-value-storage.md) — pack existential typed nodes with embedded undo values, preserve the four-word path for immediate and boxed values, and reject erased or closure-packed storage.
+- [Effect seam and Eta runtime](issues/09-effect-seam-and-runtime.md) — use one private serialized execution driver with a pre-publication cancellation checkpoint, keep claims opaque, and add no Eta runtime primitive.
 
 ## Not yet specified
 
