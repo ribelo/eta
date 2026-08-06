@@ -1,0 +1,23 @@
+pair	workload	side	correctness	operations	sample	wall_ns	allocated_words	first_failure
+1	changed.depth_1	reference	pass	16777216	1	54.671290	6.000001	-
+1	changed.depth_1	finalist	pass	16777216	1	41.962920	0.000001	-
+1	changed.depth_10	reference	pass	4194304	1	129.074579	6.000002	-
+1	changed.depth_10	finalist	pass	4194304	1	150.541268	0.000002	-
+1	changed.depth_100	reference	pass	524288	1	1007.351329	6.000019	-
+1	changed.depth_100	finalist	pass	524288	1	1372.074166	0.000019	wall 1372.074166 ns exceeds 1.20 x reference 1007.351329 ns
+1	cutoff.depth_10	reference	pass	16777216	1	32.796805	0.000001	-
+1	cutoff.depth_10	finalist	pass	16777216	1	40.810107	0.000001	wall 40.810107 ns exceeds 1.20 x reference 32.796805 ns
+1	dynamic.switch	reference	pass	4194304	1	141.205305	49.000002	-
+1	dynamic.switch	finalist	pass	8388608	1	114.703283	51.000001	-
+1	map.data_change.10000	reference	pass	2097152	1	302.301373	186.000005	-
+1	map.data_change.10000	finalist	pass	4194304	1	214.871193	211.000002	-
+1	map.data_change.100000	reference	pass	2097152	1	354.569352	234.000005	-
+1	map.data_change.100000	finalist	pass	2097152	1	246.313562	259.000005	-
+1	map.membership_change.10000	reference	pass	1048576	1	482.798669	349.500010	-
+1	map.membership_change.10000	finalist	pass	2097152	1	288.258548	369.000005	-
+1	map.membership_change.100000	reference	pass	1048576	1	594.591029	439.500010	-
+1	map.membership_change.100000	finalist	pass	2097152	1	320.400773	423.000005	-
+1	map.child_change.10000	reference	pass	8388608	1	115.862974	84.000001	-
+1	map.child_change.10000	finalist	pass	8388608	1	107.992406	89.000001	-
+1	map.child_change.100000	reference	pass	4194304	1	125.705242	108.000002	-
+1	map.child_change.100000	finalist	pass	4194304	1	120.618836	113.000002	-

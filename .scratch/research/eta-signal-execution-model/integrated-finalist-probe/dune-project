@@ -1,0 +1,6 @@
+(lang dune 3.22)
+(name eta_signal_integrated_finalist_probe)
+
+(package
+ (name eta_signal_integrated_finalist_probe)
+ (allow_empty))

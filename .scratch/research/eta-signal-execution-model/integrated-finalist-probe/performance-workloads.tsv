@@ -1,0 +1,12 @@
+# canonical	reference	public	finalist_raw
+changed.depth_1	incremental.changed.depth_1	finalist.public.changed.depth_1	changed.depth_1
+changed.depth_10	incremental.changed.depth_10	finalist.public.changed.depth_10	changed.depth_10
+changed.depth_100	incremental.changed.depth_100	finalist.public.changed.depth_100	changed.depth_100
+cutoff.depth_10	incremental.cutoff.depth_10	finalist.public.cutoff.depth_10	cutoff.depth_10
+dynamic.switch	incremental.dynamic.switch	finalist.public.dynamic.switch	dynamic.switch
+map.data_change.10000	incr_map.data_change.10000	finalist.public.map.data_change.10000	map.data_change.10000
+map.data_change.100000	incr_map.data_change.100000	finalist.public.map.data_change.100000	map.data_change.100000
+map.membership_change.10000	incr_map.membership_change.10000	finalist.public.map.membership_change.10000	map.membership_change.10000
+map.membership_change.100000	incr_map.membership_change.100000	finalist.public.map.membership_change.100000	map.membership_change.100000
+map.child_change.10000	incr_map.child_change.10000	finalist.public.map.child_change.10000	map.child_change.10000
+map.child_change.100000	incr_map.child_change.100000	finalist.public.map.child_change.100000	map.child_change.100000

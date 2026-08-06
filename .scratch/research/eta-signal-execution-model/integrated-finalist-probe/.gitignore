@@ -1,0 +1,12 @@
+/_build/
+/_install/
+/*.cmi
+/*.cmx
+/*.o
+/generated/
+/eta_signal_test_helpers.ml
+/eta_signal_test_interrupt_runtime.ml
+/test_eta_signal*.ml
+/test_eta_signal_map*.ml
+/signal_properties.ml
+/results/

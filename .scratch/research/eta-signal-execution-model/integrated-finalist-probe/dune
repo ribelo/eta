@@ -1,0 +1,114 @@
+(env
+ (release
+  (ocamlopt_flags -O3)))
+
+(library
+ (name selected_core_probe)
+ (wrapped false)
+ (modules selected_core))
+
+(executable
+ (name selected_core_check)
+ (modules selected_core_check)
+ (libraries selected_core_probe))
+
+(rule
+ (alias selected-core-check)
+ (deps selected_core_check.exe)
+ (action (run %{dep:selected_core_check.exe})))
+
+(library
+ (name selected_edges_probe)
+ (wrapped false)
+ (modules selected_edges))
+
+(executable
+ (name selected_edges_check)
+ (modules selected_edges_check)
+ (libraries selected_edges_probe))
+
+(rule
+ (alias selected-edges-check)
+ (deps selected_edges_check.exe)
+ (action (run %{dep:selected_edges_check.exe})))
+
+(library
+ (name selected_factory_owner)
+ (wrapped false)
+ (modules selected_factory_fresh)
+ (libraries selected_core_probe selected_edges_probe eta eta_observability
+   eta_signal.__private__.eta_signal_engine
+   eta_signal.__private__.eta_signal_kernel eta_stream eta_eio unix)
+ (flags
+  (:standard
+   -I %{env:ETA_REPO=.}/_build/default/lib/signal/engine/.eta_signal_engine.objs/byte
+   -I %{env:ETA_REPO=.}/_build/default/lib/signal/kernel/.eta_signal_kernel.objs/byte)))
+
+(library
+ (name finalist_probe_support)
+ (wrapped false)
+ (modules eta_signal_test_helpers eta_signal_test_interrupt_runtime)
+ (libraries selected_factory_owner eta eta_observability eta_signal_stream
+   eta_stream eta_eio eta_test alcotest eio_main unix))
+
+(tests
+ (names
+  test_eta_signal
+  test_eta_signal_public
+  test_eta_signal_contract
+  test_eta_signal_model
+  test_eta_signal_stream
+  test_eta_signal_map
+  test_eta_signal_map_keyed
+  signal_properties)
+ (modules
+  test_eta_signal
+  test_eta_signal_public
+  test_eta_signal_contract
+  test_eta_signal_model
+  test_eta_signal_stream
+  test_eta_signal_map
+  test_eta_signal_map_keyed
+  signal_properties)
+ (libraries
+  selected_factory_owner finalist_probe_support
+  eta eta_observability eta_signal eta_signal_map eta_signal_stream eta_stream
+  eta_eio eta_test alcotest qcheck qcheck-core.runner eio_main unix)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))
+
+(test
+ (name finalist_native_checks)
+ (modules finalist_native_checks)
+ (libraries selected_factory_owner eta eta_eio eta_test alcotest eio_main unix)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))
+
+(executable
+ (name compare_public)
+ (modules compare_public)
+ (libraries
+  selected_factory_owner eta eta_signal eta_signal_map eta_signal_stream eta_eio
+   incremental incr_map core eio_main unix))
+
+(executable
+ (name compare_raw)
+ (modules compare_raw raw_benchmark)
+ (libraries selected_core_probe unix))
+
+(rule
+ (alias negative)
+ (deps
+  negative_compile.sh
+  selected_factory_owner.cma
+  (source_tree generated/negative-signal)
+  (source_tree generated/negative-map))
+ (action (run bash %{dep:negative_compile.sh})))
+
+(alias
+ (name finalist-gates)
+ (deps
+  (alias runtest)
+  (alias negative)))

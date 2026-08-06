@@ -1,0 +1,13 @@
+pair	workload	side	correctness	operations	sample	wall_ns	allocated_words	first_failure
+1	map.data_change.10000	reference	pass	2097152	1	297.376573	186.000005	-
+1	map.data_change.10000	finalist	pass	4194304	1	221.467246	211.000002	-
+1	map.data_change.100000	reference	pass	2097152	1	364.697485	234.000005	-
+1	map.data_change.100000	finalist	pass	2097152	1	251.350002	259.000005	-
+1	map.membership_change.10000	reference	pass	1048576	1	473.355385	349.500010	-
+1	map.membership_change.10000	finalist	pass	2097152	1	289.006721	369.000005	-
+1	map.membership_change.100000	reference	pass	1048576	1	616.938678	439.500010	-
+1	map.membership_change.100000	finalist	pass	2097152	1	316.903197	423.000005	-
+1	map.child_change.10000	reference	pass	8388608	1	113.194204	84.000001	-
+1	map.child_change.10000	finalist	pass	8388608	1	109.140643	89.000001	-
+1	map.child_change.100000	reference	pass	4194304	1	123.527741	108.000002	-
+1	map.child_change.100000	finalist	pass	4194304	1	120.821994	113.000002	-
