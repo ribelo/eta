@@ -487,6 +487,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let callback_delivery_count = ref 0
   let dynamic_scope_invalidations = ref 0
   let recompute_count = ref 0
+  let accounted_core_evaluations = ref 0
   let nodes_became_necessary = ref 0
   let nodes_became_unnecessary = ref 0
   let dead_nodes = ref 0
@@ -508,6 +509,11 @@ module Make_impl (Observer_error : Observer_error) () = struct
       }
 
   let ensure_context () = Execution.ensure_context execution
+  let account_recomputations () =
+    let evaluations = (Core.work graph).evaluations in
+    recompute_count :=
+      !recompute_count + (evaluations - !accounted_core_evaluations);
+    accounted_core_evaluations := evaluations
   let signal_timers signal =
     let seen = Hashtbl.create 8 in
     let found = ref [] in
@@ -2069,6 +2075,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
             let output = plan.build ~key ~data:signal in
             let wrapped =
               map (fun value ->
+                let s = !keyed in
+                keyed :=
+                  { s with child_visit_count = s.child_visit_count + 1 };
                 Option.iter
                   (fun owner ->
                     owner.Core.keyed_signal.node.queued_in <- -1)
@@ -2267,8 +2276,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
              List.iter (fun timer -> timer.commit_refresh ()) !timers;
              ignore result;
              incr pure_snapshot_commit_count;
-             let work = Core.work graph in
-             recompute_count := !recompute_count + work.evaluations;
+             account_recomputations ();
              settle_invalid_observers ();
              reconcile_timer_demands runtime;
              if
@@ -2407,8 +2415,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
              List.iter (fun timer -> timer.commit_refresh ()) !timers;
              ignore result;
              initializers := [];
-             let work = Core.work graph in
-             recompute_count := !recompute_count + work.evaluations;
+             account_recomputations ();
              settle_invalid_observers ();
              reconcile_timer_demands runtime;
              Ok (collect_observers ()))

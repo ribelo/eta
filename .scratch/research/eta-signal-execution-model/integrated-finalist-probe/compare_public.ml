@@ -289,7 +289,7 @@ let make_eta_keyed_data runtime size =
       failwith "Finalist public Map published the wrong keyed value"
   in
   {
-    name = Printf.sprintf "eta_signal_map.data_change.%d" size;
+    name = Printf.sprintf "finalist.public.map.data_change.%d" size;
     run_batch;
     check;
   }
@@ -372,7 +372,7 @@ let make_eta_keyed_membership runtime size =
       failwith "Finalist public Map published the wrong membership"
   in
   {
-    name = Printf.sprintf "eta_signal_map.membership_change.%d" size;
+    name = Printf.sprintf "finalist.public.map.membership_change.%d" size;
     run_batch;
     check;
   }
@@ -455,7 +455,7 @@ let make_eta_keyed_child runtime size =
       failwith "Finalist public Map published the wrong child value"
   in
   {
-    name = Printf.sprintf "eta_signal_map.child_change.%d" size;
+    name = Printf.sprintf "finalist.public.map.child_change.%d" size;
     run_batch;
     check;
   }
@@ -541,17 +541,18 @@ let measure ~sample_count workload =
   done
 
 let parse_args () =
-  let rec loop only samples = function
-    | [] -> only, samples
-    | "--only" :: name :: rest -> loop (Some name) samples rest
+  let rec loop only samples verify_only = function
+    | [] -> only, samples, verify_only
+    | "--only" :: name :: rest -> loop (Some name) samples verify_only rest
     | "--samples" :: count :: rest ->
-        loop only (int_of_string count) rest
+        loop only (int_of_string count) verify_only rest
+    | "--verify-only" :: rest -> loop only samples true rest
     | arg :: _ -> invalid_arg ("unknown argument: " ^ arg)
   in
-  loop None 9 (List.tl (Array.to_list Sys.argv))
+  loop None 9 false (List.tl (Array.to_list Sys.argv))
 
 let () =
-  let only, sample_count = parse_args () in
+  let only, sample_count, verify_only = parse_args () in
   let selected =
     match only with
     | Some selected -> selected
@@ -579,27 +580,32 @@ let () =
       "incremental.dynamic.switch", make_incremental_dynamic;
       "finalist.public.dynamic.switch", (fun () -> make_eta_dynamic runtime);
       "incr_map.data_change.10000", (fun () -> make_incr_map_data 10_000);
-      "eta_signal_map.data_change.10000",
+      "finalist.public.map.data_change.10000",
         (fun () -> make_eta_keyed_data runtime 10_000);
       "incr_map.data_change.100000", (fun () -> make_incr_map_data 100_000);
-      "eta_signal_map.data_change.100000",
+      "finalist.public.map.data_change.100000",
         (fun () -> make_eta_keyed_data runtime 100_000);
       "incr_map.membership_change.10000",
         (fun () -> make_incr_map_membership 10_000);
-      "eta_signal_map.membership_change.10000",
+      "finalist.public.map.membership_change.10000",
         (fun () -> make_eta_keyed_membership runtime 10_000);
       "incr_map.membership_change.100000",
         (fun () -> make_incr_map_membership 100_000);
-      "eta_signal_map.membership_change.100000",
+      "finalist.public.map.membership_change.100000",
         (fun () -> make_eta_keyed_membership runtime 100_000);
       "incr_map.child_change.10000", (fun () -> make_incr_map_child 10_000);
-      "eta_signal_map.child_change.10000",
+      "finalist.public.map.child_change.10000",
         (fun () -> make_eta_keyed_child runtime 10_000);
       "incr_map.child_change.100000", (fun () -> make_incr_map_child 100_000);
-      "eta_signal_map.child_change.100000",
+      "finalist.public.map.child_change.100000",
         (fun () -> make_eta_keyed_child runtime 100_000);
     ]
   in
+  if verify_only then
+    if List.exists (fun (name, _) -> String.equal selected name) candidates then (
+      Printf.printf "matched: %s\n%!" selected;
+      exit 0)
+    else invalid_arg "no workload matched --only";
   let workloads =
     List.filter_map
       (fun (name, make) ->

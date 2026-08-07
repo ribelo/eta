@@ -87,7 +87,7 @@ record() {
 
 run_performance() {
   install_inputs && generate || { status=1; return; }
-  if ! dune build --root "$root" --profile release compare_public.exe compare_raw.exe; then
+  if ! timeout "$build_timeout" dune build --root "$root" --profile release compare_public.exe compare_raw.exe; then
     status=1
     return
   fi
@@ -106,7 +106,10 @@ run_performance() {
       record "$pair" public finalist "$canonical" "$build/compare_public.exe" "$public"
     done <"$root/performance-workloads.tsv"
   done
-  python3 "$root/summarize.py" "$results" "$root/results/summary.csv"
+  if ! python3 "$root/summarize.py" "$results" \
+       "$root/results/summary.csv" "$root/performance-workloads.tsv"; then
+    status=1
+  fi
   echo "wrote $results"
   echo "wrote $root/results/summary.csv"
 }
