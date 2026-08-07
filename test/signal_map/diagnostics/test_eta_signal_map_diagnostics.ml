@@ -104,14 +104,20 @@ let test_keyed_stats_live_gauges_follow_committed_state () =
   Alcotest.(check int) "one keyed node" 1 empty.keyed.node_count;
   Alcotest.(check int) "no children" 0 empty.keyed.committed_child_count;
   let two = H.M.set 2 20 (H.M.set 1 10 H.M.empty) in
+  let before_additions = empty.keyed.provisional_addition_count in
   H.set runtime input two;
   H.stabilize runtime;
   let added = H.stats runtime in
   Alcotest.(check int) "two children" 2 added.keyed.committed_child_count;
+  Alcotest.(check int) "two provisional scopes" 2
+    (added.keyed.provisional_addition_count - before_additions);
+  let before_removal = added.keyed.provisional_addition_count in
   H.set runtime input (H.M.remove 1 two);
   H.stabilize runtime;
   let removed = H.stats runtime in
   Alcotest.(check int) "one child" 1 removed.keyed.committed_child_count;
+  Alcotest.(check int) "removal registers no provisional scope" 0
+    (removed.keyed.provisional_addition_count - before_removal);
   H.dispose runtime observer
 
 let map_of_size empty set size =
@@ -224,8 +230,43 @@ let test_keyed_stats_count_failed_attempt_and_rollback () =
   Alcotest.(check int) "no committed removal" 0
     (after.committed_removal_count - baseline.committed_removal_count);
   Alcotest.(check int) "one live child" 1 after.committed_child_count;
-  Alcotest.(check bool) "attempted provisional work" true
-    (after.provisional_addition_count - baseline.provisional_addition_count >= 3);
+  Alcotest.(check int) "two registered provisional scopes" 2
+    (after.provisional_addition_count - baseline.provisional_addition_count);
+  H.dispose runtime observer
+
+let test_keyed_stats_count_each_rolled_back_plan () =
+  let module H = Harness () in
+  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  let first_input = H.S.Var.create H.M.empty in
+  let second_input = H.S.Var.create H.M.empty in
+  let keyed input =
+    H.K.mapi (H.S.Var.watch input) ~f:(fun ~key:_ ~data -> data)
+  in
+  let first = keyed first_input in
+  let second = keyed second_input in
+  let fail_downstream = ref false in
+  let combined =
+    H.S.map2
+      (fun first second ->
+        if !fail_downstream then failwith "downstream";
+        H.M.cardinal first + H.M.cardinal second)
+      first second
+  in
+  let observer = H.observe runtime combined (fun _ -> E.unit) in
+  H.stabilize runtime;
+  let before = (H.stats runtime).keyed in
+  fail_downstream := true;
+  H.set runtime first_input (H.M.set 1 10 H.M.empty);
+  H.set runtime second_input (H.M.set 2 20 H.M.empty);
+  ignore (H.run_exit runtime H.S.stabilize);
+  let after = (H.stats runtime).keyed in
+  Alcotest.(check int) "two plans rolled back" 2
+    (after.reconciliation_rollback_count
+     - before.reconciliation_rollback_count);
+  Alcotest.(check int) "failed additions not committed" 0
+    (after.committed_addition_count - before.committed_addition_count);
+  Alcotest.(check int) "no live children after rollback" 0
+    after.committed_child_count;
   H.dispose runtime observer
 
 let test_keyed_stats_commit_transitions_only_after_commit () =
@@ -438,6 +479,8 @@ let () =
             `Quick test_keyed_stats_report_affected_child_visits;
           Alcotest.test_case "test_keyed_stats_count_failed_attempt_and_rollback"
             `Quick test_keyed_stats_count_failed_attempt_and_rollback;
+          Alcotest.test_case "test_keyed_stats_count_each_rolled_back_plan"
+            `Quick test_keyed_stats_count_each_rolled_back_plan;
           Alcotest.test_case
             "test_keyed_stats_commit_transitions_only_after_commit" `Quick
             test_keyed_stats_commit_transitions_only_after_commit;

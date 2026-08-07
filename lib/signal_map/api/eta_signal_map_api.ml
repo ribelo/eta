@@ -97,7 +97,7 @@ module Keyed_adapter (Package : PACKAGE) (Order : Map.Ordered_type) = struct
 end
 
 module Make (Observer_error : Eta_signal.Observer_error) () = struct
-  module Signal = Eta_signal_kernel.Make (Observer_error) ()
+  module Signal = Eta_signal_kernel.Make_impl (Observer_error) ()
   include Signal
 
   module Keyed (Order : Map.Ordered_type) = struct
@@ -140,20 +140,103 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
         | Cleanup
 
       let work_count _ = 0
-      let entry_identity _ _ = None
-      let scope_valid _ = false
-      let pending _ = false
-      let set_preflight _ _ = ()
+      let raw signal = Signal.raw_for_testing signal
+
+      let owner signal =
+        let keyed_signal = raw signal in
+        match keyed_signal.node.Selected_core.keyed_owner with
+        | None -> None
+        | Some packed_owner ->
+            let owner : (_, _, _, _, _) Selected_core.keyed_owner =
+              Obj.obj packed_owner
+            in
+            if
+              owner.keyed_signal.handle = keyed_signal.handle
+              && Selected_core.validate_handle owner.keyed_signal
+            then Some owner
+            else None
+
+      let entry_identity signal key =
+        match owner signal with
+        | None -> None
+        | Some owner -> (
+            match Selected_core.keyed_find owner key with
+            | None -> None
+            | Some child ->
+                Some
+                  {
+                    keyed_key_token = Obj.repr child.key;
+                    keyed_scope_token = Obj.repr child.scope;
+                    keyed_source_token = Obj.repr child.data;
+                    keyed_data_signal_token = Obj.repr child.data.signal;
+                    keyed_child_signal_token = Obj.repr child.output;
+                    keyed_edge_attached = true;
+                  })
+
+      let scope_valid token =
+        let scope : Selected_core.scope = Obj.obj token in
+        scope.valid
+
+      let pending signal =
+        match owner signal with
+        | None -> false
+        | Some owner ->
+            owner.committed_input != owner.keyed_input.node.current
+
+      let set_preflight signal f =
+        match owner signal with
+        | None -> ()
+        | Some owner -> owner.preflight <- Some f
+
       let set_atomic_fault _ = ()
-      let signal_token _ = Obj.repr ()
-      let signal_valid_token _ = false
-      let signal_demand_token _ = 0
-      let dependent_edge_count_token _ = 0
-      let topology_counter_snapshot () = Obj.magic ()
+      let signal_token signal = Obj.repr (raw signal)
+
+      let signal_valid_token token =
+        Selected_core.validate_handle (Obj.obj token : _ Selected_core.signal)
+
+      let signal_demand_token token =
+        let signal : _ Selected_core.signal = Obj.obj token in
+        signal.node.demand
+
+      let dependent_edge_count_token token =
+        let signal : _ Selected_core.signal = Obj.obj token in
+        List.length signal.node.dependents
+
+      let topology_counter_snapshot () = ()
       let reset_counters () = ()
-      let has_dependent_edge_token ~child:_ ~parent:_ = false
-      let set_event_recorder _ _ = ()
-      let set_counter _ _ = ()
+
+      let has_dependent_edge_token ~child ~parent =
+        let child : _ Selected_core.signal = Obj.obj child in
+        let parent : _ Selected_core.signal = Obj.obj parent in
+        List.exists
+          (fun (Selected_core.P node) -> node.handle = parent.handle)
+          child.node.dependents
+
+      let set_event_recorder signal record =
+        match owner signal with
+        | None -> ()
+        | Some owner ->
+            Selected_core.set_keyed_event_recorder owner (function
+              | Selected_core.Keyed_detached scope ->
+                  record (Detached (Obj.repr scope))
+              | Selected_core.Keyed_invalidated scope ->
+                  record (Invalidated (Obj.repr scope))
+              | Selected_core.Keyed_attached scope ->
+                  record (Attached (Obj.repr scope)))
+
+      let set_counter counter value =
+        let counter =
+          match counter with
+          | Reconciliation_count -> `Reconciliation
+          | Input_key_comparison_count -> `Input_key_comparison
+          | Input_diff_event_count -> `Input_diff_event
+          | Child_visit_count -> `Child_visit
+          | Provisional_addition_count -> `Provisional_addition
+          | Committed_addition_count -> `Committed_addition
+          | Committed_removal_count -> `Committed_removal
+          | Reconciliation_rollback_count -> `Reconciliation_rollback
+        in
+        Selected_core.set_keyed_counter_for Signal.graph counter value
     end
   end
 end

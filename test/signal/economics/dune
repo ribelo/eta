@@ -1,8 +1,0 @@
-(test
- (name test_eta_signal_counter_contract)
- (libraries eta_signal_engine alcotest))
-
-(rule
- (alias signal-economics)
- (deps test_eta_signal_counter_contract.exe)
- (action (run %{dep:test_eta_signal_counter_contract.exe})))

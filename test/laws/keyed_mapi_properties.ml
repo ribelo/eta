@@ -452,7 +452,7 @@ let run_case matrix sample =
       stabilize ();
       require name (read observer == root) "child noop changed root";
       dispose observer
-  | 28 | 33 ->
+  | 28 ->
       let input, output, observer = setup (one (box 1 10)) in
       let root = read observer in
       let before = identity output key in
@@ -532,6 +532,57 @@ let run_case matrix sample =
              (fun signal -> List.for_all (fun old -> signal != old) first_tokens)
              !captured)
           "provisional identity reused";
+      dispose observer
+  | 33 ->
+      let initial = one (box 1 10) in
+      let input = S.Var.create initial in
+      let local = S.Var.create 0 in
+      let output =
+        K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data ->
+            S.map2 (fun data local -> data.value + local) data
+              (S.Var.watch local))
+      in
+      let fail_downstream = ref false in
+      let guarded =
+        S.map
+          (fun value ->
+            if !fail_downstream then failwith "downstream";
+            value)
+          output
+      in
+      let observer =
+        run_ok (S.Observer.observe guarded ~on_update:(fun _ -> E.unit))
+      in
+      stabilize ();
+      let before = identity output key in
+      let stats_before = (run_ok (S.stats ())).keyed in
+      fail_downstream := true;
+      set input M.empty;
+      require name
+        (expect_defect (run_exit S.stabilize))
+        "missing downstream defect";
+      let stats_after_failure = (run_ok (S.stats ())).keyed in
+      require name
+        (stats_after_failure.committed_removal_count
+         = stats_before.committed_removal_count)
+        "failed removal counted as committed";
+      require name
+        (stats_after_failure.reconciliation_rollback_count
+         = stats_before.reconciliation_rollback_count + 1)
+        "failed reconciliation rollback count";
+      require name
+        (same_identity before (identity output key))
+        "removal candidate identity changed";
+      require name
+        (T.scope_valid before.keyed_scope_token)
+        "removal candidate invalidated";
+      set input initial;
+      fail_downstream := false;
+      stabilize ();
+      set local 5;
+      stabilize ();
+      require name (output_value observer key = 15)
+        "restored child stopped propagating";
       dispose observer
   | 35 ->
       let choose = S.Var.create true in

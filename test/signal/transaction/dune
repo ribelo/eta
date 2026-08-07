@@ -1,3 +1,0 @@
-(test
- (name test_eta_signal_transaction)
- (libraries eta_signal_engine alcotest))

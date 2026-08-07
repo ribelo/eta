@@ -30,15 +30,18 @@
  (modules map_representation_properties)
  (libraries eta_signal_map_kernel qcheck qcheck-core.runner))
 
-; keyed_mapi_properties removed for pre-alpha promotion (representation test)
-; See docs/wayfinder/eta-signal-execution-model/issues/17-promote-selected-finalist-to-pre-alpha.md
+(test
+ (name keyed_mapi_properties)
+ (modules keyed_mapi_properties)
+ (libraries eta eta_signal eta_signal_map eta_eio eta_test qcheck qcheck-core.runner eio_main)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))
 
-; signal_properties disabled for pre-alpha promotion (ENOMEM io_uring, pre-existing)
-; See docs/wayfinder/eta-signal-execution-model/issues/17-promote-selected-finalist-to-pre-alpha.md
-; (test
-;  (name signal_properties)
-;  (modules signal_properties)
-;  (libraries eta eta_signal eta_signal_map eta_eio eta_test qcheck qcheck-core.runner eio_main)
-;  (action
-;   (setenv EIO_BACKEND posix
-;    (run %{test}))))
+(test
+ (name signal_properties)
+ (modules signal_properties)
+ (libraries eta eta_signal eta_signal_map eta_eio eta_test qcheck qcheck-core.runner eio_main)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

@@ -25,6 +25,19 @@ type work = {
   mutable verdict_steps : int;
 }
 
+type keyed_stats = {
+  mutable keyed_reconciliation_count : int;
+  mutable keyed_input_key_comparison_count : int;
+  mutable keyed_input_diff_event_count : int;
+  mutable keyed_child_visit_count : int;
+  mutable keyed_provisional_addition_count : int;
+  mutable keyed_committed_addition_count : int;
+  mutable keyed_committed_removal_count : int;
+  mutable keyed_reconciliation_rollback_count : int;
+  mutable keyed_node_count : int;
+  mutable keyed_committed_child_count : int;
+}
+
 type scope = {
   mutable valid : bool;
   mutable slot_head : int;
@@ -46,6 +59,9 @@ type 'a node = {
   mutable demand : int;
   mutable queued_in : int;
   mutable queue_next : int;
+  mutable in_queue : bool;
+  mutable topology_priority : int;
+  mutable keyed_owner : Obj.t option;
   mutable admitted : bool;
   mutable reclaim_queued : bool;
   mutable change_listeners : ('a -> unit) list;
@@ -92,6 +108,9 @@ and graph = {
   mutable heads : int array;
   mutable tails : int array;
   mutable highest : int;
+  mutable priority_heads : int array;
+  mutable priority_tails : int array;
+  mutable priority_highest : int;
   mutable admissions : int array;
   mutable admission_length : int;
   mutable current_scope : scope option;
@@ -100,6 +119,8 @@ and graph = {
   mutable suppress_reclaim : bool;
   mutable tombstones : handle array;
   mutable tombstone_length : int;
+  mutable keyed_reconciliations_in_pass : int;
+  keyed_stats : keyed_stats;
   work : work;
 }
 
@@ -148,6 +169,37 @@ let empty_work () =
     verdict_steps = 0;
   }
 
+let keyed_stats_for graph = graph.keyed_stats
+
+let bump_keyed_for graph counter =
+  let s = keyed_stats_for graph in
+  match counter with
+  | `Reconciliation -> if s.keyed_reconciliation_count <> max_int then s.keyed_reconciliation_count <- s.keyed_reconciliation_count + 1
+  | `Input_key_comparison -> if s.keyed_input_key_comparison_count <> max_int then s.keyed_input_key_comparison_count <- s.keyed_input_key_comparison_count + 1
+  | `Input_diff_event -> if s.keyed_input_diff_event_count <> max_int then s.keyed_input_diff_event_count <- s.keyed_input_diff_event_count + 1
+  | `Child_visit -> if s.keyed_child_visit_count <> max_int then s.keyed_child_visit_count <- s.keyed_child_visit_count + 1
+  | `Provisional_addition -> if s.keyed_provisional_addition_count <> max_int then s.keyed_provisional_addition_count <- s.keyed_provisional_addition_count + 1
+  | `Committed_addition -> if s.keyed_committed_addition_count <> max_int then s.keyed_committed_addition_count <- s.keyed_committed_addition_count + 1
+  | `Committed_removal -> if s.keyed_committed_removal_count <> max_int then s.keyed_committed_removal_count <- s.keyed_committed_removal_count + 1
+  | `Reconciliation_rollback -> if s.keyed_reconciliation_rollback_count <> max_int then s.keyed_reconciliation_rollback_count <- s.keyed_reconciliation_rollback_count + 1
+  | `Node -> if s.keyed_node_count <> max_int then s.keyed_node_count <- s.keyed_node_count + 1
+  | `Committed_child -> if s.keyed_committed_child_count <> max_int then s.keyed_committed_child_count <- s.keyed_committed_child_count + 1
+
+let set_keyed_counter_for graph counter value =
+  let stats = graph.keyed_stats in
+  match counter with
+  | `Reconciliation -> stats.keyed_reconciliation_count <- value
+  | `Input_key_comparison -> stats.keyed_input_key_comparison_count <- value
+  | `Input_diff_event -> stats.keyed_input_diff_event_count <- value
+  | `Child_visit -> stats.keyed_child_visit_count <- value
+  | `Provisional_addition -> stats.keyed_provisional_addition_count <- value
+  | `Committed_addition -> stats.keyed_committed_addition_count <- value
+  | `Committed_removal -> stats.keyed_committed_removal_count <- value
+  | `Reconciliation_rollback ->
+      stats.keyed_reconciliation_rollback_count <- value
+  | `Node -> stats.keyed_node_count <- value
+  | `Committed_child -> stats.keyed_committed_child_count <- value
+
 let create () =
   {
     phase = Idle;
@@ -171,6 +223,9 @@ let create () =
     heads = Array.make 4 (-1);
     tails = Array.make 4 (-1);
     highest = -1;
+    priority_heads = Array.make 4 (-1);
+    priority_tails = Array.make 4 (-1);
+    priority_highest = -1;
     admissions = Array.make 8 0;
     admission_length = 0;
     current_scope = None;
@@ -179,6 +234,20 @@ let create () =
     suppress_reclaim = false;
     tombstones = Array.make 16 { slot = -1; generation = -1 };
     tombstone_length = 0;
+    keyed_reconciliations_in_pass = 0;
+    keyed_stats =
+      {
+        keyed_reconciliation_count = 0;
+        keyed_input_key_comparison_count = 0;
+        keyed_input_diff_event_count = 0;
+        keyed_child_visit_count = 0;
+        keyed_provisional_addition_count = 0;
+        keyed_committed_addition_count = 0;
+        keyed_committed_removal_count = 0;
+        keyed_reconciliation_rollback_count = 0;
+        keyed_node_count = 0;
+        keyed_committed_child_count = 0;
+      };
     work = empty_work ();
   }
 
@@ -226,10 +295,18 @@ let ensure_height graph height =
     done;
     let heads = Array.make !length (-1) in
     let tails = Array.make !length (-1) in
+    let priority_heads = Array.make !length (-1) in
+    let priority_tails = Array.make !length (-1) in
     Array.blit graph.heads 0 heads 0 (Array.length graph.heads);
     Array.blit graph.tails 0 tails 0 (Array.length graph.tails);
+    Array.blit graph.priority_heads 0 priority_heads 0
+      (Array.length graph.priority_heads);
+    Array.blit graph.priority_tails 0 priority_tails 0
+      (Array.length graph.priority_tails);
     graph.heads <- heads;
-    graph.tails <- tails)
+    graph.tails <- tails;
+    graph.priority_heads <- priority_heads;
+    graph.priority_tails <- priority_tails)
 
 let slot_contents (slot : slot) =
   match slot.strong, slot.contents with
@@ -419,6 +496,9 @@ let make_node ?(constant = false) graph ~height ~dependencies ~compute ~cutoff
       demand = 0;
       queued_in = -1;
       queue_next = -1;
+      in_queue = false;
+      topology_priority = 0;
+      keyed_owner = None;
       admitted = false;
       reclaim_queued = false;
       change_listeners = [];
@@ -481,15 +561,66 @@ let enqueue (P node) =
   if node.necessary && node.queued_in <> graph.pass then (
     node.queued_in <- graph.pass;
     node.queue_next <- -1;
+    node.in_queue <- true;
     ensure_height graph node.height;
-    if graph.tails.(node.height) = -1 then (
-      graph.heads.(node.height) <- node.handle.slot;
-      graph.tails.(node.height) <- node.handle.slot)
+    let heads, tails =
+      if node.topology_priority > 0 then
+        graph.priority_heads, graph.priority_tails
+      else graph.heads, graph.tails
+    in
+    if tails.(node.height) = -1 then (
+      heads.(node.height) <- node.handle.slot;
+      tails.(node.height) <- node.handle.slot)
     else (
-      let P tail = resolve_slot graph graph.tails.(node.height) in
+      let P tail = resolve_slot graph tails.(node.height) in
       tail.queue_next <- node.handle.slot;
-      graph.tails.(node.height) <- node.handle.slot);
-    graph.highest <- max graph.highest node.height)
+      tails.(node.height) <- node.handle.slot);
+    if node.topology_priority > 0 then
+      graph.priority_highest <- max graph.priority_highest node.height
+    else graph.highest <- max graph.highest node.height)
+
+let enqueue_deferred (P node as packed) =
+  let topology_priority = node.topology_priority in
+  node.topology_priority <- 0;
+  Fun.protect
+    ~finally:(fun () -> node.topology_priority <- topology_priority)
+    (fun () -> enqueue packed)
+
+let unlink_queued_node (P target) =
+  let graph = target.graph in
+  if target.queued_in = graph.pass then (
+    let removed = ref false in
+    let remove_from heads tails =
+      for height = 0 to Array.length heads - 1 do
+        if not !removed then (
+          let previous = ref None in
+          let slot = ref heads.(height) in
+          while !slot <> -1 && not !removed do
+            match slot_contents graph.slots.(!slot) with
+            | None -> slot := -1
+            | Some (P node as packed) ->
+                let next = node.queue_next in
+                if node.handle = target.handle then (
+                  (match !previous with
+                  | None -> heads.(height) <- next
+                  | Some (P previous) -> previous.queue_next <- next);
+                  if tails.(height) = node.handle.slot then
+                    tails.(height) <-
+                      (match !previous with
+                      | None -> -1
+                      | Some (P previous) -> previous.handle.slot);
+                  node.queue_next <- -1;
+                  node.queued_in <- -1;
+                  node.in_queue <- false;
+                  removed := true)
+                else (
+                  previous := Some packed;
+                  slot := next)
+          done)
+      done
+    in
+    remove_from graph.priority_heads graph.priority_tails;
+    remove_from graph.heads graph.tails)
 
 let retain_admission graph node =
   if not node.admitted then (
@@ -534,18 +665,22 @@ let rec deactivate (P node as packed) =
   if node.demand > 0 then node.demand <- node.demand - 1;
   if node.necessary && node.demand = 0 then (
     node.necessary <- false;
-    if (not node.graph.suppress_reclaim) && not node.reclaim_queued then (
+    if not node.reclaim_queued then (
       node.reclaim_queued <- true;
-      let graph = node.graph in
-      if graph.pending_reclaim_length = Array.length graph.pending_reclaims then (
-        let next =
-          Array.make (2 * Array.length graph.pending_reclaims)
-            { slot = -1; generation = -1 }
-        in
-        Array.blit graph.pending_reclaims 0 next 0 graph.pending_reclaim_length;
-        graph.pending_reclaims <- next);
-      graph.pending_reclaims.(graph.pending_reclaim_length) <- node.handle;
-      graph.pending_reclaim_length <- graph.pending_reclaim_length + 1);
+      if not node.graph.suppress_reclaim then (
+        let graph = node.graph in
+        if
+          graph.pending_reclaim_length = Array.length graph.pending_reclaims
+        then (
+          let next =
+            Array.make (2 * Array.length graph.pending_reclaims)
+              { slot = -1; generation = -1 }
+          in
+          Array.blit graph.pending_reclaims 0 next 0
+            graph.pending_reclaim_length;
+          graph.pending_reclaims <- next);
+        graph.pending_reclaims.(graph.pending_reclaim_length) <- node.handle;
+        graph.pending_reclaim_length <- graph.pending_reclaim_length + 1));
     List.iter (fun notify -> notify false) node.demand_listeners;
     (match Array.length node.dependencies with
     | 0 -> ()
@@ -624,40 +759,61 @@ let rec evaluate (P node as packed) =
   ignore packed;
   changed
 
-let pop graph height =
-  let slot = graph.heads.(height) in
+let pop graph heads tails height =
+  let slot = heads.(height) in
   if slot = -1 then None
   else
     let resolved = slot_contents graph.slots.(slot) in
     match resolved with
     | None -> raise Stale_handle
     | Some (P node) ->
-        graph.heads.(height) <- node.queue_next;
-        if node.queue_next = -1 then graph.tails.(height) <- -1;
+        heads.(height) <- node.queue_next;
+        if node.queue_next = -1 then tails.(height) <- -1;
         node.queue_next <- -1;
+        node.in_queue <- false;
         resolved
 
-let rec drain_from graph height changed =
-  if height > graph.highest then changed
+let rec pop_from graph heads tails highest height =
+  if height > highest then None
   else
-    match pop graph height with
-    | None -> drain_from graph (height + 1) changed
-    | Some node ->
-      (* Dynamic child admissions can be below the current owner height. *)
-      drain_from graph 0 (evaluate node || changed)
+    match pop graph heads tails height with
+    | None -> pop_from graph heads tails highest (height + 1)
+    | Some node -> Some node
 
-let drain graph = drain_from graph 0 false
+let rec drain_from graph changed =
+  match
+    pop_from graph graph.priority_heads graph.priority_tails
+      graph.priority_highest 0
+  with
+  | Some node -> drain_from graph (evaluate node || changed)
+  | None -> (
+      match pop_from graph graph.heads graph.tails graph.highest 0 with
+      | Some node -> drain_from graph (evaluate node || changed)
+      | None -> changed)
+
+let drain graph = drain_from graph false
 
 let begin_pass graph =
   if graph.phase <> Idle then raise (Wrong_phase graph.phase);
   if graph.pass = max_int then raise Pass_identity_exhausted;
   graph.phase <- Active;
+  graph.keyed_reconciliations_in_pass <- 0;
   graph.action_length <- 0;
   graph.capsule_length <- 0;
   graph.quarantine_length <- 0
 
 let retire_packed graph (P node as packed) =
   if graph.phase <> Active then raise (Wrong_phase graph.phase);
+  unlink_queued_node packed;
+  if node.necessary then (
+    node.necessary <- false;
+    node.demand <- 0;
+    node.reclaim_queued <- true;
+    List.iter (fun notify -> notify false) node.demand_listeners;
+    iter_unique_dependencies node.dependencies
+      (fun dependency ->
+        remove_dependent dependency packed;
+        deactivate dependency));
   let entry = graph.slots.(node.handle.slot) in
   set_slot_contents entry None;
   Option.iter (fun scope -> scope.valid <- false) node.scope;
@@ -727,7 +883,19 @@ let discard_created graph =
 let clear_queues graph =
   Array.fill graph.heads 0 (Array.length graph.heads) (-1);
   Array.fill graph.tails 0 (Array.length graph.tails) (-1);
-  graph.highest <- -1
+  graph.highest <- -1;
+  Array.fill graph.priority_heads 0
+    (Array.length graph.priority_heads) (-1);
+  Array.fill graph.priority_tails 0
+    (Array.length graph.priority_tails) (-1);
+  graph.priority_highest <- -1;
+  for slot = 0 to graph.slot_count - 1 do
+    match slot_contents graph.slots.(slot) with
+    | Some (P node) ->
+        node.queue_next <- -1;
+        node.in_queue <- false
+    | None -> ()
+  done
 
 let replay_admissions graph =
   for index = 0 to graph.admission_length - 1 do
@@ -848,6 +1016,9 @@ let run_stabilization graph checkpoint =
     with
     | changed -> changed
     | exception exn ->
+        for _ = 1 to graph.keyed_reconciliations_in_pass do
+          bump_keyed_for graph `Reconciliation_rollback;
+        done;
         rollback graph;
         graph.running <- false;
         raise exn
@@ -974,6 +1145,11 @@ type ('key, 'data, 'output) keyed_child = {
   scope : scope;
 }
 
+type keyed_event =
+  | Keyed_detached of scope
+  | Keyed_invalidated of scope
+  | Keyed_attached of scope
+
 type ('key, 'value) child_tree =
   | Child_empty
   | Child_branch of {
@@ -1093,7 +1269,10 @@ type ('key, 'data, 'input, 'output, 'output_map) keyed_owner = {
   keyed_input : 'input signal;
   input_ops : ('key, 'data, 'input) input_ops;
   output_ops : ('key, 'output, 'output_map) output_ops;
+  data_cutoff : 'data -> 'data -> bool;
   builder : key:'key -> data:'data signal -> 'output signal;
+  mutable preflight : (unit -> unit) option;
+  mutable event_recorder : keyed_event -> unit;
   mutable committed_input : 'input;
   mutable children :
     ('key, ('key, 'data, 'output) keyed_child) child_tree;
@@ -1108,8 +1287,8 @@ type ('key, 'data, 'input, 'output, 'output_map) keyed_owner = {
 let keyed_find owner key =
   child_find owner.input_ops.compare_key key owner.children
 
-let keyed_owner ?(cutoff = ( == )) ~(input : 'input signal) ~input_ops
-    ~output_ops ~build () =
+let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
+    ~(input : 'input signal) ~input_ops ~output_ops ~build () =
   let graph = input.graph in
   let owner_ref = ref None in
   let stage_child_output owner key value =
@@ -1146,6 +1325,12 @@ let keyed_owner ?(cutoff = ( == )) ~(input : 'input signal) ~input_ops
     graph.work.topology_edits <- graph.work.topology_edits + 1
   in
   let reconcile owner next_input =
+    bump_keyed_for owner.keyed_signal.graph `Reconciliation;
+    graph.keyed_reconciliations_in_pass <-
+      graph.keyed_reconciliations_in_pass + 1;
+    (match owner.preflight with
+    | Some f -> f ()
+    | None -> ());
     let old_children = owner.children in
     let old_output = owner.output_root in
     owner.candidate_children <- owner.children;
@@ -1159,14 +1344,14 @@ let keyed_owner ?(cutoff = ( == )) ~(input : 'input signal) ~input_ops
             match keyed_find owner key with
             | None -> raise Stale_handle
             | Some child ->
-                set graph child.data data;
-                ())
+                let published = child.data.signal.node.current in
+                if not (owner.data_cutoff published data) then
+                  set graph child.data data)
         | Left _ -> (
             match keyed_find owner key with
             | None -> ()
             | Some child ->
                 removed := child :: !removed;
-                detach_child owner child;
                 owner.candidate_children <-
                   child_remove input_ops.compare_key key
                     owner.candidate_children;
@@ -1174,15 +1359,12 @@ let keyed_owner ?(cutoff = ( == )) ~(input : 'input signal) ~input_ops
                   output_ops.remove_output key owner.candidate_output)
         | Right data ->
             let scope = { valid = true; slot_head = -1 } in
+            bump_keyed_for owner.keyed_signal.graph `Provisional_addition;
             let source = with_scope graph scope (fun () -> var graph data) in
-            let output =
-              with_scope graph scope (fun () ->
-                  build ~key ~data:(watch source))
-            in
+            let output = with_scope graph scope (fun () -> build ~key ~data:(watch source)) in
             let child = { key; data = source; output; scope } in
             added := child :: !added;
             install_child_listener owner child;
-            attach_child owner child;
             owner.candidate_children <-
               child_add input_ops.compare_key key child
                 owner.candidate_children;
@@ -1191,8 +1373,16 @@ let keyed_owner ?(cutoff = ( == )) ~(input : 'input signal) ~input_ops
                 owner.candidate_output);
     List.iter
       (fun (child : (_, _, _) keyed_child) ->
-        retire_scope graph child.scope)
+        detach_child owner child;
+        owner.event_recorder (Keyed_detached child.scope);
+        retire_scope graph child.scope;
+        owner.event_recorder (Keyed_invalidated child.scope))
       !removed;
+    List.iter
+      (fun child ->
+        attach_child owner child;
+        owner.event_recorder (Keyed_attached child.scope))
+      !added;
     owner.children <- owner.candidate_children;
     owner.output_root <- owner.candidate_output;
     let old_input = owner.committed_input in
@@ -1201,19 +1391,26 @@ let keyed_owner ?(cutoff = ( == )) ~(input : 'input signal) ~input_ops
       {
         rollback_capsule =
           (fun () ->
+            enqueue owner.keyed_signal.packed;
             List.iter
               (fun child -> detach_child owner child)
               !added;
             List.iter
-              (fun child ->
-                add_dependent child.output.packed owner.keyed_signal.packed;
-                graph.work.topology_edits <- graph.work.topology_edits + 1)
+              (fun child -> attach_child owner child)
               !removed;
             owner.committed_input <- old_input;
             owner.children <- old_children;
             owner.output_root <- old_output);
         cleanup_capsule =
           (fun () ->
+            List.iter
+              (fun _ ->
+                bump_keyed_for owner.keyed_signal.graph `Committed_addition)
+              !added;
+            List.iter
+              (fun _ ->
+                bump_keyed_for owner.keyed_signal.graph `Committed_removal)
+              !removed;
             List.iter
               (fun (child : (_, _, _) keyed_child) ->
                 child.scope.valid <- false)
@@ -1237,7 +1434,10 @@ let keyed_owner ?(cutoff = ( == )) ~(input : 'input signal) ~input_ops
       keyed_input = input;
       input_ops;
       output_ops;
+      data_cutoff;
       builder = build;
+      preflight = None;
+      event_recorder = (fun _ -> ());
       committed_input = input_ops.empty_input;
       children = Child_empty;
       output_root = output_ops.empty_output;
@@ -1248,6 +1448,7 @@ let keyed_owner ?(cutoff = ( == )) ~(input : 'input signal) ~input_ops
     }
   in
   owner_ref := Some owner;
+  owner.keyed_signal.node.keyed_owner <- Some (Obj.repr owner);
   keyed_signal.node.demand_listeners <-
     [
       (fun necessary ->
@@ -1280,10 +1481,12 @@ let keyed_owner ?(cutoff = ( == )) ~(input : 'input signal) ~input_ops
   keyed_signal.node.undo <- owner.output_root;
   owner
 
-let keyed ?cutoff ~input ~input_ops ~output_ops ~build () =
-  (keyed_owner ?cutoff ~input ~input_ops ~output_ops ~build ()).keyed_signal
+let keyed ?cutoff ?data_cutoff ~input ~input_ops ~output_ops ~build () =
+  (keyed_owner ?cutoff ?data_cutoff ~input ~input_ops ~output_ops ~build ())
+    .keyed_signal
 
 let keyed_child owner key = keyed_find owner key
+let set_keyed_event_recorder owner record = owner.event_recorder <- record
 let keyed_scope_valid (child : (_, _, _) keyed_child) = child.scope.valid
 let journal_high_water graph = graph.journal_high_water
 let phase graph = graph.phase

@@ -1,8 +1,3 @@
-module S = Eta_signal.Make (Eta_signal.No_observer_error) ()
-module Signal_map = Eta_signal_map.Make (S.Package)
-module M = Eta_signal_map.Map.Make (Int)
-module Keyed = Signal_map.Keyed (Int)
-
 (* Observation boundary: the public observer read trace of one combined
    scalar/bind/keyed graph, plus the fiber census at teardown. The generated
    class covers valid and invalid scalar, stable-family, and observer states
@@ -27,6 +22,12 @@ type op =
   | Put of int * int
   | Drop of int
 
+let pp_op = function
+  | Set_source value -> Printf.sprintf "Set_source %d" value
+  | Switch flag -> Printf.sprintf "Switch %b" flag
+  | Put (key, data) -> Printf.sprintf "Put (%d, %d)" key data
+  | Drop key -> Printf.sprintf "Drop %d" key
+
 let op_gen =
   let open QCheck.Gen in
   let value_gen =
@@ -42,15 +43,21 @@ let op_gen =
       (1, map (fun key -> Drop key) (int_range 0 8));
     ]
 
-let render_pair (value, keyed) =
-  let bindings =
-    M.fold (fun key data acc -> (key, data) :: acc) keyed [] |> List.rev
-  in
-  Printf.sprintf "%d|%s" value
-    (String.concat ","
-       (List.map (fun (key, data) -> Printf.sprintf "%d:%d" key data) bindings))
-
 let run_script ~diagnostic ops =
+  let module S = Eta_signal.Make (Eta_signal.No_observer_error) () in
+  let module Signal_map = Eta_signal_map.Make (S.Package) in
+  let module M = Eta_signal_map.Map.Make (Int) in
+  let module Keyed = Signal_map.Keyed (Int) in
+  let render_pair (value, keyed) =
+    let bindings =
+      M.fold (fun key data acc -> (key, data) :: acc) keyed [] |> List.rev
+    in
+    Printf.sprintf "%d|%s" value
+      (String.concat ","
+         (List.map
+            (fun (key, data) -> Printf.sprintf "%d:%d" key data)
+            bindings))
+  in
   let open Eta.Syntax in
   let program =
     let source = S.Var.create sentinel in
@@ -65,10 +72,10 @@ let run_script ~diagnostic ops =
     let combined = S.map2 (fun left right -> (left, right)) selected keyed in
     let trace = ref [] in
     let dot_value_free = ref true in
-    let die _error = Failure "signal script effect failed" in
+    let die stage _error = Failure ("signal script effect failed: " ^ stage) in
     let* observer =
       S.Observer.observe combined ~on_update:(fun _ -> Eta.Effect.unit)
-      |> Eta.Effect.or_die die
+      |> Eta.Effect.or_die (die "observe")
     in
     let apply op =
       match op with
@@ -79,13 +86,22 @@ let run_script ~diagnostic ops =
       | Drop key -> S.Var.set input (M.remove (key mod 3) (S.Var.value input))
     in
     let step op =
-      let* () = apply op |> Eta.Effect.or_die die in
-      let* () = S.stabilize |> Eta.Effect.or_die die in
-      let* value = S.Observer.read observer |> Eta.Effect.or_die die in
+      let operation = pp_op op in
+      let* () = apply op |> Eta.Effect.or_die (die ("apply " ^ operation)) in
+      let* () =
+        S.stabilize
+        |> Eta.Effect.or_die (fun error ->
+               Failure
+                 (Format.asprintf "signal script effect failed: stabilize %s: %a"
+                    operation S.pp_stabilize_error error))
+      in
+      let* value =
+        S.Observer.read observer |> Eta.Effect.or_die (die ("read " ^ operation))
+      in
       trace := render_pair value :: !trace;
       if diagnostic then (
-        let* _stats = S.stats () |> Eta.Effect.or_die die in
-        let* dot = S.to_dot () |> Eta.Effect.or_die die in
+        let* _stats = S.stats () |> Eta.Effect.or_die (die ("stats " ^ operation)) in
+        let* dot = S.to_dot () |> Eta.Effect.or_die (die ("dot " ^ operation)) in
         if string_contains ~needle:(string_of_int sentinel) dot then
           dot_value_free := false;
         Eta.Effect.unit)
@@ -98,8 +114,8 @@ let run_script ~diagnostic ops =
           loop rest
     in
     let* () = loop ops in
-    let* () = S.Observer.dispose observer |> Eta.Effect.or_die die in
-    let* () = S.stabilize |> Eta.Effect.or_die die in
+    let* () = S.Observer.dispose observer |> Eta.Effect.or_die (die "dispose") in
+    let* () = S.stabilize |> Eta.Effect.or_die (die "final stabilize") in
     Eta.Effect.pure (List.rev !trace, !dot_value_free)
   in
   Eta_test.Run.run program
@@ -116,7 +132,10 @@ let test_diagnostics_noninterfering =
   QCheck.Test.make
     ~name:"signal diagnostics are committed value-free and noninterfering"
     ~count:40
-    QCheck.(make Gen.(list_size (int_range 0 12) op_gen))
+    QCheck.(
+      make
+        ~print:(fun ops -> "[" ^ String.concat "; " (List.map pp_op ops) ^ "]")
+        Gen.(list_size (int_range 0 12) op_gen))
     (fun ops ->
       let plain = run_script ~diagnostic:false ops in
       let diagnostic = run_script ~diagnostic:true ops in

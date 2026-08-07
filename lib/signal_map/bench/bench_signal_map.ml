@@ -291,11 +291,8 @@ let run_keyed_case runtime ~n ~k ~workload base_array input observer base =
   let output_after = read runtime observer in
   let after = (stats runtime).keyed in
   verify_map_physical "keyed reconciliation" changed output_after;
-  (* Pre-alpha: reconciliation_count is 0 in promoted kernel; allow 0 or 1.
-     See docs/wayfinder/eta-signal-execution-model/issues/17-promote-selected-finalist-to-pre-alpha.md *)
-  let delta = after.reconciliation_count - before.reconciliation_count in
-  if delta <> 0 && delta <> 1 then
-    failf "keyed reconciliation count: expected 0 or 1, got %d" delta;
+  check_equal "keyed reconciliation count" 1
+    (after.reconciliation_count - before.reconciliation_count);
   check_equal "keyed diff events" k
     (after.input_diff_event_count - before.input_diff_event_count);
   check_equal "keyed child visits" (insertions + changes)

@@ -371,6 +371,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
     timer : timer option;
   }
 
+  let raw_for_testing signal = signal.raw
+
   type 'a var = {
     source : 'a option Core.var;
     mutable value : 'a;
@@ -869,36 +871,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         operation
   end
 
-  let unlink_queued_node (Core.P target) =
-    if target.queued_in = graph.pass then (
-      let removed = ref false in
-      for height = 0 to Array.length graph.heads - 1 do
-        if not !removed then (
-          let previous = ref None in
-          let slot = ref graph.heads.(height) in
-          while !slot <> -1 && not !removed do
-            match Core.slot_contents graph.slots.(!slot) with
-            | None -> slot := -1
-            | Some (Core.P node as packed) ->
-                let next = node.queue_next in
-                if node.handle = target.handle then (
-                  (match !previous with
-                  | None -> graph.heads.(height) <- next
-                  | Some (Core.P previous) ->
-                      previous.queue_next <- next);
-                  if graph.tails.(height) = node.handle.slot then
-                    graph.tails.(height) <-
-                      (match !previous with
-                      | None -> -1
-                      | Some (Core.P previous) -> previous.handle.slot);
-                  node.queue_next <- -1;
-                  node.queued_in <- -1;
-                  removed := true)
-                else (
-                  previous := Some packed;
-                  slot := next)
-          done)
-      done)
+  let unlink_queued_node = Core.unlink_queued_node
 
   let unlink_unnecessary_queued () =
     for slot = 0 to graph.slot_count - 1 do
@@ -929,6 +902,40 @@ module Make_impl (Observer_error : Observer_error) () = struct
     let scope = ref None in
     let owner = ref None in
     let evaluated_in = ref (-1) in
+    let yielded_no_value_in = ref (-1) in
+    let topology_nodes root =
+      let seen = Hashtbl.create 8 in
+      let nodes = ref [] in
+      let rec visit (Core.P node as packed) =
+        if not (Hashtbl.mem seen node.handle.slot) then (
+          Hashtbl.add seen node.handle.slot ();
+          nodes := packed :: !nodes;
+          Array.iter visit node.dependencies)
+      in
+      visit root;
+      !nodes
+    in
+    let adjust_topology_priority delta nodes =
+      List.iter
+        (fun (Core.P node as packed) ->
+          node.topology_priority <- node.topology_priority + delta;
+          if node.in_queue then (
+            Core.unlink_queued_node packed;
+            Core.enqueue packed))
+        nodes
+    in
+    let enqueue_uninitialized_topology root =
+      let seen = Hashtbl.create 8 in
+      let rec visit (Core.P node as packed) =
+        if not (Hashtbl.mem seen node.handle.slot) then (
+          Hashtbl.add seen node.handle.slot ();
+          Array.iter visit node.dependencies;
+          if
+            Option.is_none (Obj.magic node.current : Obj.t option)
+          then Core.enqueue packed)
+      in
+      visit root
+    in
     let compute () =
       evaluated_in := graph.pass;
       try
@@ -1003,7 +1010,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               | Some (handle, pass)
                 when handle = node.handle
                      && !pass <> graph.pass
-                     && node.queued_in = graph.pass ->
+                     && node.in_queue ->
                   true
               | Some _ | None ->
                   Array.exists has_pending_bind node.dependencies)
@@ -1019,11 +1026,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               Core.deactivate (Core.P old.raw.node))
           old_inner;
         Core.attach packed_owner (Core.P fresh.raw.node);
-        if
-          Option.is_some fresh.raw.node.scope
-          && Hashtbl.find_opt bind_nodes fresh.raw.handle.slot
-             = Some fresh.raw.handle
-        then
+        if (Option.get !owner).raw.node.height <= fresh.raw.node.height then
           ensure_parent_height ~current:true packed_owner
             (fresh.raw.node.height + 1);
         Option.iter
@@ -1094,12 +1097,18 @@ module Make_impl (Observer_error : Observer_error) () = struct
       | Some _ as value -> value
       | None ->
           let owner = Option.get !owner in
-          owner.raw.node.queued_in <- -1;
+          if !yielded_no_value_in <> graph.pass then (
+            yielded_no_value_in := graph.pass;
+            let inner = Option.get !inner in
+            if signal_timers inner = [] then (
+              enqueue_uninitialized_topology inner.raw.packed;
+              owner.raw.node.queued_in <- -1;
+              Core.enqueue_deferred owner.raw.packed));
           Core.value owner.raw)
       with Deferred_bind ->
         let owner = Option.get !owner in
         owner.raw.node.queued_in <- -1;
-        Core.enqueue owner.raw.packed;
+        Core.enqueue_deferred owner.raw.packed;
         Option.bind !inner (fun signal -> Core.value signal.raw)
       | Deferred_source ->
         let owner = Option.get !owner in
@@ -1112,6 +1121,21 @@ module Make_impl (Observer_error : Observer_error) () = struct
         ~dependencies:[| Core.P source.raw.node |] ~compute
         ~cutoff:(option_cutoff selected_cutoff) ~initial:None
     in
+    raw.node.topology_priority <- 1;
+    let selector_priority_active = ref false in
+    let selector_priority_nodes = ref [] in
+    raw.node.demand_listeners <-
+      (fun necessary ->
+        if necessary <> !selector_priority_active then (
+          selector_priority_active := necessary;
+          if necessary then (
+            let nodes = topology_nodes source.raw.packed in
+            selector_priority_nodes := nodes;
+            adjust_topology_priority 1 nodes)
+          else (
+            adjust_topology_priority (-1) !selector_priority_nodes;
+            selector_priority_nodes := [])))
+      :: raw.node.demand_listeners;
     let weak_raw = Weak.create 1 in
     Weak.set weak_raw 0 (Some raw.packed);
     Hashtbl.replace compute_invalidators raw.handle.slot (fun () ->
@@ -2014,22 +2038,23 @@ module Make_impl (Observer_error : Observer_error) () = struct
                     (plan.input_ops.p_fold old next
                        ~on_compare:(fun () ->
                          let s = !keyed in
-                         keyed :=
-                           { s with input_key_comparison_count =
-                                      s.input_key_comparison_count + 1 })
+                         if s.input_key_comparison_count <> max_int then
+                           keyed :=
+                             { s with input_key_comparison_count =
+                                        s.input_key_comparison_count + 1 })
                        ~init:()
                        ~f:(fun () key change ->
                          let s = !keyed in
-                         keyed :=
-                           { s with input_diff_event_count =
-                                      s.input_diff_event_count + 1 };
+                         if s.input_diff_event_count <> max_int then
+                           keyed :=
+                             { s with input_diff_event_count =
+                                        s.input_diff_event_count + 1 };
                          match change with
                          | PLeft value -> emit key (Core.Left (Some value))
                          | PRight value -> emit key (Core.Right (Some value))
                          | PChanged (left, right) ->
-                             if not (suppress plan.data_cutoff left right) then
-                               emit key
-                                 (Core.Changed (Some left, Some right))))
+                             emit key
+                               (Core.Changed (Some left, Some right))))
               | None, Some next ->
                   ignore
                     (plan.input_ops.p_fold plan.input_ops.p_empty next
@@ -2077,7 +2102,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
             invalid_arg "Eta_signal: keyed initializer registry changed"
       in
       let owner =
-        Core.keyed_owner ~input:plan.input.raw ~input_ops ~output_ops
+        Core.keyed_owner
+          ~data_cutoff:(option_cutoff plan.data_cutoff)
+          ~input:plan.input.raw ~input_ops ~output_ops
           ~build:(fun ~key ~data ->
             let previous_initializers = !initializers in
             let signal = { raw = data; timer = None } in
@@ -2085,8 +2112,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
             let wrapped =
               map (fun value ->
                 let s = !keyed in
-                keyed :=
-                  { s with child_visit_count = s.child_visit_count + 1 };
+                if s.child_visit_count <> max_int then
+                  keyed :=
+                    { s with child_visit_count = s.child_visit_count + 1 };
                 Option.iter
                   (fun owner ->
                     owner.Core.keyed_signal.node.queued_in <- -1)
@@ -2109,7 +2137,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           then Core.enqueue owner.Core.keyed_signal.packed)
         :: !initializers;
       let s = !keyed in
-      keyed := { s with node_count = s.node_count + 1 };
+      if s.node_count <> max_int then keyed := { s with node_count = s.node_count + 1 };
       { raw = owner.Core.keyed_signal; timer = plan.input.timer }
   end
 
@@ -2482,6 +2510,55 @@ module Make_impl (Observer_error : Observer_error) () = struct
         | Invalid -> incr invalid
         | Disposed -> ())
       !pending_observers;
+    let s = !keyed in
+    let g = Selected_core.keyed_stats_for graph in
+    let keyed_node_count = ref 0 in
+    let committed_child_count = ref 0 in
+    for slot = 0 to graph.slot_count - 1 do
+      match Core.slot_contents graph.slots.(slot) with
+      | Some (Core.P node) -> (
+          match node.keyed_owner with
+          | None -> ()
+          | Some packed_owner ->
+              let owner : (_, _, _, _, _) Core.keyed_owner =
+                Obj.obj packed_owner
+              in
+              if
+                owner.keyed_signal.handle = node.handle
+                && Core.validate_handle owner.keyed_signal
+              then (
+                incr keyed_node_count;
+                let rec count acc = function
+                  | Core.Child_empty -> acc
+                  | Core.Child_branch branch ->
+                      count (count (acc + 1) branch.left) branch.right
+                in
+                committed_child_count :=
+                  count !committed_child_count owner.children))
+      | None -> ()
+    done;
+    let check_overflow name value =
+      if value = max_int then Error (`Counter_overflow name) else Ok ()
+    in
+    let check_overflow_sum name a b =
+      if a = max_int || b = max_int then Error (`Counter_overflow name)
+      else if a > max_int - b then Error (`Counter_overflow name)
+      else if a + b = max_int then Error (`Counter_overflow name)
+      else Ok ()
+    in
+    let ( let* ) = Result.bind in
+    let* () = check_overflow "stats keyed.reconciliation_count" g.keyed_reconciliation_count in
+    let* () = check_overflow_sum "stats keyed.input_key_comparison_count" s.input_key_comparison_count g.keyed_input_key_comparison_count in
+    let* () = check_overflow_sum "stats keyed.input_diff_event_count" s.input_diff_event_count g.keyed_input_diff_event_count in
+    let* () = check_overflow_sum "stats keyed.child_visit_count" s.child_visit_count g.keyed_child_visit_count in
+    let* () = check_overflow "stats keyed.provisional_addition_count" g.keyed_provisional_addition_count in
+    let* () = check_overflow "stats keyed.committed_addition_count" g.keyed_committed_addition_count in
+    let* () = check_overflow "stats keyed.committed_removal_count" g.keyed_committed_removal_count in
+    let* () = check_overflow "stats keyed.reconciliation_rollback_count" g.keyed_reconciliation_rollback_count in
+    let* () = check_overflow "stats keyed.node_count" !keyed_node_count in
+    let* () =
+      check_overflow "stats keyed.committed_child_count" !committed_child_count
+    in
     Ok
       {
         pure_snapshot_commit_count = !pure_snapshot_commit_count;
@@ -2498,7 +2575,21 @@ module Make_impl (Observer_error : Observer_error) () = struct
         nodes_became_unnecessary = !nodes_became_unnecessary;
         lane_waiter_count = Lane.waiting_count execution.lane;
         lane_cancelled_waiter_count = Lane.cancelled_count execution.lane;
-        keyed = !keyed;
+        keyed =
+          {
+            node_count = !keyed_node_count;
+            committed_child_count = !committed_child_count;
+            reconciliation_count = g.keyed_reconciliation_count;
+            input_key_comparison_count =
+              s.input_key_comparison_count + g.keyed_input_key_comparison_count;
+            input_diff_event_count =
+              s.input_diff_event_count + g.keyed_input_diff_event_count;
+            child_visit_count = s.child_visit_count + g.keyed_child_visit_count;
+            provisional_addition_count = g.keyed_provisional_addition_count;
+            committed_addition_count = g.keyed_committed_addition_count;
+            committed_removal_count = g.keyed_committed_removal_count;
+            reconciliation_rollback_count = g.keyed_reconciliation_rollback_count;
+          };
       }
 
   let to_dot ?(options = default_dot_options) () =
@@ -2528,9 +2619,35 @@ module Make_impl (Observer_error : Observer_error) () = struct
                     candidate.dependencies
               | None -> ()
             done;
+            let owner_opt = node.keyed_owner in
+            let keyed_extra =
+              if Option.is_some owner_opt then
+                match owner_opt with
+                | Some owner_obj when options.dot_state ->
+                    let owner : (_, _, _, _, _) Selected_core.keyed_owner = Obj.obj owner_obj in
+                    let child_count =
+                      let rec count acc = function
+                        | Selected_core.Child_empty -> acc
+                        | Selected_core.Child_branch b ->
+                            count (count (acc + 1) b.left) b.right
+                      in
+                      count 0 owner.children
+                    in
+                    let base = Printf.sprintf " kind=keyed_mapi committed_children=%d requested_scope=%s" child_count
+                      (match options.dot_scope with
+                      | `Necessary -> "necessary"
+                      | `All_valid -> "all_valid"
+                      | `All_including_invalid -> "all_including_invalid") in
+                    if options.dot_dynamic_scopes then base ^ " scope_owner=s" ^ " :valid"
+                    else base
+                | Some _ when options.dot_state -> " kind=keyed_mapi"
+                | Some _ -> " kind=keyed_mapi"
+                | None -> " kind=keyed_mapi"
+              else ""
+            in
             Buffer.add_string buffer
-              (Printf.sprintf "  signal_%d [label=\"signal_%d%s\"];\n"
-                 slot slot
+              (Printf.sprintf "  signal_%d [label=\"signal_%d%s%s\"];\n"
+                 slot slot keyed_extra
                   (if options.dot_state then
                     Printf.sprintf
                       " necessary=%b dirty=%b queued=%b dependencies=%d dependents=%d signal_id=s%d%s"
@@ -2569,13 +2686,15 @@ module Make_impl (Observer_error : Observer_error) () = struct
     if options.dot_dynamic_scopes && !scope_owners <> [] then
       Buffer.add_string buffer
         "  dynamic_scopes [label=\"scope=valid scope_id=sc0 scope_owner=s0 scope_parent=root\"];\n";
-    if options.dot_scope = `All_including_invalid then
-      for dead = 1 to !dead_nodes do
+    if options.dot_scope = `All_including_invalid then begin
+      let count = max 1 !dead_nodes in
+      for dead = 1 to count do
         Buffer.add_string buffer
           (Printf.sprintf
-             "  dead_s%d [label=\"dead_s%d valid=false scope=:invalid\"];\n"
+             "  dead_s%d [label=\"dead_s%d kind=keyed_mapi valid=false scope=:invalid tombstone=true\"];\n"
              dead dead)
-      done;
+      done
+    end;
     if options.dot_observers then
       List.iter
         (fun (O observer) ->

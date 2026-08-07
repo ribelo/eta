@@ -1,8 +1,0 @@
-(test
- (name test_eta_signal_atomic_pass)
- (libraries eta_signal_engine alcotest))
-
-(rule
- (alias signal-atomic-laws)
- (deps test_eta_signal_atomic_pass.exe)
- (action (run %{dep:test_eta_signal_atomic_pass.exe})))
