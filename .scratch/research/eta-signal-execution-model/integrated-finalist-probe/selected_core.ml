@@ -18,6 +18,8 @@ type work = {
   mutable dependency_edges : int;
   mutable propagation_edges : int;
   mutable topology_edits : int;
+  mutable dependent_inserts : int;
+  mutable adjacency_searches : int;
   mutable cleanup_visits : int;
   mutable rollback_visits : int;
   mutable verdict_steps : int;
@@ -139,6 +141,8 @@ let empty_work () =
     dependency_edges = 0;
     propagation_edges = 0;
     topology_edits = 0;
+    dependent_inserts = 0;
+    adjacency_searches = 0;
     cleanup_visits = 0;
     rollback_visits = 0;
     verdict_steps = 0;
@@ -188,6 +192,8 @@ let reset_work graph =
   graph.work.dependency_edges <- zero.dependency_edges;
   graph.work.propagation_edges <- zero.propagation_edges;
   graph.work.topology_edits <- zero.topology_edits;
+  graph.work.dependent_inserts <- zero.dependent_inserts;
+  graph.work.adjacency_searches <- zero.adjacency_searches;
   graph.work.cleanup_visits <- zero.cleanup_visits;
   graph.work.rollback_visits <- zero.rollback_visits;
   graph.work.verdict_steps <- zero.verdict_steps
@@ -312,20 +318,54 @@ let push_capsule graph capsule =
 let add_dependent child parent =
   let P child = child in
   let parent_handle = let P parent = parent in parent.handle in
+  child.graph.work.adjacency_searches <-
+    child.graph.work.adjacency_searches + 1;
   if
     not
       (List.exists
          (fun (P candidate) -> candidate.handle = parent_handle)
          child.dependents)
-  then child.dependents <- parent :: child.dependents
+  then (
+    child.dependents <- parent :: child.dependents;
+    child.graph.work.dependent_inserts <-
+      child.graph.work.dependent_inserts + 1)
+
+let add_fresh_dependent child parent =
+  let P child = child in
+  child.dependents <- parent :: child.dependents;
+  child.graph.work.dependent_inserts <-
+    child.graph.work.dependent_inserts + 1
+
+let iter_unique_dependencies dependencies f =
+  match Array.length dependencies with
+  | 0 -> ()
+  | 1 -> f dependencies.(0)
+  | length ->
+      for index = 0 to length - 1 do
+        let P child = dependencies.(index) in
+        let duplicate = ref false in
+        let previous = ref 0 in
+        while not !duplicate && !previous < index do
+          let P candidate = dependencies.(!previous) in
+          duplicate := candidate.handle = child.handle;
+          incr previous
+        done;
+        if not !duplicate then f dependencies.(index)
+      done
 
 let remove_dependent child parent =
   let P child = child in
   let P parent = parent in
-  child.dependents <-
-    List.filter
-      (fun (P candidate) -> candidate.handle <> parent.handle)
-      child.dependents
+  match child.dependents with
+  | P candidate :: rest when candidate.handle = parent.handle ->
+      child.dependents <- rest
+  | dependents ->
+      child.graph.work.adjacency_searches <-
+        child.graph.work.adjacency_searches + 1;
+      child.dependents <-
+        List.filter
+          (fun (P candidate) -> candidate.handle <> parent.handle)
+          dependents
 
 let attach parent child =
   let P parent_node = parent in
@@ -392,7 +432,12 @@ let make_node ?(constant = false) graph ~height ~dependencies ~compute ~cutoff
   Option.iter
     (fun (scope : scope) -> scope.slot_head <- handle.slot)
     graph.current_scope;
-  Array.iter (fun child -> add_dependent child (P node)) dependencies;
+  (match Array.length dependencies with
+  | 0 -> ()
+  | 1 -> add_fresh_dependent dependencies.(0) packed
+  | _ ->
+      iter_unique_dependencies dependencies
+        (fun child -> add_fresh_dependent child packed));
   ensure_height graph height;
   if graph.phase = Active then push_action graph (Created handle.slot);
   { graph; handle; node; packed }
@@ -459,13 +504,22 @@ let rec activate (P node as packed) =
   if not node.necessary then (
     let slot = node.graph.slots.(node.handle.slot) in
     if slot.strong = None then set_slot_contents slot (Some packed);
+    let reverse_edges_detached = node.reclaim_queued in
     node.reclaim_queued <- false;
     node.necessary <- true;
-    Array.iter
-      (fun dependency ->
-        add_dependent dependency packed;
-        activate dependency)
-      node.dependencies;
+    (match Array.length node.dependencies with
+    | 0 -> ()
+    | 1 ->
+        let dependency = node.dependencies.(0) in
+        if reverse_edges_detached then
+          add_fresh_dependent dependency packed;
+        activate dependency
+    | _ ->
+        iter_unique_dependencies node.dependencies
+          (fun dependency ->
+            if reverse_edges_detached then
+              add_fresh_dependent dependency packed;
+            activate dependency));
     List.iter (fun notify -> notify true) node.demand_listeners;
     if Array.length node.dependencies = 0 && not node.constant then (
       retain_admission node.graph node;
@@ -478,11 +532,7 @@ let demand signal =
 
 let rec deactivate (P node as packed) =
   if node.demand > 0 then node.demand <- node.demand - 1;
-  if node.necessary && node.demand = 0
-     &&
-     not
-       (List.exists (fun (P parent) -> parent.necessary) node.dependents)
-  then (
+  if node.necessary && node.demand = 0 then (
     node.necessary <- false;
     if (not node.graph.suppress_reclaim) && not node.reclaim_queued then (
       node.reclaim_queued <- true;
@@ -497,11 +547,17 @@ let rec deactivate (P node as packed) =
       graph.pending_reclaims.(graph.pending_reclaim_length) <- node.handle;
       graph.pending_reclaim_length <- graph.pending_reclaim_length + 1);
     List.iter (fun notify -> notify false) node.demand_listeners;
-    Array.iter
-      (fun dependency ->
+    (match Array.length node.dependencies with
+    | 0 -> ()
+    | 1 ->
+        let dependency = node.dependencies.(0) in
         remove_dependent dependency packed;
-        deactivate dependency)
-      node.dependencies;
+        deactivate dependency
+    | _ ->
+        iter_unique_dependencies node.dependencies
+          (fun dependency ->
+            remove_dependent dependency packed;
+            deactivate dependency));
     if not node.graph.suppress_reclaim then
       weaken_slot node.graph.slots.(node.handle.slot) packed)
 

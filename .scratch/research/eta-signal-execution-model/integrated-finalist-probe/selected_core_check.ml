@@ -372,6 +372,25 @@ let weak_root_reclamation () =
     (C.handle_is_live graph dead_handle);
   bool "source remains live" true (C.validate_handle (C.watch source))
 
+let wide_attachment () =
+  List.iter
+    (fun size ->
+      let graph = C.create () in
+      let source = C.var graph 0 in
+      C.reset_work graph;
+      let parents =
+        Array.init size (fun index ->
+            C.map (fun value -> value + index) (C.watch source))
+      in
+      let work = C.work graph in
+      int "wide exact dependent inserts" size work.dependent_inserts;
+      int "wide no adjacency search" 0 work.adjacency_searches;
+      int "wide parent count" size (Array.length parents);
+      if size > 0 then
+        int "wide parent value" (size - 1)
+          (C.value parents.(size - 1)))
+    [ 1_000; 10_000; 100_000 ]
+
 let randomized_dags () =
   for seed = 0 to 31 do
     let random = Random.State.make [| seed; seed lxor 0x5a5a |] in
@@ -440,6 +459,8 @@ let () =
   allocation_and_economics ();
   Printf.printf "weak roots\n%!";
   weak_root_reclamation ();
+  Printf.printf "wide attachment\n%!";
+  wide_attachment ();
   Printf.printf "random DAGs\n%!";
   randomized_dags ();
   Printf.printf "selected_core checks passed\n%!"

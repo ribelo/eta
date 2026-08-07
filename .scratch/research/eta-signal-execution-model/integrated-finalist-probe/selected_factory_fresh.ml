@@ -2068,9 +2068,18 @@ module Make_impl (Observer_error : Observer_error) () = struct
         }
       in
       let owner_ref = ref None in
+      let rec initialize_added before = function
+        | current when current == before -> ()
+        | initialize :: rest ->
+            initialize ();
+            initialize_added before rest
+        | [] ->
+            invalid_arg "Eta_signal: keyed initializer registry changed"
+      in
       let owner =
         Core.keyed_owner ~input:plan.input.raw ~input_ops ~output_ops
           ~build:(fun ~key ~data ->
+            let previous_initializers = !initializers in
             let signal = { raw = data; timer = None } in
             let output = plan.build ~key ~data:signal in
             let wrapped =
@@ -2086,7 +2095,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
                 output
             in
             Core.activate (Core.P wrapped.raw.node);
-            List.iter (fun initialize -> initialize ()) !initializers;
+            initialize_added previous_initializers !initializers;
             wrapped.raw)
           ()
       in
