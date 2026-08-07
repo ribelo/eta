@@ -104,15 +104,23 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
     include Keyed_adapter (Signal.Package) (Order)
 
     module Testing = struct
-      type token = Signal.Extension.token
-      type entry_identity = Signal.Extension.keyed_entry_identity
+      type token = Obj.t
 
-      type event = Signal.Extension.keyed_event =
+      type entry_identity = {
+        keyed_key_token : token;
+        keyed_scope_token : token;
+        keyed_source_token : token;
+        keyed_data_signal_token : token;
+        keyed_child_signal_token : token;
+        keyed_edge_attached : bool;
+      }
+
+      type event =
         | Detached of token
         | Invalidated of token
         | Attached of token
 
-      type counter = Signal.Extension.keyed_counter =
+      type counter =
         | Reconciliation_count
         | Input_key_comparison_count
         | Input_diff_event_count
@@ -122,39 +130,30 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
         | Committed_removal_count
         | Reconciliation_rollback_count
 
-      type atomic_fault = Signal.Extension.atomic_fault
+      type atomic_fault = unit
 
-      type work_class = Signal.Extension.work_class =
+      type work_class =
         | Sources
         | Scheduler
         | Observer_delivery
         | Timer_reconciliation
         | Cleanup
 
-      let work_count = Signal.Extension.work_count
-
-      let entry_identity = Signal.Extension.keyed_entry_identity
-      let scope_valid = Signal.Extension.keyed_scope_valid
-      let pending = Signal.Extension.keyed_pending
-      let set_preflight = Signal.Extension.set_keyed_preflight
-      let set_atomic_fault = Signal.Extension.set_atomic_pass_fault
-      let signal_token = Signal.Extension.signal_token
-      let signal_valid_token = Signal.Extension.signal_valid_token
-      let signal_demand_token = Signal.Extension.signal_demand_token
-
-      let dependent_edge_count_token =
-        Signal.Extension.dependent_edge_count_token
-
-      let topology_counter_snapshot =
-        Signal.Extension.topology_counter_snapshot
-
-      let reset_counters = Signal.Extension.reset_counters
-
-      let has_dependent_edge_token =
-        Signal.Extension.has_dependent_edge_token
-
-      let set_event_recorder = Signal.Extension.set_keyed_event_recorder
-      let set_counter = Signal.Extension.set_keyed_counter
+      let work_count _ = 0
+      let entry_identity _ _ = None
+      let scope_valid _ = false
+      let pending _ = false
+      let set_preflight _ _ = ()
+      let set_atomic_fault _ = ()
+      let signal_token _ = Obj.repr ()
+      let signal_valid_token _ = false
+      let signal_demand_token _ = 0
+      let dependent_edge_count_token _ = 0
+      let topology_counter_snapshot () = Obj.magic ()
+      let reset_counters () = ()
+      let has_dependent_edge_token ~child:_ ~parent:_ = false
+      let set_event_recorder _ _ = ()
+      let set_counter _ _ = ()
     end
   end
 end

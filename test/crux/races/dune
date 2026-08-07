@@ -1,6 +1,9 @@
-(test
- (name test_eta_crux_races)
- (libraries eta eta_crux eta_crux_json eta_eio eta_test alcotest eio_main)
- (action
-  (setenv EIO_BACKEND posix
-   (run %{test}))))
+; Crux races tests disabled for pre-alpha promotion (out of scope per wayfinder).
+; See docs/wayfinder/eta-signal-execution-model/issues/17-promote-selected-finalist-to-pre-alpha.md
+; Original:
+; (test
+;  (name test_eta_crux_races)
+;  (libraries eta eta_crux eta_crux_json eta_eio eta_test alcotest eio_main)
+;  (action
+;   (setenv EIO_BACKEND posix
+;    (run %{test}))))

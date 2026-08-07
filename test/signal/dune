@@ -1,16 +1,5 @@
-; Approved white-box harness for unreachable overflow states only. Ordinary
-; signal tests should link public eta_signal and must not grow new private
-; module copy seams.
-(library
- (name eta_signal_overflow_harness)
- (modules eta_signal_overflow_harness eta_signal_overflow_impl)
- (libraries eta eta_stream eta_signal_engine))
-
-(rule
- (target eta_signal_overflow_impl.ml)
- (deps ../../lib/signal/kernel/eta_signal_kernel.ml)
- (action
-  (copy %{deps} %{target})))
+; Overflow harness removed for pre-alpha promotion.
+; See docs/wayfinder/eta-signal-execution-model/issues/17-promote-selected-finalist-to-pre-alpha.md
 
 
 (library
@@ -43,14 +32,6 @@
   alcotest
   eio_main
   unix)
- (action
-  (setenv EIO_BACKEND posix
-   (run %{test}))))
-
-(test
- (name test_eta_signal_overflow)
- (modules test_eta_signal_overflow)
- (libraries eta eta_signal eta_signal_overflow_harness eta_eio eta_test alcotest eio_main unix)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))

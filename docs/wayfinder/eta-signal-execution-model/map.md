@@ -66,11 +66,11 @@ main Dune workspace.
 - [Effect seam and Eta runtime](issues/09-effect-seam-and-runtime.md) — use one private serialized execution driver with a pre-publication cancellation checkpoint, keep claims opaque, and add no Eta runtime primitive.
 - [Timer and observer edges](issues/10-timer-and-observer-edges.md) — keep timer generations, runtime provenance, observer cursors, cleanup, and stream acknowledgement inside one opaque post-commit driver.
 - [Integrated finalist proof](issues/11-integrated-finalist-proof.md) — reject the behavior-complete finalist for final selection, then retain it as the production pre-alpha base.
+- [Promote selected finalist to pre-alpha](issues/17-promote-selected-finalist-to-pre-alpha.md) — replace production kernel with selected core, edge driver, and factory, wire Eta_signal, Eta_signal_map, and Eta_signal_stream, delete old engine modules and representation tests, keep scratch as evidence.
 
 ## Current path
 
-1. [Promote the selected finalist](issues/17-promote-selected-finalist-to-pre-alpha.md) into the production packages.
-2. Decide the [public interface and graph ownership](issues/12-public-interface-depth.md) on the promoted code.
+1. Decide the [public interface and graph ownership](issues/12-public-interface-depth.md) on the promoted code.
 3. Decide [module and package ownership](issues/13-module-and-package-ownership.md) and move the production code.
 4. Write the [consolidated execution specification](issues/14-consolidated-execution-specification.md) after all gates pass.
 
