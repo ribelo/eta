@@ -1,0 +1,11 @@
+# Candidate workload	Pinned reference workload	Tracked summary	Match status
+# Measurement formula: calibrate by doubling from 1 until >=0.5 s or 16,777,216 operations; 9 samples; allocated_words = minor + major - promoted, divided by operations.
+# Acceptance source: compare_edges_reference.ml at pinned production revision d04d6e2bedc87ab22326af5cc03c339406177a67, using the exact same tapes and Eta/Eio boundary as compare_edges.ml. Historical rows below remain provenance only.
+failed_retry.depth_1.position_last	eta_signal.raw.failed_retry.depth_1.position_last	../failure-retry-reference-probe/summary.csv	closest-only: pinned acceptance row uses the raw private lane and synchronous runtime; complete public factory requires an observer and requested Eta/Eio runtime
+failed_retry.depth_10.position_last	eta_signal.raw.failed_retry.depth_10.position_last	../failure-retry-reference-probe/summary.csv	closest-only: pinned acceptance row uses the raw private lane and synchronous runtime; complete public factory requires an observer and requested Eta/Eio runtime
+failed_retry.depth_100.position_last	eta_signal.raw.failed_retry.depth_100.position_last	../failure-retry-reference-probe/summary.csv	closest-only: pinned acceptance row uses the raw private lane and synchronous runtime; complete public factory requires an observer and requested Eta/Eio runtime
+dynamic_scope_cleanup	eta_reference.dynamic_scope_cleanup	../dynamic-topology-probe/summary.csv	exact operation tape and Eta/Eio boundary
+cancelled_contender	eta_signal.effect_seam.edge.reference_cancelled_contender	../effect-seam-probe/summary.csv	exact reference operation tape and Eta/Eio boundary
+observer_failure_retry	reference,observer_failure_retry	../edge-seam-probe/summary.csv	exact operation tape and Eta/Eio boundary
+observer_disposal	reference,observer_disposal	../edge-seam-probe/summary.csv	exact operation tape and Eta/Eio boundary
+timer_cycle	reference,timer_cycle	../edge-seam-probe/summary.csv	exact operation tape and Eta/Eio boundary

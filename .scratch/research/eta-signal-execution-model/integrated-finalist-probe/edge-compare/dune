@@ -1,0 +1,14 @@
+(copy_files ../compare_edges.ml)
+(copy_files ../compare_edges_reference.ml)
+
+(executable
+ (name compare_edges)
+ (modules compare_edges)
+ (libraries
+  selected_factory_owner eta eta_eio eio_main unix))
+
+(executable
+ (name compare_edges_reference)
+ (modules compare_edges_reference)
+ (libraries
+  eta eta_signal eta_eio eio_main unix))
