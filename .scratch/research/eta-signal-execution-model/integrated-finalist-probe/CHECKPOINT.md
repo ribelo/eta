@@ -87,6 +87,6 @@ Dynamic-scope cleanup and observer disposal fail.
 
 ## Next work
 
-1. Keep this implementation as input to another finalist.
-2. Remove repeated public execution crossings.
+1. Promote this implementation as the production pre-alpha base.
+2. Remove repeated public execution crossings in production.
 3. Remove graph-history work from dynamic cleanup and observer disposal.

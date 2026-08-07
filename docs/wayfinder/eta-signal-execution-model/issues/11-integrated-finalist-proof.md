@@ -36,8 +36,16 @@ Dynamic-scope cleanup fails wall time in all three pairs.
 Observer disposal fails wall time and allocation in all three pairs.
 
 Reject this finalist for production selection.
-Keep the implementation as input to the next finalist.
+Promote it only as the pre-alpha implementation base.
 
 The implementation, full samples, process medians, behavior totals, and rejected
 rows are in
 [Integrated finalist proof](../../../../.scratch/research/eta-signal-execution-model/integrated-finalist-proof.md).
+
+## Follow-up decision
+
+The project approved production promotion after this performance verdict.
+Issue 17 owns the move from scratch code to the production packages.
+
+This decision does not change the failed performance result.
+It selects one behavior-complete codebase for direct improvement.

@@ -180,17 +180,29 @@ The 100,000-key public workload then completed as a normal fresh process.
 
 Reject this integrated finalist for production selection.
 
-Keep its implementation as a production-design input.
+Keep its implementation as the pre-alpha production base.
 The behavior result proves that one unified selected architecture can implement the complete interface.
 
 The performance result locates the remaining work at the public adapter and two lifecycle paths.
 The raw dynamic and keyed representation is not the rejection cause.
 
-The next finalist must remove repeated public execution crossings.
+The production pre-alpha must remove repeated public execution crossings.
 It must also remove graph-history work from dynamic cleanup and observer disposal.
 
-Issue 12 cannot measure the depth of a selected production interface from this rejected finalist.
-The map needs another finalist before issues 12 through 14 can continue.
+Issue 17 promotes this implementation before the remaining architecture work.
+Issue 12 then assesses the public interface on production code.
+
+## Subsequent direction
+
+Date: 2026-08-07
+
+The project approved this behavior-complete implementation as the pre-alpha
+production base.
+Issue 17 promotes the selected code into the production packages.
+Issues 12 through 14 then change and assess the production code directly.
+
+This direction does not change the performance verdict.
+The failed rows remain binding gates for the pre-alpha implementation.
 
 ## Commands
 

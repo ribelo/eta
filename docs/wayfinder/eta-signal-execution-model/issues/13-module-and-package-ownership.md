@@ -2,7 +2,7 @@
 
 Type: grilling
 Status:
-Blocked by: 09, 11, 12
+Blocked by: 09, 12, 17
 
 ## Question
 
@@ -11,3 +11,6 @@ Signal Map integration, and any new Eta runtime primitive?
 
 Give each module one named invariant and one small interface. Keep optional
 dependencies out of the root Eta package.
+
+Use the promoted production implementation as the subject.
+Move code directly when the ownership decision is complete.

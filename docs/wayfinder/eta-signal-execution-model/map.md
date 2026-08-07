@@ -2,15 +2,15 @@
 
 ## Destination
 
-An implementation-ready replacement architecture for `eta_signal` and
-`eta_signal_map`, supported by staged performance prototypes. The architecture
-must preserve the Signal behavior contract and meet workload-specific
-performance gates.
+An implementation-ready replacement architecture and pre-alpha implementation
+for `eta_signal` and `eta_signal_map`. The implementation must preserve the
+Signal behavior contract and meet workload-specific performance gates.
 
 ## Notes
 
-Planning and throwaway prototypes are the deliverables. Production
-implementation is a later effort.
+Planning and throwaway prototypes selected the pre-alpha base through issue 11.
+Issue 17 promotes that base into the production packages.
+Later tickets change the production pre-alpha implementation directly.
 
 Executable semantics and public behavior remain binding. All internal
 architecture decisions reopen. The prior Signal Wayfinder work and current
@@ -65,12 +65,17 @@ main Dune workspace.
 - [Generic typed value storage](issues/16-generic-typed-value-storage.md) — pack existential typed nodes with embedded undo values, preserve the four-word path for immediate and boxed values, and reject erased or closure-packed storage.
 - [Effect seam and Eta runtime](issues/09-effect-seam-and-runtime.md) — use one private serialized execution driver with a pre-publication cancellation checkpoint, keep claims opaque, and add no Eta runtime primitive.
 - [Timer and observer edges](issues/10-timer-and-observer-edges.md) — keep timer generations, runtime provenance, observer cursors, cleanup, and stream acknowledgement inside one opaque post-commit driver.
-- [Integrated finalist proof](issues/11-integrated-finalist-proof.md) — reject the behavior-complete finalist because every complete public wall-time row fails, while retaining its implementation for the next finalist.
+- [Integrated finalist proof](issues/11-integrated-finalist-proof.md) — reject the behavior-complete finalist for final selection, then retain it as the production pre-alpha base.
+
+## Current path
+
+1. [Promote the selected finalist](issues/17-promote-selected-finalist-to-pre-alpha.md) into the production packages.
+2. Decide the [public interface and graph ownership](issues/12-public-interface-depth.md) on the promoted code.
+3. Decide [module and package ownership](issues/13-module-and-package-ownership.md) and move the production code.
+4. Write the [consolidated execution specification](issues/14-consolidated-execution-specification.md) after all gates pass.
 
 ## Not yet specified
 
-- Another integrated finalist must remove repeated public execution crossings and
-  graph-history work before issues 12 through 14 can continue.
 - Additional workload classes can become necessary when the behavior census
   finds a capability without a matched benchmark.
 
@@ -80,5 +85,4 @@ main Dune workspace.
 - Eta packages unrelated to the selected Signal execution model.
 - Compatibility with the Incremental interface.
 - Compatibility shims for the current Signal implementation.
-- Production implementation and durable test replacement during this map.
 - Changes to frozen benchmark workloads, checks, operation counts, or formulas.
