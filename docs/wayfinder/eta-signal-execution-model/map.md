@@ -65,9 +65,12 @@ main Dune workspace.
 - [Generic typed value storage](issues/16-generic-typed-value-storage.md) — pack existential typed nodes with embedded undo values, preserve the four-word path for immediate and boxed values, and reject erased or closure-packed storage.
 - [Effect seam and Eta runtime](issues/09-effect-seam-and-runtime.md) — use one private serialized execution driver with a pre-publication cancellation checkpoint, keep claims opaque, and add no Eta runtime primitive.
 - [Timer and observer edges](issues/10-timer-and-observer-edges.md) — keep timer generations, runtime provenance, observer cursors, cleanup, and stream acknowledgement inside one opaque post-commit driver.
+- [Integrated finalist proof](issues/11-integrated-finalist-proof.md) — reject the behavior-complete finalist because every complete public wall-time row fails, while retaining its implementation for the next finalist.
 
 ## Not yet specified
 
+- Another integrated finalist must remove repeated public execution crossings and
+  graph-history work before issues 12 through 14 can continue.
 - Additional workload classes can become necessary when the behavior census
   finds a capability without a matched benchmark.
 

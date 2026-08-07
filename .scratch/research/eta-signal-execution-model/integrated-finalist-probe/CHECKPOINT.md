@@ -5,7 +5,7 @@ Date: 2026-08-07
 ## Purpose
 
 This checkpoint preserves the implementation work for issue 11.
-It is not the final issue decision.
+The final issue decision rejects this finalist on performance.
 
 The research bundle contains three durable implementation layers:
 
@@ -69,8 +69,8 @@ The behavior gate does not route cases to the legacy control.
 
 ## Raw performance checkpoint
 
-`raw-smoke.tsv` contains one CPU-pinned pair with one sample for all raw rows.
-It is diagnostic evidence, not the final three-pair decision.
+`raw-smoke.tsv` contains one early CPU-pinned pair with one sample.
+It remains diagnostic evidence.
 
 Every raw row passes its correctness and allocation check.
 Most wall-time rows pass in this pair.
@@ -79,9 +79,14 @@ Depth 100 and cutoff exceed the paired `1.20` wall-time limit.
 `raw-keyed-smoke.tsv` contains a later keyed-only pair.
 All six keyed rows pass correctness, allocation, and wall-time checks in that pair.
 
-The final proof must run nine samples in three fresh pairs after all behavior gates pass.
+`matched-results.csv` and `matched-summary.csv` contain the final matched matrix.
+Every complete public row fails in all three pairs.
+
+`edge-results.csv` and `edge-summary.csv` contain the final Eta-only matrix.
+Dynamic-scope cleanup and observer disposal fail.
 
 ## Next work
 
-1. Run the full raw and public performance matrix.
-2. Record the issue 11 verdict only after those gates finish.
+1. Keep this implementation as input to another finalist.
+2. Remove repeated public execution crossings.
+3. Remove graph-history work from dynamic cleanup and observer disposal.

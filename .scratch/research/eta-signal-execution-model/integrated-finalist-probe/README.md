@@ -11,8 +11,8 @@ not copy or modify production implementation modules. The legacy
   `Eta_signal.Make_no_error ()`. It fails when it finds another factory
   expression. `generated/source-manifest.json` records SHA-256 hashes of every
   source and generated file. Tracked `source-hashes.json` freezes the source
-  hashes; update it explicitly with `generate.py --record-hashes` when an
-  intentional public-test revision is reviewed.
+  hashes. Run `generate.py --record-hashes` after a review of an intentional
+  public-test revision.
 - Generated files and temporary results are ignored. Run `check_generated.py`
   to detect source drift or edited generated copies. Reviewed checkpoint
   results can be copied to tracked files in this directory.
@@ -51,6 +51,7 @@ nix develop -c dune build --root \
 nix develop -c .scratch/research/eta-signal-execution-model/integrated-finalist-probe/run.sh tests
 nix develop -c .scratch/research/eta-signal-execution-model/integrated-finalist-probe/run.sh raw-smoke
 nix develop -c .scratch/research/eta-signal-execution-model/integrated-finalist-probe/run.sh performance
+nix develop -c .scratch/research/eta-signal-execution-model/integrated-finalist-probe/run_edges.sh
 ```
 
 `@selected-core-check` builds the separately owned `selected_core.ml` and runs
@@ -67,3 +68,12 @@ ignored `results/`. The checkpoint files preserve reviewed diagnostic runs.
 `run.sh raw-smoke` runs one CPU-pinned reference/finalist pair with one sample
 per raw workload. It records correctness, allocation, and the first allocation
 or paired wall-time failure in ignored `results/raw-smoke.tsv`.
+
+The final matched samples are in `matched-results.csv`.
+The matched process medians are in `matched-summary.csv`.
+The matched command exits with status 1 because the public wall-time rows fail.
+
+`run_edges.sh` compares eight complete Eta/Eio operation tapes.
+The production reference is pinned to revision `d04d6e2b`.
+The final samples are in `edge-results.csv`.
+The process medians are in `edge-summary.csv`.
