@@ -40,6 +40,9 @@ The fresh public factory passes these suites:
 - persistent Signal Map: 12 of 12
 - keyed Signal Map: 6 of 6
 - Signal Stream: 18 of 18
+- Signal model: 21 of 21
+- generated Signal properties: 40 of 40
+- lifecycle and timer behavior: 64 of 64
 - finalist-native replacement checks: 3 of 3
 - public negative compilation fixtures
 - root reclamation
@@ -52,23 +55,17 @@ nix develop -c dune build --root \
   --profile release @all
 ```
 
-## Remaining behavior work
+The complete behavior gate passes with:
 
-The model suite currently passes 15 of 21 tests.
-The remaining failures cover scripted traces, timer-bind demand, nested bind churn, diamonds, and generated graph traces.
+```sh
+env BUILD_TIMEOUT=300s SUITE_TIMEOUT=120s \
+  nix develop -c \
+  .scratch/research/eta-signal-execution-model/integrated-finalist-probe/run.sh \
+  tests
+```
 
-The property suite has a seed-sensitive failure in the combined Signal script.
-
-The main lifecycle suite still has failures in these areas:
-
-- observer registration interruption
-- timer startup rollback
-- nested runtime operations
-- timer catch-up and saturation
-- disposal before timer-cancel installation
-
-The fresh factory remains the only candidate for further fixes.
-Do not route these cases to the legacy control.
+The fresh factory remains the selected candidate.
+The behavior gate does not route cases to the legacy control.
 
 ## Raw performance checkpoint
 
@@ -86,7 +83,5 @@ The final proof must run nine samples in three fresh pairs after all behavior ga
 
 ## Next work
 
-1. Make every generated behavior suite pass with `selected_factory_fresh.ml`.
-2. Remove the remaining lifecycle stalls and seed-sensitive failures.
-3. Run the full raw and public performance matrix.
-4. Record the issue 11 verdict only after those gates finish.
+1. Run the full raw and public performance matrix.
+2. Record the issue 11 verdict only after those gates finish.

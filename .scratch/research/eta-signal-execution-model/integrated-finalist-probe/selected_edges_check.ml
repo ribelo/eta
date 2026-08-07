@@ -21,6 +21,13 @@ exception Interrupted
 let failf format = Printf.ksprintf failwith format
 let check label condition = if not condition then failwith label
 
+let rec bounded label remaining step finished =
+  if finished () then ()
+  else if remaining = 0 then failwith ("bounded completion: " ^ label)
+  else (
+    step ();
+    bounded label (remaining - 1) step finished)
+
 let success = E.Success ()
 let typed label = E.Failure (E.Typed_failure label)
 let defect label = E.Failure (E.Defect (Injected label))
@@ -135,6 +142,20 @@ let observer_checks () =
   check "stream publication was retried after acknowledgement"
     (E.run edges ~runtime:1 ~plan:[ E.Observer stream ] = Ok ()
      && !published = 1);
+  let raised_publications = ref 0 in
+  let raised_stream =
+    E.observe edges (fun delivery ->
+        E.publish_sealed delivery (fun _ ->
+            incr raised_publications;
+            raise Interrupted))
+  in
+  E.publish edges raised_stream 11;
+  (match E.run edges ~runtime:1 ~plan:[ E.Observer raised_stream ] with
+  | exception Interrupted -> ()
+  | _ -> failwith "raised stream interruption did not escape");
+  check "raised stream interruption split publication and acknowledgement"
+    (E.run edges ~runtime:1 ~plan:[ E.Observer raised_stream ] = Ok ()
+     && !raised_publications = 1);
   let finishes = ref [] in
   let disposing = ref None in
   let raced =
@@ -172,6 +193,51 @@ let observer_checks () =
   check "invalid cleanup failed"
     (E.run edges ~runtime:1 ~plan:[ E.Observer invalid ] = Ok ());
   check "invalid finish count" (!invalid_finishes = 1);
+  let raised_attempts = ref 0 in
+  let raised_interrupt =
+    E.observe edges (fun _ ->
+        incr raised_attempts;
+        if !raised_attempts = 1 then raise Interrupted else success)
+  in
+  E.publish edges raised_interrupt 3;
+  (match E.run edges ~runtime:1 ~plan:[ E.Observer raised_interrupt ] with
+  | exception Interrupted -> ()
+  | _ -> failwith "raised interruption did not escape");
+  check "raised interruption did not restore pending delivery"
+    (E.run edges ~runtime:1 ~plan:[ E.Observer raised_interrupt ] = Ok ()
+     && !raised_attempts = 2);
+  let nested_calls = ref 0 in
+  let nested =
+    E.observe edges (fun _ ->
+        incr nested_calls;
+        success)
+  in
+  let outer =
+    E.observe edges (fun _ ->
+        E.publish edges nested 4;
+        check "nested edge run failed"
+          (E.run edges ~runtime:1 ~plan:[ E.Observer nested ] = Ok ());
+        success)
+  in
+  E.publish edges outer 4;
+  bounded "nested same-fiber edge call" 2
+    (fun () ->
+      ignore
+        (E.run edges ~runtime:1 ~plan:[ E.Observer outer ]))
+    (fun () -> !nested_calls = 1);
+  let reentrant = E.observe edges (fun _ -> success) in
+  let before = execution.Execution.entries in
+  (match
+     Execution.run execution (fun _checkpoint ->
+         E.publish edges reentrant 5;
+         Ok ())
+   with
+  | Ok () -> ()
+  | Error _ -> assert false);
+  check "nested same-fiber claim reacquired execution"
+    (execution.Execution.entries = before + 1);
+  check "nested same-fiber publication was lost"
+    (E.run edges ~runtime:1 ~plan:[ E.Observer reentrant ] = Ok ());
   Printf.printf "observers: pass\n%!"
 
 let policy execution starts stops fail_start fail_stop =
@@ -232,6 +298,26 @@ let timer_checks () =
   E.daemon_failed edges timer ~generation:daemon_generation;
   check "daemon failure lost retry" (E.queued_timer_count edges = 1);
   check "daemon restart failed" (E.run edges ~runtime:7 ~plan:[] = Ok ());
+  let source_admissions = ref 0 in
+  check "timer wake did not admit source work once"
+    (E.timer_wake_with edges ~runtime:7 timer
+       ~generation:(E.timer_generation timer)
+       ~admit:(fun () -> incr source_admissions)
+     = Ok true
+     && !source_admissions = 1);
+  let catch_up ~current ~now_ms ~next_due_ms ~interval_ms =
+    if now_ms < next_due_ms then current
+    else
+      let elapsed = now_ms - next_due_ms in
+      let ticks = 1 + (elapsed / interval_ms) in
+      if ticks > max_int - current then max_int else current + ticks
+  in
+  check "interval catch-up did not advance arithmetically"
+    (catch_up ~current:0 ~now_ms:50 ~next_due_ms:10 ~interval_ms:10 = 5);
+  check "interval catch-up did not saturate"
+    (catch_up ~current:(max_int - 2) ~now_ms:50 ~next_due_ms:10
+       ~interval_ms:10
+     = max_int);
   let foreign =
     E.create_timer edges ~runtime:8
       ~policy:(policy execution (ref 0) (ref 0) (ref false) (ref false))
@@ -247,6 +333,234 @@ let timer_checks () =
     (E.timer_wake edges ~runtime:7 foreign
        ~generation:(E.timer_generation foreign)
      = Error E.Runtime_mismatch);
+  let race_execution = Execution.create () in
+  let race_edges = E.create race_execution in
+  let sleepers = ref 0 in
+  let finish_count = ref 0 in
+  let registration = ref None in
+  let installing = ref None in
+  let race_policy =
+    E.
+      {
+        same_runtime = Int.equal;
+        start =
+          (fun _ ~generation:_ ->
+            incr sleepers;
+            E.abort_timer_registration race_edges
+              (Option.get !installing)
+              (Option.get !registration) E.Disposed;
+            Success
+              (fun () ->
+                decr sleepers;
+                success));
+      }
+  in
+  let race_timer =
+    E.create_timer race_edges ~runtime:9 ~policy:race_policy
+  in
+  installing := Some race_timer;
+  let race_observer =
+    E.observe race_edges
+      ~finish:(fun _ ->
+        check "finish ran before stop-before-install cleanup" (!sleepers = 0);
+        incr finish_count;
+        success)
+      (fun _ -> success)
+  in
+  registration := Some race_observer;
+  E.activate_timer_registration race_edges race_timer race_observer;
+  bounded "dispose before cancel installation" 3
+    (fun () ->
+      ignore (E.run race_edges ~runtime:9 ~plan:[]))
+    (fun () ->
+      !sleepers = 0 && !finish_count = 1
+      && E.queued_timer_count race_edges = 0);
+  let failure_execution = Execution.create () in
+  let failure_edges = E.create failure_execution in
+  let leaked_sleepers = ref 0 in
+  let cleanup_calls = ref 0 in
+  let failed_policy =
+    E.
+      {
+        same_runtime = Int.equal;
+        start =
+          (fun _ ~generation:_ ->
+            incr leaked_sleepers;
+            interrupted);
+      }
+  in
+  let failed_timer =
+    E.create_timer_with_cleanup failure_edges ~runtime:10
+      ~policy:failed_policy
+      ~on_start_failure:(fun ~generation:_ _ ->
+        incr cleanup_calls;
+        decr leaked_sleepers;
+        success)
+  in
+  let failed_observer =
+    E.observe failure_edges (fun _ -> success)
+  in
+  E.activate_timer_registration failure_edges failed_timer failed_observer;
+  (match E.run failure_edges ~runtime:10 ~plan:[] with
+  | Error (E.Cleanup_failures [ E.Interrupted Interrupted ]) -> ()
+  | _ -> failwith "interrupted start did not preserve classification");
+  check "start failure leaked sleeper"
+    (!leaked_sleepers = 0 && !cleanup_calls = 1);
+  E.abort_timer_registration failure_edges failed_timer failed_observer
+    E.Disposed;
+  bounded "cancelled registration rollback" 3
+    (fun () ->
+      ignore (E.run failure_edges ~runtime:10 ~plan:[]))
+    (fun () -> E.queued_timer_count failure_edges = 0);
+  let raised_sleepers = ref 0 in
+  let raised_cleanup = ref 0 in
+  let raised_timer =
+    E.create_timer_with_cleanup failure_edges ~runtime:10
+      ~policy:
+        E.
+          {
+            same_runtime = Int.equal;
+            start =
+              (fun _ ~generation:_ ->
+                incr raised_sleepers;
+                raise Interrupted);
+          }
+      ~on_start_failure:(fun ~generation:_ _ ->
+        incr raised_cleanup;
+        decr raised_sleepers;
+        success)
+  in
+  E.set_timer_demand failure_edges raised_timer true;
+  (match E.run failure_edges ~runtime:10 ~plan:[] with
+  | exception Interrupted -> ()
+  | _ -> failwith "raised start interruption changed classification");
+  check "raised start interruption skipped protected cleanup"
+    (!raised_sleepers = 0 && !raised_cleanup = 1);
+  E.set_timer_demand failure_edges raised_timer false;
+  bounded "raised start rollback" 2
+    (fun () ->
+      ignore (E.run failure_edges ~runtime:10 ~plan:[]))
+    (fun () -> E.queued_timer_count failure_edges = 0);
+  let batch_execution = Execution.create () in
+  let batch_edges = E.create batch_execution in
+  let sibling_starts = ref 0 in
+  let failed_starts = ref 0 in
+  let installed_sleepers = ref 0 in
+  let compensations = ref 0 in
+  let sibling =
+    E.create_timer batch_edges ~runtime:11
+      ~policy:
+        E.
+          {
+            same_runtime = Int.equal;
+            start =
+              (fun _ ~generation:_ ->
+                incr sibling_starts;
+                incr installed_sleepers;
+                Success
+                  (fun () ->
+                    incr compensations;
+                    decr installed_sleepers;
+                    success));
+          }
+  in
+  let failed =
+    E.create_timer batch_edges ~runtime:11
+      ~policy:
+        E.
+          {
+            same_runtime = Int.equal;
+            start =
+              (fun _ ~generation:_ ->
+                incr failed_starts;
+                defect "batch-start");
+          }
+  in
+  E.set_timer_demand batch_edges sibling true;
+  E.set_timer_demand batch_edges failed true;
+  (match E.run batch_edges ~runtime:11 ~plan:[] with
+  | Error (E.Cleanup_failures [ E.Defect (Injected "batch-start") ]) -> ()
+  | _ -> failwith "multi-start failure result mismatch");
+  check "multi-start batch did not compensate installed sibling"
+    (!sibling_starts = 1 && !failed_starts = 1
+     && !compensations = 1 && !installed_sleepers = 0);
+  check "multi-start failure lost later intents"
+    (E.queued_timer_count batch_edges = 2);
+  check "cleanup-only drain claimed ordinary timer mismatches"
+    (E.drain_cleanup batch_edges = Ok ()
+     && !sibling_starts = 1 && !failed_starts = 1
+     && E.queued_timer_count batch_edges = 2);
+  let order_edges = E.create (Execution.create ()) in
+  let attempts = ref [] in
+  let successful name compensation =
+    E.create_timer order_edges ~runtime:12
+      ~policy:
+        E.
+          {
+            same_runtime = Int.equal;
+            start =
+              (fun _ ~generation:_ ->
+                attempts := name :: !attempts;
+                Success (fun () -> defect compensation));
+          }
+  in
+  let first = successful "first" "comp-first" in
+  let middle =
+    E.create_timer order_edges ~runtime:12
+      ~policy:
+        E.
+          {
+            same_runtime = Int.equal;
+            start =
+              (fun _ ~generation:_ ->
+                attempts := "middle" :: !attempts;
+                defect "start-middle");
+          }
+  in
+  let last = successful "last" "comp-last" in
+  List.iter
+    (fun timer -> E.set_timer_demand order_edges timer true)
+    [ first; middle; last ];
+  (match E.run order_edges ~runtime:12 ~plan:[] with
+  | Error
+      (E.Cleanup_failures
+        [
+          E.Defect (Injected "start-middle");
+          E.Defect (Injected "comp-first");
+          E.Defect (Injected "comp-last");
+        ]) ->
+      ()
+  | _ -> failwith "compensation failures were not aggregated in order");
+  check "start batch stopped after first failure"
+    (List.rev !attempts = [ "first"; "middle"; "last" ]);
+  let stop_edges = E.create (Execution.create ()) in
+  let stop_attempts = ref 0 in
+  let stop_timer =
+    E.create_timer stop_edges ~runtime:13
+      ~policy:
+        E.
+          {
+            same_runtime = Int.equal;
+            start =
+              (fun _ ~generation:_ ->
+                Success
+                  (fun () ->
+                    incr stop_attempts;
+                    defect "ordinary-stop"));
+          }
+  in
+  E.set_timer_demand stop_edges stop_timer true;
+  check "ordinary stop setup failed"
+    (E.run stop_edges ~runtime:13 ~plan:[] = Ok ());
+  E.set_timer_demand stop_edges stop_timer false;
+  (match E.run stop_edges ~runtime:13 ~plan:[] with
+  | Error (E.Cleanup_failures [ E.Defect (Injected "ordinary-stop") ]) -> ()
+  | _ -> failwith "ordinary stop failure result mismatch");
+  check "failed stop retried in the same run" (!stop_attempts = 1);
+  check "cleanup-only drain retried failed stop"
+    (E.drain_cleanup stop_edges = Ok ()
+     && !stop_attempts = 1
+     && E.queued_timer_count stop_edges = 1);
   Printf.printf "timers: pass\n%!"
 
 let cleanup_and_affected_checks () =

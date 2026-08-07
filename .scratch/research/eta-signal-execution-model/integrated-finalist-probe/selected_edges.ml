@@ -67,13 +67,37 @@ module type S = sig
     runtime:'runtime ->
     policy:('runtime, 'error) timer_policy ->
     ('runtime, 'error) timer
+  val create_timer_with_cleanup :
+    t ->
+    runtime:'runtime ->
+    policy:('runtime, 'error) timer_policy ->
+    on_start_failure:
+      (generation:int ->
+      'error failure ->
+      (unit, 'error) outcome) ->
+    ('runtime, 'error) timer
 
   val set_timer_demand : t -> ('runtime, 'error) timer -> bool -> unit
+  val activate_timer_registration :
+    t -> ('runtime, 'error) timer -> 'a observer -> unit
+  val abort_timer_registration :
+    t ->
+    ('runtime, 'error) timer ->
+    'a observer ->
+    finish_reason ->
+    unit
   val timer_wake :
     t ->
     runtime:'runtime ->
     ('runtime, 'error) timer ->
     generation:int ->
+    (bool, 'other_error run_error) result
+  val timer_wake_with :
+    t ->
+    runtime:'runtime ->
+    ('runtime, 'error) timer ->
+    generation:int ->
+    admit:(unit -> unit) ->
     (bool, 'other_error run_error) result
   val daemon_failed :
     t -> ('runtime, 'error) timer -> generation:int -> unit
@@ -84,6 +108,7 @@ module type S = sig
     runtime:'runtime ->
     plan:packed_observer list ->
     (unit, 'error run_error) result
+  val drain_cleanup : t -> (unit, 'error run_error) result
 
   val stats : t -> stats
   val queued_timer_count : t -> int
@@ -150,6 +175,7 @@ module Make (Execution : EXECUTION) :
     execution : execution;
     mutable next_token : int;
     hooks : hook Queue.t;
+    timer_hooks : hook Queue.t;
     timers : packed_timer Queue.t;
     counts : mutable_stats;
   }
@@ -175,6 +201,10 @@ module Make (Execution : EXECUTION) :
     mutable demanded : bool;
     mutable state : ('runtime, 'error) timer_state;
     mutable queued : bool;
+    on_start_failure :
+      generation:int ->
+      'error failure ->
+      (unit, 'error) outcome;
   }
 
   type 'error run_error =
@@ -189,6 +219,13 @@ module Make (Execution : EXECUTION) :
         * int
         * (unit -> (unit, 'error) outcome)
         -> timer_action
+
+  type installed_timer =
+    | Timer_installation :
+        ('runtime, 'error) timer
+        * int
+        * (unit -> (unit, 'error) outcome)
+        -> installed_timer
 
   type claimed_delivery =
     | Claim : 'a observer * int * 'a update -> claimed_delivery
@@ -206,6 +243,7 @@ module Make (Execution : EXECUTION) :
       execution;
       next_token = 0;
       hooks = Queue.create ();
+      timer_hooks = Queue.create ();
       timers = Queue.create ();
       counts =
         {
@@ -258,9 +296,7 @@ module Make (Execution : EXECUTION) :
             t.next_token <- token;
             observer.cursor <- Pending (token, event))
 
-  let finish_observer t observer reason =
-    if observer.owner != t then invalid_arg "selected_edges: observer owner";
-    claim t @@ fun () ->
+  let finish_observer_under_lane t observer reason =
     match observer.lifecycle with
     | Finished _ -> ()
     | Active ->
@@ -272,6 +308,10 @@ module Make (Execution : EXECUTION) :
         Queue.add
           (Hook (fun () -> Obj.magic (observer.finish reason)))
           t.hooks
+
+  let finish_observer t observer reason =
+    if observer.owner != t then invalid_arg "selected_edges: observer owner";
+    claim t (fun () -> finish_observer_under_lane t observer reason)
 
   let dispose t observer = finish_observer t observer Disposed
   let invalidate t observer = finish_observer t observer Invalid_scope
@@ -306,11 +346,11 @@ module Make (Execution : EXECUTION) :
       | Active, _ | Finished _, _ -> false
 
   let publish_sealed delivery publish =
-    let outcome = publish delivery.event in
-    ignore (acknowledge delivery : bool);
-    outcome
+    Fun.protect
+      ~finally:(fun () -> ignore (acknowledge delivery : bool))
+      (fun () -> publish delivery.event)
 
-  let create_timer owner ~runtime ~policy =
+  let create_timer_with_cleanup owner ~runtime ~policy ~on_start_failure =
     {
       owner;
       runtime;
@@ -319,16 +359,19 @@ module Make (Execution : EXECUTION) :
       demanded = false;
       state = Inactive;
       queued = false;
+      on_start_failure;
     }
+
+  let create_timer owner ~runtime ~policy =
+    create_timer_with_cleanup owner ~runtime ~policy
+      ~on_start_failure:(fun ~generation:_ _ -> Success ())
 
   let enqueue (timer : (_, _) timer) =
     if not timer.queued then (
       timer.queued <- true;
       Queue.add (Timer timer) timer.owner.timers)
 
-  let set_timer_demand t (timer : (_, _) timer) demanded =
-    if timer.owner != t then invalid_arg "selected_edges: timer owner";
-    claim t @@ fun () ->
+  let set_timer_demand_under_lane (timer : (_, _) timer) demanded =
     if timer.demanded <> demanded then (
       (match demanded, timer.state with
       | false, (Starting _ | Running _) ->
@@ -340,9 +383,28 @@ module Make (Execution : EXECUTION) :
       | true, Inactive | false, (Starting _ | Running _) -> enqueue timer
       | true, (Starting _ | Running _) | false, Inactive -> ())
 
+  let set_timer_demand t (timer : (_, _) timer) demanded =
+    if timer.owner != t then invalid_arg "selected_edges: timer owner";
+    claim t (fun () -> set_timer_demand_under_lane timer demanded)
+
+  let activate_timer_registration t (timer : (_, _) timer) observer =
+    if timer.owner != t || observer.owner != t then
+      invalid_arg "selected_edges: registration owner";
+    claim t @@ fun () ->
+    match observer.lifecycle with
+    | Finished _ -> ()
+    | Active -> set_timer_demand_under_lane timer true
+
+  let abort_timer_registration t (timer : (_, _) timer) observer reason =
+    if timer.owner != t || observer.owner != t then
+      invalid_arg "selected_edges: registration owner";
+    claim t @@ fun () ->
+    finish_observer_under_lane t observer reason;
+    set_timer_demand_under_lane timer false
+
   let timer_generation (timer : (_, _) timer) = timer.generation
 
-  let timer_wake t ~runtime (timer : (_, _) timer) ~generation =
+  let timer_wake_with t ~runtime (timer : (_, _) timer) ~generation ~admit =
     if timer.owner != t then invalid_arg "selected_edges: timer owner";
     claim t @@ fun () ->
     if not (timer.policy.same_runtime runtime timer.runtime) then
@@ -354,8 +416,12 @@ module Make (Execution : EXECUTION) :
           when active = generation
                && timer.generation = generation
                && timer.demanded ->
+            admit ();
             true
         | Inactive | Starting _ | Running _ -> false)
+
+  let timer_wake t ~runtime timer ~generation =
+    timer_wake_with t ~runtime timer ~generation ~admit:(fun () -> ())
 
   let daemon_failed t (timer : (_, _) timer) ~generation =
     if timer.owner != t then invalid_arg "selected_edges: timer owner";
@@ -411,12 +477,16 @@ module Make (Execution : EXECUTION) :
       when active = generation
            && timer.generation = generation
            && timer.demanded ->
-        timer.state <- Running (generation, stop)
+        timer.state <- Running (generation, stop);
+        true
     | Starting active when active = generation ->
         timer.state <- Inactive;
-        Queue.add (Hook stop) timer.owner.hooks;
-        if timer.demanded then enqueue timer
-    | Inactive | Starting _ | Running _ -> Queue.add (Hook stop) timer.owner.hooks
+        Queue.add (Hook stop) timer.owner.timer_hooks;
+        if timer.demanded then enqueue timer;
+        false
+    | Inactive | Starting _ | Running _ ->
+        Queue.add (Hook stop) timer.owner.timer_hooks;
+        false
 
   let failed_start (timer : (_, _) timer) generation =
     claim timer.owner @@ fun () ->
@@ -438,21 +508,54 @@ module Make (Execution : EXECUTION) :
 
   let run_actions actions =
     let failures = ref [] in
+    let installed = ref [] in
+    let start_failed = ref false in
+    let record failure = failures := failure :: !failures in
     List.iter
       (function
         | Start (timer, generation) -> (
             match timer.policy.start timer.runtime ~generation with
-            | Success stop -> settle_start timer generation stop
+            | Success stop ->
+                if settle_start timer generation stop then
+                  installed :=
+                    Timer_installation (timer, generation, stop) :: !installed
             | Failure failure ->
+                start_failed := true;
                 failed_start timer generation;
-                failures := Obj.magic failure :: !failures)
+                record (Obj.magic failure);
+                (match timer.on_start_failure ~generation failure with
+                | Success () -> ()
+                | Failure cleanup_failure ->
+                    record (Obj.magic cleanup_failure))
+            | exception exn ->
+                start_failed := true;
+                failed_start timer generation;
+                ignore
+                  (timer.on_start_failure ~generation (Defect exn)
+                    : (unit, _) outcome);
+                raise exn)
         | Stop (timer, generation, stop) -> (
             match stop () with
             | Success () -> settle_stop timer generation
             | Failure failure ->
                 failed_stop timer;
-                failures := Obj.magic failure :: !failures))
+                record (Obj.magic failure)
+            | exception exn ->
+                failed_stop timer;
+                raise exn))
       actions;
+    if !start_failed then
+      List.iter
+        (fun (Timer_installation (timer, generation, stop)) ->
+          match stop () with
+          | Success () -> settle_stop timer generation
+          | Failure failure ->
+              failed_stop timer;
+              record (Obj.magic failure)
+          | exception exn ->
+              failed_stop timer;
+              raise exn)
+        (List.rev !installed);
     List.rev !failures
 
   let claim_hooks t =
@@ -512,14 +615,36 @@ module Make (Execution : EXECUTION) :
                 deliver t rest
             | Failure failure ->
                 settle_delivery observer token event false;
-                Error (Callback_failure (Obj.magic failure)))
+                Error (Callback_failure (Obj.magic failure))
+            | exception exn ->
+                settle_delivery observer token event false;
+                raise exn)
+
+  let drain_cleanup_failures t =
+    let timer_hooks =
+      claim t @@ fun () ->
+      let hooks =
+        Queue.fold (fun rest hook -> hook :: rest) [] t.timer_hooks
+      in
+      Queue.clear t.timer_hooks;
+      List.rev hooks
+    in
+    let timer_failures = run_hooks timer_hooks in
+    let hook_failures = run_hooks (claim_hooks t) in
+    timer_failures @ hook_failures
+
+  let drain_cleanup t =
+    match drain_cleanup_failures t with
+    | [] -> Ok ()
+    | failures -> Error (Cleanup_failures failures)
 
   let run t ~runtime ~plan =
     match claim_timer_actions t runtime with
     | Error Runtime_mismatch -> Error Runtime_mismatch
     | Error (Cleanup_failures _ | Callback_failure _) -> assert false
     | Ok actions ->
-        let failures = run_actions actions @ run_hooks (claim_hooks t) in
+        let action_failures = run_actions actions in
+        let failures = action_failures @ drain_cleanup_failures t in
         if failures <> [] then Error (Cleanup_failures failures)
         else deliver t plan
 

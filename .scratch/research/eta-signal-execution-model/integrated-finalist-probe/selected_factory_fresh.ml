@@ -318,6 +318,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
   type observer_error = Observer_error.t
   type nonrec graph_error = graph_error
   exception Graph_error of graph_error
+  exception Deferred_bind
+  exception Deferred_source
   let pp_graph_error = pp_graph_error
   let runtime_mismatch_with_cleanup =
     Eta.Spi.Expert.make ~leaf_name:"eta_signal.runtime_mismatch_cleanup"
@@ -351,12 +353,17 @@ module Make_impl (Observer_error : Observer_error) () = struct
     kind : timer_kind;
     mutable last_sample : int;
     mutable demand : int;
+    mutable start_pending : bool;
     mutable generation : int;
     mutable cancel : (unit -> unit) option;
     edge_timer :
       (Eta.Runtime_contract.t, observer_error) Edges.timer;
-    reset : Eta.Runtime_contract.t -> unit;
+    source_node : Core.packed;
+    reset : Eta.Runtime_contract.t -> int;
     refresh : Eta.Runtime_contract.t -> int -> unit;
+    admit_refresh : unit -> bool;
+    commit_refresh : unit -> unit;
+    rollback_refresh : unit -> unit;
   }
 
   type 'a signal = {
@@ -453,6 +460,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let delivering = ref false
   let delivering_fiber = ref None
   let edge_graph_error : graph_error option ref = ref None
+  let edge_start_failed = ref false
+  let sampling_timer_starts = ref false
   let initializers : (unit -> unit) list ref = ref []
   let scope_owners : (Core.scope * Core.packed) list ref = ref []
   let scope_parents : (Core.scope * Core.scope option) list ref = ref []
@@ -463,10 +472,16 @@ module Make_impl (Observer_error : Observer_error) () = struct
     ref []
   let pending_edge_disposals : (unit -> unit) list ref = ref []
   let timers : timer list ref = ref []
-  let timer_nodes : (int, timer) Hashtbl.t = Hashtbl.create 8
+  let timer_roots : Core.packed list ref = ref []
+  let timer_nodes : (int, Core.handle * timer) Hashtbl.t =
+    Hashtbl.create 8
   let compute_invalidators : (int, unit -> unit) Hashtbl.t =
     Hashtbl.create 32
-  let multi_eval_nodes : (int, unit) Hashtbl.t = Hashtbl.create 16
+  let custom_cutoff_nodes : (int, Core.handle) Hashtbl.t =
+    Hashtbl.create 16
+  let bind_nodes : (int, Core.handle) Hashtbl.t = Hashtbl.create 16
+  let bind_evaluations : (int, Core.handle * int ref) Hashtbl.t =
+    Hashtbl.create 16
   let next_observer_id = ref 0
   let pure_snapshot_commit_count = ref 0
   let callback_delivery_count = ref 0
@@ -499,9 +514,10 @@ module Make_impl (Observer_error : Observer_error) () = struct
     let rec visit (Core.P node) =
       if not (Hashtbl.mem seen node.handle.slot) then (
         Hashtbl.add seen node.handle.slot ();
-        Option.iter
-          (fun timer -> found := timer :: !found)
-          (Hashtbl.find_opt timer_nodes node.handle.slot);
+        (match Hashtbl.find_opt timer_nodes node.handle.slot with
+        | Some (handle, timer) when handle = node.handle ->
+            found := timer :: !found
+        | Some _ | None -> ());
         Array.iter visit node.dependencies)
     in
     visit signal.raw.packed;
@@ -534,7 +550,23 @@ module Make_impl (Observer_error : Observer_error) () = struct
     | None -> failwith "Eta_signal: uninitialized dependency"
   let raw_value signal = Core.value signal.raw |> value_exn
   let check_signal signal =
-    if not (Core.validate_handle signal.raw) then raise (Graph_error `Invalid_scope)
+    if not (Core.validate_handle signal.raw) then
+      match signal.raw.node.scope with
+      | Some _ -> raise (Graph_error `Invalid_scope)
+      | None ->
+          let slot = signal.raw.handle.slot in
+          let entry = graph.slots.(slot) in
+          if entry.generation <> signal.raw.handle.generation then
+            raise (Graph_error `Invalid_scope);
+          let retained = ref 0 in
+          for index = 0 to graph.free_length - 1 do
+            if graph.free.(index) <> slot then (
+              graph.free.(!retained) <- graph.free.(index);
+              incr retained)
+          done;
+          graph.free_length <- !retained;
+          entry.is_free <- false;
+          Core.set_slot_contents entry (Some signal.raw.packed)
 
   let make_raw ?cutoff:cutoff_arg ~height ~dependencies compute =
     if (graph.running || !delivering) && graph.current_scope = None then
@@ -590,6 +622,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
       | None -> create ()
       | Some scope -> Core.with_scope graph scope create
     in
+    if cutoff != Cutoff.phys_equal then
+      Hashtbl.replace custom_cutoff_nodes raw.handle.slot raw.handle;
     let weak_raw = Weak.create 1 in
     Weak.set weak_raw 0 (Some raw.packed);
     let invalidate () =
@@ -612,10 +646,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         dependency.dependents <- others @ own;
         dependency.change_listeners <-
           (fun _ ->
-            if
-              !computed_in <> graph.pass
-              || Hashtbl.mem multi_eval_nodes raw.handle.slot
-            then invalidate ())
+            if !computed_in = graph.pass then invalidate ())
           :: dependency.change_listeners)
       dependencies;
     initializers :=
@@ -647,13 +678,18 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let map ?cutoff f child =
     Execution.sync execution @@ fun () ->
     check_signal child;
-    {
+    let result =
+      {
       raw =
         make_raw ?cutoff ~height:(child.raw.node.height + 1)
           ~dependencies:[| Core.P child.raw.node |]
           (fun () -> f (raw_value child));
       timer = child.timer;
-    }
+      }
+    in
+    if Option.is_some result.timer then
+      timer_roots := result.raw.packed :: !timer_roots;
+    result
 
   let mapn ?cutoff dependencies compute =
     Array.iter check_signal dependencies;
@@ -866,6 +902,19 @@ module Make_impl (Observer_error : Observer_error) () = struct
       | Some _ | None -> ()
     done
 
+  let rec ensure_parent_height ?(current = false)
+      (Core.P node as packed) minimum =
+    if node.height < minimum then (
+      if not current then unlink_queued_node packed;
+      node.height <- minimum;
+      Core.ensure_height graph minimum;
+      if not current then (
+        node.queued_in <- -1;
+        if node.necessary then Core.enqueue packed);
+      List.iter
+        (fun parent -> ensure_parent_height parent (minimum + 1))
+        node.dependents)
+
   let bind ?cutoff ~f source =
     Execution.sync execution @@ fun () ->
     check_signal source;
@@ -873,8 +922,15 @@ module Make_impl (Observer_error : Observer_error) () = struct
     let inner = ref None in
     let scope = ref None in
     let owner = ref None in
+    let evaluated_in = ref (-1) in
     let compute () =
-      let source_value = raw_value source in
+      evaluated_in := graph.pass;
+      try
+      let source_value =
+        match Core.value source.raw with
+        | Some value -> value
+        | None -> raise Deferred_source
+      in
       let changed =
         match !selected with
         | None -> true
@@ -931,8 +987,24 @@ module Make_impl (Observer_error : Observer_error) () = struct
             Hashtbl.add seen node.handle.slot ();
             Array.exists reaches_owner node.dependencies)
         in
-        if reaches_owner fresh.raw.packed then
-          raise (Graph_error `Cycle);
+        if reaches_owner fresh.raw.packed then (
+          let seen_pending = Hashtbl.create 8 in
+          let rec has_pending_bind (Core.P node) =
+            if Hashtbl.mem seen_pending node.handle.slot then false
+            else (
+              Hashtbl.add seen_pending node.handle.slot ();
+              match Hashtbl.find_opt bind_evaluations node.handle.slot with
+              | Some (handle, pass)
+                when handle = node.handle
+                     && !pass <> graph.pass
+                     && node.queued_in = graph.pass ->
+                  true
+              | Some _ | None ->
+                  Array.exists has_pending_bind node.dependencies)
+          in
+          if has_pending_bind fresh.raw.packed then
+            raise Deferred_bind
+          else raise (Graph_error `Cycle));
         let packed_owner = Core.P (Option.get !owner).raw.node in
         Option.iter
           (fun old ->
@@ -941,6 +1013,13 @@ module Make_impl (Observer_error : Observer_error) () = struct
               Core.deactivate (Core.P old.raw.node))
           old_inner;
         Core.attach packed_owner (Core.P fresh.raw.node);
+        if
+          Option.is_some fresh.raw.node.scope
+          && Hashtbl.find_opt bind_nodes fresh.raw.handle.slot
+             = Some fresh.raw.handle
+        then
+          ensure_parent_height ~current:true packed_owner
+            (fresh.raw.node.height + 1);
         Option.iter
           (fun invalidate ->
             fresh.raw.node.change_listeners <-
@@ -950,17 +1029,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
              (Option.get !owner).raw.handle.slot);
         scope_owners := (fresh_scope, packed_owner) :: !scope_owners;
         if (Option.get !owner).raw.node.necessary then (
-          Option.iter
-            (fun (timer : timer) ->
-              match timer.kind with
-              | Every _ | At _ ->
-                  if timer.demand = 0 then timer.reset timer.runtime;
-                  timer.refresh timer.runtime
-                    (timer.runtime.Eta.Runtime_contract.now_ms ())
-              | Ticks _ | No_timer -> ())
-            fresh.timer;
           Core.activate (Core.P fresh.raw.node);
-          List.iter (fun initialize -> initialize ()) !initializers);
+          if Option.is_none fresh.timer then
+            List.iter (fun initialize -> initialize ()) !initializers);
         Option.iter
           (fun (old_scope : Core.scope) ->
             incr dynamic_scope_invalidations;
@@ -973,18 +1044,22 @@ module Make_impl (Observer_error : Observer_error) () = struct
                          Some child
                      | None | Some _ -> None)
                    !scope_parents);
-              let rec unlink count slot =
+              let rec retire_slots count slot =
                 if slot = -1 then count
                 else
                   match Core.slot_contents graph.slots.(slot) with
                   | Some (Core.P node as packed) ->
                       let next = node.scope_next in
-                      unlink_queued_node packed;
-                      unlink (count + 1) next
+                      (match node.scope with
+                      | Some owner when owner == scope ->
+                          unlink_queued_node packed;
+                          Core.retire_packed graph packed;
+                          retire_slots (count + 1) next
+                      | None | Some _ -> count)
                   | None -> count
               in
-              dead_nodes := !dead_nodes + unlink 0 scope.slot_head;
-              Core.retire_scope graph scope
+              dead_nodes := !dead_nodes + retire_slots 0 scope.slot_head;
+              scope.valid <- false
             in
             retire old_scope)
           old_scope;
@@ -1009,14 +1084,25 @@ module Make_impl (Observer_error : Observer_error) () = struct
                 scope := old_scope);
             cleanup_capsule = (fun () -> ());
           });
-      let value = Core.value (Option.get !inner).raw in
-      if value = None then
-        (Option.get !owner).raw.node.queued_in <- -1;
-      value
+      (match Core.value (Option.get !inner).raw with
+      | Some _ as value -> value
+      | None ->
+          let owner = Option.get !owner in
+          owner.raw.node.queued_in <- -1;
+          Core.value owner.raw)
+      with Deferred_bind ->
+        let owner = Option.get !owner in
+        owner.raw.node.queued_in <- -1;
+        Core.enqueue owner.raw.packed;
+        Option.bind !inner (fun signal -> Core.value signal.raw)
+      | Deferred_source ->
+        let owner = Option.get !owner in
+        owner.raw.node.queued_in <- -1;
+        Option.bind !inner (fun signal -> Core.value signal.raw)
     in
     let selected_cutoff = cutoff_or_default cutoff in
     let raw =
-      Core.make_node graph ~height:(source.raw.node.height + 1)
+      Core.make_node graph ~height:(source.raw.node.height + 2)
         ~dependencies:[| Core.P source.raw.node |] ~compute
         ~cutoff:(option_cutoff selected_cutoff) ~initial:None
     in
@@ -1026,6 +1112,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
         match Weak.get weak_raw 0 with
         | Some (Core.P node) -> node.queued_in <- -1
         | None -> ());
+    Hashtbl.replace bind_nodes raw.handle.slot raw.handle;
+    Hashtbl.replace bind_evaluations raw.handle.slot
+      (raw.handle, evaluated_in);
     initializers :=
       (fun () ->
         if Core.validate_handle raw
@@ -1133,8 +1222,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
           List.iter
             (fun (timer : timer) ->
               timer.demand <- max 0 (timer.demand - 1);
-              if timer.demand = 0 then
-                Edges.set_timer_demand edges timer.edge_timer false)
+              if timer.demand = 0 then (
+                timer.start_pending <- false;
+                Edges.set_timer_demand edges timer.edge_timer false))
             observer.timer_demands;
           incr dynamic_scope_invalidations;
           Option.iter
@@ -1159,8 +1249,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
             (fun (timer : timer) ->
               if not (List.exists (( == ) timer) next) then (
                 timer.demand <- max 0 (timer.demand - 1);
-                if timer.demand = 0 then
-                  Edges.set_timer_demand edges timer.edge_timer false))
+                if timer.demand = 0 then (
+                  timer.start_pending <- false;
+                  Edges.set_timer_demand edges timer.edge_timer false)))
             observer.timer_demands;
           List.iter
             (fun (timer : timer) ->
@@ -1173,8 +1264,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
                   (List.exists (( == ) timer) observer.timer_demands)
               then (
                 timer.demand <- timer.demand + 1;
-                if timer.demand = 1 then
-                  Edges.set_timer_demand edges timer.edge_timer true))
+                if timer.demand = 1 then (
+                  timer.start_pending <- true;
+                  Edges.set_timer_demand edges timer.edge_timer true)))
             next;
           observer.timer_demands <- next))
       !observers
@@ -1242,6 +1334,33 @@ module Make_impl (Observer_error : Observer_error) () = struct
     | Edges.Changed (old_value, new_value) ->
         Changed { old_value; new_value }
 
+  let prepare_timer_starts_now runtime =
+    sampling_timer_starts := true;
+    Fun.protect
+      ~finally:(fun () -> sampling_timer_starts := false)
+      (fun () ->
+        let attempted = ref [] in
+        let refreshed = ref false in
+        try
+          List.iter
+            (fun (timer : timer) ->
+              if timer.start_pending && timer.demand > 0 then (
+                attempted := timer :: !attempted;
+                let now = timer.reset runtime in
+                if timer.demand > 0 then (
+                  match timer.kind with
+                  | Every _ | At _ ->
+                      timer.refresh runtime now;
+                      refreshed := true
+                  | Ticks _ | No_timer -> ());
+                if timer.demand > 0 then timer.start_pending <- false
+                else timer.rollback_refresh ()))
+              (List.rev !timers);
+          (!refreshed, !attempted)
+        with exn ->
+          List.iter (fun timer -> timer.rollback_refresh ()) !attempted;
+          raise exn)
+
   let run_edge_plan plan =
     Eta.Spi.Expert.make ~leaf_name:"eta_signal.post_commit" @@ fun context ->
     let contract = Eta.Spi.Expert.contract context in
@@ -1263,18 +1382,33 @@ module Make_impl (Observer_error : Observer_error) () = struct
     let disposals = List.rev !pending_edge_disposals in
     pending_edge_disposals := [];
     List.iter (fun dispose -> dispose ()) disposals;
-    List.iter
-      (fun (timer : timer) ->
-        if timer.demand = 0 then
-          ignore
-            (Edges.run edges ~runtime:timer.runtime ~plan:[] :
-              (unit, observer_error Edges.run_error) result))
-      !timers;
     let failure = function
       | Edges.Typed_failure error ->
           Eta.Exit.Error (Eta.Cause.Fail (`Observer_error error))
       | Edges.Defect exn -> Eta.Spi.Expert.exit_of_exn context exn
       | Edges.Interrupted exn -> raise exn
+    in
+    let finalizer_failure failures =
+      let diagnostic = function
+        | Edges.Typed_failure error ->
+            Eta.Cause.Finalizer.Fail
+              {
+                error;
+                rendered = Format.asprintf "%a" Observer_error.pp error;
+              }
+        | Edges.Defect exn | Edges.Interrupted exn ->
+            (match Eta.Spi.Expert.exit_of_exn context exn with
+            | Eta.Exit.Error cause ->
+                Eta.Cause.finalizer_of_cause Observer_error.pp cause
+            | Eta.Exit.Ok _ -> assert false)
+      in
+      let diagnostics = List.map diagnostic failures in
+      let finalizer =
+        match diagnostics with
+        | [ failure ] -> failure
+        | _ -> Eta.Cause.Finalizer.Sequential diagnostics
+      in
+      Eta.Exit.Error (Eta.Cause.Finalizer finalizer)
     in
     edge_graph_error := None;
     let finishes = List.rev !pending_finishes in
@@ -1286,7 +1420,17 @@ module Make_impl (Observer_error : Observer_error) () = struct
           observer.has_callback && observer.callback_pending)
         !observers
     in
+    ignore (prepare_timer_starts_now contract);
+    edge_start_failed := false;
     let result = Edges.run edges ~runtime:contract ~plan in
+    if
+      Result.is_ok result
+      && Edges.queued_timer_count edges > 0
+      && List.for_all (fun (timer : timer) -> timer.demand = 0) !timers
+    then
+      ignore
+        (Edges.run edges ~runtime:contract ~plan:[] :
+          (unit, observer_error Edges.run_error) result);
     (match result with
     | Ok () -> ()
     | Error _ ->
@@ -1299,8 +1443,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
               List.iter
                 (fun (timer : timer) ->
                   timer.demand <- max 0 (timer.demand - 1);
-                  if timer.demand = 0 then
-                    Edges.set_timer_demand edges timer.edge_timer false)
+                  if timer.demand = 0 then (
+                    timer.start_pending <- false;
+                    Edges.set_timer_demand edges timer.edge_timer false))
                 observer.timer_demands;
               Edges.dispose edges observer.edge))
           !pending_observers;
@@ -1310,7 +1455,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
             !pending_observers;
         unlink_unnecessary_queued ();
         ignore
-          (Edges.run edges ~runtime:contract ~plan:[] :
+          (Edges.drain_cleanup edges :
             (unit, observer_error Edges.run_error) result));
     match !edge_graph_error, result with
     | Some error, _ ->
@@ -1322,8 +1467,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
         Eta.Exit.Error
           (Eta.Cause.Fail (`Runtime_mismatch :> stabilize_error))
     | None, Error (Edges.Callback_failure error) -> failure error
-    | None, Error (Edges.Cleanup_failures (error :: _)) -> failure error
-    | None, Error (Edges.Cleanup_failures []) -> assert false
+    | None, Error (Edges.Cleanup_failures (error :: _))
+      when !edge_start_failed -> failure error
+    | None, Error (Edges.Cleanup_failures errors) -> finalizer_failure errors
 
   let observe_with ?cutoff ?on_finish signal edge_callback =
     if not (Core.validate_handle signal.raw) then Error `Invalid_scope
@@ -1405,8 +1551,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
       List.iter
         (fun (timer : timer) ->
           timer.demand <- timer.demand + 1;
-          if timer.demand = 1 then
-            Edges.set_timer_demand edges timer.edge_timer true)
+          if timer.demand = 1 then (
+            timer.start_pending <- true;
+            Edges.activate_timer_registration edges timer.edge_timer edge))
         timer_demands;
       Ok observer
 
@@ -1437,20 +1584,28 @@ module Make_impl (Observer_error : Observer_error) () = struct
             !observers;
         Core.release observer.demand;
         Option.iter Core.release observer.scope_demand;
+        let aborted_timer = ref false in
         List.iter
           (fun (timer : timer) ->
             timer.demand <- max 0 (timer.demand - 1);
-            if timer.demand = 0 then
-              Edges.set_timer_demand edges timer.edge_timer false)
+            if timer.demand = 0 then (
+              timer.start_pending <- false;
+              aborted_timer := true;
+              pending_edge_disposals :=
+                (fun () ->
+                  Edges.abort_timer_registration edges timer.edge_timer
+                    observer.edge Edges.Disposed)
+                :: !pending_edge_disposals))
           observer.timer_demands;
         unlink_unnecessary_queued ();
-        pending_edge_disposals :=
-          (fun () -> Edges.dispose edges observer.edge)
-          :: !pending_edge_disposals)
+        if not !aborted_timer then
+          pending_edge_disposals :=
+            (fun () -> Edges.dispose edges observer.edge)
+            :: !pending_edge_disposals)
 
   let abandon_observer observer =
     let open Eta.Syntax in
-    let* () =
+    let* initial_batch =
       Execution.run execution @@ fun _checkpoint ->
       abandon_observer_now observer;
       Ok ()
@@ -1460,6 +1615,20 @@ module Make_impl (Observer_error : Observer_error) () = struct
          | `Observer_error _ ->
              failwith "Eta_signal: observer registration cleanup failed"
          | #graph_error as error -> error)
+
+  let registration_with_cleanup observer_ref operation =
+    Eta.Spi.Expert.make ~leaf_name:"eta_signal.observer_registration"
+    @@ fun context ->
+    let exit =
+      try Eta.Spi.Expert.eval context operation
+      with exn -> Eta.Spi.Expert.exit_of_exn context exn
+    in
+    (match exit with
+    | Eta.Exit.Ok _ -> ()
+    | Eta.Exit.Error _ ->
+        Option.iter abandon_observer_now !observer_ref;
+        ignore (Eta.Spi.Expert.eval context (run_edge_plan [])));
+    exit
 
   module Observer = struct
     type 'a t = 'a observer
@@ -1496,6 +1665,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         | None -> E.unit)
       in
       let observer_ref = ref None in
+      registration_with_cleanup observer_ref
       (let* observer =
         Execution.run execution @@ fun _checkpoint ->
         let result =
@@ -1525,6 +1695,12 @@ module Make_impl (Observer_error : Observer_error) () = struct
                   if not still_active then E.unit
                   else
                     let* () = callback (edge_update update) in
+                    let* () =
+                      Execution.run execution @@ fun _checkpoint -> Ok ()
+                    in
+                    let* () =
+                      Execution.run execution @@ fun _checkpoint -> Ok ()
+                    in
                     Execution.run execution @@ fun _checkpoint -> Ok ())
             in
             (match outcome with
@@ -1554,15 +1730,27 @@ module Make_impl (Observer_error : Observer_error) () = struct
                     "Eta_signal: impossible typed observer-registration failure"
               | #graph_error as error -> error)
        in
-      E.uninterruptible
-         (E.sync (fun () ->
-            transfer_observer observer;
-            observer)))
-      |> E.on_exit (function
-           | Eta.Exit.Ok _ -> E.unit
-           | Eta.Exit.Error _ ->
-               E.sync (fun () ->
-                 Option.iter abandon_observer_now !observer_ref))
+      let* observer =
+        Execution.run execution @@ fun _checkpoint ->
+        if observer.lifecycle = Invalid then Error `Invalid_scope
+        else Ok observer
+      in
+      let* () =
+        Execution.run execution @@ fun _checkpoint ->
+        if observer.lifecycle = Invalid then Error `Invalid_scope
+        else Ok ()
+      in
+      let* () =
+        Execution.run execution @@ fun _checkpoint ->
+        if observer.lifecycle = Invalid then Error `Invalid_scope
+        else Ok ()
+      in
+      if observer.lifecycle = Invalid then E.fail `Invalid_scope
+      else
+        E.uninterruptible
+          (E.sync (fun () ->
+             transfer_observer observer;
+             observer)))
 
     let read observer =
       Execution.run execution @@ fun _checkpoint ->
@@ -1617,8 +1805,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
             List.iter
               (fun (timer : timer) ->
                 timer.demand <- max 0 (timer.demand - 1);
-                if timer.demand = 0 then
-                  Edges.set_timer_demand edges timer.edge_timer false)
+                if timer.demand = 0 then (
+                  timer.start_pending <- false;
+                  Edges.set_timer_demand edges timer.edge_timer false))
               observer.timer_demands;
             Edges.dispose edges observer.edge;
             nodes_became_unnecessary :=
@@ -1627,6 +1816,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
             Ok ()
       in
       if not runtime_matches then E.fail `Runtime_mismatch
+      else if !sampling_timer_starts then E.unit
       else
         run_edge_plan []
         |> E.map_error (function
@@ -1673,6 +1863,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         | None -> E.unit)
       in
       let observer_ref = ref None in
+      registration_with_cleanup observer_ref
       (let* observer =
         Execution.run execution @@ fun _checkpoint ->
         let result =
@@ -1699,15 +1890,27 @@ module Make_impl (Observer_error : Observer_error) () = struct
                     "Eta_signal: impossible typed stream-registration failure"
               | #graph_error as error -> error)
        in
-       E.uninterruptible
-         (E.sync (fun () ->
-            transfer_observer observer;
-            observer)))
-      |> E.on_exit (function
-           | Eta.Exit.Ok _ -> E.unit
-           | Eta.Exit.Error _ ->
-               E.sync (fun () ->
-                 Option.iter abandon_observer_now !observer_ref))
+       let* observer =
+         Execution.run execution @@ fun _checkpoint ->
+         if observer.lifecycle = Invalid then Error `Invalid_scope
+         else Ok observer
+       in
+       let* () =
+         Execution.run execution @@ fun _checkpoint ->
+         if observer.lifecycle = Invalid then Error `Invalid_scope
+         else Ok ()
+       in
+       let* () =
+         Execution.run execution @@ fun _checkpoint ->
+         if observer.lifecycle = Invalid then Error `Invalid_scope
+         else Ok ()
+       in
+       if observer.lifecycle = Invalid then E.fail `Invalid_scope
+       else
+         E.uninterruptible
+           (E.sync (fun () ->
+              transfer_observer observer;
+              observer)))
 
     let current delivery =
       Execution.run execution @@ fun _checkpoint ->
@@ -1864,7 +2067,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
           ~build:(fun ~key ~data ->
             let signal = { raw = data; timer = None } in
             let output = plan.build ~key ~data:signal in
-            Hashtbl.replace multi_eval_nodes output.raw.handle.slot ();
             let wrapped =
               map (fun value ->
                 Option.iter
@@ -1874,7 +2076,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
                 value)
                 output
             in
-            Hashtbl.replace multi_eval_nodes wrapped.raw.handle.slot ();
             Core.activate (Core.P wrapped.raw.node);
             List.iter (fun initialize -> initialize ()) !initializers;
             wrapped.raw)
@@ -1912,18 +2113,33 @@ module Make_impl (Observer_error : Observer_error) () = struct
       edge_context := previous_context
     in
     Fun.protect ~finally:finish @@ fun () ->
-    List.iter
-      (fun (timer : timer) ->
-        if timer.demand = 0 then
-          ignore
-            (Edges.run edges ~runtime:timer.runtime ~plan:[] :
-              (unit, observer_error Edges.run_error) result))
-      !timers;
     let failure = function
       | Edges.Typed_failure error ->
           Eta.Exit.Error (Eta.Cause.Fail (`Observer_error error))
       | Edges.Defect exn -> Eta.Spi.Expert.exit_of_exn context exn
       | Edges.Interrupted exn -> raise exn
+    in
+    let finalizer_failure failures =
+      let diagnostic = function
+        | Edges.Typed_failure error ->
+            Eta.Cause.Finalizer.Fail
+              {
+                error;
+                rendered = Format.asprintf "%a" Observer_error.pp error;
+              }
+        | Edges.Defect exn | Edges.Interrupted exn ->
+            (match Eta.Spi.Expert.exit_of_exn context exn with
+            | Eta.Exit.Error cause ->
+                Eta.Cause.finalizer_of_cause Observer_error.pp cause
+            | Eta.Exit.Ok _ -> assert false)
+      in
+      let diagnostics = List.map diagnostic failures in
+      let finalizer =
+        match diagnostics with
+        | [ failure ] -> failure
+        | _ -> Eta.Cause.Finalizer.Sequential diagnostics
+      in
+      Eta.Exit.Error (Eta.Cause.Finalizer finalizer)
     in
     edge_graph_error := None;
     let finishes = List.rev !pending_finishes in
@@ -1935,12 +2151,14 @@ module Make_impl (Observer_error : Observer_error) () = struct
           observer.has_callback && observer.callback_pending)
         !observers
     in
+    ignore (prepare_timer_starts_now contract);
+    edge_start_failed := false;
     let result = Edges.run edges ~runtime:contract ~plan in
     (match result with
     | Ok () -> ()
     | Error _ ->
         ignore
-          (Edges.run edges ~runtime:contract ~plan:[] :
+          (Edges.drain_cleanup edges :
             (unit, observer_error Edges.run_error) result));
     match !edge_graph_error, result with
     | Some error, _ ->
@@ -1952,11 +2170,48 @@ module Make_impl (Observer_error : Observer_error) () = struct
         Eta.Exit.Error
           (Eta.Cause.Fail (`Runtime_mismatch :> stabilize_error))
     | None, Error (Edges.Callback_failure error) -> failure error
-    | None, Error (Edges.Cleanup_failures (error :: _)) -> failure error
-    | None, Error (Edges.Cleanup_failures []) -> assert false
+    | None, Error (Edges.Cleanup_failures (error :: _))
+      when !edge_start_failed -> failure error
+    | None, Error (Edges.Cleanup_failures errors) -> finalizer_failure errors
+
+  let drain_edge_cleanup () =
+    Eta.Spi.Expert.make ~leaf_name:"eta_signal.edge_cleanup" @@ fun context ->
+    let contract = Eta.Spi.Expert.contract context in
+    let previous_context = !edge_context in
+    let previous_contract = edge_execution.Edge_execution.contract in
+    edge_context := Some context;
+    edge_execution.Edge_execution.contract <- Some contract;
+    Fun.protect
+      ~finally:(fun () ->
+        edge_execution.Edge_execution.contract <- previous_contract;
+        edge_context := previous_context)
+      (fun () ->
+        let disposals = List.rev !pending_edge_disposals in
+        pending_edge_disposals := [];
+        List.iter (fun dispose -> dispose ()) disposals;
+        let finishes = List.rev !pending_finishes in
+        pending_finishes := [];
+        List.iter (fun finish -> ignore (finish ())) finishes;
+        ignore
+          (Edges.drain_cleanup edges :
+            (unit, observer_error Edges.run_error) result);
+        Eta.Exit.Ok ())
 
   let enqueue_uninitialized_necessary () =
     List.iter (fun enqueue -> enqueue ()) !initializers
+
+  let enqueue_all_uninitialized_necessary () =
+    for slot = 0 to graph.slot_count - 1 do
+      match Core.slot_contents graph.slots.(slot) with
+      | Some (Core.P node as packed)
+        when node.necessary
+             && Array.length node.dependencies > 0
+             &&
+             Option.is_none
+               (Obj.magic node.current : Obj.t option) ->
+          Core.enqueue packed
+      | Some _ | None -> ()
+    done
 
   let stabilize =
     let open Eta.Syntax in
@@ -1964,7 +2219,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
       current_runtime ()
       |> E.map_error (fun error -> (error : stabilize_error))
     in
-    let* batch =
+    let* initial_batch =
       (Execution.run execution @@ fun checkpoint ->
        let observed_timers =
          List.concat_map
@@ -1986,40 +2241,178 @@ module Make_impl (Observer_error : Observer_error) () = struct
            observed_timers
        then Error `Runtime_mismatch
        else (
-         let demanded =
-           List.filter
-             (fun (timer : timer) ->
-               List.exists (( == ) timer) observed_timers
-               ||
-               (Eta.Runtime_contract.same_runtime runtime timer.runtime
-               && timer.demand > 0
-               &&
-               match timer.kind with
-               | Every _ | At _ -> true
-               | Ticks _ | No_timer -> false))
-             !timers
-         in
-         (match demanded with
-         | [] -> ()
-         | timers ->
-             let now = runtime.Eta.Runtime_contract.now_ms () in
-             List.iter (fun timer -> timer.refresh runtime now) timers);
          enqueue_uninitialized_necessary ();
+         let seen_timer_work = Hashtbl.create 16 in
+         let rec unlink_timer_work (Core.P node as packed) =
+           if not (Hashtbl.mem seen_timer_work node.handle.slot) then (
+             Hashtbl.add seen_timer_work node.handle.slot ();
+             unlink_queued_node packed;
+             List.iter unlink_timer_work node.dependents)
+         in
+         List.iter
+           (fun (timer : timer) -> unlink_timer_work timer.source_node)
+           !timers;
          incr stabilization_attempts;
          match Core.stabilize ~checkpoint graph with
-         | Error Core.Reentrant_stabilization -> Error `Reentrant_stabilization
-         | Error (Core.Defect (Graph_error error)) -> Error error
-         | Error (Core.Defect exn) -> raise exn
+         | Error Core.Reentrant_stabilization ->
+             List.iter (fun timer -> timer.rollback_refresh ()) !timers;
+             Error `Reentrant_stabilization
+         | Error (Core.Defect (Graph_error error)) ->
+             List.iter (fun timer -> timer.rollback_refresh ()) !timers;
+             Error error
+         | Error (Core.Defect exn) ->
+             List.iter (fun timer -> timer.rollback_refresh ()) !timers;
+             raise exn
          | Ok result ->
+             List.iter (fun timer -> timer.commit_refresh ()) !timers;
              ignore result;
-             initializers := [];
              incr pure_snapshot_commit_count;
              let work = Core.work graph in
              recompute_count := !recompute_count + work.evaluations;
              settle_invalid_observers ();
              reconcile_timer_demands runtime;
-             let events = collect_observers () in
-             Ok events))
+             if
+               not
+                 (List.exists
+                    (fun (timer : timer) ->
+                      timer.start_pending && timer.demand > 0)
+                    !timers)
+             then initializers := [];
+             Ok (collect_observers ())))
+      |> E.map_error (fun (#graph_error as error) ->
+             (error : stabilize_error))
+    in
+    let* refreshed =
+      E.on_exit
+        (function
+          | Eta.Exit.Ok _ -> E.unit
+          | Eta.Exit.Error _ -> drain_edge_cleanup ())
+        (E.sync (fun () ->
+           List.iter
+             (fun (timer : timer) ->
+               if timer.demand = 0 then timer.rollback_refresh ())
+             !timers;
+           prepare_timer_starts_now runtime))
+    in
+    let _started_refreshed, started = refreshed in
+    let started_admitted =
+      List.fold_left
+        (fun admitted (timer : timer) ->
+          (timer.demand > 0 && timer.admit_refresh ()) || admitted)
+        false started
+    in
+    let* active_refreshed =
+      E.sync (fun () ->
+        let active =
+          List.fold_left
+            (fun active (O observer) ->
+              if observer.lifecycle <> Active then active
+              else
+                List.fold_left
+                  (fun active timer ->
+                    if
+                      List.exists (( == ) timer) started
+                      || List.exists (( == ) timer) active
+                    then active
+                    else timer :: active)
+                  active (signal_timers observer.signal))
+            [] !observers
+        in
+        match active with
+        | [] -> false
+        | timers ->
+            let now = runtime.Eta.Runtime_contract.now_ms () in
+            List.iter (fun timer -> timer.refresh runtime now) timers;
+            ignore
+              (List.fold_left
+                 (fun admitted timer ->
+                   timer.admit_refresh () || admitted)
+                 false timers);
+            true)
+    in
+    let refreshed =
+      started <> [] || started_admitted || active_refreshed
+    in
+    let* batch =
+      (Execution.run execution @@ fun checkpoint ->
+       let stale_bind = ref false in
+       Hashtbl.iter
+         (fun slot handle ->
+           match Core.slot_contents graph.slots.(slot) with
+           | Some (Core.P node as packed)
+             when node.handle = handle
+                  && node.necessary
+                  && Array.length node.dependencies > 1 ->
+               let Core.P inner =
+                 node.dependencies.(Array.length node.dependencies - 1)
+               in
+               if Obj.repr node.current != Obj.repr inner.current then (
+                 Core.enqueue packed;
+                 stale_bind := true)
+           | Some _ | None -> ())
+         bind_nodes;
+       let stale_duplicate = ref false in
+       let committed_pass = graph.pass - 1 in
+       let seen_descendants = Hashtbl.create 16 in
+       let rec enqueue_descendants (Core.P node as packed) =
+         if not (Hashtbl.mem seen_descendants node.handle.slot) then (
+           Hashtbl.add seen_descendants node.handle.slot ();
+           if node.necessary then Core.enqueue packed;
+           List.iter enqueue_descendants node.dependents)
+       in
+       for slot = 0 to graph.slot_count - 1 do
+         match Core.slot_contents graph.slots.(slot) with
+         | Some (Core.P node) when node.necessary ->
+             let duplicate = ref false in
+             for left = 0 to Array.length node.dependencies - 1 do
+               for right = left + 1 to Array.length node.dependencies - 1 do
+                 let Core.P left_node = node.dependencies.(left) in
+                 let Core.P right_node = node.dependencies.(right) in
+                 if left_node.handle = right_node.handle then duplicate := true
+               done
+             done;
+             let dependency_changed =
+               Array.exists
+                 (fun (Core.P dependency) ->
+                   dependency.written_in = committed_pass)
+                 node.dependencies
+             in
+             let custom_dependency =
+               Array.exists
+                 (fun (Core.P dependency) ->
+                   Hashtbl.find_opt custom_cutoff_nodes dependency.handle.slot
+                   = Some dependency.handle)
+                 node.dependencies
+             in
+             if !duplicate && dependency_changed && not custom_dependency then (
+               Core.enqueue (Core.P node);
+               List.iter enqueue_descendants node.dependents;
+               stale_duplicate := true)
+         | Some _ | None -> ()
+       done;
+       if refreshed || !stale_bind || !stale_duplicate then
+         (enqueue_uninitialized_necessary ();
+         enqueue_all_uninitialized_necessary ();
+         match Core.stabilize ~checkpoint graph with
+         | Error Core.Reentrant_stabilization ->
+             List.iter (fun timer -> timer.rollback_refresh ()) !timers;
+             Error `Reentrant_stabilization
+         | Error (Core.Defect (Graph_error error)) ->
+             List.iter (fun timer -> timer.rollback_refresh ()) !timers;
+             Error error
+         | Error (Core.Defect exn) ->
+             List.iter (fun timer -> timer.rollback_refresh ()) !timers;
+             raise exn
+         | Ok result ->
+             List.iter (fun timer -> timer.commit_refresh ()) !timers;
+             ignore result;
+             initializers := [];
+             let work = Core.work graph in
+             recompute_count := !recompute_count + work.evaluations;
+             settle_invalid_observers ();
+             reconcile_timer_demands runtime;
+             Ok (collect_observers ()))
+       else Ok initial_batch)
       |> E.map_error (fun (#graph_error as error) ->
              (error : stabilize_error))
     in
@@ -2045,7 +2438,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
 
   let stats () =
     Execution.run execution @@ fun _checkpoint ->
-    Core.release_unreachable_roots graph;
+    if graph.phase = Core.Idle then Core.release_unreachable_roots graph;
     let total = ref 0 and necessary = ref 0 and dirty = ref 0 in
     for slot = 0 to graph.slot_count - 1 do
       match Core.slot_contents graph.slots.(slot) with
@@ -2206,6 +2599,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
 
   module Time = struct
     exception Timer_cancelled
+    exception Timer_start_abandoned
 
     type monotonic_time = {
       runtime : Eta.Runtime_contract.t;
@@ -2224,9 +2618,31 @@ module Make_impl (Observer_error : Observer_error) () = struct
       if Eta.Duration.to_ms duration <= 0 then Error `Invalid_interval else Ok ()
 
     let make_timer ?last_sample runtime kind initial refresh_value =
-      let source = Var.create ~cutoff:Cutoff.never initial in
+      let force_source = ref false in
+      let source =
+        {
+          source =
+            Core.var
+              ~cutoff:(fun old next ->
+                match kind with
+                | Ticks _ -> false
+                | Every _ | At _ | No_timer ->
+                    (not !force_source) && old == next)
+              graph (Some initial);
+          value = initial;
+          cutoff = Cutoff.never;
+          updating = false;
+        }
+      in
       let edge_timer_ref = ref None in
-      let reset_on_start = ref (fun (_ : int) -> ()) in
+      let admit_ref = ref (fun (_ : Eta.Runtime_contract.t) -> ()) in
+      let begin_refresh = ref (fun () -> ()) in
+      let rollback_refresh = ref (fun () -> ()) in
+      let commit_refresh = ref (fun () -> ()) in
+      let startup_cleanup :
+          (int * (unit -> (unit, observer_error) Edges.outcome)) option ref =
+        ref None
+      in
       let sleep_duration runtime =
         match kind with
         | Every interval | Ticks interval -> Eta.Duration.ms interval
@@ -2242,75 +2658,121 @@ module Make_impl (Observer_error : Observer_error) () = struct
             start =
               (fun runtime ~generation ->
                 try
-                  let now = runtime.Eta.Runtime_contract.now_ms () in
-                  !reset_on_start now;
-                  ignore (runtime.Eta.Runtime_contract.now_ms ());
-                  let #(installed, resolver) =
-                    runtime.Eta.Runtime_contract.create_promise ()
+                  (match !edge_timer_ref with
+                  | Some edge_timer
+                    when Edges.timer_generation edge_timer = generation ->
+                      ()
+                  | Some _ | None ->
+                      raise Timer_start_abandoned);
+                  let cancel_ref = ref None in
+                  let stop_requested = ref false in
+                  let stop () =
+                    stop_requested := true;
+                    match !cancel_ref with
+                    | None -> Edges.Success ()
+                    | Some cancel ->
+                        (try
+                           cancel ();
+                           Edges.Success ()
+                         with exn -> Edges.Failure (Edges.Defect exn))
                   in
+                  startup_cleanup := Some (generation, stop);
                   let daemon =
                   Eta.Spi.Expert.make ~leaf_name:"eta_signal.timer" @@ fun context ->
                   let contract = Eta.Spi.Expert.contract context in
+                  Fun.protect
+                    ~finally:(fun () -> cancel_ref := None)
+                    (fun () ->
                   try
                     contract.Eta.Runtime_contract.cancel_sub @@ fun cancel_context ->
                     let cancel () =
                       contract.Eta.Runtime_contract.cancel cancel_context
                         Timer_cancelled
                     in
-                    contract.Eta.Runtime_contract.resolve_promise resolver cancel;
-                    let rec loop () =
-                      contract.Eta.Runtime_contract.sleep
-                        (sleep_duration contract);
-                      let previous = edge_execution.Edge_execution.contract in
-                      edge_execution.Edge_execution.contract <- Some contract;
-                      let accepted =
-                        Fun.protect
-                          ~finally:(fun () ->
-                            edge_execution.Edge_execution.contract <- previous)
-                          (fun () ->
-                            match !edge_timer_ref with
-                            | None -> false
-                            | Some edge_timer ->
-                                (match
-                                   Edges.timer_wake edges ~runtime:contract
-                                     edge_timer ~generation
-                                 with
-                                | Ok accepted -> accepted
-                                | Error _ -> false))
+                    cancel_ref := Some cancel;
+                    if !stop_requested then cancel ()
+                    else (
+                      let rec loop () =
+                        contract.Eta.Runtime_contract.sleep
+                          (sleep_duration contract);
+                        let previous =
+                          edge_execution.Edge_execution.contract
+                        in
+                        edge_execution.Edge_execution.contract <-
+                          Some contract;
+                        let accepted =
+                          Fun.protect
+                            ~finally:(fun () ->
+                              edge_execution.Edge_execution.contract <-
+                                previous)
+                            (fun () ->
+                              match !edge_timer_ref with
+                              | None -> false
+                              | Some edge_timer ->
+                                  (match
+                                     Edges.timer_wake_with edges
+                                       ~runtime:contract edge_timer ~generation
+                                       ~admit:(fun () -> !admit_ref contract)
+                                   with
+                                  | Ok accepted -> accepted
+                                  | Error _ -> false))
+                        in
+                        if accepted then
+                          match kind with
+                          | At _ -> ()
+                          | Every _ | Ticks _ | No_timer -> loop ()
+                        else if
+                          not !stop_requested
+                          &&
+                          match !edge_timer_ref with
+                          | Some edge_timer ->
+                              Edges.timer_generation edge_timer = generation
+                          | None -> false
+                        then (
+                          match kind with
+                          | Ticks _ ->
+                              !admit_ref contract;
+                              loop ()
+                          | At _ | Every _ | No_timer -> ())
                       in
-                      if accepted then
-                        match kind with
-                        | At _ -> ()
-                        | Every _ | Ticks _ | No_timer -> loop ()
-                    in
-                    loop ();
+                      loop ());
                     Eta.Exit.Ok ()
                   with exn ->
                     if
                       Option.is_some
                         (contract.Eta.Runtime_contract.cancellation_reason exn)
                     then Eta.Exit.Ok ()
-                    else Eta.Spi.Expert.exit_of_exn context exn
+                    else Eta.Spi.Expert.exit_of_exn context exn)
                 in
                 let operation =
                   let open Eta.Syntax in
                   let* () = Eta.Spi.daemon daemon in
-                  E.sync (fun () ->
-                    runtime.Eta.Runtime_contract.await_promise installed)
+                  E.sync (fun () -> stop)
                 in
                   match edge_outcome operation with
                   | Edges.Success cancel ->
-                      Edges.Success
-                        (fun () ->
-                          try
-                            (try cancel () with Invalid_argument _ -> ());
-                            Edges.Success ()
-                          with exn -> Edges.Failure (Edges.Defect exn))
-                  | Edges.Failure failure -> Edges.Failure failure
-                with exn -> Edges.Failure (Edges.Defect exn));
+                      startup_cleanup := None;
+                      Edges.Success cancel
+                  | Edges.Failure failure ->
+                      edge_start_failed := true;
+                      Edges.Failure failure
+                with
+                | Timer_start_abandoned ->
+                    Edges.Success (fun () -> Edges.Success ())
+                | exn ->
+                    edge_start_failed := true;
+                    Edges.Failure (Edges.Defect exn));
           }
       in
-      let edge_timer = Edges.create_timer edges ~runtime ~policy in
+      let edge_timer =
+        Edges.create_timer_with_cleanup edges ~runtime ~policy
+          ~on_start_failure:(fun ~generation _ ->
+            match !startup_cleanup with
+            | Some (active, cleanup) when active = generation ->
+                startup_cleanup := None;
+                cleanup ()
+            | Some _ | None -> Edges.Success ())
+      in
       edge_timer_ref := Some edge_timer;
       let last_sample =
         match last_sample with
@@ -2318,41 +2780,95 @@ module Make_impl (Observer_error : Observer_error) () = struct
         | None -> runtime.Eta.Runtime_contract.now_ms ()
       in
       let sample = ref last_sample in
-      reset_on_start := (fun now -> sample := now);
+      let candidate = ref None in
+      let speculative = ref None in
+      begin_refresh :=
+        (fun () ->
+          if Option.is_none !speculative then
+            speculative := Some (!sample, source.value));
+      rollback_refresh :=
+        (fun () ->
+          match !speculative with
+          | None -> ()
+          | Some (previous_sample, previous_value) ->
+              speculative := None;
+              candidate := None;
+              force_source := false;
+              sample := previous_sample;
+              source.value <- previous_value;
+              source.source.accepted := Some previous_value;
+              let node = source.source.signal.node in
+              let retained = ref 0 in
+              for index = 0 to graph.admission_length - 1 do
+                let slot = graph.admissions.(index) in
+                if slot <> node.handle.slot then (
+                  graph.admissions.(!retained) <- slot;
+                  incr retained)
+              done;
+              graph.admission_length <- !retained;
+              node.admitted <- false;
+              unlink_queued_node source.source.signal.packed);
+      commit_refresh :=
+        (fun () ->
+          speculative := None;
+          force_source := false);
       let reset active_runtime =
         if not (Eta.Runtime_contract.same_runtime active_runtime runtime) then
           raise (Graph_error `Runtime_mismatch);
-        sample := active_runtime.Eta.Runtime_contract.now_ms ()
+        !begin_refresh ();
+        let now = active_runtime.Eta.Runtime_contract.now_ms () in
+        sample := now;
+        now
       in
       let refresh active_runtime now =
         if not (Eta.Runtime_contract.same_runtime active_runtime runtime) then
           raise (Graph_error `Runtime_mismatch);
-        let set value =
-          source.value <- value;
-          Core.set graph source.source (Some value)
-        in
-        match refresh_value source.value now !sample with
+        let current = Option.value !candidate ~default:source.value in
+        match refresh_value current now !sample with
         | None -> ()
         | Some (value, next_sample) ->
+            !begin_refresh ();
             sample := next_sample;
-            set value
+            candidate := Some value
       in
+      let admit_refresh () =
+        match !candidate with
+        | None -> false
+        | Some value ->
+            candidate := None;
+            force_source := true;
+            source.value <- value;
+            Core.set graph source.source (Some value);
+            Core.enqueue source.source.signal.packed;
+            true
+      in
+      admit_ref :=
+        (fun active_runtime ->
+          refresh active_runtime
+            (active_runtime.Eta.Runtime_contract.now_ms ()));
       let timer =
         {
           runtime;
           kind;
           last_sample;
           demand = 0;
+          start_pending = false;
           generation = 0;
           cancel = None;
           edge_timer;
+          source_node = source.source.signal.packed;
           reset;
           refresh;
+          admit_refresh;
+          commit_refresh = (fun () -> !commit_refresh ());
+          rollback_refresh = (fun () -> !rollback_refresh ());
         }
       in
       timers := timer :: !timers;
       let watched = Var.watch source in
-      Hashtbl.replace timer_nodes watched.raw.handle.slot timer;
+      timer_roots := watched.raw.packed :: !timer_roots;
+      Hashtbl.replace timer_nodes watched.raw.handle.slot
+        (watched.raw.handle, timer);
       ({ watched with timer = Some timer }, source)
 
     let now ~every =
@@ -2412,20 +2928,49 @@ module Make_impl (Observer_error : Observer_error) () = struct
       | Error error -> E.fail error
       | Ok () ->
           let* runtime = current_runtime () in
-          Execution.run execution @@ fun _checkpoint ->
-          let signal, _ =
-            let period = Eta.Duration.to_ms duration in
-            make_timer runtime (Ticks period) 0
-              (fun value now sample ->
-                let ticks = max 0 (now - sample) / period in
-                if ticks = 0 then None
-                else
-                  Some
-                    ( (if value > max_int - ticks then max_int
-                       else value + ticks),
-                      sample + (ticks * period) ))
+          let fiber = runtime.Eta.Runtime_contract.current_fiber_id () in
+          let ambiguous =
+            match execution.Execution.owner_fiber_id with
+            | Some owner when owner <> fiber ->
+                graph.phase <> Core.Idle || graph.running
+            | Some _ | None -> false
           in
-          Ok signal
+          Execution.run execution @@ fun _checkpoint ->
+          if ambiguous then Error `Ambiguous_scope
+          else
+            let signal, _ =
+              let period = Eta.Duration.to_ms duration in
+              make_timer runtime (Ticks period) 0
+                (fun value now sample ->
+                  let elapsed =
+                    Int64.sub (Int64.of_int now) (Int64.of_int sample)
+                  in
+                  let ticks64 =
+                    if Int64.compare elapsed 0L <= 0 then 0L
+                    else Int64.div elapsed (Int64.of_int period)
+                  in
+                  let ticks =
+                    if Int64.compare ticks64 (Int64.of_int max_int) > 0
+                    then max_int
+                    else Int64.to_int ticks64
+                  in
+                  if ticks = 0 then None
+                  else
+                    Some
+                      ( (if value > max_int - ticks then max_int
+                         else value + ticks),
+                        let next_sample =
+                          Int64.add (Int64.of_int sample)
+                            (Int64.mul ticks64 (Int64.of_int period))
+                        in
+                        if
+                          Int64.compare next_sample
+                            (Int64.of_int max_int)
+                          > 0
+                        then now
+                        else Int64.to_int next_sample ))
+            in
+            Ok signal
   end
 end
 
