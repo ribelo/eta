@@ -71,8 +71,8 @@ main Dune workspace.
 ## Current path
 
 1. Decide the [public interface and graph ownership](issues/12-public-interface-depth.md) on the promoted code.
-3. Decide [module and package ownership](issues/13-module-and-package-ownership.md) and move the production code.
-4. Write the [consolidated execution specification](issues/14-consolidated-execution-specification.md) after all gates pass.
+2. Decide [module and package ownership](issues/13-module-and-package-ownership.md) and move the production code.
+3. Write the [consolidated execution specification](issues/14-consolidated-execution-specification.md) after all gates pass.
 
 ## Not yet specified
 
