@@ -1,9 +1,10 @@
-# Autoresearch: Eta Signal dynamic-switch wall time
+# Autoresearch: Eta Signal cutoff depth-10 wall time
 
 ## Objective
 
-Reduce the wall time of dynamic `bind` switching in `bench/signal_compare`.
-Jane Street Incremental is the fixed reference (145.03 ns frozen median).
+Reduce the wall time of cutoff propagation at depth 10 in
+`bench/signal_compare`. Jane Street Incremental is the fixed reference
+(32.42 ns frozen median).
 
 The workload set contains these operations:
 
@@ -16,7 +17,7 @@ the final observer read are outside the timed operation.
 
 ## Metrics
 
-- **Primary**: `signal_dynamic_wall_ns` (nanoseconds, lower is better).
+- **Primary**: `signal_cutoff_10_wall_ns` (nanoseconds, lower is better).
 - **Secondary**:
   - `signal_dynamic_words`
   - `signal_changed_100_words`
@@ -81,8 +82,8 @@ behavior, law, model, package, complexity, and install gates.
 
 ## Initial Work
 
-1. Measure the retained dynamic-switch wall baseline.
-2. Profile the dynamic row with release symbols and `perf`.
-3. Inspect the matching Incremental bind path after the profile identifies
+1. Measure the retained cutoff depth-10 wall baseline.
+2. Profile the cutoff row with release symbols and `perf`.
+3. Inspect the matching Incremental cutoff path after the profile identifies
    Eta's dominant cost.
 4. Prefer removal of generic pass work over workload-specific code.
