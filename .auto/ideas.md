@@ -30,3 +30,11 @@
 - Timer-free graphs bypass timer discovery and refresh planning.
 - Zero or one observer bypasses dependency sorting.
 - Empty stale-freshness registries bypass repair setup.
+
+## Deferred allocation work
+
+- OxCaml `or_null` raw values flattened changed-depth allocation to 81 words
+  (from 91, 127, and 487) and reduced cutoff/dynamic allocation, but run 15
+  regressed the wall geomean from 3.70 to 3.74. Reconsider only if allocation
+  becomes the primary target or a profile identifies the removed wrappers as a
+  wall-time bottleneck.
