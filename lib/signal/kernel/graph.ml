@@ -1219,7 +1219,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           observer.has_callback && observer.callback_pending)
         !observers
     in
-    ignore (prepare_timer_starts_now ());
+    if !timers <> [] then ignore (prepare_timer_starts_now ());
     edge_start_failed := false;
     let result =
       match Edges.run edges ~plan with
