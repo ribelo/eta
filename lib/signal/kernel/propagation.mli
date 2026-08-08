@@ -45,7 +45,6 @@ type keyed_stats = {
   mutable keyed_node_count : int;
   mutable keyed_committed_child_count : int;
 }
-type scope = { mutable valid : bool; mutable slot_head : int; }
 type height_queue = {
   mutable heads : int array;
   mutable tails : int array;
@@ -75,6 +74,17 @@ type ('a : value_or_null) node = {
   scope : scope option;
 }
 and packed = P : ('a : value_or_null). 'a node -> packed [@@unboxed]
+
+and scope = {
+  mutable valid : bool;
+  mutable slot_head : int;
+  parent : scope or_null;
+  mutable first_child : scope or_null;
+  mutable previous_sibling : scope or_null;
+  mutable next_sibling : scope or_null;
+  mutable owner : packed or_null;
+  mutable counted : bool;
+}
 
 and slot = {
   mutable generation : int;
@@ -114,6 +124,7 @@ and graph = {
   mutable change_listeners_enabled : bool;
   mutable tombstones : handle array;
   mutable tombstone_length : int;
+  mutable dynamic_scope_count : int;
   mutable keyed_reconciliations_in_pass : int;
   keyed_stats : keyed_stats;
   work : work;
@@ -216,7 +227,7 @@ val enqueue_all_uninitialized_necessary : graph -> unit
 val clear_queue_mark : packed -> unit
 val cancel_admission : graph -> packed -> unit
 val public_node_counts : graph -> int * int * int
-val create_scope : unit -> scope
+val create_scope : ?parent:scope -> graph -> unit -> scope
 val scope_valid : scope -> bool
 val current_scope : graph -> scope option
 val current_pass : graph -> int

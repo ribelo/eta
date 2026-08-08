@@ -385,8 +385,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let edge_start_failed = ref false
   let sampling_timer_starts = ref false
   let initializers : Core.packed list ref = ref []
-  let scope_owners : (Core.scope * Core.packed) list ref = ref []
-  let scope_parents : (Core.scope * Core.scope option) list ref = ref []
   let observers : packed_observer list ref = ref []
   let pending_observers : packed_observer list ref = ref []
   let pending_finishes :
@@ -790,19 +788,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let ensure_parent_height ?current packed minimum =
     Core.ensure_parent_height graph ?current packed minimum
 
-  (* Retire [scope] and its live descendants, charging dead-node counts to
-     [dead_nodes]. Defined at module level so the recursive walk does not build
-     a closure per bind switch. *)
-  let rec retire_scope_children graph dead_nodes scope_parents scope =
-    iter_list_local
-      (stack_ (fun ((child : Core.scope), parent) ->
-          match parent with
-          | Some parent when parent == scope && child.valid ->
-              retire_scope_children graph dead_nodes scope_parents child
-          | None | Some _ -> ()))
-      !scope_parents;
-    dead_nodes := !dead_nodes + Core.invalidate_scope_chain graph scope
-
   let bind ?cutoff ~f source =
     Execution.sync execution @@ fun () ->
     check_signal source;
@@ -838,29 +823,27 @@ module Make_impl (Observer_error : Observer_error) () = struct
           | Some owner -> owner.raw.node.scope
           | None -> Core.current_scope graph
         in
-        let fresh_scope = Core.create_scope () in
-        scope_parents := (fresh_scope, parent_scope) :: !scope_parents;
+        let fresh_scope = Core.create_scope ?parent:parent_scope graph () in
         let fresh =
           Core.with_scope graph fresh_scope (fun () -> f source_value)
         in
         check_signal fresh;
-        let rec scope_is_ancestor candidate = function
-          | None -> false
-          | Some scope when scope == candidate -> true
-          | Some scope ->
-              scope_is_ancestor candidate
-                (List.find_map
-                   (fun ((child : Core.scope), parent) ->
-                     if child == scope then Some parent else None)
-                   !scope_parents
-                |> Option.join)
+        let rec scope_is_ancestor candidate (scope : Core.scope) =
+          if scope == candidate then true
+          else
+            match scope.parent with
+            | Null -> false
+            | This parent -> scope_is_ancestor candidate parent
         in
         let local_ validate_scope candidate =
             if
               not (Core.scope_valid candidate)
               || not
                    (candidate == fresh_scope
-                    || scope_is_ancestor candidate parent_scope)
+                    ||
+                    match parent_scope with
+                    | None -> false
+                    | Some parent -> scope_is_ancestor candidate parent)
             then raise (Graph_error `Invalid_scope)
         in
         if Array.length fresh.raw.node.dependencies = 0 then
@@ -913,7 +896,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
                     invalidate ())))
             (Hashtbl.find_opt compute_invalidators
                (Option.get !owner).raw.handle.slot);
-        scope_owners := (fresh_scope, packed_owner) :: !scope_owners;
+        fresh_scope.owner <- This packed_owner;
         if Core.node_necessary (Option.get !owner).raw.node then (
           Core.activate (Core.P fresh.raw.node);
           if Option.is_none fresh.timer then
@@ -926,17 +909,10 @@ module Make_impl (Observer_error : Observer_error) () = struct
             ignore (Core.evaluate_node (Core.P fresh.raw.node)));
         let local_ retire_old_scope (old_scope : Core.scope) =
           incr dynamic_scope_invalidations;
-          retire_scope_children graph dead_nodes scope_parents old_scope
+          dead_nodes :=
+            !dead_nodes + Core.invalidate_scope_chain graph old_scope
         in
         iter_option_local retire_old_scope old_scope;
-        (* Retired scopes are invalid and so is their whole subtree; keep the
-           ancestry and owner indices bounded to live scopes. *)
-        scope_parents :=
-          List.filter (fun ((child : Core.scope), _) -> Core.scope_valid child)
-            !scope_parents;
-        scope_owners :=
-          List.filter (fun ((scope : Core.scope), _) -> Core.scope_valid scope)
-            !scope_owners;
         selected := This source_value;
         inner := Some fresh;
         scope := Some fresh_scope;
@@ -1379,14 +1355,12 @@ module Make_impl (Observer_error : Observer_error) () = struct
       let scope_demand =
         match signal.raw.node.scope with
         | None -> None
-        | Some scope ->
-            List.find_map
-              (fun (candidate, owner) ->
-                if candidate == scope then (
-                  Core.activate owner;
-                  Some owner)
-                else None)
-              !scope_owners
+        | Some scope -> (
+            match scope.owner with
+            | Null -> None
+            | This owner ->
+                Core.activate owner;
+                Some owner)
       in
       let finish =
         Option.map
@@ -2093,7 +2067,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         | `All_including_invalid -> "all_including_invalid")
       ~dot_state:options.dot_state
       ~dot_dynamic_scopes:options.dot_dynamic_scopes;
-    if options.dot_dynamic_scopes && !scope_owners <> [] then
+    if options.dot_dynamic_scopes && graph.dynamic_scope_count <> 0 then
       Buffer.add_string buffer
         "  dynamic_scopes [label=\"scope=valid scope_id=sc0 scope_owner=s0 scope_parent=root\"];\n";
     if options.dot_scope = `All_including_invalid then begin

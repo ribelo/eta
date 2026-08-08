@@ -43,11 +43,6 @@ type keyed_stats = {
   mutable keyed_committed_child_count : int;
 }
 
-type scope = {
-  mutable valid : bool;
-  mutable slot_head : int;
-}
-
 type height_queue = {
   mutable heads : int array;
   mutable tails : int array;
@@ -79,6 +74,17 @@ type ('a : value_or_null) node = {
 }
 
 and packed = P : ('a : value_or_null). 'a node -> packed [@@unboxed]
+
+and scope = {
+  mutable valid : bool;
+  mutable slot_head : int;
+  parent : scope or_null;
+  mutable first_child : scope or_null;
+  mutable previous_sibling : scope or_null;
+  mutable next_sibling : scope or_null;
+  mutable owner : packed or_null;
+  mutable counted : bool;
+}
 
 and slot = {
   mutable generation : int;
@@ -123,6 +129,7 @@ and graph = {
   mutable change_listeners_enabled : bool;
   mutable tombstones : handle array;
   mutable tombstone_length : int;
+  mutable dynamic_scope_count : int;
   mutable keyed_reconciliations_in_pass : int;
   keyed_stats : keyed_stats;
   work : work;
@@ -165,6 +172,41 @@ let set_node_admitted node value =
 
 let set_node_reclaim_queued node value =
   node.flags <- if value then node.flags lor 16 else node.flags land (lnot 16)
+
+let make_scope ?(counted = false) parent =
+  {
+    valid = true;
+    slot_head = -1;
+    parent;
+    first_child = Null;
+    previous_sibling = Null;
+    next_sibling = Null;
+    owner = Null;
+    counted;
+  }
+
+let attach_scope parent scope =
+  scope.next_sibling <- parent.first_child;
+  (match parent.first_child with
+  | Null -> ()
+  | This child -> child.previous_sibling <- This scope);
+  parent.first_child <- This scope
+
+let detach_scope graph scope =
+  if scope.counted then (
+    (match scope.previous_sibling with
+    | This previous -> previous.next_sibling <- scope.next_sibling
+    | Null -> (
+        match scope.parent with
+        | This parent -> parent.first_child <- scope.next_sibling
+        | Null -> ()));
+    (match scope.next_sibling with
+    | Null -> ()
+    | This next -> next.previous_sibling <- scope.previous_sibling);
+    scope.previous_sibling <- Null;
+    scope.next_sibling <- Null;
+    scope.counted <- false;
+    graph.dynamic_scope_count <- graph.dynamic_scope_count - 1)
 
 
 (* Public Signal values carry an uninitialized state, so kernel value slots use
@@ -291,6 +333,7 @@ let create () =
     change_listeners_enabled = false;
     tombstones = Array.make 16 { slot = -1; generation = -1 };
     tombstone_length = 0;
+    dynamic_scope_count = 0;
     keyed_reconciliations_in_pass = 0;
     keyed_stats =
       {
@@ -1013,7 +1056,11 @@ let discard_created graph =
         let entry = graph.slots.(slot) in
         (match slot_contents entry with
         | Some (P node) ->
-            Option.iter (fun scope -> scope.valid <- false) node.scope
+            Option.iter
+              (fun scope ->
+                scope.valid <- false;
+                detach_scope graph scope)
+              node.scope
         | None -> ());
         set_slot_contents entry None;
         push_free graph slot;
@@ -1081,7 +1128,12 @@ let cleanup graph =
   done;
   for index = 0 to graph.action_length - 1 do
     (match graph.actions.(index) with
-    | Retired (slot, _) -> push_free graph slot
+    | Retired (slot, P node) ->
+        Option.iter
+          (fun scope ->
+            if not scope.valid then detach_scope graph scope)
+          node.scope;
+        push_free graph slot
     | Created _ -> ());
     graph.actions.(index) <- Created 0;
     graph.work.cleanup_visits <- graph.work.cleanup_visits + 1
@@ -1205,15 +1257,36 @@ let public_node_counts graph =
   done;
   (!total, !necessary, !dirty)
 
-let create_scope () = { valid = true; slot_head = -1 }
+let create_scope ?parent graph () =
+  let parent = match parent with None -> Null | Some scope -> This scope in
+  let scope = make_scope ~counted:true parent in
+  (match parent with Null -> () | This parent -> attach_scope parent scope);
+  graph.dynamic_scope_count <- graph.dynamic_scope_count + 1;
+  scope
+
+let create_detached_scope () = make_scope Null
 let scope_valid scope = scope.valid
 let current_scope graph = graph.current_scope
 let current_pass graph = graph.pass
 
-let invalidate_scope_chain graph scope =
-  let retired = retire_scope_chain graph scope in
+let rec invalidate_scope_chain graph scope =
+  let retired = ref 0 in
+  let child = ref scope.first_child in
+  while
+    match !child with
+    | Null -> false
+    | This current ->
+        let next = current.next_sibling in
+        if current.valid then
+          retired := !retired + invalidate_scope_chain graph current;
+        child := next;
+        true
+  do
+    ()
+  done;
+  retired := !retired + retire_scope_chain graph scope;
   scope.valid <- false;
-  retired
+  !retired
 
 let prepend_change_listener (P node)
     (listener : ('a : value_or_null). 'a -> unit) =
@@ -1456,7 +1529,7 @@ type ('a, 'b) bind_owner = {
 let bind_owner ?(cutoff = ( == )) (source : 'a signal) ~f =
   let graph = source.graph in
   enable_change_listeners graph;
-  let scope = { valid = true; slot_head = -1 } in
+  let scope = create_detached_scope () in
   let inner : 'b signal =
     with_scope graph scope (fun () -> f source.node.current)
   in
@@ -1503,7 +1576,7 @@ let bind_owner ?(cutoff = ( == )) (source : 'a signal) ~f =
     if owner.selected_source != next_source then (
       let old_inner = owner.inner in
       let old_scope = owner.inner_scope in
-      let fresh_scope = { valid = true; slot_head = -1 } in
+      let fresh_scope = create_detached_scope () in
       let fresh_inner =
         with_scope graph fresh_scope (fun () -> f next_source)
       in
@@ -1871,7 +1944,7 @@ let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
                 owner.candidate_output <-
                   output_ops.remove_output key owner.candidate_output)
         | Right data ->
-            let scope = { valid = true; slot_head = -1 } in
+            let scope = create_detached_scope () in
             bump_keyed_for owner.keyed_signal.graph `Provisional_addition;
             let source = with_scope graph scope (fun () -> var graph data) in
             let output = with_scope graph scope (fun () -> build ~key ~data:(watch source)) in
@@ -1980,7 +2053,7 @@ let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
   input_ops.iter_diff input_ops.empty_input input.node.current
     (fun key -> function
       | Right data ->
-          let scope = { valid = true; slot_head = -1 } in
+          let scope = create_detached_scope () in
           let source = with_scope graph scope (fun () -> var graph data) in
           let output =
             with_scope graph scope (fun () ->
