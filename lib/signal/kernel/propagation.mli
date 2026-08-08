@@ -16,6 +16,10 @@ type phase = Idle | Active | Cleanup_pending
 type stabilization = Quiescent | Committed
 type error = Defect of exn | Reentrant_stabilization
 type handle = { slot : int; generation : int; }
+
+(* Handle records compare by their two integer fields; structural [=] on the
+   record would call the generic [caml_equal]. *)
+val same_handle : handle -> handle -> bool
 type work = {
   mutable admissions : int;
   mutable claims : int;

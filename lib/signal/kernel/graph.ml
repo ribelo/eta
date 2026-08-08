@@ -445,7 +445,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
       if not (Hashtbl.mem seen node.handle.slot) then (
         Hashtbl.add seen node.handle.slot ();
         (match Hashtbl.find_opt timer_nodes node.handle.slot with
-        | Some (handle, timer) when handle = node.handle ->
+        | Some (handle, timer) when Core.same_handle handle node.handle ->
             found := timer :: !found
         | Some _ | None -> ());
         Array.iter visit node.dependencies)
@@ -546,7 +546,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
       for right = left + 1 to Array.length dependencies - 1 do
         let Core.P left_node = dependencies.(left) in
         let Core.P right_node = dependencies.(right) in
-        if left_node.handle = right_node.handle then duplicate := true
+        if Core.same_handle left_node.handle right_node.handle then duplicate := true
       done
     done;
     if !duplicate then (
@@ -584,7 +584,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
        tail position, which stack_ requires. *)
     let outcome =
       Execution.sync execution @@ stack_ (fun () ->
-        if !phase <> `Idle && Core.current_scope graph = None then
+        if !phase <> `Idle && Option.is_none (Core.current_scope graph) then
           raise (Graph_error `Ambiguous_scope);
         let raw =
           Core.make_node graph ~height:0 ~dependencies:[||]
@@ -891,7 +891,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               Hashtbl.add seen_pending node.handle.slot ();
               match Hashtbl.find_opt bind_evaluations node.handle.slot with
               | Some (handle, pass)
-                when handle = node.handle
+                when Core.same_handle handle node.handle
                      && !pass <> Core.current_pass graph
                      && Core.node_in_queue node ->
                   true
@@ -968,7 +968,10 @@ module Make_impl (Observer_error : Observer_error) () = struct
           if !yielded_no_value_in <> Core.current_pass graph then (
             yielded_no_value_in := Core.current_pass graph;
             let inner = Option.get !inner in
-            if !timers = [] || signal_timers inner = [] then (
+            if
+              (match !timers with [] -> true | _ -> false)
+              || (match signal_timers inner with [] -> true | _ -> false)
+            then (
               enqueue_uninitialized_topology inner.raw.packed;
               Core.clear_queue_mark owner.raw.packed;
               Core.enqueue_deferred owner.raw.packed));
@@ -1065,7 +1068,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     let target = dependency.raw.handle in
     let seen = Hashtbl.create 8 in
     let rec visit (Core.P node) =
-      if node.handle = target then true
+      if Core.same_handle node.handle target then true
       else if Hashtbl.mem seen node.handle.slot then false
       else (
         Hashtbl.add seen node.handle.slot ();

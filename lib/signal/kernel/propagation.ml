@@ -11,6 +11,11 @@ exception Generation_exhausted
 
 type handle = { slot : int; generation : int }
 
+(* Handle records compare by their two integer fields; structural [=] on the
+   record would call the generic [caml_equal]. *)
+let same_handle left right =
+  left.slot = right.slot && left.generation = right.generation
+
 type work = {
   mutable admissions : int;
   mutable claims : int;
@@ -399,7 +404,7 @@ let resolve graph handle =
 let validate_handle (signal : 'a signal) =
   match resolve signal.graph signal.handle with
   | Some (P node) ->
-      node.handle = signal.handle
+      same_handle node.handle signal.handle
       && Option.fold ~none:true ~some:(fun scope -> scope.valid) node.scope
   | None -> false
 
@@ -446,7 +451,7 @@ let add_dependent child parent =
   if
     not
       (List.exists
-         (fun (P candidate) -> candidate.handle = parent_handle)
+         (fun (P candidate) -> same_handle candidate.handle parent_handle)
          child.dependents)
   then (
     child.dependents <- parent :: child.dependents;
@@ -470,7 +475,7 @@ let iter_unique_dependencies dependencies f =
         let previous = ref 0 in
         while not !duplicate && !previous < index do
           let P candidate = dependencies.(!previous) in
-          duplicate := candidate.handle = child.handle;
+          duplicate := same_handle candidate.handle child.handle;
           incr previous
         done;
         if not !duplicate then f dependencies.(index)
@@ -480,14 +485,14 @@ let remove_dependent child parent =
   let P child = child in
   let P parent = parent in
   match child.dependents with
-  | P candidate :: rest when candidate.handle = parent.handle ->
+  | P candidate :: rest when same_handle candidate.handle parent.handle ->
       child.dependents <- rest
   | dependents ->
       child.graph.work.adjacency_searches <-
         child.graph.work.adjacency_searches + 1;
       child.dependents <-
         List.filter
-          (fun (P candidate) -> candidate.handle <> parent.handle)
+          (fun (P candidate) -> not (same_handle candidate.handle parent.handle))
           dependents
 
 let attach parent child =
@@ -495,7 +500,7 @@ let attach parent child =
   if
     not
       (Array.exists
-         (fun (P candidate) -> candidate.handle = (let P c = child in c.handle))
+         (fun (P candidate) -> same_handle candidate.handle (let P c = child in c.handle))
          parent_node.dependencies)
   then (
     parent_node.dependencies <-
@@ -511,7 +516,7 @@ let detach parent child =
     Array.of_list
       (Array.fold_right
          (fun (P candidate as packed) rest ->
-           if candidate.handle = child_node.handle then rest else packed :: rest)
+           if same_handle candidate.handle child_node.handle then rest else packed :: rest)
          parent_node.dependencies []);
   remove_dependent child parent;
   parent_node.graph.work.topology_edits <-
@@ -527,7 +532,7 @@ let replace_dependency parent old child =
   let found = ref (-1) in
   for index = 0 to length - 1 do
     match parent_node.dependencies.(index) with
-    | P candidate when candidate.handle = old_node.handle -> found := index
+    | P candidate when same_handle candidate.handle old_node.handle -> found := index
     | P _ -> ()
   done;
   match !found with
@@ -664,7 +669,7 @@ let unlink_queued_node (P target) =
             | None -> slot := -1
             | Some (P node as packed) ->
                 let next = node.queue_next in
-                if node.handle = target.handle then (
+                if same_handle node.handle target.handle then (
                   (match !previous with
                   | None -> heads.(height) <- next
                   | Some (P previous) -> previous.queue_next <- next);
@@ -1183,7 +1188,7 @@ let prepend_change_listener (P node)
 let move_dependent_last (P dependency) handle =
   let own, others =
     List.partition
-      (fun (P candidate) -> candidate.handle = handle)
+      (fun (P candidate) -> same_handle candidate.handle handle)
       dependency.dependents
   in
   dependency.dependents <- others @ own
@@ -1254,7 +1259,7 @@ let distinct_scopes root =
 let reaches_handle root target =
   let seen = Hashtbl.create 8 in
   let rec visit (P node) =
-    if node.handle = target then true
+    if same_handle node.handle target then true
     else if Hashtbl.mem seen node.handle.slot then false
     else (
       Hashtbl.add seen node.handle.slot ();
@@ -1295,7 +1300,7 @@ let enqueue_stale_freshness graph ~bind_nodes ~custom_cutoff_nodes
     (fun slot handle ->
       match slot_contents graph.slots.(slot) with
       | Some (P node as packed)
-        when node.handle = handle
+        when same_handle node.handle handle
              && node_necessary node
              && Array.length node.dependencies > 1 ->
           let P inner =
@@ -1319,7 +1324,7 @@ let enqueue_stale_freshness graph ~bind_nodes ~custom_cutoff_nodes
       (fun slot handle ->
         match slot_contents graph.slots.(slot) with
         | Some (P node)
-          when node.handle = handle && node_necessary node ->
+          when same_handle node.handle handle && node_necessary node ->
           let dependency_changed =
             Array.exists
               (fun (P dependency) -> dependency.written_in = committed_pass)
@@ -1667,7 +1672,7 @@ let keyed_node_counts graph =
         | Some packed_owner ->
             let owner : (_, _, _, _, _) keyed_owner = Obj.obj packed_owner in
             if
-              owner.keyed_signal.handle = node.handle
+              same_handle owner.keyed_signal.handle node.handle
               && validate_handle owner.keyed_signal
             then (
               incr keyed_node_count;
@@ -1694,7 +1699,7 @@ let append_nodes_dot buffer graph ~only_necessary ~scope_label ~dot_state
             | Some (P candidate) ->
                 Array.iter
                   (fun (P dependency) ->
-                    if dependency.handle = node.handle then
+                    if same_handle dependency.handle node.handle then
                       incr dependent_count)
                   candidate.dependencies
             | None -> ()
