@@ -1,90 +1,138 @@
-# Autoresearch: Eta Signal performance
+# Autoresearch: Eta Signal Map performance
 
 ## Objective
 
-Reduce steady-state allocation and execution cost in `eta_signal` and
-`eta_signal_map`. Compare the public Eta operations with Jane Street
-Incremental and `Incr_map` under matched changed-value, cutoff, dynamic-bind,
-retained-data, membership-churn, and child-only workloads.
+Reduce the steady-state wall time of the six public `eta_signal_map` workloads
+in `bench/signal_compare`. Jane Street `Incr_map.mapi'` is the fixed reference.
 
-The current primary workload changes the source of a scalar chain with 100
-unary `map` nodes. It isolates the per-node execution cost that leaves Eta
-thousands of times more allocation-heavy than Incremental.
+The workloads cover one retained data change, one membership change, and one
+child-source change at 10,000 and 100,000 keys. Each operation performs one
+change and one stabilization. Initial graph construction and the final observer
+read are outside the timed Eta operation.
+
+The implementation must keep the current behavior contract, affected-work
+bounds, rollback rules, stable child identity, and synchronous owner-domain
+interface.
 
 ## Metrics
 
-- **Primary**: `signal_depth_100_words` (words/op, lower is better).
-- **Secondary**: depth-100 wall time; scalar depth-one allocation and wall time;
-  child-change allocation and wall time; membership-churn allocation and wall
-  time.
+- **Primary**: `map_wall_ratio_geomean` (unitless, lower is better). This is the
+  geometric mean of the six Eta wall times divided by the fixed `Incr_map`
+  medians from the clean `6f4c5cf7` comparison.
+- **Secondary**:
+  - `map_worst_wall_ratio`
+  - wall time and allocated words for every data, membership, and child row
+  - 100,000-key to 10,000-key wall-time growth for each change class
 
-Keyed child allocation fell from 1,419,614.50 to about 8,020 words per
-operation and is now a regression guard. Scalar depth 100 still allocates about
-19,682 words versus Incremental's six words, exposing approximately 122 words
-per recomputed Eta node.
+The first complete comparison gives a primary ratio near `5,982` with this
+aggregation. The worst row is child change at 100,000 keys, near `230,100`
+times the reference.
 
 ## How to Run
 
-`./.auto/measure.sh`
+Run:
 
-The script builds the frozen comparison harness in release mode. Every
-workload runs in a fresh process pinned to one logical CPU.
+```sh
+./.auto/measure.sh
+```
+
+The script builds the frozen release-profile harness. It runs each Eta workload
+in a fresh process on logical CPU 2. Each row uses one measured sample after the
+harness calibration and warm-up. Set `SAMPLES=3` for a confirmation run.
+
+`.auto/checks.sh` runs automatically after each successful experiment. It runs
+the Signal behavior, law, model, package, and complexity gates.
 
 ## Files in Scope
 
-- `lib/signal/kernel/eta_signal_kernel.ml`: graph ownership and public runtime
-  integration.
-- `lib/signal/engine/**`: stabilization, transactions, observers, graph
-  scheduling, timers, and internal data structures.
-- `lib/signal_map/**`: persistent map and keyed reconciliation.
-- Public `.mli` and API files only when an optimization requires an honest
-  representation or contract change.
-- Focused tests for every changed protocol.
+- `lib/signal_map/kernel/eta_signal_map_kernel.ml`
+  - persistent map operations and symmetric diff
+- `lib/signal_map/api/eta_signal_map_api.ml`
+  - the public map adapter and `Package_graph` plan
+- `lib/signal/kernel/propagation.ml`
+  - stable-family reconciliation, propagation queues, rollback, and graph
+    storage
+- `lib/signal/kernel/propagation.mli`
+  - private propagation seam for an implementation that needs a deeper
+    operation
+- `lib/signal/kernel/graph.ml`
+  - owner-domain execution and the sealed stable-family protocol
+- `lib/signal/kernel/graph.mli`
+  - private graph seam for a required protocol change
+- Focused tests under `test/signal/`, `test/signal_map/`, and `test/laws/`
+- `.auto/prompt.md` and `.auto/ideas.md` for durable experiment knowledge
 
 ## Off Limits
 
-- `bench/signal_compare/**` after the baseline commit.
-- Existing benchmark inputs, operation counts, checks, and metric formulas.
-- Weakening tests, diagnostics, lifecycle fences, rollback, observer ordering,
-  cutoffs, or keyed child identity.
-- New dependencies, compatibility shims, and benchmark-specific branches.
+- Do not change `bench/signal_compare/**`.
+- Do not change reference medians, workload sizes, operations, calibration,
+  timing boundaries, formulas, or correctness checks.
+- Do not weaken public behavior, rollback, cutoff, observer, scope, timer,
+  lifecycle, diagnostic, or affected-work rules.
+- Do not add benchmark-specific branches, size thresholds, hidden defaults,
+  compatibility paths, feature flags, or new dependencies.
+- Do not make the root `eta` package depend on Signal or Signal Map.
+- Do not optimize Eta Crux, streams, timers, or unrelated Eta packages.
 
 ## Constraints
 
-- Preserve all Signal V1 semantics and executable laws.
-- Target OxCaml `5.2.0+ox` only. OxCaml modes, stack allocation, unboxed
-  layouts, and zero-allocation checks are available for production changes.
-- Use Nix/OxCaml for every build and test claim.
-- Keep the branch linear over `master`.
-- An optimization must explain a general source-level cost. Do not fit map
-  size, key value, chain depth, callback identity, or benchmark names.
-- Keep only primary allocation improvements. Reject allocation-neutral
-  complexity unless it removes code or produces a large verified time win.
-- Never optimize away required callback delivery. Both comparison sides
-  install a no-op observer callback.
+- Target OxCaml `5.2.0+ox` only.
+- Use `nix develop -c ...` for every build and correctness claim.
+- Keep only primary metric improvements. Reject worse or unchanged results.
+- Treat allocation and every individual row as tradeoff monitors. Reject a
+  catastrophic secondary regression despite a primary improvement.
+- Preserve the public synchronous owner-domain interface.
+- Preserve `Propagation`, `Post_commit`, and `Graph` ownership.
+- Preserve the sealed `Package_graph` boundary. `eta_signal_map` must not depend
+  on the private Signal kernel.
+- Add a focused regression test for each changed protocol.
+- Changes to law-bearing `.mli` prose require the named executable law and law
+  registry update in the same experiment.
+- Run the full Nix test and shipped-package gates before finalization.
 
-## Benchmark Audit
+## Current Diagnosis
 
-The inherited harness covered changed scalar chains, cutoff, dynamic bind,
-retained keyed data, and child-only keyed changes. Three defects were fixed
-before freezing:
+The persistent map already patches one key with logarithmic comparisons. The
+deterministic gates report one selected child for a child-only change. Allocation
+is hundreds of words, not proportional to the key count. The dominant wall cost
+is therefore in the graph driver.
 
-- A default full run constructed unrelated Eta candidates in one global graph.
-  The harness now requires one `--only` workload per fresh process.
-- Incremental observers had no update callback while Eta observers delivered
-  one. Both sides now install a no-op callback.
-- Keyed insertion and removal were absent. Membership-churn workloads at
-  10,000 and 100,000 entries now alternate one insertion and one removal.
+A release-profile `perf` capture of child change at 100,000 keys found:
 
-## Starting Hypotheses
+- about 40% in `Propagation.enqueue_stale_freshness`
+- about 15% in `Propagation.clear_queues`
+- about 10% in major-GC marking
+- the remaining large samples in equality and hash operations called by the
+  stale-freshness scan
 
-- Unary `Map` evaluation allocates generic `Static_eval` child, result, plan,
-  dependency-list, and callback values for every recomputed node.
-- `keyed_affected`, `keyed_plan_processed`, and pending-plan traversal may
-  duplicate membership work.
-- Incremental uses dense persistent graph state and specialized node kinds.
-  Prefer similarly deep internal representations over public fast-path APIs.
+`enqueue_stale_freshness` scans every graph slot to find nodes with duplicate
+dependencies. The 100,000-key graph has hundreds of thousands of nodes, although
+the measured change affects one child. `clear_queues` also scans every slot after
+the queue drain.
+
+## First Experiments
+
+1. Replace the duplicate-dependency full scan with a generation-safe registry
+   of candidate nodes. Include dynamic bind nodes whose dependencies can change.
+   Preserve the duplicate-dependency freshness regression.
+2. Remove the successful-pass `clear_queues` full scan, or replace it with
+   affected-node cleanup. Queue pop already clears the popped node fields.
+   Preserve rollback queue cleanup.
+3. Reprofile all three 100,000-key rows after both full scans are gone.
+
+## Inherited Research
+
+The prior Signal autoresearch session showed that graph-wide scans, timer
+planning, observer ordering, and generic stabilization machinery dominated
+keyed work. Its code belongs to the old execution engine and must not return as
+a compatibility path.
+
+The `.auto/` directory in `/home/ribelo/projects/ribelo/ocaml/Eta` currently
+contains H2-over-TLS research. It has no Signal Map findings.
 
 ## What's Been Tried
 
-- No Signal optimization has been attempted in this session.
+- The new Signal Map optimization segment has no experiments yet.
+- The current execution-model redesign reduced map time by about 59 to 74 times
+  and allocation by thousands of times against the old public implementation.
+  It still retained graph-wide stabilization scans.

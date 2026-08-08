@@ -1,80 +1,53 @@
-# Ideas
+# Eta Signal Map performance ideas
 
-## Architectural levers vs the Incremental gap
+## Highest-confidence work
 
-Final shape before the architecture effort (approx):
-- depth 1: ~5.4k words / ~6.6us fixed stabilize floor
-- depth 100: ~12.1k words = fixed floor + ~68 words/node
-- Incremental depth 1/100: 6 words; map child 10k: 84 words / 121ns
+- Track fixed duplicate-dependency nodes during graph construction. Iterate that
+  registry during stale-freshness repair instead of scanning every graph slot.
+  Include bind nodes because their dependency arrays can change.
+- Remove the successful-pass `clear_queues` full slot scan. Queue pop clears
+  `queue_next` and `in_queue`. Keep the full cleanup on rollback. If another
+  path can leave residue, track only the touched queue nodes.
+- After both scans are gone, use `perf` on data, membership, and child changes at
+  100,000 keys. Do not guess at the next bottleneck.
 
-The construction comparison is real, but most of the comparison-table gap is
-**stabilization architecture**, not constructor allocation.
+## Likely follow-up work
 
-### What construction fixes can improve in the table
+- Avoid `Hashtbl.create` in stale-freshness repair for empty candidate
+  registries.
+- Replace stale registry entries after slot generations change. Do not let a
+  long-lived graph accumulate stale handles.
+- Check whether `enqueue_all_uninitialized_necessary` performs another full scan
+  after a repaired stale node. Track uninitialized necessary nodes only after a
+  profile shows that this path is hot.
+- Profile the first propagation pass after the graph-wide scans are removed.
+  Look for observer delivery, output-map equality, or child-wrapper overhead.
+- Check whether each stable-family child needs the extra `Graph.map` wrapper
+  that counts child visits. A deeper propagation operation can count visits
+  without one node per key, but it must preserve diagnostics.
+- Check whether the keyed owner needs a second balanced child tree. The input
+  map already supplies stable key identity and shared ancestry. Any
+  replacement must preserve rollback and generation-safe child lookup.
+- Specialize output patching so one child change performs one map update and no
+  generic option wrapping.
 
-From `graph-construction-comparison.md`:
+## Map-kernel work after graph work
 
-1. Shared empty topology vectors + lazy dynamic-edge Hashtbl
-   - Helps retained memory and GC/cache.
-   - Helps construction and membership/keyed add paths.
-   - Does **not** remove the ~5.4k-word stabilize floor.
+- Profile `fold_symmetric_diff_with` after stabilization becomes affected-only.
+  Keep its shared-ancestry complexity law.
+- Consider a cursor representation that reuses traversal storage. If it
+  increases comparisons or allocation on one-key shared edits, reject it.
+- Inspect weight-balanced-tree rotations and output patch allocation only after
+  profiles show that map operations dominate.
 
-2. Fixed-arity constructors without temp dependency lists
-   - Construction only, unless paired with fixed-arity **execution** (already
-     started for unary Map).
+## Historical knowledge
 
-3. Compact / deferred reverse edges (report #5, larger redesign)
-   - Can make dirty propagation and necessity like Incremental.
-   - Touches invalidation, inspection, and demand.
-   - Worth a dedicated prototype; not a local patch.
-
-4. Private keyed data node + cheaper scope proof (report #6)
-   - Directly targets map membership / data_change rows.
-   - Second priority after a stabilize fast path.
-
-### Bigger refactors that can move the table by orders of magnitude
-
-A. **In-place stabilize fast path for static pure graphs**
-   - Today every change stages `Signal_snapshot` cells, builds a commit plan,
-     and commits through transaction machinery.
-   - Incremental writes node fields in place during stabilize.
-   - A proven-safe path (no bind switch, no timer refresh, no rollback observers)
-     that mutates current value/version/dirty in place would attack every scalar
-     and cutoff row and most of the fixed floor.
-
-B. **Collapse the Effect/lane shell for graph-local ops**
-   - Depth-1 memtrace is dominated by `Eta_signal_lane.with_sync`, Effect bind
-     trees, and non-Eta runtime frames.
-   - Incremental has no effect interpreter around stabilize/set.
-   - Need an expert/internal entry that preserves cancellation and reentry
-     fences without allocating a full effect tree per stabilize.
-
-C. **Edge-local dependency versions instead of snapshot lists**
-   - Unary Map still allocates publish snapshot + `[ (id, version) ]` per node.
-   - Incremental keeps child versions on the edge/node.
-   - Removes a large fraction of the remaining ~74 words/node.
-
-D. **Reusable stabilize protocol state**
-   - `begin_stabilize` rebuilds pending/observer/commit/rollback ops records and
-     empty bind-timer Hashtables every run.
-   - Cache or specialize the no-bind/no-timer shape.
-
-E. Then construction report 1–4 and keyed report 6.
-
-### Recommended order
-
-1. Prototype A+C together on scalar depth-1/100 (biggest table impact).
-2. Prototype B only if A still leaves a multi-microsecond floor.
-3. Construction 1–2 and keyed 6 for map membership/retained memory.
-4. Deferred reverse edges as a separate design spike.
-
-## Smaller leftovers
-
-- Measure transaction planning, commit, and observer delivery allocation
-  separately with scratch-only probes before redesigning their shared state.
-- Compare keyed child-only reconciliation with `Incr_map.mapi'` source around
-  affected-child notification and output patching.
-- Skip empty `Hashtbl.create` in `preflight_staged_bind_timers` /
-  `timer_demand_plan_unlocked` when registries are empty.
-- Avoid `mark_timer_refresh_dirty` closure/list work when no timer refresh
-  context is active (CPU; allocation often already optimized away).
+- The previous execution engine reached single-digit microseconds for a
+  10,000-key child change after it removed global timer, observer, invalidation,
+  and dependency-snapshot work. This is evidence that affected-only execution
+  is possible. The old engine is not a source-compatible fallback.
+- The current promoted execution model reintroduced a full duplicate-dependency
+  scan and a full queue cleanup scan. A 100,000-key child-change profile assigns
+  about 55% of CPU samples to these two scans.
+- `/home/ribelo/projects/ribelo/ocaml/Eta/.auto` contains H2-over-TLS research,
+  not Signal Map research.
