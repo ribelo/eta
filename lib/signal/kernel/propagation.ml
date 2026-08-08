@@ -1175,6 +1175,11 @@ let unlink_queued_descendants graph roots =
 
 let enqueue_stale_freshness graph ~bind_nodes ~custom_cutoff_nodes
     ~duplicate_dependency_nodes =
+  if
+    Hashtbl.length bind_nodes = 0
+    && Hashtbl.length duplicate_dependency_nodes = 0
+  then false
+  else
   let stale = ref false in
   Hashtbl.iter
     (fun slot handle ->
