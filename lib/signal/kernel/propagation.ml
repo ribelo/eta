@@ -70,7 +70,7 @@ type 'a node = {
   scope : scope option;
 }
 
-and packed = P : 'a node -> packed
+and packed = P : 'a node -> packed [@@unboxed]
 
 and slot = {
   mutable generation : int;

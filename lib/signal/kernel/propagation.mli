@@ -68,7 +68,7 @@ type 'a node = {
   scope_next : int;
   scope : scope option;
 }
-and packed = P : 'a node -> packed
+and packed = P : 'a node -> packed [@@unboxed]
 and slot = {
   mutable generation : int;
   mutable strong : packed option;
