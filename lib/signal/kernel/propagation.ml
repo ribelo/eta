@@ -988,6 +988,265 @@ let release_unreachable_roots = reclaim_unreachable
 let handle_is_live graph handle = Option.is_some (resolve graph handle)
 let tombstone_count graph = graph.tombstone_length
 
+let count_necessary graph =
+  let count = ref 0 in
+  for slot = 0 to graph.slot_count - 1 do
+    match slot_contents graph.slots.(slot) with
+    | Some (P node) when node.necessary -> incr count
+    | Some _ | None -> ()
+  done;
+  !count
+
+let unlink_unnecessary_queued graph =
+  for slot = 0 to graph.slot_count - 1 do
+    match slot_contents graph.slots.(slot) with
+    | Some (P node as packed) when not node.necessary ->
+        unlink_queued_node packed
+    | Some _ | None -> ()
+  done
+
+let retire_scope_chain graph scope =
+  let rec loop count slot =
+    if slot = -1 then count
+    else
+      match slot_contents graph.slots.(slot) with
+      | Some (P node as packed) ->
+          let next = node.scope_next in
+          (match node.scope with
+          | Some owner when owner == scope ->
+              unlink_queued_node packed;
+              retire_packed graph packed;
+              loop (count + 1) next
+          | None | Some _ -> count)
+      | None -> count
+  in
+  loop 0 scope.slot_head
+
+let enqueue_all_uninitialized_necessary graph =
+  for slot = 0 to graph.slot_count - 1 do
+    match slot_contents graph.slots.(slot) with
+    | Some (P node as packed)
+      when node.necessary
+           && Array.length node.dependencies > 0
+           && Option.is_none (Obj.magic node.current : Obj.t option) ->
+        enqueue packed
+    | Some _ | None -> ()
+  done
+
+let clear_queue_mark (P node) = node.queued_in <- -1
+
+let cancel_admission graph (P node as packed) =
+  let retained = ref 0 in
+  for index = 0 to graph.admission_length - 1 do
+    let slot = graph.admissions.(index) in
+    if slot <> node.handle.slot then (
+      graph.admissions.(!retained) <- slot;
+      incr retained)
+  done;
+  graph.admission_length <- !retained;
+  node.admitted <- false;
+  unlink_queued_node packed
+
+let public_node_counts graph =
+  let total = ref 0 and necessary = ref 0 and dirty = ref 0 in
+  for slot = 0 to graph.slot_count - 1 do
+    match slot_contents graph.slots.(slot) with
+    | None -> ()
+    | Some (P node) ->
+        let internal_source =
+          not node.constant && Array.length node.dependencies = 0
+        in
+        if not internal_source then incr total;
+        if node.necessary && not internal_source then incr necessary;
+        if node.admitted then incr dirty
+  done;
+  (!total, !necessary, !dirty)
+
+let create_scope () = { valid = true; slot_head = -1 }
+let scope_valid scope = scope.valid
+let current_scope graph = graph.current_scope
+let current_pass graph = graph.pass
+
+let invalidate_scope_chain graph scope =
+  let retired = retire_scope_chain graph scope in
+  scope.valid <- false;
+  retired
+
+let prepend_change_listener (P node) (listener : 'a. 'a -> unit) =
+  node.change_listeners <- listener :: node.change_listeners
+
+let move_dependent_last (P dependency) handle =
+  let own, others =
+    List.partition
+      (fun (P candidate) -> candidate.handle = handle)
+      dependency.dependents
+  in
+  dependency.dependents <- others @ own
+
+let rec ensure_parent_height graph ?(current = false) (P node as packed)
+    minimum =
+  if node.height < minimum then (
+    if not current then unlink_queued_node packed;
+    node.height <- minimum;
+    ensure_height graph minimum;
+    if not current then (
+      node.queued_in <- -1;
+      if node.necessary then enqueue packed);
+    List.iter
+      (fun parent -> ensure_parent_height graph parent (minimum + 1))
+      node.dependents)
+
+let dependency_subgraph root =
+  let seen = Hashtbl.create 8 in
+  let nodes = ref [] in
+  let rec visit (P node as packed) =
+    if not (Hashtbl.mem seen node.handle.slot) then (
+      Hashtbl.add seen node.handle.slot ();
+      nodes := packed :: !nodes;
+      Array.iter visit node.dependencies)
+  in
+  visit root;
+  !nodes
+
+let adjust_topology_priority delta nodes =
+  List.iter
+    (fun (P node as packed) ->
+      node.topology_priority <- node.topology_priority + delta;
+      if node.in_queue then (
+        unlink_queued_node packed;
+        enqueue packed))
+    nodes
+
+let enqueue_uninitialized_topology root =
+  let seen = Hashtbl.create 8 in
+  let rec visit (P node as packed) =
+    if not (Hashtbl.mem seen node.handle.slot) then (
+      Hashtbl.add seen node.handle.slot ();
+      Array.iter visit node.dependencies;
+      if Option.is_none (Obj.magic node.current : Obj.t option) then
+        enqueue packed)
+  in
+  visit root
+
+let distinct_scopes root =
+  let seen = Hashtbl.create 8 in
+  let scopes = ref [] in
+  let rec visit (P node) =
+    if not (Hashtbl.mem seen node.handle.slot) then (
+      Hashtbl.add seen node.handle.slot ();
+      match node.scope with
+      | None -> ()
+      | Some scope ->
+          if not (List.exists (fun candidate -> candidate == scope) !scopes)
+          then scopes := scope :: !scopes;
+          Array.iter visit node.dependencies)
+  in
+  visit root;
+  !scopes
+
+let reaches_handle root target =
+  let seen = Hashtbl.create 8 in
+  let rec visit (P node) =
+    if node.handle = target then true
+    else if Hashtbl.mem seen node.handle.slot then false
+    else (
+      Hashtbl.add seen node.handle.slot ();
+      Array.exists visit node.dependencies)
+  in
+  visit root
+
+let rec enqueue_reactivated (P node as packed) =
+  Array.iter
+    (fun (P dependency as packed) ->
+      if Array.length dependency.dependencies > 0 then
+        enqueue_reactivated packed)
+    node.dependencies;
+  if Array.length node.dependencies > 0 then enqueue packed
+
+let unlink_queued_descendants graph roots =
+  let seen = Hashtbl.create 16 in
+  let rec walk (P node as packed) =
+    if not (Hashtbl.mem seen node.handle.slot) then (
+      Hashtbl.add seen node.handle.slot ();
+      unlink_queued_node packed;
+      List.iter walk node.dependents)
+  in
+  List.iter walk roots
+
+let enqueue_stale_freshness graph ~bind_nodes ~custom_cutoff_nodes =
+  let stale = ref false in
+  Hashtbl.iter
+    (fun slot handle ->
+      match slot_contents graph.slots.(slot) with
+      | Some (P node as packed)
+        when node.handle = handle
+             && node.necessary
+             && Array.length node.dependencies > 1 ->
+          let P inner =
+            node.dependencies.(Array.length node.dependencies - 1)
+          in
+          if Obj.repr node.current != Obj.repr inner.current then (
+            enqueue packed;
+            stale := true)
+      | Some _ | None -> ())
+    bind_nodes;
+  let committed_pass = graph.pass - 1 in
+  let seen_descendants = Hashtbl.create 16 in
+  let rec enqueue_descendants (P node as packed) =
+    if not (Hashtbl.mem seen_descendants node.handle.slot) then (
+      Hashtbl.add seen_descendants node.handle.slot ();
+      if node.necessary then enqueue packed;
+      List.iter enqueue_descendants node.dependents)
+  in
+  for slot = 0 to graph.slot_count - 1 do
+    match slot_contents graph.slots.(slot) with
+    | Some (P node) when node.necessary ->
+        let duplicate = ref false in
+        for left = 0 to Array.length node.dependencies - 1 do
+          for right = left + 1 to Array.length node.dependencies - 1 do
+            let P left_node = node.dependencies.(left) in
+            let P right_node = node.dependencies.(right) in
+            if left_node.handle = right_node.handle then duplicate := true
+          done
+        done;
+        let dependency_changed =
+          Array.exists
+            (fun (P dependency) -> dependency.written_in = committed_pass)
+            node.dependencies
+        in
+        let custom_dependency =
+          Array.exists
+            (fun (P dependency) ->
+              Hashtbl.find_opt custom_cutoff_nodes dependency.handle.slot
+              = Some dependency.handle)
+            node.dependencies
+        in
+        if !duplicate && dependency_changed && not custom_dependency then (
+          enqueue (P node);
+          List.iter enqueue_descendants node.dependents;
+          stale := true)
+    | Some _ | None -> ()
+  done;
+  !stale
+
+let reinstall_freed graph handle packed =
+  (* The handle still matches the slot generation, but the slot sits on the
+     free list: remove it from the list and reinstall the node as occupied.
+     Returns [false] when the generation has moved on. *)
+  let entry = graph.slots.(handle.slot) in
+  if entry.generation <> handle.generation then false
+  else (
+    let retained = ref 0 in
+    for index = 0 to graph.free_length - 1 do
+      if graph.free.(index) <> handle.slot then (
+        graph.free.(!retained) <- graph.free.(index);
+        incr retained)
+    done;
+    graph.free_length <- !retained;
+    entry.is_free <- false;
+    set_slot_contents entry (Some packed);
+    true)
+
 let clear_admissions graph =
   for index = 0 to graph.admission_length - 1 do
     match slot_contents graph.slots.(graph.admissions.(index)) with
@@ -1278,6 +1537,114 @@ type ('key, 'data, 'input, 'output, 'output_map) keyed_owner = {
   mutable output_undo : 'output_map;
   mutable output_written_in : int;
 }
+
+let rec count_children acc = function
+  | Child_empty -> acc
+  | Child_branch branch ->
+      count_children (count_children (acc + 1) branch.left) branch.right
+
+let keyed_node_counts graph =
+  let keyed_node_count = ref 0 in
+  let committed_child_count = ref 0 in
+  for slot = 0 to graph.slot_count - 1 do
+    match slot_contents graph.slots.(slot) with
+    | Some (P node) -> (
+        match node.keyed_owner with
+        | None -> ()
+        | Some packed_owner ->
+            let owner : (_, _, _, _, _) keyed_owner = Obj.obj packed_owner in
+            if
+              owner.keyed_signal.handle = node.handle
+              && validate_handle owner.keyed_signal
+            then (
+              incr keyed_node_count;
+              committed_child_count :=
+                count_children !committed_child_count owner.children))
+    | None -> ()
+  done;
+  (!keyed_node_count, !committed_child_count)
+
+let append_nodes_dot buffer graph ~only_necessary ~scope_label ~dot_state
+    ~dot_dynamic_scopes =
+  for slot = 0 to graph.slot_count - 1 do
+    match slot_contents graph.slots.(slot) with
+    | None -> ()
+    | Some (P node) ->
+        let internal_source =
+          not node.constant && Array.length node.dependencies = 0
+        in
+        if (not internal_source) && ((not only_necessary) || node.necessary)
+        then (
+          let dependent_count = ref 0 in
+          for candidate_slot = 0 to graph.slot_count - 1 do
+            match slot_contents graph.slots.(candidate_slot) with
+            | Some (P candidate) ->
+                Array.iter
+                  (fun (P dependency) ->
+                    if dependency.handle = node.handle then
+                      incr dependent_count)
+                  candidate.dependencies
+            | None -> ()
+          done;
+          let owner_opt = node.keyed_owner in
+          let keyed_extra =
+            if Option.is_some owner_opt then
+              match owner_opt with
+              | Some owner_obj when dot_state ->
+                  let owner : (_, _, _, _, _) keyed_owner =
+                    Obj.obj owner_obj
+                  in
+                  let child_count = count_children 0 owner.children in
+                  let base =
+                    Printf.sprintf
+                      " kind=keyed_mapi committed_children=%d requested_scope=%s"
+                      child_count scope_label
+                  in
+                  if dot_dynamic_scopes then base ^ " scope_owner=s" ^ " :valid"
+                  else base
+              | Some _ when dot_state -> " kind=keyed_mapi"
+              | Some _ -> " kind=keyed_mapi"
+              | None -> " kind=keyed_mapi"
+            else ""
+          in
+          Buffer.add_string buffer
+            (Printf.sprintf "  signal_%d [label=\"signal_%d%s%s\"];\n" slot
+               slot keyed_extra
+               (if dot_state then
+                  Printf.sprintf
+                    " necessary=%b dirty=%b queued=%b dependencies=%d dependents=%d signal_id=s%d%s"
+                    node.necessary
+                    (node.admitted
+                    || Array.exists
+                         (fun (P dependency) -> dependency.admitted)
+                         node.dependencies)
+                    (node.queued_in = graph.pass
+                    || Array.exists
+                         (fun (P dependency) ->
+                           dependency.admitted
+                           || dependency.queued_in = graph.pass)
+                         node.dependencies)
+                    (Array.length node.dependencies) !dependent_count slot
+                    (match node.scope with
+                    | None -> ""
+                    | Some scope ->
+                        Printf.sprintf
+                          " scope=%s scope_id=sc%d scope_owner=s%d scope_parent=root"
+                          (if scope.valid then "valid" else "invalid")
+                          scope.slot_head scope.slot_head)
+                else ""));
+          Array.iter
+            (fun (P child) ->
+              let child_internal =
+                not child.constant && Array.length child.dependencies = 0
+              in
+              if not child_internal then
+                Buffer.add_string buffer
+                  (Printf.sprintf "  signal_%d -> signal_%d;\n"
+                     child.handle.slot slot))
+            node.dependencies)
+  done
+
 
 let keyed_find owner key =
   child_find owner.input_ops.compare_key key owner.children

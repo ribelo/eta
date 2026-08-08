@@ -428,21 +428,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
     in
     visit signal.raw.packed;
     !found
-  let rec enqueue_reactivated (Core.P node as packed) =
-    Array.iter
-      (fun (Core.P dependency as packed) ->
-        if Array.length dependency.dependencies > 0 then
-          enqueue_reactivated packed)
-      node.dependencies;
-    if Array.length node.dependencies > 0 then Core.enqueue packed
-  let necessary_count () =
-    let count = ref 0 in
-    for slot = 0 to graph.slot_count - 1 do
-      match Core.slot_contents graph.slots.(slot) with
-      | Some (Core.P node) when node.necessary -> incr count
-      | Some _ | None -> ()
-    done;
-    !count
+  let enqueue_reactivated = Core.enqueue_reactivated
+  let necessary_count () = Core.count_necessary graph
   let suppress cutoff old candidate =
     Cutoff.suppress cutoff ~published:old ~candidate
   let cutoff_or_default = Option.value ~default:Cutoff.phys_equal
@@ -460,40 +447,31 @@ module Make_impl (Observer_error : Observer_error) () = struct
       match signal.raw.node.scope with
       | Some _ -> raise (Graph_error `Invalid_scope)
       | None ->
-          let slot = signal.raw.handle.slot in
-          let entry = graph.slots.(slot) in
-          if entry.generation <> signal.raw.handle.generation then
-            raise (Graph_error `Invalid_scope);
-          let retained = ref 0 in
-          for index = 0 to graph.free_length - 1 do
-            if graph.free.(index) <> slot then (
-              graph.free.(!retained) <- graph.free.(index);
-              incr retained)
-          done;
-          graph.free_length <- !retained;
-          entry.is_free <- false;
-          Core.set_slot_contents entry (Some signal.raw.packed)
+          if
+            not
+              (Core.reinstall_freed graph signal.raw.handle signal.raw.packed)
+          then raise (Graph_error `Invalid_scope)
 
   let make_raw ?cutoff:cutoff_arg ~height ~dependencies compute =
-    if !phase <> `Idle && graph.current_scope = None then
+    if !phase <> `Idle && Core.current_scope graph = None then
       raise (Graph_error `Ambiguous_scope);
     let cutoff = cutoff_or_default cutoff_arg in
     let computed_in = ref (-1) in
     let computed = ref None in
     let duplicate_evaluation = ref false in
     let compute_once () =
-      if !computed_in = graph.pass then (
+      if !computed_in = Core.current_pass graph then (
         duplicate_evaluation := true;
         Option.get !computed)
       else
         let value = compute () in
-        computed_in := graph.pass;
+        computed_in := Core.current_pass graph;
         computed := Some value;
         duplicate_evaluation := false;
         value
     in
     let inherited_scope =
-      if Option.is_some graph.current_scope then None
+      if Option.is_some (Core.current_scope graph) then None
       else
         Array.fold_left
           (fun inherited (Core.P dependency) ->
@@ -506,7 +484,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     in
     let create () =
       let scoped =
-        Option.is_some graph.current_scope || Option.is_some inherited_scope
+        Option.is_some (Core.current_scope graph) || Option.is_some inherited_scope
       in
       Core.make_node graph ~height:(if scoped then height + 1 else height)
         ~dependencies
@@ -533,27 +511,19 @@ module Make_impl (Observer_error : Observer_error) () = struct
     let weak_raw = Weak.create 1 in
     Weak.set weak_raw 0 (Some raw.packed);
     let invalidate () =
-      if !computed_in = graph.pass then (
+      if !computed_in = Core.current_pass graph then (
         match Weak.get weak_raw 0 with
-        | Some (Core.P node) -> node.queued_in <- -1
+        | Some packed -> Core.clear_queue_mark packed
         | None -> ());
       computed_in := -1;
       duplicate_evaluation := false
     in
     Hashtbl.replace compute_invalidators raw.handle.slot invalidate;
     Array.iter
-      (fun (Core.P dependency) ->
-        let own, others =
-          List.partition
-            (fun (Core.P candidate) ->
-              candidate.handle = raw.node.handle)
-            dependency.dependents
-        in
-        dependency.dependents <- others @ own;
-        dependency.change_listeners <-
-          (fun _ ->
-            if !computed_in = graph.pass then invalidate ())
-          :: dependency.change_listeners)
+      (fun (Core.P dependency as packed_dependency) ->
+        Core.move_dependent_last packed_dependency raw.node.handle;
+        Core.prepend_change_listener packed_dependency (fun _ ->
+            if !computed_in = Core.current_pass graph then invalidate ()))
       dependencies;
     initializers :=
       (fun () ->
@@ -565,7 +535,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
 
   let const value =
     Execution.sync execution @@ fun () ->
-    if !phase <> `Idle && graph.current_scope = None then
+    if !phase <> `Idle && Core.current_scope graph = None then
       raise (Graph_error `Ambiguous_scope);
     let raw =
       Core.make_node graph ~height:0 ~dependencies:[||]
@@ -772,26 +742,10 @@ module Make_impl (Observer_error : Observer_error) () = struct
 
   let unlink_queued_node = Core.unlink_queued_node
 
-  let unlink_unnecessary_queued () =
-    for slot = 0 to graph.slot_count - 1 do
-      match Core.slot_contents graph.slots.(slot) with
-      | Some (Core.P node as packed) when not node.necessary ->
-          unlink_queued_node packed
-      | Some _ | None -> ()
-    done
+  let unlink_unnecessary_queued () = Core.unlink_unnecessary_queued graph
 
-  let rec ensure_parent_height ?(current = false)
-      (Core.P node as packed) minimum =
-    if node.height < minimum then (
-      if not current then unlink_queued_node packed;
-      node.height <- minimum;
-      Core.ensure_height graph minimum;
-      if not current then (
-        node.queued_in <- -1;
-        if node.necessary then Core.enqueue packed);
-      List.iter
-        (fun parent -> ensure_parent_height parent (minimum + 1))
-        node.dependents)
+  let ensure_parent_height ?current packed minimum =
+    Core.ensure_parent_height graph ?current packed minimum
 
   let bind ?cutoff ~f source =
     Execution.sync execution @@ fun () ->
@@ -802,41 +756,11 @@ module Make_impl (Observer_error : Observer_error) () = struct
     let owner = ref None in
     let evaluated_in = ref (-1) in
     let yielded_no_value_in = ref (-1) in
-    let topology_nodes root =
-      let seen = Hashtbl.create 8 in
-      let nodes = ref [] in
-      let rec visit (Core.P node as packed) =
-        if not (Hashtbl.mem seen node.handle.slot) then (
-          Hashtbl.add seen node.handle.slot ();
-          nodes := packed :: !nodes;
-          Array.iter visit node.dependencies)
-      in
-      visit root;
-      !nodes
-    in
-    let adjust_topology_priority delta nodes =
-      List.iter
-        (fun (Core.P node as packed) ->
-          node.topology_priority <- node.topology_priority + delta;
-          if node.in_queue then (
-            Core.unlink_queued_node packed;
-            Core.enqueue packed))
-        nodes
-    in
-    let enqueue_uninitialized_topology root =
-      let seen = Hashtbl.create 8 in
-      let rec visit (Core.P node as packed) =
-        if not (Hashtbl.mem seen node.handle.slot) then (
-          Hashtbl.add seen node.handle.slot ();
-          Array.iter visit node.dependencies;
-          if
-            Option.is_none (Obj.magic node.current : Obj.t option)
-          then Core.enqueue packed)
-      in
-      visit root
-    in
+    let topology_nodes = Core.dependency_subgraph in
+    let adjust_topology_priority = Core.adjust_topology_priority in
+    let enqueue_uninitialized_topology = Core.enqueue_uninitialized_topology in
     let compute () =
-      evaluated_in := graph.pass;
+      evaluated_in := Core.current_pass graph;
       try
       let source_value =
         match Core.value source.raw with
@@ -855,9 +779,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
         let parent_scope =
           match !owner with
           | Some owner -> owner.raw.node.scope
-          | None -> graph.current_scope
+          | None -> Core.current_scope graph
         in
-        let fresh_scope = { Core.valid = true; slot_head = -1 } in
+        let fresh_scope = Core.create_scope () in
         scope_parents := (fresh_scope, parent_scope) :: !scope_parents;
         let fresh =
           Core.with_scope graph fresh_scope (fun () -> f source_value)
@@ -874,32 +798,17 @@ module Make_impl (Observer_error : Observer_error) () = struct
                    !scope_parents
                 |> Option.join)
         in
-        let seen_scopes = Hashtbl.create 8 in
-        let rec validate_scopes (Core.P node) =
-          if not (Hashtbl.mem seen_scopes node.handle.slot) then (
-            Hashtbl.add seen_scopes node.handle.slot ();
-            (match node.scope with
-            | None -> ()
-            | Some candidate ->
-                if
-                  not candidate.valid
-                  || not
-                       (candidate == fresh_scope
-                       || scope_is_ancestor candidate parent_scope)
-                then raise (Graph_error `Invalid_scope);
-                Array.iter validate_scopes node.dependencies))
-        in
-        validate_scopes fresh.raw.packed;
+        List.iter
+          (fun candidate ->
+            if
+              not (Core.scope_valid candidate)
+              || not
+                   (candidate == fresh_scope
+                    || scope_is_ancestor candidate parent_scope)
+            then raise (Graph_error `Invalid_scope))
+          (Core.distinct_scopes fresh.raw.packed);
         let owner_handle = (Option.get !owner).raw.handle in
-        let seen = Hashtbl.create 8 in
-        let rec reaches_owner (Core.P node) =
-          if node.handle = owner_handle then true
-          else if Hashtbl.mem seen node.handle.slot then false
-          else (
-            Hashtbl.add seen node.handle.slot ();
-            Array.exists reaches_owner node.dependencies)
-        in
-        if reaches_owner fresh.raw.packed then (
+        if Core.reaches_handle fresh.raw.packed owner_handle then (
           let seen_pending = Hashtbl.create 8 in
           let rec has_pending_bind (Core.P node) =
             if Hashtbl.mem seen_pending node.handle.slot then false
@@ -908,7 +817,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               match Hashtbl.find_opt bind_evaluations node.handle.slot with
               | Some (handle, pass)
                 when handle = node.handle
-                     && !pass <> graph.pass
+                     && !pass <> Core.current_pass graph
                      && node.in_queue ->
                   true
               | Some _ | None ->
@@ -930,9 +839,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
             (fresh.raw.node.height + 1);
         Option.iter
           (fun invalidate ->
-            fresh.raw.node.change_listeners <-
-              (fun _ -> invalidate ())
-              :: fresh.raw.node.change_listeners)
+            Core.prepend_change_listener (Core.P fresh.raw.node) (fun _ ->
+                invalidate ()))
           (Hashtbl.find_opt compute_invalidators
              (Option.get !owner).raw.handle.slot);
         scope_owners := (fresh_scope, packed_owner) :: !scope_owners;
@@ -952,32 +860,17 @@ module Make_impl (Observer_error : Observer_error) () = struct
                          Some child
                      | None | Some _ -> None)
                    !scope_parents);
-              let rec retire_slots count slot =
-                if slot = -1 then count
-                else
-                  match Core.slot_contents graph.slots.(slot) with
-                  | Some (Core.P node as packed) ->
-                      let next = node.scope_next in
-                      (match node.scope with
-                      | Some owner when owner == scope ->
-                          unlink_queued_node packed;
-                          Core.retire_packed graph packed;
-                          retire_slots (count + 1) next
-                      | None | Some _ -> count)
-                  | None -> count
-              in
-              dead_nodes := !dead_nodes + retire_slots 0 scope.slot_head;
-              scope.valid <- false
+              dead_nodes := !dead_nodes + Core.invalidate_scope_chain graph scope
             in
             retire old_scope)
           old_scope;
         (* Retired scopes are invalid and so is their whole subtree; keep the
            ancestry and owner indices bounded to live scopes. *)
         scope_parents :=
-          List.filter (fun ((child : Core.scope), _) -> child.valid)
+          List.filter (fun ((child : Core.scope), _) -> Core.scope_valid child)
             !scope_parents;
         scope_owners :=
-          List.filter (fun ((scope : Core.scope), _) -> scope.valid)
+          List.filter (fun ((scope : Core.scope), _) -> Core.scope_valid scope)
             !scope_owners;
         selected := Some source_value;
         inner := Some fresh;
@@ -1004,22 +897,22 @@ module Make_impl (Observer_error : Observer_error) () = struct
       | Some _ as value -> value
       | None ->
           let owner = Option.get !owner in
-          if !yielded_no_value_in <> graph.pass then (
-            yielded_no_value_in := graph.pass;
+          if !yielded_no_value_in <> Core.current_pass graph then (
+            yielded_no_value_in := Core.current_pass graph;
             let inner = Option.get !inner in
             if signal_timers inner = [] then (
               enqueue_uninitialized_topology inner.raw.packed;
-              owner.raw.node.queued_in <- -1;
+              Core.clear_queue_mark owner.raw.packed;
               Core.enqueue_deferred owner.raw.packed));
           Core.value owner.raw)
       with Deferred_bind ->
         let owner = Option.get !owner in
-        owner.raw.node.queued_in <- -1;
+        Core.clear_queue_mark owner.raw.packed;
         Core.enqueue_deferred owner.raw.packed;
         Option.bind !inner (fun signal -> Core.value signal.raw)
       | Deferred_source ->
         let owner = Option.get !owner in
-        owner.raw.node.queued_in <- -1;
+        Core.clear_queue_mark owner.raw.packed;
         Option.bind !inner (fun signal -> Core.value signal.raw)
     in
     let selected_cutoff = cutoff_or_default cutoff in
@@ -1047,7 +940,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     Weak.set weak_raw 0 (Some raw.packed);
     Hashtbl.replace compute_invalidators raw.handle.slot (fun () ->
         match Weak.get weak_raw 0 with
-        | Some (Core.P node) -> node.queued_in <- -1
+        | Some packed -> Core.clear_queue_mark packed
         | None -> ());
     Hashtbl.replace bind_nodes raw.handle.slot raw.handle;
     Hashtbl.replace bind_evaluations raw.handle.slot
@@ -1823,7 +1716,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
                     { s with child_visit_count = s.child_visit_count + 1 };
                 Option.iter
                   (fun owner ->
-                    owner.Core.keyed_signal.node.queued_in <- -1)
+                    Core.clear_queue_mark owner.Core.keyed_signal.packed)
                   !owner_ref;
                 value)
                 output
@@ -1862,17 +1755,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     List.iter (fun enqueue -> enqueue ()) !initializers
 
   let enqueue_all_uninitialized_necessary () =
-    for slot = 0 to graph.slot_count - 1 do
-      match Core.slot_contents graph.slots.(slot) with
-      | Some (Core.P node as packed)
-        when node.necessary
-             && Array.length node.dependencies > 0
-             &&
-             Option.is_none
-               (Obj.magic node.current : Obj.t option) ->
-          Core.enqueue packed
-      | Some _ | None -> ()
-    done
+    Core.enqueue_all_uninitialized_necessary graph
 
   let stabilize () =
     Execution.sync execution @@ fun () ->
@@ -1880,16 +1763,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
     else
       let first_pass () =
         enqueue_uninitialized_necessary ();
-        let seen_timer_work = Hashtbl.create 16 in
-        let rec unlink_timer_work (Core.P node as packed) =
-          if not (Hashtbl.mem seen_timer_work node.handle.slot) then (
-            Hashtbl.add seen_timer_work node.handle.slot ();
-            unlink_queued_node packed;
-            List.iter unlink_timer_work node.dependents)
-        in
-        List.iter
-          (fun (timer : timer) -> unlink_timer_work timer.source_node)
-          !timers;
+        Core.unlink_queued_descendants graph
+          (List.map (fun (timer : timer) -> timer.source_node) !timers);
         incr stabilization_attempts;
         match with_phase `Planning (fun () -> Core.stabilize graph) with
         | Error Core.Reentrant_stabilization ->
@@ -1975,65 +1850,11 @@ module Make_impl (Observer_error : Observer_error) () = struct
             started <> [] || started_admitted || active_refreshed
           in
           let second_pass () =
-            let stale_bind = ref false in
-            Hashtbl.iter
-              (fun slot handle ->
-                match Core.slot_contents graph.slots.(slot) with
-                | Some (Core.P node as packed)
-                  when node.handle = handle
-                       && node.necessary
-                       && Array.length node.dependencies > 1 ->
-                    let Core.P inner =
-                      node.dependencies.(Array.length node.dependencies - 1)
-                    in
-                    if Obj.repr node.current != Obj.repr inner.current then (
-                      Core.enqueue packed;
-                      stale_bind := true)
-                | Some _ | None -> ())
-              bind_nodes;
-            let stale_duplicate = ref false in
-            let committed_pass = graph.pass - 1 in
-            let seen_descendants = Hashtbl.create 16 in
-            let rec enqueue_descendants (Core.P node as packed) =
-              if not (Hashtbl.mem seen_descendants node.handle.slot) then (
-                Hashtbl.add seen_descendants node.handle.slot ();
-                if node.necessary then Core.enqueue packed;
-                List.iter enqueue_descendants node.dependents)
+            let stale =
+              Core.enqueue_stale_freshness graph ~bind_nodes
+                ~custom_cutoff_nodes
             in
-            for slot = 0 to graph.slot_count - 1 do
-              match Core.slot_contents graph.slots.(slot) with
-              | Some (Core.P node) when node.necessary ->
-                  let duplicate = ref false in
-                  for left = 0 to Array.length node.dependencies - 1 do
-                    for right = left + 1 to Array.length node.dependencies - 1 do
-                      let Core.P left_node = node.dependencies.(left) in
-                      let Core.P right_node = node.dependencies.(right) in
-                      if left_node.handle = right_node.handle then
-                        duplicate := true
-                    done
-                  done;
-                  let dependency_changed =
-                    Array.exists
-                      (fun (Core.P dependency) ->
-                        dependency.written_in = committed_pass)
-                      node.dependencies
-                  in
-                  let custom_dependency =
-                    Array.exists
-                      (fun (Core.P dependency) ->
-                        Hashtbl.find_opt custom_cutoff_nodes
-                          dependency.handle.slot
-                        = Some dependency.handle)
-                      node.dependencies
-                  in
-                  if !duplicate && dependency_changed && not custom_dependency
-                  then (
-                    Core.enqueue (Core.P node);
-                    List.iter enqueue_descendants node.dependents;
-                    stale_duplicate := true)
-              | Some _ | None -> ()
-            done;
-            if refreshed || !stale_bind || !stale_duplicate then (
+            if refreshed || stale then (
               enqueue_uninitialized_necessary ();
               enqueue_all_uninitialized_necessary ();
               match with_phase `Planning (fun () -> Core.stabilize graph) with
@@ -2081,18 +1902,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let stats () =
     Execution.sync execution @@ fun () ->
     if graph.phase = Core.Idle then Core.release_unreachable_roots graph;
-    let total = ref 0 and necessary = ref 0 and dirty = ref 0 in
-    for slot = 0 to graph.slot_count - 1 do
-      match Core.slot_contents graph.slots.(slot) with
-      | None -> ()
-      | Some (Core.P node) ->
-          let internal_source =
-            not node.constant && Array.length node.dependencies = 0
-          in
-          if not internal_source then incr total;
-          if node.necessary && not internal_source then incr necessary;
-          if node.admitted then incr dirty
-    done;
+    let total, necessary, dirty = Core.public_node_counts graph in
+    let total = ref total and necessary = ref necessary and dirty = ref dirty in
     let active = ref 0 and invalid = ref 0 in
     List.iter
       (fun (O observer) ->
@@ -2112,29 +1923,11 @@ module Make_impl (Observer_error : Observer_error) () = struct
     let g = Core.keyed_stats_for graph in
     let keyed_node_count = ref 0 in
     let committed_child_count = ref 0 in
-    for slot = 0 to graph.slot_count - 1 do
-      match Core.slot_contents graph.slots.(slot) with
-      | Some (Core.P node) -> (
-          match node.keyed_owner with
-          | None -> ()
-          | Some packed_owner ->
-              let owner : (_, _, _, _, _) Core.keyed_owner =
-                Obj.obj packed_owner
-              in
-              if
-                owner.keyed_signal.handle = node.handle
-                && Core.validate_handle owner.keyed_signal
-              then (
-                incr keyed_node_count;
-                let rec count acc = function
-                  | Core.Child_empty -> acc
-                  | Core.Child_branch branch ->
-                      count (count (acc + 1) branch.left) branch.right
-                in
-                committed_child_count :=
-                  count !committed_child_count owner.children))
-      | None -> ()
-    done;
+    let counted_keyed_nodes, counted_committed_children =
+      Core.keyed_node_counts graph
+    in
+    keyed_node_count := counted_keyed_nodes;
+    committed_child_count := counted_committed_children;
     let check_overflow name value =
       if value = max_int then Error (`Counter_overflow name) else Ok ()
     in
@@ -2193,92 +1986,15 @@ module Make_impl (Observer_error : Observer_error) () = struct
     Core.release_unreachable_roots graph;
     let buffer = Buffer.create 256 in
     Buffer.add_string buffer "digraph eta_signal {\n";
-    for slot = 0 to graph.slot_count - 1 do
-      match Core.slot_contents graph.slots.(slot) with
-      | None -> ()
-      | Some (Core.P node) ->
-          let internal_source =
-            not node.constant && Array.length node.dependencies = 0
-          in
-          if
-            not internal_source
-            && (options.dot_scope <> `Necessary || node.necessary)
-          then (
-            let dependent_count = ref 0 in
-            for candidate_slot = 0 to graph.slot_count - 1 do
-              match Core.slot_contents graph.slots.(candidate_slot) with
-              | Some (Core.P candidate) ->
-                  Array.iter
-                    (fun (Core.P dependency) ->
-                      if dependency.handle = node.handle then
-                        incr dependent_count)
-                    candidate.dependencies
-              | None -> ()
-            done;
-            let owner_opt = node.keyed_owner in
-            let keyed_extra =
-              if Option.is_some owner_opt then
-                match owner_opt with
-                | Some owner_obj when options.dot_state ->
-                    let owner : (_, _, _, _, _) Core.keyed_owner = Obj.obj owner_obj in
-                    let child_count =
-                      let rec count acc = function
-                        | Core.Child_empty -> acc
-                        | Core.Child_branch b ->
-                            count (count (acc + 1) b.left) b.right
-                      in
-                      count 0 owner.children
-                    in
-                    let base = Printf.sprintf " kind=keyed_mapi committed_children=%d requested_scope=%s" child_count
-                      (match options.dot_scope with
-                      | `Necessary -> "necessary"
-                      | `All_valid -> "all_valid"
-                      | `All_including_invalid -> "all_including_invalid") in
-                    if options.dot_dynamic_scopes then base ^ " scope_owner=s" ^ " :valid"
-                    else base
-                | Some _ when options.dot_state -> " kind=keyed_mapi"
-                | Some _ -> " kind=keyed_mapi"
-                | None -> " kind=keyed_mapi"
-              else ""
-            in
-            Buffer.add_string buffer
-              (Printf.sprintf "  signal_%d [label=\"signal_%d%s%s\"];\n"
-                 slot slot keyed_extra
-                  (if options.dot_state then
-                    Printf.sprintf
-                      " necessary=%b dirty=%b queued=%b dependencies=%d dependents=%d signal_id=s%d%s"
-                      node.necessary
-                      (node.admitted
-                      || Array.exists
-                           (fun (Core.P dependency) -> dependency.admitted)
-                           node.dependencies)
-                      (node.queued_in = graph.pass
-                      || Array.exists
-                           (fun (Core.P dependency) ->
-                             dependency.admitted
-                             || dependency.queued_in = graph.pass)
-                           node.dependencies)
-                      (Array.length node.dependencies) !dependent_count slot
-                      (match node.scope with
-                      | None -> ""
-                      | Some scope ->
-                          Printf.sprintf
-                            " scope=%s scope_id=sc%d scope_owner=s%d scope_parent=root"
-                            (if scope.valid then "valid" else "invalid")
-                            scope.slot_head scope.slot_head)
-                  else ""));
-            Array.iter
-              (fun (Core.P child) ->
-                let child_internal =
-                  not child.constant
-                  && Array.length child.dependencies = 0
-                in
-                if not child_internal then
-                  Buffer.add_string buffer
-                    (Printf.sprintf "  signal_%d -> signal_%d;\n"
-                       child.handle.slot slot))
-              node.dependencies)
-    done;
+    Core.append_nodes_dot buffer graph
+      ~only_necessary:(options.dot_scope = `Necessary)
+      ~scope_label:
+        (match options.dot_scope with
+        | `Necessary -> "necessary"
+        | `All_valid -> "all_valid"
+        | `All_including_invalid -> "all_including_invalid")
+      ~dot_state:options.dot_state
+      ~dot_dynamic_scopes:options.dot_dynamic_scopes;
     if options.dot_dynamic_scopes && !scope_owners <> [] then
       Buffer.add_string buffer
         "  dynamic_scopes [label=\"scope=valid scope_id=sc0 scope_owner=s0 scope_parent=root\"];\n";
@@ -2526,17 +2242,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               sample := previous_sample;
               source.value <- previous_value;
               source.source.accepted := Some previous_value;
-              let node = source.source.signal.node in
-              let retained = ref 0 in
-              for index = 0 to graph.admission_length - 1 do
-                let slot = graph.admissions.(index) in
-                if slot <> node.handle.slot then (
-                  graph.admissions.(!retained) <- slot;
-                  incr retained)
-              done;
-              graph.admission_length <- !retained;
-              node.admitted <- false;
-              unlink_queued_node source.source.signal.packed);
+              Core.cancel_admission graph source.source.signal.packed);
       commit_refresh :=
         (fun () ->
           speculative := None;
