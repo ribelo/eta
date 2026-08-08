@@ -703,7 +703,7 @@ let value signal =
   if not (validate_handle signal) then raise Stale_handle;
   signal.node.current
 
-let record_first_write (node : 'a node) =
+let[@inline always] record_first_write (node : 'a node) =
   let graph = node.graph in
   if node.written_in <> graph.pass then (
     if graph.journal_length = Array.length graph.journal then
