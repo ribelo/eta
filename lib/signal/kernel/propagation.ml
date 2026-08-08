@@ -724,16 +724,40 @@ let set graph variable candidate =
     retain_admission graph variable.signal.node;
     enqueue variable.signal.packed)
 
-let rec evaluate_from changed_before (P node) =
+type pending_work = {
+  mutable pending_claims : int;
+  mutable pending_evaluations : int;
+  mutable pending_dependency_edges : int;
+  mutable pending_propagation_edges : int;
+}
+
+let[@inline always] flush_pending_work (pending @ local) work =
+  work.claims <- work.claims + pending.pending_claims;
+  work.evaluations <- work.evaluations + pending.pending_evaluations;
+  work.dependency_edges <-
+    work.dependency_edges + pending.pending_dependency_edges;
+  work.propagation_edges <-
+    work.propagation_edges + pending.pending_propagation_edges
+
+let rec enqueue_parents (pending @ local) = function
+  | [] -> ()
+  | (P parent_node as parent) :: parents ->
+      pending.pending_propagation_edges <-
+        pending.pending_propagation_edges + 1;
+      if parent_node.necessary then enqueue parent;
+      enqueue_parents pending parents
+
+let rec evaluate_from (pending @ local) changed_before (P node) =
   let graph = node.graph in
-  graph.work.claims <- graph.work.claims + 1;
+  pending.pending_claims <- pending.pending_claims + 1;
   let changed =
     if node.constant then false
     else (
-      if Array.length node.dependencies > 0 then (
-      graph.work.evaluations <- graph.work.evaluations + 1;
-      graph.work.dependency_edges <-
-        graph.work.dependency_edges + Array.length node.dependencies);
+      let dependency_count = Array.length node.dependencies in
+      if dependency_count > 0 then (
+        pending.pending_evaluations <- pending.pending_evaluations + 1;
+        pending.pending_dependency_edges <-
+          pending.pending_dependency_edges + dependency_count);
       let next = node.compute () in
       if node.cutoff node.current next then false
       else (
@@ -749,19 +773,30 @@ let rec evaluate_from changed_before (P node) =
       when parent_node.necessary
            && Array.length parent_node.dependencies = 1
            && parent_node.height = node.height + 1 ->
-        graph.work.propagation_edges <- graph.work.propagation_edges + 1;
-        evaluate_from true parent
+        pending.pending_propagation_edges <-
+          pending.pending_propagation_edges + 1;
+        evaluate_from pending true parent
     | parents ->
-        List.iter
-          (fun parent ->
-            let P parent_node = parent in
-            graph.work.propagation_edges <- graph.work.propagation_edges + 1;
-            if parent_node.necessary then enqueue parent)
-          parents;
+        enqueue_parents pending parents;
         true
   else changed_before
 
-let evaluate packed = evaluate_from false packed
+let evaluate (P node as packed) =
+  let local_ pending =
+    {
+      pending_claims = 0;
+      pending_evaluations = 0;
+      pending_dependency_edges = 0;
+      pending_propagation_edges = 0;
+    }
+  in
+  match evaluate_from pending false packed with
+  | changed ->
+      flush_pending_work pending node.graph.work;
+      changed
+  | exception exn ->
+      flush_pending_work pending node.graph.work;
+      raise exn
 
 let pop graph heads tails height =
   let slot = heads.(height) in
