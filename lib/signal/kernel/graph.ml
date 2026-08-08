@@ -356,10 +356,19 @@ module Make_impl (Observer_error : Observer_error) () = struct
      while a propagation pass executes; [Delivering] runs exactly while
      post-commit delivery executes. *)
   let phase : [ `Idle | `Planning | `Delivering ] ref = ref `Idle
-  let with_phase next f =
+  (* [f] never escapes, so callers may stack-allocate the closure. Restoring the
+     previous phase inline instead of through [Fun.protect] keeps the argument
+     local and avoids the protect closure. *)
+  let with_phase next (f @ local) =
     let previous = !phase in
     phase := next;
-    Fun.protect ~finally:(fun () -> phase := previous) f
+    match f () with
+    | result ->
+        phase := previous;
+        result
+    | exception exn ->
+        phase := previous;
+        raise exn
   let edge_graph_error : graph_error option ref = ref None
   let edge_start_failed = ref false
   let sampling_timer_starts = ref false
@@ -1223,7 +1232,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
     | [] -> invalid_arg "Eta_signal: empty cleanup failure list"
 
   let run_edge_plan_sync ?(registration = false) plan =
-    with_phase `Delivering @@ fun () ->
+    (* The delivery body never escapes; the result binding keeps the call out of
+       tail position, which stack_ requires. *)
+    let outcome = with_phase `Delivering @@ stack_ (fun () ->
     (if registration then (
        let disposals = List.rev !pending_edge_disposals in
        pending_edge_disposals := [];
@@ -1314,7 +1325,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
     | None, Error (Edges.Callback_failure (Edges.Defect exn)) -> raise exn
     | None, Error (Edges.Callback_failure (Edges.Interrupted exn)) -> raise exn
     | None, Error (Edges.Cleanup_failures errors) ->
-        raise_cleanup_failures errors
+        raise_cleanup_failures errors)
+    in
+    outcome
 
   let observe_with ?cutoff ?on_finish signal edge_callback =
     if not (Core.validate_handle signal.raw) then Error `Invalid_scope
