@@ -894,10 +894,10 @@ module Make_impl (Observer_error : Observer_error) () = struct
         if (Option.get !owner).raw.node.height <= fresh.raw.node.height then
           ensure_parent_height ~current:true packed_owner
             (fresh.raw.node.height + 1);
-        Option.iter
-          (fun invalidate ->
-            Core.prepend_change_listener (Core.P fresh.raw.node) (fun _ ->
-                invalidate ()))
+        iter_option_local
+          (stack_ (fun invalidate ->
+              Core.prepend_change_listener (Core.P fresh.raw.node) (fun _ ->
+                  invalidate ())))
           (Hashtbl.find_opt compute_invalidators
              (Option.get !owner).raw.handle.slot);
         scope_owners := (fresh_scope, packed_owner) :: !scope_owners;
@@ -908,14 +908,13 @@ module Make_impl (Observer_error : Observer_error) () = struct
         let local_ retire_old_scope (old_scope : Core.scope) =
           incr dynamic_scope_invalidations;
           let rec retire scope =
-            List.iter retire
-              (List.filter_map
-                 (fun ((child : Core.scope), parent) ->
-                   match parent with
-                   | Some parent when parent == scope && child.valid ->
-                       Some child
-                   | None | Some _ -> None)
-                 !scope_parents);
+            iter_list_local
+              (stack_ (fun ((child : Core.scope), parent) ->
+                  match parent with
+                  | Some parent when parent == scope && child.valid ->
+                      retire child
+                  | None | Some _ -> ()))
+              !scope_parents;
             dead_nodes := !dead_nodes + Core.invalidate_scope_chain graph scope
           in
           retire old_scope
