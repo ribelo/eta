@@ -1,4 +1,4 @@
-# Eta Signal performance ideas
+# Eta Signal allocation ideas
 
 ## Next measurements
 
@@ -31,10 +31,10 @@
 - Zero or one observer bypasses dependency sorting.
 - Empty stale-freshness registries bypass repair setup.
 
-## Deferred allocation work
+## Primary allocation work
 
 - OxCaml `or_null` raw values flattened changed-depth allocation to 81 words
   (from 91, 127, and 487) and reduced cutoff/dynamic allocation, but run 15
-  regressed the wall geomean from 3.70 to 3.74. Reconsider only if allocation
-  becomes the primary target or a profile identifies the removed wrappers as a
-  wall-time bottleneck.
+  regressed the wall geomean from 3.70 to 3.74. Allocation is now the primary
+  target. Reapply this representation first and retain wall time as a secondary
+  regression guard.

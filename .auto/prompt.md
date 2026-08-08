@@ -1,8 +1,8 @@
-# Autoresearch: Eta Signal performance
+# Autoresearch: Eta Signal allocation
 
 ## Objective
 
-Reduce the wall time of the five public `eta_signal` workloads in
+Reduce steady-state allocation for changed propagation at depth 100 in
 `bench/signal_compare`. Jane Street Incremental is the fixed reference.
 
 The workload set contains these operations:
@@ -16,10 +16,10 @@ the final observer read are outside the timed operation.
 
 ## Metrics
 
-- **Primary**: `signal_wall_ratio_geomean` (unitless, lower is better).
-  This value is the geometric mean of the five Eta wall times divided by the
-  frozen Incremental medians from Eta commit `6f4c5cf7`.
+- **Primary**: `signal_changed_100_words` (allocated words, lower is better).
 - **Secondary**:
+  - `signal_changed_100_wall_ns`
+  - `signal_wall_ratio_geomean`
   - `signal_worst_wall_ratio`
   - Wall time and allocated words for each workload.
   - Depth growth from 1 to 10 and from 10 to 100.
@@ -68,8 +68,9 @@ behavior, law, model, package, complexity, and install gates.
 - Measure with `perf` or Memtrace before each non-obvious optimization.
 - Use OxCaml local allocation, unboxed values, or zero-allocation checks when
   measurements identify a suitable hot allocation.
-- Keep only primary metric improvements.
-- Reject catastrophic regressions in any workload or allocation row.
+- Keep only primary allocation improvements.
+- Reject catastrophic wall-time regressions or allocation regressions in another
+  workload.
 - Preserve the synchronous owner-domain interface.
 - Preserve `Propagation`, `Post_commit`, and `Graph` ownership.
 - Add a focused regression test for each changed protocol.
@@ -79,7 +80,7 @@ behavior, law, model, package, complexity, and install gates.
 
 ## Initial Work
 
-1. Measure the five-row baseline after the retained graph-wide scan fixes.
-2. Profile the worst ratio and the allocation-heavy changed-depth row.
-3. Inspect Incremental for the measured operation before changing Eta.
-4. Prefer removal of generic pass work over workload-specific code.
+1. Measure the retained depth-100 allocation baseline.
+2. Attribute every steady-state allocation category in the depth-100 row.
+3. Revisit the measured OxCaml `or_null` raw-value representation.
+4. Prefer removal of per-node allocation over workload-specific code.
