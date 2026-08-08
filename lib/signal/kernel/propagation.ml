@@ -882,6 +882,8 @@ let evaluate (P node as packed) =
       flush_pending_work pending node.graph.work;
       raise exn
 
+let evaluate_node = evaluate
+
 let pop graph heads tails height =
   let slot = heads.(height) in
   if slot = -1 then None

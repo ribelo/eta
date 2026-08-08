@@ -196,6 +196,9 @@ val var :
   ('a : value_or_null). ?cutoff:('a -> 'a -> bool) -> graph -> 'a -> 'a var
 val watch : ('a : value_or_null). 'a var -> 'a signal
 val enqueue : packed -> unit
+(* Run the propagation step for [packed] immediately (used to initialize a
+   dependency-free bind inner during the owner's compute). *)
+val evaluate_node : packed -> bool
 val enqueue_deferred : packed -> unit
 val unlink_queued_node : packed -> unit
 val activate : packed -> unit

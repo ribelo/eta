@@ -918,7 +918,11 @@ module Make_impl (Observer_error : Observer_error) () = struct
           if Option.is_none fresh.timer then
             iter_list_local
               (stack_ (fun packed -> Core.enqueue_if_uninitialized graph packed))
-              !initializers);
+              !initializers;
+          (* A dependency-free inner is pure and initialized by one evaluation,
+             so the owner publishes in this pass without a deferred retry. *)
+          if Array.length fresh.raw.node.dependencies = 0 then
+            ignore (Core.evaluate_node (Core.P fresh.raw.node)));
         let local_ retire_old_scope (old_scope : Core.scope) =
           incr dynamic_scope_invalidations;
           retire_scope_children graph dead_nodes scope_parents old_scope
