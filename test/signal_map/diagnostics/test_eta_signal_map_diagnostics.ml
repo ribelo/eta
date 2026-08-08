@@ -1,16 +1,18 @@
 module E = Eta.Effect
 
 module Harness () = struct
-  module S = Eta_signal_map_api.Make (Eta_signal.No_observer_error) ()
-
   module Order = struct
     type t = int
     let compare = Int.compare
   end
 
-  module M = Eta_signal_map_api.Map.Make (Order)
-  module K = S.Keyed (Order)
-  module T = K.Testing
+  module P =
+    Eta_signal_map_test_support.Make (Eta_signal.No_observer_error) (Order) ()
+
+  module S = P.Signal
+  module M = Eta_signal_map_kernel.Make (Order)
+  module K = P.Keyed
+  module T = P
 
   let run_ok = function
     | Ok value -> value
@@ -204,10 +206,13 @@ let test_keyed_stats_count_failed_attempt_and_rollback () =
   H.set input (H.M.set 1 (ref 2) H.M.empty);
   (try ignore (H.S.stabilize ()) with _ -> ());
   fail_cutoff := false;
-  H.T.set_preflight output (fun () -> failwith "preflight");
+  H.T.fail_next_precommit
+    (match H.P.family output with
+     | Some family -> family
+     | None -> Alcotest.fail "missing family")
+    (Failure "precommit");
   H.set input (H.M.set 2 (ref 2) H.M.empty);
   (try ignore (H.S.stabilize ()) with _ -> ());
-  H.T.set_preflight output (fun () -> ());
   let after = (H.stats ()).keyed in
   Alcotest.(check int) "four reconciliation attempts" 4
     (after.reconciliation_count - baseline.reconciliation_count);
@@ -218,7 +223,7 @@ let test_keyed_stats_count_failed_attempt_and_rollback () =
   Alcotest.(check int) "no committed removal" 0
     (after.committed_removal_count - baseline.committed_removal_count);
   Alcotest.(check int) "one live child" 1 after.committed_child_count;
-  Alcotest.(check int) "two registered provisional scopes" 2
+  Alcotest.(check int) "three registered provisional scopes" 3
     (after.provisional_addition_count - baseline.provisional_addition_count);
   H.dispose observer
 
@@ -310,7 +315,7 @@ let test_keyed_stats_saturation_does_not_change_transaction () =
         | 6 -> "stats keyed.committed_removal_count"
         | _ -> "stats keyed.reconciliation_rollback_count"
       in
-      H.T.set_counter counter max_int;
+      H.T.saturate_counter counter;
       H.set input (H.M.set 1 10 H.M.empty);
       H.stabilize ();
       Alcotest.(check (option int)) "transaction still commits" (Some 10)
@@ -424,7 +429,15 @@ let test_keyed_diagnostics_are_read_only () =
   let observer = H.observe output (fun _ -> Ok ()) in
   H.stabilize ();
   let before = H.stats () in
-  let identity_before = H.T.entry_identity output 1 |> Option.get in
+  let identity_of () =
+    match H.P.family output with
+    | Some family -> (
+        match H.P.find family 1 with
+        | Some entry -> entry
+        | None -> Alcotest.fail "missing entry")
+    | None -> Alcotest.fail "missing family"
+  in
+  let identity_before = identity_of () in
   ignore (H.stats ());
   ignore (H.dot H.S.default_dot_options);
   let after_reads = H.stats () in
@@ -432,9 +445,9 @@ let test_keyed_diagnostics_are_read_only () =
     before.keyed.reconciliation_count after_reads.keyed.reconciliation_count;
   Alcotest.(check int) "visits unchanged"
     before.keyed.child_visit_count after_reads.keyed.child_visit_count;
-  let identity_after = H.T.entry_identity output 1 |> Option.get in
+  let identity_after = identity_of () in
   Alcotest.(check bool) "identity unchanged" true
-    (identity_before.keyed_scope_token == identity_after.keyed_scope_token);
+    (H.P.same_scope identity_before identity_after);
   H.set input (H.M.set 1 20 H.M.empty);
   ignore (H.stats ());
   ignore (H.dot H.S.default_dot_options);

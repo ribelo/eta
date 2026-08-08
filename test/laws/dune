@@ -33,7 +33,7 @@
 (test
  (name keyed_mapi_properties)
  (modules keyed_mapi_properties)
- (libraries eta eta_signal eta_signal_map eta_eio eta_test qcheck qcheck-core.runner eio_main)
+ (libraries eta eta_signal eta_signal_map eta_signal_map_test_support eta_signal_map_kernel eta_eio eta_test qcheck qcheck-core.runner eio_main)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))

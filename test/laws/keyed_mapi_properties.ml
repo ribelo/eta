@@ -65,15 +65,16 @@ let run_case matrix sample =
   let key = 1 + (generated_key mod 31) in
   let other = key + 100 in
   let third = key + 200 in
-  let module S = Eta_signal_map_api.Make (Eta_signal.No_observer_error) () in
   let module Order = struct
     type t = int
     let compare = Int.compare
   end in
-  let module M = Eta_signal_map_api.Map.Make (Order) in
-  let module KM = Eta_signal_map_kernel.Make (Order) in
-  let module K = S.Keyed (Order) in
-  let module T = K.Testing in
+  let module P =
+    Eta_signal_map_test_support.Make (Eta_signal.No_observer_error) (Order) ()
+  in
+  let module S = P.Signal in
+  let module M = Eta_signal_map_kernel.Make (Order) in
+  let module K = P.Keyed in
   let run_ok = function
     | Ok value -> value
     | Error _ -> failwith (name ^ ": unexpected typed failure")
@@ -125,9 +126,14 @@ let run_case matrix sample =
     (input, output, observer)
   in
   let one value = M.set key value M.empty in
+  let family output =
+    match P.family output with
+    | Some family -> family
+    | None -> failwith (name ^ ": missing family")
+  in
   let identity output selected =
-    match T.entry_identity output selected with
-    | Some identity -> identity
+    match P.find (family output) selected with
+    | Some entry -> entry
     | None -> failwith (name ^ ": missing identity")
   in
   let output_value observer selected =
@@ -135,11 +141,11 @@ let run_case matrix sample =
     | Some value -> value
     | None -> failwith (name ^ ": missing output")
   in
-  let same_identity (left : T.entry_identity) (right : T.entry_identity) =
-    left.keyed_scope_token == right.keyed_scope_token
-    && left.keyed_source_token == right.keyed_source_token
-    && left.keyed_data_signal_token == right.keyed_data_signal_token
-    && left.keyed_child_signal_token == right.keyed_child_signal_token
+  let same_identity left right =
+    P.same_scope left right
+    && P.same_source left right
+    && P.same_data_signal left right
+    && P.same_child_signal left right
   in
   match matrix with
   | 1 | 22 ->
@@ -148,7 +154,7 @@ let run_case matrix sample =
       stabilize ();
       let id = identity output key in
       require name (List.length !builds = 1) "builder count";
-      require name id.keyed_edge_attached "missing child edge";
+      require name (P.has_exact_child_edge id) "missing child edge";
       require name (output_value observer key = 10) "wrong output";
       dispose observer
   | 2 ->
@@ -174,26 +180,40 @@ let run_case matrix sample =
         type t = { rank : int; label : string }
         let compare left right = Int.compare left.rank right.rank
       end in
-      let module RM = Eta_signal_map_api.Map.Make (Representative) in
-      let module RK = S.Keyed (Representative) in
+      let module RP =
+        Eta_signal_map_test_support.Make
+          (Eta_signal.No_observer_error)
+          (Representative)
+          ()
+      in
+      let module RS = RP.Signal in
+      let module RM = Eta_signal_map_kernel.Make (Representative) in
+      let module RK = RP.Keyed in
+      let stabilize () = run_ok (RS.stabilize ()) in
+      let set source value = run_ok (RS.Var.set source value) in
+      let dispose observer = run_ok (RS.Observer.dispose observer) in
       let first = Representative.{ rank = key; label = "first" } in
       let equal_key = Representative.{ rank = key; label = "second" } in
-      let input = S.Var.create (RM.set first (box 1 10) RM.empty) in
+      let input = RS.Var.create (RM.set first (box 1 10) RM.empty) in
       let output =
-        RK.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data ->
-            S.map (fun data -> data.value) data)
+        RK.mapi (RS.Var.watch input) ~f:(fun ~key:_ ~data ->
+            RS.map (fun data -> data.value) data)
       in
-      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> Ok ())) in
+      let observer =
+        run_ok (RS.Observer.observe output ~on_update:(fun _ -> Ok ()))
+      in
       stabilize ();
       let before =
-        match RK.Testing.entry_identity output first with
-        | Some identity -> identity
-        | None -> failwith (name ^ ": missing representative")
+        match RP.family output with
+        | None -> failwith (name ^ ": missing family")
+        | Some family -> (
+            match RP.find family first with
+            | Some entry -> entry
+            | None -> failwith (name ^ ": missing representative"))
       in
       set input (RM.set equal_key (box 2 20) RM.empty);
       stabilize ();
-      let stored : Representative.t = Obj.obj before.keyed_key_token in
-      require name (stored == first) "stored representative replaced";
+      require name (RP.stored_key_is before first) "stored representative replaced";
       dispose observer
   | 4 | 6 ->
       let input, _output, observer = setup (one (box 1 10)) in
@@ -209,7 +229,7 @@ let run_case matrix sample =
       set input M.empty;
       stabilize ();
       require name (M.is_empty (read observer)) "binding retained";
-      require name (not (T.scope_valid before.keyed_scope_token)) "scope valid";
+      require name (not (P.scope_valid before)) "scope valid";
       dispose observer
   | 9 ->
       let input, output, observer = setup (one (box 1 10)) in
@@ -220,7 +240,7 @@ let run_case matrix sample =
       stabilize ();
       let after = identity output key in
       require name (not (same_identity before after)) "incarnation reused";
-      require name (not (T.scope_valid before.keyed_scope_token)) "old scope revived";
+      require name (not (P.scope_valid before)) "old scope revived";
       dispose observer
   | 10 ->
       let stable = one (box 1 10) in
@@ -254,11 +274,9 @@ let run_case matrix sample =
       let _input, output, observer = setup initial in
       let left = identity output key in
       let right = identity output other in
-      require name (left.keyed_scope_token != right.keyed_scope_token) "shared scope";
-      require name (left.keyed_data_signal_token != right.keyed_data_signal_token)
-        "shared data cell";
-      require name (left.keyed_child_signal_token != right.keyed_child_signal_token)
-        "shared child cell";
+      require name (not (P.same_scope left right)) "shared scope";
+      require name (not (P.same_data_signal left right)) "shared data cell";
+      require name (not (P.same_child_signal left right)) "shared child cell";
       dispose observer
   | 14 ->
       let input = S.Var.create (one (box 1 10)) in
@@ -417,7 +435,7 @@ let run_case matrix sample =
       stabilize ();
       let after = read observer in
       require name (before != after) "output root unchanged";
-      require name (KM.shared_node_count before after > 0) "ancestry rebuilt";
+      require name (M.shared_node_count before after > 0) "ancestry rebuilt";
       dispose observer
   | 27 ->
       let input = S.Var.create (one (box 1 10)) in
@@ -441,13 +459,13 @@ let run_case matrix sample =
       let input, output, observer = setup (one (box 1 10)) in
       let root = read observer in
       let before = identity output key in
-      T.set_preflight output (fun () -> failwith "preflight");
+      P.fail_next_precommit (family output) (Failure "precommit");
       set input (M.set other (box 2 20) M.empty);
       require name (expect_defect (fun () -> ignore (S.stabilize ()))) "missing preflight defect";
       require name (read observer == root) "rollback changed root";
       require name (same_identity before (identity output key)) "committed identity lost";
-      require name (T.scope_valid before.keyed_scope_token) "removal candidate invalid";
-      require name (not (T.pending output)) "pending plan retained";
+      require name (P.scope_valid before) "removal candidate invalid";
+      require name (P.is_settled (family output)) "pending plan retained";
       dispose observer
   | 31 ->
       let initial = M.set other (box 2 20) (one (box 1 10)) in
@@ -455,7 +473,7 @@ let run_case matrix sample =
       let root = read observer in
       let kept_before = identity output key in
       let removed_before = identity output other in
-      T.set_preflight output (fun () -> failwith "preflight");
+      P.fail_next_precommit (family output) (Failure "precommit");
       let final = M.set third (box 4 40) (one (box 3 30)) in
       set input final;
       require name (expect_defect (fun () -> ignore (S.stabilize ()))) "missing preflight defect";
@@ -464,20 +482,21 @@ let run_case matrix sample =
         "retained update identity changed";
       require name (same_identity removed_before (identity output other))
         "removal candidate identity changed";
-      require name (T.scope_valid removed_before.keyed_scope_token)
+      require name (P.scope_valid removed_before)
         "removal candidate invalidated";
-      require name (not (T.pending output)) "pending plan retained";
+      require name (P.is_settled (family output)) "pending plan retained";
       dispose observer
   | 29 ->
       let initial = M.set other (box 2 20) (one (box 1 10)) in
       let input, output, observer = setup initial in
       let events = ref [] in
-      T.set_event_recorder output (fun event -> events := !events @ [ event ]);
+      P.record_commit_events (family output) (fun event ->
+          events := !events @ [ event ]);
       set input (M.set third (box 3 30) M.empty);
       stabilize ();
       let labels =
         List.map
-          (function T.Detached _ -> 0 | T.Invalidated _ -> 1 | T.Attached _ -> 2)
+          (function P.Detached -> 0 | P.Invalidated -> 1 | P.Attached -> 2)
           !events
       in
       require name (labels = [ 0; 1; 0; 1; 2 ])
@@ -499,7 +518,7 @@ let run_case matrix sample =
       set input (M.set other (box 2 20) (one (box 1 10)));
       require name (expect_defect (fun () -> ignore (S.stabilize ()))) "missing builder defect";
       require name (M.is_empty (read observer)) "provisional output published";
-      require name (not (T.pending output)) "pending plan retained";
+      require name (P.is_settled (family output)) "pending plan retained";
       List.iter
         (fun data ->
           require name
@@ -558,8 +577,7 @@ let run_case matrix sample =
       require name
         (same_identity before (identity output key))
         "removal candidate identity changed";
-      require name
-        (T.scope_valid before.keyed_scope_token)
+      require name (P.scope_valid before)
         "removal candidate invalidated";
       set input initial;
       fail_downstream := false;
@@ -590,7 +608,11 @@ let run_case matrix sample =
       stabilize ();
       require name (M.is_empty (read observer)) "outer removal leaked nested plan";
       (match !nested_output with
-       | Some nested -> require name (not (T.pending nested)) "nested plan pending"
+       | Some nested -> (
+           match P.family nested with
+           | None -> ()
+           | Some family ->
+               require name (P.is_settled family) "nested plan pending")
        | None -> failwith (name ^ ": nested builder missing"));
       dispose observer
   | 37 ->

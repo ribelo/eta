@@ -240,6 +240,7 @@ type ('key, 'data, 'input, 'output, 'output_map) keyed_owner = {
   data_cutoff : 'data -> 'data -> bool;
   builder : key:'key -> data:'data signal -> 'output signal;
   mutable preflight : (unit -> unit) option;
+  mutable precommit : (unit -> unit) option;
   mutable event_recorder : keyed_event -> unit;
   mutable committed_input : 'input;
   mutable children : ('key, ('key, 'data, 'output) keyed_child) child_tree;
@@ -268,6 +269,12 @@ val keyed_owner :
   unit -> ('c, 'b, 'input, 'd, 'a) keyed_owner
 val set_keyed_event_recorder :
   ('a, 'b, 'c, 'd, 'e) keyed_owner -> (keyed_event -> unit) -> unit
+val set_keyed_precommit :
+  ('a, 'b, 'c, 'd, 'e) keyed_owner -> (unit -> unit) -> unit
+val child_iter :
+  (('a, 'b, 'c) keyed_child -> unit) ->
+  ('a, ('a, 'b, 'c) keyed_child) child_tree ->
+  unit
 type workload = {
   name : string;
   run_batch : int -> unit;

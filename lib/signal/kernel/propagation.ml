@@ -1526,6 +1526,7 @@ type ('key, 'data, 'input, 'output, 'output_map) keyed_owner = {
   data_cutoff : 'data -> 'data -> bool;
   builder : key:'key -> data:'data signal -> 'output signal;
   mutable preflight : (unit -> unit) option;
+  mutable precommit : (unit -> unit) option;
   mutable event_recorder : keyed_event -> unit;
   mutable committed_input : 'input;
   mutable children :
@@ -1733,6 +1734,11 @@ let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
             owner.candidate_output <-
               output_ops.set_output key output.node.current
                 owner.candidate_output);
+    (match owner.precommit with
+    | Some f ->
+        owner.precommit <- None;
+        f ()
+    | None -> ());
     List.iter
       (fun (child : (_, _, _) keyed_child) ->
         detach_child owner child;
@@ -1799,6 +1805,7 @@ let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
       data_cutoff;
       builder = build;
       preflight = None;
+      precommit = None;
       event_recorder = (fun _ -> ());
       committed_input = input_ops.empty_input;
       children = Child_empty;
@@ -1849,6 +1856,7 @@ let keyed ?cutoff ?data_cutoff ~input ~input_ops ~output_ops ~build () =
 
 let keyed_child owner key = keyed_find owner key
 let set_keyed_event_recorder owner record = owner.event_recorder <- record
+let set_keyed_precommit owner f = owner.precommit <- Some f
 let keyed_scope_valid (child : (_, _, _) keyed_child) = child.scope.valid
 let journal_high_water graph = graph.journal_high_water
 let slot_count graph = graph.slot_count

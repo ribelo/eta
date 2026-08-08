@@ -1,0 +1,4 @@
+(library
+ (name eta_signal_map_test_support)
+ (modules eta_signal_map_test_support)
+ (libraries eta eta_signal_kernel eta_signal eta_signal_map))
