@@ -488,17 +488,30 @@ module Make_impl (Observer_error : Observer_error) () = struct
       let scoped =
         Option.is_some (Core.current_scope graph) || Option.is_some inherited_scope
       in
+      let compute_candidate =
+        match dependencies with
+        | [||] -> (fun () -> Some (compute_once ()))
+        | [| Core.P dependency |] ->
+            (fun () ->
+              if
+                Option.is_none
+                  (Obj.magic dependency.current : Obj.t option)
+              then None
+              else Some (compute_once ()))
+        | _ ->
+            (fun () ->
+              if
+                Array.exists
+                  (fun (Core.P dependency) ->
+                    Option.is_none
+                      (Obj.magic dependency.current : Obj.t option))
+                  dependencies
+              then None
+              else Some (compute_once ()))
+      in
       Core.make_node graph ~height:(if scoped then height + 1 else height)
         ~dependencies
-        ~compute:(fun () ->
-          if
-            Array.exists
-              (fun (Core.P dependency) ->
-                Option.is_none
-                  (Obj.magic dependency.current : Obj.t option))
-              dependencies
-          then None
-          else Some (compute_once ()))
+        ~compute:compute_candidate
         ~cutoff:(fun old candidate ->
           !duplicate_evaluation || option_cutoff cutoff old candidate)
         ~initial:None
