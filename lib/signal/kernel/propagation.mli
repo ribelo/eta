@@ -60,7 +60,7 @@ type ('a : value_or_null) node = {
   mutable written_in : int;
   mutable flags : int;
   compute : unit -> 'a;
-  cutoff : 'a -> 'a -> bool;
+  mutable cutoff : 'a -> 'a -> bool;
   mutable dependencies : packed array;
   mutable dependents : packed list;
   mutable demand : int;
@@ -130,7 +130,7 @@ and graph = {
   work : work;
 }
 (* Packed per-node flags (see [node]): 1 = constant, 2 = necessary,
-   4 = in_queue, 8 = admitted, 16 = reclaim_queued. *)
+   4 = in_queue, 8 = admitted, 16 = reclaim_queued, 32 = public source. *)
 val node_constant : ('a : value_or_null). 'a node -> bool
 val node_necessary : ('a : value_or_null). 'a node -> bool
 val node_in_queue : ('a : value_or_null). 'a node -> bool
@@ -208,6 +208,9 @@ val make_node :
 val var :
   ('a : value_or_null). ?cutoff:('a -> 'a -> bool) -> graph -> 'a -> 'a var
 val watch : ('a : value_or_null). 'a var -> 'a signal
+val set_cutoff :
+  ('a : value_or_null). 'a signal -> ('a -> 'a -> bool) -> unit
+val mark_public_source : ('a : value_or_null). 'a signal -> unit
 val enqueue : packed -> unit
 (* Run the propagation step for [packed] immediately (used to initialize a
    dependency-free bind inner during the owner's compute). *)

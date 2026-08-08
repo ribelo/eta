@@ -59,7 +59,7 @@ type ('a : value_or_null) node = {
   mutable written_in : int;
   mutable flags : int;
   compute : unit -> 'a;
-  cutoff : 'a -> 'a -> bool;
+  mutable cutoff : 'a -> 'a -> bool;
   mutable dependencies : packed array;
   mutable dependents : packed list;
   mutable demand : int;
@@ -151,12 +151,13 @@ type ('a : value_or_null) var = {
 type demand = packed
 
 (* Packed per-node flags: 1 = constant, 2 = necessary, 4 = in_queue,
-   8 = admitted, 16 = reclaim_queued. *)
+   8 = admitted, 16 = reclaim_queued, 32 = public source. *)
 let node_constant node = node.flags land 1 <> 0
 let node_necessary node = node.flags land 2 <> 0
 let node_in_queue node = node.flags land 4 <> 0
 let node_admitted node = node.flags land 8 <> 0
 let node_reclaim_queued node = node.flags land 16 <> 0
+let node_public_source node = node.flags land 32 <> 0
 
 let set_node_constant node value =
   node.flags <- if value then node.flags lor 1 else node.flags land (lnot 1)
@@ -172,6 +173,9 @@ let set_node_admitted node value =
 
 let set_node_reclaim_queued node value =
   node.flags <- if value then node.flags lor 16 else node.flags land (lnot 16)
+
+let mark_public_source signal =
+  signal.node.flags <- signal.node.flags lor 32
 
 let make_scope ?(counted = false) parent =
   {
@@ -654,6 +658,7 @@ let var ?(cutoff = ( == )) graph initial =
   { signal; accepted; source_cutoff = cutoff }
 
 let watch variable = variable.signal
+let set_cutoff signal cutoff = signal.node.cutoff <- cutoff
 
 let constant_compute () = failwith "selected_core: evaluated constant"
 
@@ -1266,7 +1271,9 @@ let public_node_counts graph =
     | None -> ()
     | Some (P node) ->
         let internal_source =
-          not (node_constant node) && Array.length node.dependencies = 0
+          not (node_constant node)
+          && not (node_public_source node)
+          && Array.length node.dependencies = 0
         in
         if not internal_source then incr total;
         if node_necessary node && not internal_source then incr necessary;
@@ -1814,7 +1821,9 @@ let append_nodes_dot buffer graph ~only_necessary ~scope_label ~dot_state
     | None -> ()
     | Some (P node) ->
         let internal_source =
-          not (node_constant node) && Array.length node.dependencies = 0
+          not (node_constant node)
+          && not (node_public_source node)
+          && Array.length node.dependencies = 0
         in
         if (not internal_source) && ((not only_necessary) || node_necessary node)
         then (
@@ -1879,7 +1888,9 @@ let append_nodes_dot buffer graph ~only_necessary ~scope_label ~dot_state
           Array.iter
             (fun (P child) ->
               let child_internal =
-                not (node_constant child) && Array.length child.dependencies = 0
+                not (node_constant child)
+                && not (node_public_source child)
+                && Array.length child.dependencies = 0
               in
               if not child_internal then
                 Buffer.add_string buffer

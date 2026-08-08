@@ -274,6 +274,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     source : 'a or_null Core.var;
     mutable value : 'a;
     cutoff : 'a Cutoff.t;
+    direct_watch : bool;
     mutable updating : bool;
   }
 
@@ -721,11 +722,14 @@ module Make_impl (Observer_error : Observer_error) () = struct
     let create ?cutoff value =
       Execution.sync execution @@ fun () ->
       let cutoff = cutoff_or_default cutoff in
+      let source =
+        Core.var ~cutoff:(fun _ _ -> false) graph (This value)
+      in
       {
-        source =
-          Core.var ~cutoff:(fun _ _ -> false) graph (This value);
+        source;
         value;
         cutoff;
+        direct_watch = true;
         updating = false;
       }
 
@@ -737,13 +741,20 @@ module Make_impl (Observer_error : Observer_error) () = struct
     let watch var =
       Execution.sync execution @@ fun () ->
       let source = Core.watch var.source in
-      {
-        raw =
-          make_raw ~cutoff:var.cutoff ~height:(source.node.height + 1)
-            ~dependencies:[| source.packed |]
-            (fun () -> Core.value source |> value_exn);
-        timer = None;
-      }
+      match Core.current_scope graph, var.direct_watch with
+      | None, true when !phase = `Idle && var.cutoff == Cutoff.phys_equal ->
+          Core.mark_public_source source;
+          Core.set_cutoff source (or_null_cutoff var.cutoff);
+          { raw = source; timer = None }
+      | (None | Some _), _ ->
+          {
+            raw =
+              make_raw ~cutoff:var.cutoff
+                ~height:(source.node.height + 1)
+                ~dependencies:[| source.packed |]
+                (fun () -> Core.value source |> value_exn);
+            timer = None;
+          }
 
     let set (var : 'a t) value =
       Execution.sync execution @@ fun () ->
@@ -791,6 +802,21 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let bind ?cutoff ~f source =
     Execution.sync execution @@ fun () ->
     check_signal source;
+    let source =
+      if
+        Option.is_none source.timer
+        && Array.length source.raw.node.dependencies = 0
+        && not (Core.node_constant source.raw.node)
+      then
+        {
+          raw =
+            make_raw ~height:(source.raw.node.height + 1)
+              ~dependencies:[| source.raw.packed |]
+              (fun () -> Core.value source.raw |> value_exn);
+          timer = None;
+        }
+      else source
+    in
     Core.enable_change_listeners graph;
     let selected = ref Null in
     let inner = ref None in
@@ -2151,6 +2177,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               graph (This initial);
           value = initial;
           cutoff = Cutoff.never;
+          direct_watch = false;
           updating = false;
         }
       in

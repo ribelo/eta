@@ -43,3 +43,10 @@
 - Initializer list stores packed nodes with shared enqueue helper.
 - Eager evaluate of dependency-free bind inners removes the deferred retry and
   the second compute per switch.
+
+## Deferred cutoff allocation result
+
+- A private sealed plan `Empty | One observer | Many list` removes exactly three
+  words from every one-observer pass (cutoff 5 -> 2, changed 21 -> 18, dynamic
+  100 -> 97), but cutoff wall regressed 67.25 -> 69.18 ns. Revisit only if the
+  primary changes back to allocation; the existing list plan is faster.
