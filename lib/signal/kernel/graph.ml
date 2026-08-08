@@ -459,16 +459,18 @@ module Make_impl (Observer_error : Observer_error) () = struct
       raise (Graph_error `Ambiguous_scope);
     let cutoff = cutoff_or_default cutoff_arg in
     let computed_in = ref (-1) in
-    let computed = ref None in
+    let computed = ref Null in
     let duplicate_evaluation = ref false in
     let compute_once () =
       if !computed_in = Core.current_pass graph then (
         duplicate_evaluation := true;
-        Option.get !computed)
+        match !computed with
+        | This value -> value
+        | Null -> assert false)
       else
         let value = compute () in
         computed_in := Core.current_pass graph;
-        computed := Some value;
+        computed := This value;
         duplicate_evaluation := false;
         value
     in
