@@ -799,6 +799,19 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let ensure_parent_height ?current packed minimum =
     Core.ensure_parent_height graph ?current packed minimum
 
+  (* Retire [scope] and its live descendants, charging dead-node counts to
+     [dead_nodes]. Defined at module level so the recursive walk does not build
+     a closure per bind switch. *)
+  let rec retire_scope_children graph dead_nodes scope_parents scope =
+    iter_list_local
+      (stack_ (fun ((child : Core.scope), parent) ->
+          match parent with
+          | Some parent when parent == scope && child.valid ->
+              retire_scope_children graph dead_nodes scope_parents child
+          | None | Some _ -> ()))
+      !scope_parents;
+    dead_nodes := !dead_nodes + Core.invalidate_scope_chain graph scope
+
   let bind ?cutoff ~f source =
     Execution.sync execution @@ fun () ->
     check_signal source;
@@ -912,17 +925,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
             List.iter (fun initialize -> initialize ()) !initializers);
         let local_ retire_old_scope (old_scope : Core.scope) =
           incr dynamic_scope_invalidations;
-          let rec retire scope =
-            iter_list_local
-              (stack_ (fun ((child : Core.scope), parent) ->
-                  match parent with
-                  | Some parent when parent == scope && child.valid ->
-                      retire child
-                  | None | Some _ -> ()))
-              !scope_parents;
-            dead_nodes := !dead_nodes + Core.invalidate_scope_chain graph scope
-          in
-          retire old_scope
+          retire_scope_children graph dead_nodes scope_parents old_scope
         in
         iter_option_local retire_old_scope old_scope;
         (* Retired scopes are invalid and so is their whole subtree; keep the
