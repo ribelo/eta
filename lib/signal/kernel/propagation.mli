@@ -178,6 +178,7 @@ val enable_change_listeners : graph -> unit
 val raw_is_null : ('a : value_or_null). 'a -> bool
 val raw_same : ('a : value_or_null) ('b : value_or_null). 'a -> 'b -> bool
 val validate_handle : ('a : value_or_null). 'a signal -> bool
+val enqueue_if_uninitialized : graph -> packed -> unit
 val handle : ('a : value_or_null). 'a signal -> handle
 val push_capsule : graph -> capsule -> unit
 val attach : packed -> packed -> unit

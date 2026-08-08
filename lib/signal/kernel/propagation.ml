@@ -408,6 +408,7 @@ let validate_handle (signal : 'a signal) =
       && Option.fold ~none:true ~some:(fun scope -> scope.valid) node.scope
   | None -> false
 
+
 let handle (signal : 'a signal) = signal.handle
 
 let allocate_slot graph =
@@ -648,6 +649,20 @@ let enqueue (P node) =
       if node.height > graph.priority_highest then
         graph.priority_highest <- node.height)
     else if node.height > graph.highest then graph.highest <- node.height)
+
+(* Shared initializer body: enqueue [packed] when it is still live, necessary,
+   and uninitialized. The graph stores packed nodes in its initializer list
+   instead of allocating one closure per created node. *)
+let enqueue_if_uninitialized graph (P node as packed) =
+  match resolve graph node.handle with
+  | Some (P current) ->
+      if
+        same_handle current.handle node.handle
+        && (match node.scope with None -> true | Some scope -> scope.valid)
+        && node_necessary node
+        && raw_is_null node.current
+      then enqueue packed
+  | None -> ()
 
 let enqueue_deferred (P node as packed) =
   let topology_priority = node.topology_priority in

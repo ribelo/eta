@@ -384,7 +384,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let edge_graph_error : graph_error option ref = ref None
   let edge_start_failed = ref false
   let sampling_timer_starts = ref false
-  let initializers : (unit -> unit) list ref = ref []
+  let initializers : Core.packed list ref = ref []
   let scope_owners : (Core.scope * Core.packed) list ref = ref []
   let scope_parents : (Core.scope * Core.scope option) list ref = ref []
   let observers : packed_observer list ref = ref []
@@ -571,12 +571,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         Core.prepend_change_listener packed_dependency (fun _ ->
             if !computed_in = Core.current_pass graph then invalidate ()))
       dependencies;
-    initializers :=
-      (fun () ->
-        if Core.validate_handle raw
-           && Core.node_necessary raw.node && Core.raw_is_null (Core.value raw) then
-          Core.enqueue (Core.P raw.node))
-      :: !initializers;
+    initializers := Core.P raw.node :: !initializers;
     raw
 
   let const value =
@@ -593,12 +588,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               (not (Core.raw_is_null old)) && not (Core.raw_is_null next))
             ~initial:Null
         in
-        initializers :=
-          (fun () ->
-            if Core.validate_handle raw
-               && Core.node_necessary raw.node && Core.raw_is_null (Core.value raw) then
-              Core.enqueue (Core.P raw.node))
-          :: !initializers;
+        initializers := Core.P raw.node :: !initializers;
         { raw; timer = None })
     in
     outcome
@@ -926,7 +916,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
         if Core.node_necessary (Option.get !owner).raw.node then (
           Core.activate (Core.P fresh.raw.node);
           if Option.is_none fresh.timer then
-            List.iter (fun initialize -> initialize ()) !initializers);
+            iter_list_local
+              (stack_ (fun packed -> Core.enqueue_if_uninitialized graph packed))
+              !initializers);
         let local_ retire_old_scope (old_scope : Core.scope) =
           incr dynamic_scope_invalidations;
           retire_scope_children graph dead_nodes scope_parents old_scope
@@ -1020,12 +1012,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     Hashtbl.replace bind_nodes raw.handle.slot raw.handle;
     Hashtbl.replace bind_evaluations raw.handle.slot
       (raw.handle, evaluated_in);
-    initializers :=
-      (fun () ->
-        if Core.validate_handle raw
-           && Core.node_necessary raw.node && Core.raw_is_null (Core.value raw) then
-          Core.enqueue (Core.P raw.node))
-      :: !initializers;
+    initializers := Core.P raw.node :: !initializers;
     let result = { raw; timer = source.timer }
     in
     owner := Some result;
@@ -1791,8 +1778,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
       let owner_ref = ref None in
       let rec initialize_added before = function
         | current when current == before -> ()
-        | initialize :: rest ->
-            initialize ();
+        | packed :: rest ->
+            Core.enqueue_if_uninitialized graph packed;
             initialize_added before rest
         | [] ->
             invalid_arg "Eta_signal: keyed initializer registry changed"
@@ -1824,14 +1811,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           ()
       in
       owner_ref := Some owner;
-      initializers :=
-        (fun () ->
-          if
-            Core.validate_handle owner.Core.keyed_signal
-            && Core.node_necessary owner.Core.keyed_signal.node
-            && Core.raw_is_null (Core.value owner.Core.keyed_signal)
-          then Core.enqueue owner.Core.keyed_signal.packed)
-        :: !initializers;
+      initializers := owner.Core.keyed_signal.packed :: !initializers;
       let s = !keyed in
       if s.node_count <> max_int then keyed := { s with node_count = s.node_count + 1 };
       { raw = owner.Core.keyed_signal; timer = plan.input.timer }
@@ -1849,7 +1829,12 @@ module Make_impl (Observer_error : Observer_error) () = struct
         (unit, observer_error Edges.run_error) result)
 
   let enqueue_uninitialized_necessary () =
-    List.iter (fun enqueue -> enqueue ()) !initializers
+    let () =
+      iter_list_local
+        (stack_ (fun packed -> Core.enqueue_if_uninitialized graph packed))
+        !initializers
+    in
+    ()
 
   let enqueue_all_uninitialized_necessary () =
     Core.enqueue_all_uninitialized_necessary graph
