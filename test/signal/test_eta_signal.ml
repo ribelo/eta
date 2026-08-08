@@ -1213,6 +1213,123 @@ let test_effectful_update_interruption_preserves_value_and_releases_slot () =
        (Signal.Var.update_effect source (fun current ->
             Effect.pure (current + 1))))
 
+let test_effectful_update_typed_failure_releases_slot () =
+  let module Signal = Eta_signal.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  expect_fail "typed update failure" (( = ) `Update_failed)
+    (Eta_eio.Runtime.run rt
+       (widen
+          (Signal.Var.update_effect source (fun _ ->
+               Effect.fail `Update_failed))));
+  Alcotest.(check int) "typed failure leaves value unchanged" 1
+    (Signal.Var.value source);
+  Alcotest.(check int) "slot released after typed failure" 12
+    (run_ok rt
+       (Signal.Var.update_effect source (fun current ->
+            Effect.pure (current + 11))))
+
+let test_effectful_update_defect_releases_slot () =
+  let module Signal = Eta_signal.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  expect_die "update defect"
+    (Eta_eio.Runtime.run rt
+       (widen
+          (Signal.Var.update_effect source (fun _ ->
+               failwith "update defect"))));
+  Alcotest.(check int) "defect leaves value unchanged" 1
+    (Signal.Var.value source);
+  Alcotest.(check int) "slot released after defect" 12
+    (run_ok rt
+       (Signal.Var.update_effect source (fun current ->
+            Effect.pure (current + 11))))
+
+let test_sync_operations_reject_foreign_domain () =
+  let module Signal = Eta_signal.Make (Observer_error) () in
+  let source = Signal.Var.create 1 in
+  let observer =
+    expect_result_ok
+      (Signal.Observer.observe (Signal.Var.watch source) ~on_update:(fun _ ->
+           Ok ()))
+  in
+  let expect_foreign_raise label f =
+    match
+      run_in_domain (fun () ->
+          try
+            f ();
+            `No_raise
+          with Invalid_argument _ -> `Raised)
+    with
+    | `Raised -> ()
+    | `No_raise ->
+        Alcotest.failf "%s: expected Invalid_argument on a foreign domain"
+          label
+  in
+  expect_foreign_raise "Var.set" (fun () ->
+      ignore (Signal.Var.set source 2));
+  expect_foreign_raise "stabilize" (fun () ->
+      ignore (Signal.stabilize ()));
+  expect_foreign_raise "Observer.read" (fun () ->
+      ignore (Signal.Observer.read observer));
+  expect_foreign_raise "Observer.dispose" (fun () ->
+      ignore (Signal.Observer.dispose observer));
+  expect_result_ok (Signal.Observer.dispose observer)
+
+let test_timer_daemon_wake_defect_recovers_on_next_stabilize () =
+  let module Signal = Eta_signal.Make (Observer_error) () in
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let now_ms = ref 0 in
+  let sleep_calls = ref 0 in
+  let fail_next_now = ref false in
+  let defect_seen = ref false in
+  let hold, hold_resolver = Eio.Promise.create () in
+  let sleep _duration =
+    incr sleep_calls;
+    if !sleep_calls = 1 then (
+      now_ms := 100;
+      fail_next_now := true)
+    else Eio.Promise.await hold
+  in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~sleep
+      ~now_ms:(fun () ->
+        if !fail_next_now then (
+          fail_next_now := false;
+          defect_seen := true;
+          failwith "now defect")
+        else !now_ms)
+      ()
+  in
+  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let observer =
+    expect_result_ok (Signal.Observer.observe signal ~on_update:(fun _ -> Ok ()))
+  in
+  expect_result_ok (Signal.stabilize ());
+  wait_until "timer daemon wake defect" (fun () -> !defect_seen);
+  Alcotest.(check int)
+    "wake defect catch-up admitted by the same stabilize" 10
+    (expect_result_ok (Signal.Observer.read observer));
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check int) "no autonomous restart before the next stabilize" 1
+    !sleep_calls;
+  now_ms := 200;
+  expect_result_ok (Signal.stabilize ());
+  Alcotest.(check int)
+    "timer keeps refreshing from the stabilize clock snapshot" 20
+    (expect_result_ok (Signal.Observer.read observer));
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check int)
+    "daemon does not restart even after a delivery-bearing stabilize" 1
+    !sleep_calls;
+  expect_result_ok (Signal.Observer.dispose observer);
+  Eio.Promise.resolve hold_resolver ()
+
 let with_late_timer_wake f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -2196,6 +2313,14 @@ let () =
             test_effectful_update_rejects_concurrent_set_same_variable;
           Alcotest.test_case "effectful update interruption cleanup" `Quick
             test_effectful_update_interruption_preserves_value_and_releases_slot;
+          Alcotest.test_case "effectful update typed failure releases slot"
+            `Quick test_effectful_update_typed_failure_releases_slot;
+          Alcotest.test_case "effectful update defect releases slot" `Quick
+            test_effectful_update_defect_releases_slot;
+          Alcotest.test_case "sync operations reject foreign domain" `Quick
+            test_sync_operations_reject_foreign_domain;
+          Alcotest.test_case "timer daemon wake defect recovers on stabilize"
+            `Quick test_timer_daemon_wake_defect_recovers_on_next_stabilize;
           Alcotest.test_case "time interval catches up after late sleep" `Quick
             test_time_interval_catches_up_after_late_sleep;
           Alcotest.test_case "time interval does not recount saturated due"

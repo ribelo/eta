@@ -131,7 +131,7 @@ module No_observer_error : sig
 end
 
 module Cutoff : sig
-  type 'a t = 'a Eta_signal_cutoff.t
+  type 'a t = 'a Eta_signal_kernel.Cutoff.t
 
   val always : 'a t
   val never : 'a t

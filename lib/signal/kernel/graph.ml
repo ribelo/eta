@@ -1,6 +1,14 @@
+(* Graph: owner-domain phase authority.
+
+   Invariant: every graph operation runs on its creating domain in exactly
+   one explicit phase; rollback authority exists only while planning.
+
+   DAG: Propagation and Post_commit are independent leaves; this module
+   composes both and owns the Eta effect seam. *)
+
 module E = Eta.Effect
-module Core = Selected_core
-module Cutoff = Eta_signal_cutoff
+module Core = Propagation
+module Edges = Post_commit
 
 module type Observer_error = sig
   type t
@@ -12,14 +20,11 @@ module No_observer_error = struct
   let pp _ (error : t) = match error with _ -> .
 end
 
-type graph_error =
-  [ `Ambiguous_scope
-  | `Counter_overflow of string
-  | `Cycle
-  | `Invalid_scope
-  | `Reentrant_stabilization
-  | `Runtime_mismatch
-  | `Reentrant_update ]
+type graph_error = Error.graph_error
+
+type observer_read_error = Error.observer_read_error
+
+type time_error = Error.time_error
 
 module type Package_graph = sig
   type 'a signal
@@ -51,12 +56,9 @@ module type Result = sig
   type observer_error
   type nonrec graph_error = graph_error
   exception Graph_error of graph_error
-  type observer_read_error =
-    [ `Disposed_observer | `Invalid_scope | `No_current_value
-    | `Uninitialized_observer ]
+  type nonrec observer_read_error = observer_read_error
   type stabilize_error = [ graph_error | `Observer_error of observer_error ]
-  type time_error =
-    [ graph_error | `Deadline_overflow | `Invalid_interval | `Past_deadline ]
+  type nonrec time_error = time_error
   type 'a var
   type 'a signal
   type 'a observer
@@ -210,15 +212,6 @@ module Execution = struct
     f ()
 end
 
-module Edge_execution = struct
-  type t = unit
-
-  let create (_ : Execution.t) = ()
-  let run () operation = operation (fun () -> ())
-end
-
-module Edges = Selected_edges.Make (Edge_execution)
-
 let current_runtime () =
   Eta.Spi.Expert.make ~leaf_name:"eta_signal.current_runtime"
     (fun context -> Eta.Exit.Ok (Eta.Spi.Expert.contract context))
@@ -357,8 +350,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
 
   let graph = Core.create ()
   let execution = Execution.create ()
-  let edge_execution = Edge_execution.create execution
-  let edges = Edges.create edge_execution
+  let edges = Edges.create ()
   let delivering = ref false
   let edge_graph_error : graph_error option ref = ref None
   let edge_start_failed = ref false
@@ -760,11 +752,14 @@ module Make_impl (Observer_error : Observer_error) () = struct
         (function
           | Eta.Exit.Ok value ->
               E.sync (fun () ->
+                ensure_context ();
                 Core.set graph var.source (Some value);
                 var.value <- value;
                 var.updating <- false)
           | Eta.Exit.Error _ ->
-              E.sync (fun () -> var.updating <- false))
+              E.sync (fun () ->
+                ensure_context ();
+                var.updating <- false))
         operation
   end
 
@@ -2111,7 +2106,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         | Disposed -> ())
       !pending_observers;
     let s = !keyed in
-    let g = Selected_core.keyed_stats_for graph in
+    let g = Core.keyed_stats_for graph in
     let keyed_node_count = ref 0 in
     let committed_child_count = ref 0 in
     for slot = 0 to graph.slot_count - 1 do
@@ -2222,11 +2217,11 @@ module Make_impl (Observer_error : Observer_error) () = struct
               if Option.is_some owner_opt then
                 match owner_opt with
                 | Some owner_obj when options.dot_state ->
-                    let owner : (_, _, _, _, _) Selected_core.keyed_owner = Obj.obj owner_obj in
+                    let owner : (_, _, _, _, _) Core.keyed_owner = Obj.obj owner_obj in
                     let child_count =
                       let rec count acc = function
-                        | Selected_core.Child_empty -> acc
-                        | Selected_core.Child_branch b ->
+                        | Core.Child_empty -> acc
+                        | Core.Child_branch b ->
                             count (count (acc + 1) b.left) b.right
                       in
                       count 0 owner.children
@@ -2411,6 +2406,11 @@ module Make_impl (Observer_error : Observer_error) () = struct
                   in
                   startup_cleanup := Some (generation, stop);
                   let daemon_body () =
+                    (* The daemon callback must resume on the graph owner
+                       domain before it reads or mutates any timer state.
+                       A violation escapes the callback and surfaces through
+                       the runtime's daemon failure path. *)
+                    ensure_context ();
                     Fun.protect
                       ~finally:(fun () -> cancel_ref := None)
                       (fun () ->

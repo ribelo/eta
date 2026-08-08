@@ -1,4 +1,4 @@
-module Error = Eta_signal_error
+module Error = Eta_signal_kernel.Error
 
 type observer_error = Observer_failed
 

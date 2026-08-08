@@ -97,7 +97,7 @@ module Keyed_adapter (Package : PACKAGE) (Order : Map.Ordered_type) = struct
 end
 
 module Make (Observer_error : Eta_signal.Observer_error) () = struct
-  module Signal = Eta_signal_kernel.Make_impl (Observer_error) ()
+  module Signal = Eta_signal_kernel.Graph.Make_impl (Observer_error) ()
   include Signal
 
   module Keyed (Order : Map.Ordered_type) = struct
@@ -144,15 +144,15 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
 
       let owner signal =
         let keyed_signal = raw signal in
-        match keyed_signal.node.Selected_core.keyed_owner with
+        match keyed_signal.node.Eta_signal_kernel.Propagation.keyed_owner with
         | None -> None
         | Some packed_owner ->
-            let owner : (_, _, _, _, _) Selected_core.keyed_owner =
+            let owner : (_, _, _, _, _) Eta_signal_kernel.Propagation.keyed_owner =
               Obj.obj packed_owner
             in
             if
               owner.keyed_signal.handle = keyed_signal.handle
-              && Selected_core.validate_handle owner.keyed_signal
+              && Eta_signal_kernel.Propagation.validate_handle owner.keyed_signal
             then Some owner
             else None
 
@@ -160,7 +160,7 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
         match owner signal with
         | None -> None
         | Some owner -> (
-            match Selected_core.keyed_find owner key with
+            match Eta_signal_kernel.Propagation.keyed_find owner key with
             | None -> None
             | Some child ->
                 Some
@@ -174,7 +174,7 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
                   })
 
       let scope_valid token =
-        let scope : Selected_core.scope = Obj.obj token in
+        let scope : Eta_signal_kernel.Propagation.scope = Obj.obj token in
         scope.valid
 
       let pending signal =
@@ -192,36 +192,36 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
       let signal_token signal = Obj.repr (raw signal)
 
       let signal_valid_token token =
-        Selected_core.validate_handle (Obj.obj token : _ Selected_core.signal)
+        Eta_signal_kernel.Propagation.validate_handle (Obj.obj token : _ Eta_signal_kernel.Propagation.signal)
 
       let signal_demand_token token =
-        let signal : _ Selected_core.signal = Obj.obj token in
+        let signal : _ Eta_signal_kernel.Propagation.signal = Obj.obj token in
         signal.node.demand
 
       let dependent_edge_count_token token =
-        let signal : _ Selected_core.signal = Obj.obj token in
+        let signal : _ Eta_signal_kernel.Propagation.signal = Obj.obj token in
         List.length signal.node.dependents
 
       let topology_counter_snapshot () = ()
       let reset_counters () = ()
 
       let has_dependent_edge_token ~child ~parent =
-        let child : _ Selected_core.signal = Obj.obj child in
-        let parent : _ Selected_core.signal = Obj.obj parent in
+        let child : _ Eta_signal_kernel.Propagation.signal = Obj.obj child in
+        let parent : _ Eta_signal_kernel.Propagation.signal = Obj.obj parent in
         List.exists
-          (fun (Selected_core.P node) -> node.handle = parent.handle)
+          (fun (Eta_signal_kernel.Propagation.P node) -> node.handle = parent.handle)
           child.node.dependents
 
       let set_event_recorder signal record =
         match owner signal with
         | None -> ()
         | Some owner ->
-            Selected_core.set_keyed_event_recorder owner (function
-              | Selected_core.Keyed_detached scope ->
+            Eta_signal_kernel.Propagation.set_keyed_event_recorder owner (function
+              | Eta_signal_kernel.Propagation.Keyed_detached scope ->
                   record (Detached (Obj.repr scope))
-              | Selected_core.Keyed_invalidated scope ->
+              | Eta_signal_kernel.Propagation.Keyed_invalidated scope ->
                   record (Invalidated (Obj.repr scope))
-              | Selected_core.Keyed_attached scope ->
+              | Eta_signal_kernel.Propagation.Keyed_attached scope ->
                   record (Attached (Obj.repr scope)))
 
       let set_counter counter value =
@@ -236,7 +236,7 @@ module Make (Observer_error : Eta_signal.Observer_error) () = struct
           | Committed_removal_count -> `Committed_removal
           | Reconciliation_rollback_count -> `Reconciliation_rollback
         in
-        Selected_core.set_keyed_counter_for Signal.graph counter value
+        Eta_signal_kernel.Propagation.set_keyed_counter_for Signal.graph counter value
     end
   end
 end
