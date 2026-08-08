@@ -1153,9 +1153,10 @@ module Make_impl (Observer_error : Observer_error) () = struct
     | [] -> []
     | [ (O observer) ] ->
         (* Singleton fast path: the generic path filters, orders (identity for
-           one), publishes, and maps one edge. *)
+           one), publishes, and maps one edge. [settle_invalid_observers]
+           validated active handles immediately before collection. *)
         if observer.lifecycle = Active then (
-          (match Core.value observer.signal.raw with
+          (match observer.signal.raw.node.current with
           | This value -> publish_observer observer value
           | Null -> ());
           [ Edges.Observer observer.edge ])
@@ -1170,7 +1171,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         List.iter
           (fun (O observer) ->
             if observer.lifecycle = Active then
-              match Core.value observer.signal.raw with
+              match observer.signal.raw.node.current with
               | This value -> publish_observer observer value
               | Null -> ())
           ordered;
