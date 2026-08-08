@@ -912,7 +912,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           if !yielded_no_value_in <> Core.current_pass graph then (
             yielded_no_value_in := Core.current_pass graph;
             let inner = Option.get !inner in
-            if signal_timers inner = [] then (
+            if !timers = [] || signal_timers inner = [] then (
               enqueue_uninitialized_topology inner.raw.packed;
               Core.clear_queue_mark owner.raw.packed;
               Core.enqueue_deferred owner.raw.packed));
