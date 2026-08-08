@@ -912,12 +912,16 @@ module Make_impl (Observer_error : Observer_error) () = struct
         if (Option.get !owner).raw.node.height <= fresh.raw.node.height then
           ensure_parent_height ~current:true packed_owner
             (fresh.raw.node.height + 1);
-        iter_option_local
-          (stack_ (fun invalidate ->
-              Core.prepend_change_listener (Core.P fresh.raw.node) (fun _ ->
-                  invalidate ())))
-          (Hashtbl.find_opt compute_invalidators
-             (Option.get !owner).raw.handle.slot);
+        (* A dependency-free inner never changes after its first write, and the
+           owner is already a dependent of the inner, so a change listener on it
+           would be dead weight; only non-leaf inners can change later. *)
+        if Array.length fresh.raw.node.dependencies > 0 then
+          iter_option_local
+            (stack_ (fun invalidate ->
+                Core.prepend_change_listener (Core.P fresh.raw.node) (fun _ ->
+                    invalidate ())))
+            (Hashtbl.find_opt compute_invalidators
+               (Option.get !owner).raw.handle.slot);
         scope_owners := (fresh_scope, packed_owner) :: !scope_owners;
         if (Option.get !owner).raw.node.necessary then (
           Core.activate (Core.P fresh.raw.node);

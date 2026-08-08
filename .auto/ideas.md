@@ -26,3 +26,24 @@
 - Test OxCaml `local_`/`stack_` on measured per-switch closures and `or_null`
   on measured per-switch options, then guard changed leaves with
   `[@zero_alloc]`.
+
+## Dynamic-switch progress (runs 37-46)
+
+- 273 -> 145 words (-46.9%); dynamic wall 737 -> 590 ns.
+- Leaf fast paths for owner-reachability and uninitialized-topology walks (212).
+- Stack-allocated Post_commit claim closures, bind validate/retire closures,
+  const pass closure; local-mode iter consumers (175 -> 161 area).
+- Hoisted recursive retire walks to module-level functions.
+- replace_dependency mutates the bind dependency array in place (155 -> 145).
+
+## Remaining measured dynamic sites (145 words)
+
+- make_node node record (25) + signal record (5).
+- Rollback capsule closure + record (14).
+- Ancestry List.filter (6), enqueue_stale_freshness Hashtbl closure (6).
+- Scope record (3) + ancestry cons cells (6).
+- Escaping const compute closure (4), change-listener closure (7), initializer
+  closures (7), Post_commit event/cursor data (12).
+- Candidate: convert the bind rollback capsule to a structured variant; shrink
+  the 24-field node record via bool packing (54 access sites); or reuse the
+  owner dependency array capacity instead of reallocating on rollback.
