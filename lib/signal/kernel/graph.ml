@@ -574,7 +574,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     initializers :=
       (fun () ->
         if Core.validate_handle raw
-           && raw.node.necessary && Core.raw_is_null (Core.value raw) then
+           && Core.node_necessary raw.node && Core.raw_is_null (Core.value raw) then
           Core.enqueue (Core.P raw.node))
       :: !initializers;
     raw
@@ -596,7 +596,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         initializers :=
           (fun () ->
             if Core.validate_handle raw
-               && raw.node.necessary && Core.raw_is_null (Core.value raw) then
+               && Core.node_necessary raw.node && Core.raw_is_null (Core.value raw) then
               Core.enqueue (Core.P raw.node))
           :: !initializers;
         { raw; timer = None })
@@ -893,7 +893,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               | Some (handle, pass)
                 when handle = node.handle
                      && !pass <> Core.current_pass graph
-                     && node.in_queue ->
+                     && Core.node_in_queue node ->
                   true
               | Some _ | None ->
                   Array.exists has_pending_bind node.dependencies)
@@ -907,7 +907,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         | Some old ->
             Core.replace_dependency packed_owner (Core.P old.raw.node)
               (Core.P fresh.raw.node);
-            if (Option.get !owner).raw.node.necessary then
+            if Core.node_necessary (Option.get !owner).raw.node then
               Core.deactivate (Core.P old.raw.node));
         if (Option.get !owner).raw.node.height <= fresh.raw.node.height then
           ensure_parent_height ~current:true packed_owner
@@ -923,7 +923,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
             (Hashtbl.find_opt compute_invalidators
                (Option.get !owner).raw.handle.slot);
         scope_owners := (fresh_scope, packed_owner) :: !scope_owners;
-        if (Option.get !owner).raw.node.necessary then (
+        if Core.node_necessary (Option.get !owner).raw.node then (
           Core.activate (Core.P fresh.raw.node);
           if Option.is_none fresh.timer then
             List.iter (fun initialize -> initialize ()) !initializers);
@@ -948,12 +948,12 @@ module Make_impl (Observer_error : Observer_error) () = struct
             Core.rollback_capsule =
               (fun () ->
                 Core.detach packed_owner (Core.P fresh.raw.node);
-                if (Option.get !owner).raw.node.necessary then
+                if Core.node_necessary (Option.get !owner).raw.node then
                   Core.deactivate (Core.P fresh.raw.node);
                 Option.iter
                   (fun old ->
                     Core.attach packed_owner (Core.P old.raw.node);
-                    if (Option.get !owner).raw.node.necessary then
+                    if Core.node_necessary (Option.get !owner).raw.node then
                       Core.activate (Core.P old.raw.node))
                   old_inner;
                 selected := old_selected;
@@ -1020,7 +1020,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     initializers :=
       (fun () ->
         if Core.validate_handle raw
-           && raw.node.necessary && Core.raw_is_null (Core.value raw) then
+           && Core.node_necessary raw.node && Core.raw_is_null (Core.value raw) then
           Core.enqueue (Core.P raw.node))
       :: !initializers;
     let result = { raw; timer = source.timer }
@@ -1375,7 +1375,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     else
       let id = checked_next "observer id" next_observer_id in
       let necessary_before = necessary_count () in
-      let was_necessary = signal.raw.node.necessary in
+      let was_necessary = Core.node_necessary signal.raw.node in
       let demand = Core.demand signal.raw in
       if not was_necessary then enqueue_reactivated signal.raw.packed;
       let scope_demand =
@@ -1827,7 +1827,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         (fun () ->
           if
             Core.validate_handle owner.Core.keyed_signal
-            && owner.Core.keyed_signal.node.necessary
+            && Core.node_necessary owner.Core.keyed_signal.node
             && Core.raw_is_null (Core.value owner.Core.keyed_signal)
           then Core.enqueue owner.Core.keyed_signal.packed)
         :: !initializers;

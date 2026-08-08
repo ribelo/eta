@@ -50,20 +50,16 @@ type ('a : value_or_null) node = {
   mutable current : 'a;
   mutable undo : 'a;
   mutable written_in : int;
-  constant : bool;
+  mutable flags : int;
   compute : unit -> 'a;
   cutoff : 'a -> 'a -> bool;
   mutable dependencies : packed array;
   mutable dependents : packed list;
-  mutable necessary : bool;
   mutable demand : int;
   mutable queued_in : int;
   mutable queue_next : int;
-  mutable in_queue : bool;
   mutable topology_priority : int;
   mutable keyed_owner : Obj.t option;
-  mutable admitted : bool;
-  mutable reclaim_queued : bool;
   mutable change_listeners : ('a -> unit) list;
   mutable demand_listeners : (bool -> unit) list;
   scope_next : int;
@@ -138,6 +134,30 @@ type ('a : value_or_null) var = {
 }
 
 type demand = packed
+
+(* Packed per-node flags: 1 = constant, 2 = necessary, 4 = in_queue,
+   8 = admitted, 16 = reclaim_queued. *)
+let node_constant node = node.flags land 1 <> 0
+let node_necessary node = node.flags land 2 <> 0
+let node_in_queue node = node.flags land 4 <> 0
+let node_admitted node = node.flags land 8 <> 0
+let node_reclaim_queued node = node.flags land 16 <> 0
+
+let set_node_constant node value =
+  node.flags <- if value then node.flags lor 1 else node.flags land (lnot 1)
+
+let set_node_necessary node value =
+  node.flags <- if value then node.flags lor 2 else node.flags land (lnot 2)
+
+let set_node_in_queue node value =
+  node.flags <- if value then node.flags lor 4 else node.flags land (lnot 4)
+
+let set_node_admitted node value =
+  node.flags <- if value then node.flags lor 8 else node.flags land (lnot 8)
+
+let set_node_reclaim_queued node value =
+  node.flags <- if value then node.flags lor 16 else node.flags land (lnot 16)
+
 
 (* Public Signal values carry an uninitialized state, so kernel value slots use
    the nullable [value_or_null] kind. These helpers inspect such a slot without
@@ -535,20 +555,16 @@ let make_node ?(constant = false) graph ~height ~dependencies ~compute ~cutoff
       current = initial;
       undo = initial;
       written_in = -1;
-      constant;
+      flags = if constant then 1 else 0;
       compute;
       cutoff;
       dependencies;
       dependents = [];
-      necessary = false;
       demand = 0;
       queued_in = -1;
       queue_next = -1;
-      in_queue = false;
       topology_priority = 0;
       keyed_owner = None;
-      admitted = false;
-      reclaim_queued = false;
       change_listeners = [];
       demand_listeners = [];
       scope_next;
@@ -606,10 +622,10 @@ let map2 ?(cutoff = ( == )) f (left : 'a signal) (right : 'b signal) =
 
 let enqueue (P node) =
   let graph = node.graph in
-  if node.necessary && node.queued_in <> graph.pass then (
+  if node_necessary node && node.queued_in <> graph.pass then (
     node.queued_in <- graph.pass;
     node.queue_next <- -1;
-    node.in_queue <- true;
+    set_node_in_queue node true;
     ensure_height graph node.height;
     let heads, tails =
       if node.topology_priority > 0 then
@@ -659,7 +675,7 @@ let unlink_queued_node (P target) =
                       | Some (P previous) -> previous.handle.slot);
                   node.queue_next <- -1;
                   node.queued_in <- -1;
-                  node.in_queue <- false;
+                  set_node_in_queue node false;
                   removed := true)
                 else (
                   previous := Some packed;
@@ -671,21 +687,21 @@ let unlink_queued_node (P target) =
     remove_from graph.heads graph.tails)
 
 let retain_admission graph node =
-  if not node.admitted then (
+  if not (node_admitted node) then (
     if graph.admission_length = Array.length graph.admissions then
       graph.admissions <- grow_int graph.admissions;
-    node.admitted <- true;
+    set_node_admitted node true;
     graph.admissions.(graph.admission_length) <- node.handle.slot;
     graph.admission_length <- graph.admission_length + 1)
 
 let rec activate (P node as packed) =
   node.demand <- node.demand + 1;
-  if not node.necessary then (
+  if not (node_necessary node) then (
     let slot = node.graph.slots.(node.handle.slot) in
     if slot.strong = None then set_slot_contents slot (Some packed);
-    let reverse_edges_detached = node.reclaim_queued in
-    node.reclaim_queued <- false;
-    node.necessary <- true;
+    let reverse_edges_detached = node_reclaim_queued node in
+    set_node_reclaim_queued node false;
+    set_node_necessary node true;
     (match Array.length node.dependencies with
     | 0 -> ()
     | 1 ->
@@ -700,7 +716,7 @@ let rec activate (P node as packed) =
               add_fresh_dependent dependency packed;
             activate dependency));
     List.iter (fun notify -> notify true) node.demand_listeners;
-    if Array.length node.dependencies = 0 && not node.constant then (
+    if Array.length node.dependencies = 0 && not (node_constant node) then (
       retain_admission node.graph node;
       enqueue packed))
 
@@ -711,10 +727,10 @@ let demand signal =
 
 let rec deactivate (P node as packed) =
   if node.demand > 0 then node.demand <- node.demand - 1;
-  if node.necessary && node.demand = 0 then (
-    node.necessary <- false;
-    if not node.reclaim_queued then (
-      node.reclaim_queued <- true;
+  if node_necessary node && node.demand = 0 then (
+    set_node_necessary node false;
+    if not (node_reclaim_queued node) then (
+      set_node_reclaim_queued node true;
       if not node.graph.suppress_reclaim then (
         let graph = node.graph in
         if
@@ -791,14 +807,14 @@ let rec enqueue_parents (pending @ local) = function
   | (P parent_node as parent) :: parents ->
       pending.pending_propagation_edges <-
         pending.pending_propagation_edges + 1;
-      if parent_node.necessary then enqueue parent;
+      if node_necessary parent_node then enqueue parent;
       enqueue_parents pending parents
 
 let rec evaluate_from (pending @ local) changed_before (P node) =
   let graph = node.graph in
   pending.pending_claims <- pending.pending_claims + 1;
   let changed =
-    if node.constant then false
+    if node_constant node then false
     else (
       let dependency_count = Array.length node.dependencies in
       if dependency_count > 0 then (
@@ -817,7 +833,7 @@ let rec evaluate_from (pending @ local) changed_before (P node) =
   if changed then
     match node.dependents with
     | [ (P parent_node as parent) ]
-      when parent_node.necessary
+      when node_necessary parent_node
            && Array.length parent_node.dependencies = 1
            && parent_node.height = node.height + 1 ->
         pending.pending_propagation_edges <-
@@ -856,7 +872,7 @@ let pop graph heads tails height =
         heads.(height) <- node.queue_next;
         if node.queue_next = -1 then tails.(height) <- -1;
         node.queue_next <- -1;
-        node.in_queue <- false;
+        set_node_in_queue node false;
         resolved
 
 let rec pop_from graph heads tails highest height =
@@ -891,10 +907,10 @@ let begin_pass graph =
 let retire_packed graph (P node as packed) =
   if graph.phase <> Active then raise (Wrong_phase graph.phase);
   unlink_queued_node packed;
-  if node.necessary then (
-    node.necessary <- false;
+  if node_necessary node then (
+    set_node_necessary node false;
     node.demand <- 0;
-    node.reclaim_queued <- true;
+    set_node_reclaim_queued node true;
     List.iter (fun notify -> notify false) node.demand_listeners;
     iter_unique_dependencies node.dependencies
       (fun dependency ->
@@ -979,7 +995,7 @@ let clear_queues graph =
     match slot_contents graph.slots.(slot) with
     | Some (P node) ->
         node.queue_next <- -1;
-        node.in_queue <- false
+        set_node_in_queue node false
     | None -> ()
   done
 
@@ -1060,8 +1076,8 @@ let reclaim_unreachable graph =
               remember_tombstone graph handle;
               push_free graph handle.slot;
               false
-          | Some (P node) when node.necessary ->
-              node.reclaim_queued <- false;
+          | Some (P node) when node_necessary node ->
+              set_node_reclaim_queued node false;
               false
           | Some _ -> true
       else false
@@ -1080,7 +1096,7 @@ let count_necessary graph =
   let count = ref 0 in
   for slot = 0 to graph.slot_count - 1 do
     match slot_contents graph.slots.(slot) with
-    | Some (P node) when node.necessary -> incr count
+    | Some (P node) when node_necessary node -> incr count
     | Some _ | None -> ()
   done;
   !count
@@ -1088,7 +1104,7 @@ let count_necessary graph =
 let unlink_unnecessary_queued graph =
   for slot = 0 to graph.slot_count - 1 do
     match slot_contents graph.slots.(slot) with
-    | Some (P node as packed) when not node.necessary ->
+    | Some (P node as packed) when not (node_necessary node) ->
         unlink_queued_node packed
     | Some _ | None -> ()
   done
@@ -1114,7 +1130,7 @@ let enqueue_all_uninitialized_necessary graph =
   for slot = 0 to graph.slot_count - 1 do
     match slot_contents graph.slots.(slot) with
     | Some (P node as packed)
-      when node.necessary
+      when node_necessary node
            && Array.length node.dependencies > 0
            && raw_is_null node.current ->
         enqueue packed
@@ -1132,7 +1148,7 @@ let cancel_admission graph (P node as packed) =
       incr retained)
   done;
   graph.admission_length <- !retained;
-  node.admitted <- false;
+  set_node_admitted node false;
   unlink_queued_node packed
 
 let public_node_counts graph =
@@ -1142,11 +1158,11 @@ let public_node_counts graph =
     | None -> ()
     | Some (P node) ->
         let internal_source =
-          not node.constant && Array.length node.dependencies = 0
+          not (node_constant node) && Array.length node.dependencies = 0
         in
         if not internal_source then incr total;
-        if node.necessary && not internal_source then incr necessary;
-        if node.admitted then incr dirty
+        if node_necessary node && not internal_source then incr necessary;
+        if node_admitted node then incr dirty
   done;
   (!total, !necessary, !dirty)
 
@@ -1180,7 +1196,7 @@ let rec ensure_parent_height graph ?(current = false) (P node as packed)
     ensure_height graph minimum;
     if not current then (
       node.queued_in <- -1;
-      if node.necessary then enqueue packed);
+      if node_necessary node then enqueue packed);
     List.iter
       (fun parent -> ensure_parent_height graph parent (minimum + 1))
       node.dependents)
@@ -1201,7 +1217,7 @@ let adjust_topology_priority delta nodes =
   List.iter
     (fun (P node as packed) ->
       node.topology_priority <- node.topology_priority + delta;
-      if node.in_queue then (
+      if node_in_queue node then (
         unlink_queued_node packed;
         enqueue packed))
     nodes
@@ -1280,7 +1296,7 @@ let enqueue_stale_freshness graph ~bind_nodes ~custom_cutoff_nodes
       match slot_contents graph.slots.(slot) with
       | Some (P node as packed)
         when node.handle = handle
-             && node.necessary
+             && node_necessary node
              && Array.length node.dependencies > 1 ->
           let P inner =
             node.dependencies.(Array.length node.dependencies - 1)
@@ -1296,14 +1312,14 @@ let enqueue_stale_freshness graph ~bind_nodes ~custom_cutoff_nodes
     let rec enqueue_descendants (P node as packed) =
       if not (Hashtbl.mem seen_descendants node.handle.slot) then (
         Hashtbl.add seen_descendants node.handle.slot ();
-        if node.necessary then enqueue packed;
+        if node_necessary node then enqueue packed;
         List.iter enqueue_descendants node.dependents)
     in
     Hashtbl.iter
       (fun slot handle ->
         match slot_contents graph.slots.(slot) with
         | Some (P node)
-          when node.handle = handle && node.necessary ->
+          when node.handle = handle && node_necessary node ->
           let dependency_changed =
             Array.exists
               (fun (P dependency) -> dependency.written_in = committed_pass)
@@ -1346,7 +1362,7 @@ let clear_admissions graph =
   for index = 0 to graph.admission_length - 1 do
     match slot_contents graph.slots.(graph.admissions.(index)) with
     | Some (P node) ->
-        node.admitted <- false
+        set_node_admitted node false
     | None -> ()
   done;
   graph.admission_length <- 0
@@ -1410,7 +1426,7 @@ let bind_owner ?(cutoff = ( == )) (source : 'a signal) ~f =
     owner.bind_signal.node.dependencies.(1) <- fresh_inner.packed;
     remove_dependent old_inner.packed owner.bind_signal.packed;
     add_dependent fresh_inner.packed owner.bind_signal.packed;
-    if owner.bind_signal.node.necessary then (
+    if node_necessary owner.bind_signal.node then (
       graph.suppress_reclaim <- true;
       deactivate old_inner.packed;
       graph.suppress_reclaim <- false;
@@ -1668,9 +1684,9 @@ let append_nodes_dot buffer graph ~only_necessary ~scope_label ~dot_state
     | None -> ()
     | Some (P node) ->
         let internal_source =
-          not node.constant && Array.length node.dependencies = 0
+          not (node_constant node) && Array.length node.dependencies = 0
         in
-        if (not internal_source) && ((not only_necessary) || node.necessary)
+        if (not internal_source) && ((not only_necessary) || node_necessary node)
         then (
           let dependent_count = ref 0 in
           for candidate_slot = 0 to graph.slot_count - 1 do
@@ -1710,15 +1726,15 @@ let append_nodes_dot buffer graph ~only_necessary ~scope_label ~dot_state
                (if dot_state then
                   Printf.sprintf
                     " necessary=%b dirty=%b queued=%b dependencies=%d dependents=%d signal_id=s%d%s"
-                    node.necessary
-                    (node.admitted
+                    (node_necessary node)
+                    (node_admitted node
                     || Array.exists
-                         (fun (P dependency) -> dependency.admitted)
+                         (fun (P dependency) -> node_admitted dependency)
                          node.dependencies)
                     (node.queued_in = graph.pass
                     || Array.exists
                          (fun (P dependency) ->
-                           dependency.admitted
+                           node_admitted dependency
                            || dependency.queued_in = graph.pass)
                          node.dependencies)
                     (Array.length node.dependencies) !dependent_count slot
@@ -1733,7 +1749,7 @@ let append_nodes_dot buffer graph ~only_necessary ~scope_label ~dot_state
           Array.iter
             (fun (P child) ->
               let child_internal =
-                not child.constant && Array.length child.dependencies = 0
+                not (node_constant child) && Array.length child.dependencies = 0
               in
               if not child_internal then
                 Buffer.add_string buffer
@@ -1773,12 +1789,12 @@ let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
   in
   let attach_child owner child =
     add_dependent child.output.packed owner.keyed_signal.packed;
-    if owner.keyed_signal.node.necessary then activate child.output.packed;
+    if node_necessary owner.keyed_signal.node then activate child.output.packed;
     graph.work.topology_edits <- graph.work.topology_edits + 1
   in
   let detach_child owner child =
     remove_dependent child.output.packed owner.keyed_signal.packed;
-    if child.output.node.necessary then (
+    if node_necessary child.output.node then (
       graph.suppress_reclaim <- true;
       deactivate child.output.packed;
       graph.suppress_reclaim <- false);

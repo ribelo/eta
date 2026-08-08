@@ -49,26 +49,23 @@ type ('a : value_or_null) node = {
   mutable current : 'a;
   mutable undo : 'a;
   mutable written_in : int;
-  constant : bool;
+  mutable flags : int;
   compute : unit -> 'a;
   cutoff : 'a -> 'a -> bool;
   mutable dependencies : packed array;
   mutable dependents : packed list;
-  mutable necessary : bool;
   mutable demand : int;
   mutable queued_in : int;
   mutable queue_next : int;
-  mutable in_queue : bool;
   mutable topology_priority : int;
   mutable keyed_owner : Obj.t option;
-  mutable admitted : bool;
-  mutable reclaim_queued : bool;
   mutable change_listeners : ('a -> unit) list;
   mutable demand_listeners : (bool -> unit) list;
   scope_next : int;
   scope : scope option;
 }
 and packed = P : ('a : value_or_null). 'a node -> packed [@@unboxed]
+
 and slot = {
   mutable generation : int;
   mutable strong : packed option;
@@ -115,6 +112,19 @@ and graph = {
   keyed_stats : keyed_stats;
   work : work;
 }
+(* Packed per-node flags (see [node]): 1 = constant, 2 = necessary,
+   4 = in_queue, 8 = admitted, 16 = reclaim_queued. *)
+val node_constant : ('a : value_or_null). 'a node -> bool
+val node_necessary : ('a : value_or_null). 'a node -> bool
+val node_in_queue : ('a : value_or_null). 'a node -> bool
+val node_admitted : ('a : value_or_null). 'a node -> bool
+val node_reclaim_queued : ('a : value_or_null). 'a node -> bool
+val set_node_constant : ('a : value_or_null). 'a node -> bool -> unit
+val set_node_necessary : ('a : value_or_null). 'a node -> bool -> unit
+val set_node_in_queue : ('a : value_or_null). 'a node -> bool -> unit
+val set_node_admitted : ('a : value_or_null). 'a node -> bool -> unit
+val set_node_reclaim_queued : ('a : value_or_null). 'a node -> bool -> unit
+
 type ('a : value_or_null) signal = {
   graph : graph;
   handle : handle;
