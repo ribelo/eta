@@ -1,8 +1,8 @@
-# Autoresearch: Eta Signal allocation
+# Autoresearch: Eta Signal dynamic-switch allocation
 
 ## Objective
 
-Reduce steady-state allocation for changed propagation at depth 100 in
+Reduce steady-state allocation for dynamic `bind` switching in
 `bench/signal_compare`. Jane Street Incremental is the fixed reference.
 
 The workload set contains these operations:
@@ -16,9 +16,10 @@ the final observer read are outside the timed operation.
 
 ## Metrics
 
-- **Primary**: `signal_changed_100_words` (allocated words, lower is better).
+- **Primary**: `signal_dynamic_words` (allocated words, lower is better).
 - **Secondary**:
-  - `signal_changed_100_wall_ns`
+  - `signal_dynamic_wall_ns`
+  - `signal_changed_100_words`
   - `signal_wall_ratio_geomean`
   - `signal_worst_wall_ratio`
   - Wall time and allocated words for each workload.
@@ -80,7 +81,8 @@ behavior, law, model, package, complexity, and install gates.
 
 ## Initial Work
 
-1. Measure the retained depth-100 allocation baseline.
-2. Attribute every steady-state allocation category in the depth-100 row.
-3. Revisit the measured OxCaml `or_null` raw-value representation.
-4. Prefer removal of per-node allocation over workload-specific code.
+1. Measure the retained dynamic-switch allocation baseline.
+2. Attribute every steady-state allocation category in the dynamic row with the
+   bench-identical memtrace probe.
+3. Inspect dynamic `bind` scope creation, retirement, and topology repair.
+4. Prefer removal of generic pass work over workload-specific code.

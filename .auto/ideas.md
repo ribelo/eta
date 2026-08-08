@@ -1,40 +1,28 @@
-# Eta Signal allocation ideas
+# Eta Signal dynamic-switch allocation ideas
 
-## Next measurements
+## Retained allocation findings
 
-- Establish the five-row public baseline. Profile the worst wall-ratio row with
-  release symbols and `perf`.
-- Measure allocations in changed depth 1 and dynamic switching with Memtrace or
-  the OxCaml zero-allocation checker before changing representation.
-- Inspect the matching Incremental propagation and observer-delivery paths after
-  the Eta profile identifies a specific cost.
-
-## Candidate work after measurement
-
-- Check the remaining generic edge plan and post-commit delivery. The Signal Map
-  profile attributed visible time to this path after graph-wide scans vanished.
-- Check whether `make_raw` option wrapping, duplicate-evaluation bookkeeping, or
-  per-dependency listeners dominate shallow changed propagation.
-- Check whether successful static passes allocate rollback journals or callback
-  batches that can use OxCaml local allocation without escaping.
-- Check dynamic `bind` scope creation, retirement, and topology repair for work
-  that accumulates across switches.
-- Use `[@zero_alloc]` on a measured leaf helper only after its transitive calls
-  satisfy the checker. Do not add trusted assumptions to hide allocations.
-
-## Retained findings
-
-- Duplicate-dependency freshness now uses a generation-safe candidate registry.
+- OxCaml `or_null` raw values made changed/cutoff allocation depth independent
+  and dropped dynamic words from 322 to 290.
+- Empty timer-root descendant unlinking now returns immediately.
+- The stabilize and delivery pass bodies are stack allocated through local-mode
+  `Execution.sync` and `with_phase` parameters; dynamic words are now 273.
+- Duplicate-dependency freshness uses a generation-safe candidate registry.
 - Successful passes without checkpoints no longer scan all graph slots to clear
   drained queues.
 - Timer-free graphs bypass timer discovery and refresh planning.
 - Zero or one observer bypasses dependency sorting.
 - Empty stale-freshness registries bypass repair setup.
 
-## Primary allocation work
+## Dynamic-switch work
 
-- OxCaml `or_null` raw values flattened changed-depth allocation to 81 words
-  (from 91, 127, and 487) and reduced cutoff/dynamic allocation, but run 15
-  regressed the wall geomean from 3.70 to 3.74. Allocation is now the primary
-  target. Reapply this representation first and retain wall time as a secondary
-  regression guard.
+- Profile `eta_signal.dynamic.switch` with the bench-identical memtrace probe
+  (`.scratch/allocprobe` plus a temporary workspace copy of
+  `bench/signal_compare/compare.ml`); attribute every steady-state word.
+- Dynamic bind creates and retires a scope per switch; measure scope records,
+  the inner-graph node set, and the topology repair pass.
+- Measure bind `compute` re-evaluation, the selector `selected`/`inner` refs,
+  and `enqueue_stale_freshness` when the inner graph is rebuilt.
+- Test OxCaml `local_`/`stack_` on measured per-switch closures and `or_null`
+  on measured per-switch options, then guard changed leaves with
+  `[@zero_alloc]`.
