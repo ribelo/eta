@@ -356,6 +356,18 @@ module Make_impl (Observer_error : Observer_error) () = struct
      while a propagation pass executes; [Delivering] runs exactly while
      post-commit delivery executes. *)
   let phase : [ `Idle | `Planning | `Delivering ] ref = ref `Idle
+
+  (* Local-mode consumers for immediately applied closures: the closure
+     argument never escapes, so callers may stack-allocate it. *)
+  let[@inline always] iter_option_local (f @ local) = function
+    | None -> ()
+    | Some value -> f value
+
+  let rec iter_list_local (f @ local) = function
+    | [] -> ()
+    | value :: rest ->
+        f value;
+        iter_list_local f rest
   (* [f] never escapes, so callers may stack-allocate the closure. Restoring the
      previous phase inline instead of through [Fun.protect] keeps the argument
      local and avoids the protect closure. *)
@@ -834,7 +846,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
                    !scope_parents
                 |> Option.join)
         in
-        let validate_scope candidate =
+        let local_ validate_scope candidate =
             if
               not (Core.scope_valid candidate)
               || not
@@ -843,9 +855,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
             then raise (Graph_error `Invalid_scope)
         in
         if Array.length fresh.raw.node.dependencies = 0 then
-          Option.iter validate_scope fresh.raw.node.scope
+          iter_option_local validate_scope fresh.raw.node.scope
         else
-          List.iter validate_scope (Core.distinct_scopes fresh.raw.packed);
+          iter_list_local validate_scope (Core.distinct_scopes fresh.raw.packed);
         let owner_handle = (Option.get !owner).raw.handle in
         (* A dependency-free bind result is a leaf: it reaches only itself, so
            it cannot form a cycle with the owner node and needs no reachability
@@ -893,22 +905,22 @@ module Make_impl (Observer_error : Observer_error) () = struct
           Core.activate (Core.P fresh.raw.node);
           if Option.is_none fresh.timer then
             List.iter (fun initialize -> initialize ()) !initializers);
-        Option.iter
-          (fun (old_scope : Core.scope) ->
-            incr dynamic_scope_invalidations;
-            let rec retire scope =
-              List.iter retire
-                (List.filter_map
-                   (fun ((child : Core.scope), parent) ->
-                     match parent with
-                     | Some parent when parent == scope && child.valid ->
-                         Some child
-                     | None | Some _ -> None)
-                   !scope_parents);
-              dead_nodes := !dead_nodes + Core.invalidate_scope_chain graph scope
-            in
-            retire old_scope)
-          old_scope;
+        let local_ retire_old_scope (old_scope : Core.scope) =
+          incr dynamic_scope_invalidations;
+          let rec retire scope =
+            List.iter retire
+              (List.filter_map
+                 (fun ((child : Core.scope), parent) ->
+                   match parent with
+                   | Some parent when parent == scope && child.valid ->
+                       Some child
+                   | None | Some _ -> None)
+                 !scope_parents);
+            dead_nodes := !dead_nodes + Core.invalidate_scope_chain graph scope
+          in
+          retire old_scope
+        in
+        iter_option_local retire_old_scope old_scope;
         (* Retired scopes are invalid and so is their whole subtree; keep the
            ancestry and owner indices bounded to live scopes. *)
         scope_parents :=
