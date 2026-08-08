@@ -1071,22 +1071,22 @@ let unlink_unnecessary_queued graph =
     | Some _ | None -> ()
   done
 
+let rec retire_scope_loop graph scope count slot =
+  if slot = -1 then count
+  else
+    match slot_contents graph.slots.(slot) with
+    | Some (P node as packed) ->
+        let next = node.scope_next in
+        (match node.scope with
+        | Some owner when owner == scope ->
+            unlink_queued_node packed;
+            retire_packed graph packed;
+            retire_scope_loop graph scope (count + 1) next
+        | None | Some _ -> count)
+    | None -> count
+
 let retire_scope_chain graph scope =
-  let rec loop count slot =
-    if slot = -1 then count
-    else
-      match slot_contents graph.slots.(slot) with
-      | Some (P node as packed) ->
-          let next = node.scope_next in
-          (match node.scope with
-          | Some owner when owner == scope ->
-              unlink_queued_node packed;
-              retire_packed graph packed;
-              loop (count + 1) next
-          | None | Some _ -> count)
-      | None -> count
-  in
-  loop 0 scope.slot_head
+  retire_scope_loop graph scope 0 scope.slot_head
 
 let enqueue_all_uninitialized_necessary graph =
   for slot = 0 to graph.slot_count - 1 do
