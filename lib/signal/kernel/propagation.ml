@@ -388,22 +388,24 @@ let grow_capsules values =
   Array.blit values 0 next 0 (Array.length values);
   next
 
-let ensure_height graph height =
-  if height >= Array.length graph.queue.heads then (
-    let length = ref (Array.length graph.queue.heads) in
-    while height >= !length do
-      length := 2 * !length
-    done;
-    let grow queue =
-      let heads = Array.make !length (-1) in
-      let tails = Array.make !length (-1) in
-      Array.blit queue.heads 0 heads 0 (Array.length queue.heads);
-      Array.blit queue.tails 0 tails 0 (Array.length queue.tails);
-      queue.heads <- heads;
-      queue.tails <- tails
-    in
-    grow graph.queue;
-    grow graph.priority_queue)
+let grow_height graph height =
+  let length = ref (Array.length graph.queue.heads) in
+  while height >= !length do
+    length := 2 * !length
+  done;
+  let grow queue =
+    let heads = Array.make !length (-1) in
+    let tails = Array.make !length (-1) in
+    Array.blit queue.heads 0 heads 0 (Array.length queue.heads);
+    Array.blit queue.tails 0 tails 0 (Array.length queue.tails);
+    queue.heads <- heads;
+    queue.tails <- tails
+  in
+  grow graph.queue;
+  grow graph.priority_queue
+
+let[@inline always] ensure_height graph height =
+  if height >= Array.length graph.queue.heads then grow_height graph height
 
 let slot_contents (slot : slot) =
   match slot.strong, slot.contents with
