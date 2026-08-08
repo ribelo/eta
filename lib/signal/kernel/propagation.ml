@@ -842,6 +842,16 @@ let rec deactivate (P node as packed) =
     if not node.graph.suppress_reclaim then
       weaken_slot node.graph.slots.(node.handle.slot) packed)
 
+let deactivate_for_retirement (P node as packed) =
+  let graph = node.graph in
+  let previous = graph.suppress_reclaim in
+  graph.suppress_reclaim <- true;
+  match deactivate packed with
+  | () -> graph.suppress_reclaim <- previous
+  | exception exn ->
+      graph.suppress_reclaim <- previous;
+      raise exn
+
 let release demand = deactivate demand
 
 let value signal =

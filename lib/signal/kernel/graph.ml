@@ -882,7 +882,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
             Core.replace_dependency packed_owner (Core.P old.raw.node)
               (Core.P fresh.raw.node);
             if Core.node_necessary (Option.get !owner).raw.node then
-              Core.deactivate (Core.P old.raw.node));
+              Core.deactivate_for_retirement (Core.P old.raw.node));
         if (Option.get !owner).raw.node.height <= fresh.raw.node.height then
           ensure_parent_height ~current:true packed_owner
             (fresh.raw.node.height + 1);

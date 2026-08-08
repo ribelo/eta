@@ -217,6 +217,7 @@ val unlink_queued_node : packed -> unit
 val activate : packed -> unit
 val demand : ('a : value_or_null). 'a signal -> packed
 val deactivate : packed -> unit
+val deactivate_for_retirement : packed -> unit
 val release : packed -> unit
 val value : ('a : value_or_null). 'a signal -> 'a
 val set : ('a : value_or_null). graph -> 'a var -> 'a -> unit
