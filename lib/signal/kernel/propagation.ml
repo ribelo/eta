@@ -413,7 +413,12 @@ let slot_contents (slot : slot) =
 
 let set_slot_contents (slot : slot) value =
   slot.strong <- value;
-  Option.iter (fun contents -> Weak.set contents 0 value) slot.contents
+  (* Weak contents are consulted only after [weaken_slot] clears [strong], and
+     that transition installs the current packed node first. A strong install
+     therefore need not rewrite the weak cell left by an older generation. *)
+  match value, slot.contents with
+  | Some _, _ | None, None -> ()
+  | None, Some contents -> Weak.set contents 0 None
 
 let weaken_slot (slot : slot) packed =
   let contents =
