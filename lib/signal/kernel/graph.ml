@@ -580,23 +580,28 @@ module Make_impl (Observer_error : Observer_error) () = struct
     raw
 
   let const value =
-    Execution.sync execution @@ fun () ->
-    if !phase <> `Idle && Core.current_scope graph = None then
-      raise (Graph_error `Ambiguous_scope);
-    let raw =
-      Core.make_node graph ~height:0 ~dependencies:[||]
-        ~compute:(fun () -> This value)
-        ~cutoff:(fun old next ->
-          (not (Core.raw_is_null old)) && not (Core.raw_is_null next))
-        ~initial:Null
+    (* The pass body never escapes; the result binding keeps the call out of
+       tail position, which stack_ requires. *)
+    let outcome =
+      Execution.sync execution @@ stack_ (fun () ->
+        if !phase <> `Idle && Core.current_scope graph = None then
+          raise (Graph_error `Ambiguous_scope);
+        let raw =
+          Core.make_node graph ~height:0 ~dependencies:[||]
+            ~compute:(fun () -> This value)
+            ~cutoff:(fun old next ->
+              (not (Core.raw_is_null old)) && not (Core.raw_is_null next))
+            ~initial:Null
+        in
+        initializers :=
+          (fun () ->
+            if Core.validate_handle raw
+               && raw.node.necessary && Core.raw_is_null (Core.value raw) then
+              Core.enqueue (Core.P raw.node))
+          :: !initializers;
+        { raw; timer = None })
     in
-    initializers :=
-      (fun () ->
-        if Core.validate_handle raw
-           && raw.node.necessary && Core.raw_is_null (Core.value raw) then
-          Core.enqueue (Core.P raw.node))
-      :: !initializers;
-    { raw; timer = None }
+    outcome
 
   let map ?cutoff f child =
     Execution.sync execution @@ fun () ->
