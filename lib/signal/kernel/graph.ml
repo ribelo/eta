@@ -1123,39 +1123,40 @@ module Make_impl (Observer_error : Observer_error) () = struct
     | _ -> loop [] observers
 
   let settle_invalid_observers () =
-    List.iter
-      (fun (O observer) ->
-        if observer.lifecycle = Active
-           && not (Core.validate_handle observer.signal.raw)
-        then (
-          let necessary_before = necessary_count () in
-          observer.lifecycle <- Invalid;
-          observer.current <- Null;
-          observer.published <- Null;
-          observer.edge_base <- Null;
-          observer.callback_pending <- false;
-          Core.release observer.demand;
-          Option.iter Core.release observer.scope_demand;
-          unlink_unnecessary_queued ();
-          List.iter
-            (fun (timer : timer) ->
-              timer.demand <- max 0 (timer.demand - 1);
-              if timer.demand = 0 then (
-                timer.start_pending <- false;
-                Edges.set_timer_demand edges timer.edge_timer false))
-            observer.timer_demands;
-          incr dynamic_scope_invalidations;
-          Option.iter
-            (fun finish ->
-              pending_finishes :=
-                (fun () -> finish Edges.Invalid_scope)
-                :: !pending_finishes)
-            observer.finish_edge;
-          Edges.invalidate edges observer.edge;
-          nodes_became_unnecessary :=
-            !nodes_became_unnecessary
-            + max 0 (necessary_before - necessary_count ())))
-      (!pending_observers @ !observers);
+    let settle (O observer) =
+      if observer.lifecycle = Active
+         && not (Core.validate_handle observer.signal.raw)
+      then (
+        let necessary_before = necessary_count () in
+        observer.lifecycle <- Invalid;
+        observer.current <- Null;
+        observer.published <- Null;
+        observer.edge_base <- Null;
+        observer.callback_pending <- false;
+        Core.release observer.demand;
+        Option.iter Core.release observer.scope_demand;
+        unlink_unnecessary_queued ();
+        List.iter
+          (fun (timer : timer) ->
+            timer.demand <- max 0 (timer.demand - 1);
+            if timer.demand = 0 then (
+              timer.start_pending <- false;
+              Edges.set_timer_demand edges timer.edge_timer false))
+          observer.timer_demands;
+        incr dynamic_scope_invalidations;
+        Option.iter
+          (fun finish ->
+            pending_finishes :=
+              (fun () -> finish Edges.Invalid_scope)
+              :: !pending_finishes)
+          observer.finish_edge;
+        Edges.invalidate edges observer.edge;
+        nodes_became_unnecessary :=
+          !nodes_became_unnecessary
+          + max 0 (necessary_before - necessary_count ()))
+    in
+    List.iter settle !pending_observers;
+    List.iter settle !observers;
     ()
 
   let reconcile_timer_demands () =
