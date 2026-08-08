@@ -68,11 +68,11 @@ main Dune workspace.
 - [Integrated finalist proof](issues/11-integrated-finalist-proof.md) — reject the behavior-complete finalist for final selection, then retain it as the production pre-alpha base.
 - [Promote selected finalist to pre-alpha](issues/17-promote-selected-finalist-to-pre-alpha.md) — use the promoted core and edge driver in production with the complete behavior, package, and frozen benchmark gates enabled.
 - [Public interface and graph ownership](issues/12-public-interface-depth.md) — make the public Signal interface synchronous on one owner domain, delete the lane and per-operation fiber protocol, and keep the frozen acceptance-matrix gates open for issues 13, 15, and 16.
+- [Module and package ownership](issues/13-module-and-package-ownership.md) — split the kernel into `Propagation` (generation-safe topological freshness with rollback), `Post_commit` (opaque post-commit settlement), and `Graph` (owner-domain phase authority) inside one wrapped uninstalled library; cut `eta_signal_map` to the public `Package_graph` protocol and replace the `Obj.t` token seam with a typed repo-private probe.
 
 ## Current path
 
-1. Decide [module and package ownership](issues/13-module-and-package-ownership.md) and move the production code.
-2. Write the [consolidated execution specification](issues/14-consolidated-execution-specification.md) after all gates pass.
+1. Write the [consolidated execution specification](issues/14-consolidated-execution-specification.md) after all gates pass.
 
 ## Not yet specified
 
