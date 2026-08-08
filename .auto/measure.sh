@@ -19,12 +19,11 @@ if ! nix develop -c dune build --profile release \
 fi
 
 workloads=(
-  eta_signal_map.data_change.10000
-  eta_signal_map.data_change.100000
-  eta_signal_map.membership_change.10000
-  eta_signal_map.membership_change.100000
-  eta_signal_map.child_change.10000
-  eta_signal_map.child_change.100000
+  eta_signal.changed.depth_1
+  eta_signal.changed.depth_10
+  eta_signal.changed.depth_100
+  eta_signal.cutoff.depth_10
+  eta_signal.dynamic.switch
 )
 
 for workload in "${workloads[@]}"; do
@@ -42,21 +41,19 @@ path = sys.argv[1]
 sample_count = int(sys.argv[2])
 
 references = {
-    "data_10k": 293.448466,
-    "data_100k": 351.251515,
-    "membership_10k": 474.784000,
-    "membership_100k": 577.578000,
-    "child_10k": 116.016395,
-    "child_100k": 128.645411,
+    "changed_1": 53.892009,
+    "changed_10": 127.957776,
+    "changed_100": 1059.433089,
+    "cutoff_10": 32.418910,
+    "dynamic": 145.031947,
 }
 
 names = {
-    "eta_signal_map.data_change.10000": "data_10k",
-    "eta_signal_map.data_change.100000": "data_100k",
-    "eta_signal_map.membership_change.10000": "membership_10k",
-    "eta_signal_map.membership_change.100000": "membership_100k",
-    "eta_signal_map.child_change.10000": "child_10k",
-    "eta_signal_map.child_change.100000": "child_100k",
+    "eta_signal.changed.depth_1": "changed_1",
+    "eta_signal.changed.depth_10": "changed_10",
+    "eta_signal.changed.depth_100": "changed_100",
+    "eta_signal.cutoff.depth_10": "cutoff_10",
+    "eta_signal.dynamic.switch": "dynamic",
 }
 
 rows = {prefix: [] for prefix in names.values()}
@@ -79,29 +76,24 @@ for prefix, samples in rows.items():
 ratios = {prefix: walls[prefix] / references[prefix] for prefix in walls}
 geomean = math.exp(sum(math.log(ratio) for ratio in ratios.values()) / len(ratios))
 
-print(f"METRIC map_wall_ratio_geomean={geomean:.6f}")
-print(f"METRIC map_worst_wall_ratio={max(ratios.values()):.6f}")
+print(f"METRIC signal_wall_ratio_geomean={geomean:.6f}")
+print(f"METRIC signal_worst_wall_ratio={max(ratios.values()):.6f}")
 for prefix in (
-    "data_10k",
-    "data_100k",
-    "membership_10k",
-    "membership_100k",
-    "child_10k",
-    "child_100k",
+    "changed_1",
+    "changed_10",
+    "changed_100",
+    "cutoff_10",
+    "dynamic",
 ):
-    print(f"METRIC map_{prefix}_wall_ns={walls[prefix]:.6f}")
-    print(f"METRIC map_{prefix}_words={words[prefix]:.6f}")
+    print(f"METRIC signal_{prefix}_wall_ns={walls[prefix]:.6f}")
+    print(f"METRIC signal_{prefix}_words={words[prefix]:.6f}")
 
 print(
-    "METRIC map_data_growth_10x="
-    f"{walls['data_100k'] / walls['data_10k']:.6f}"
+    "METRIC signal_changed_growth_1_to_10="
+    f"{walls['changed_10'] / walls['changed_1']:.6f}"
 )
 print(
-    "METRIC map_membership_growth_10x="
-    f"{walls['membership_100k'] / walls['membership_10k']:.6f}"
-)
-print(
-    "METRIC map_child_growth_10x="
-    f"{walls['child_100k'] / walls['child_10k']:.6f}"
+    "METRIC signal_changed_growth_10_to_100="
+    f"{walls['changed_100'] / walls['changed_10']:.6f}"
 )
 PY
