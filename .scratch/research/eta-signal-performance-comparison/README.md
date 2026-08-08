@@ -104,6 +104,58 @@ The allocation growth is much smaller than the wall-time growth. The
 measurements therefore show size-dependent public-path work. They do not
 identify its cause.
 
+## Change from the previous Eta version
+
+The previous
+[Eta and Jane Street comparison](../evidence/eta_incremental_performance/REPORT.md)
+measured Eta commit `5614fa66`. The current run measured commit `6f4c5cf7`.
+The measured historical commit is on a sibling Git history. Its `lib/eta`,
+`lib/eio`, `lib/signal`, and `lib/signal_map` trees are identical to direct
+ancestor `6b98144e`.
+
+The nine comparable rows used the same machine, CPU, compiler, release profile,
+reference commits, workload names, and 3-by-9 sample count. This section
+recalculates both raw datasets with one aggregation method. It takes the median
+of nine samples for each process. It then takes the median of the three process
+medians.
+
+| Workload | Previous Eta | Current Eta | Wall speedup | Previous words | Current words | Allocation reduction |
+|---|---:|---:|---:|---:|---:|---:|
+| changed, depth 1 | 10.98 us | 492.5 ns | 22.29 | 8,795 | 328.0 | 26.81 |
+| changed, depth 10 | 14.68 us | 1.38 us | 10.64 | 12,287 | 472.0 | 26.03 |
+| changed, depth 100 | 72.31 us | 15.29 us | 4.73 | 49,043 | 2,524.0 | 19.43 |
+| cutoff, depth 10 | 11.64 us | 1.20 us | 9.68 | 9,780 | 432.0 | 22.64 |
+| dynamic switch | 21.39 us | 4.07 us | 5.26 | 16,339 | 645.0 | 25.33 |
+| data change, 10,000 keys | 13.81 ms | 199.6 us | 69.19 | 2,571,401 | 740.0 | 3,474.86 |
+| data change, 100,000 keys | 307.77 ms | 4.57 ms | 67.31 | 25,106,642 | 832.1 | 30,173.42 |
+| child change, 10,000 keys | 60.99 ms | 825.9 us | 73.84 | 6,993,791 | 434.0 | 16,114.36 |
+| child change, 100,000 keys | 1.742 s | 29.60 ms | 58.83 | 72,998,406 | 458.3 | 159,276.49 |
+
+The current scalar operations are `4.73` to `22.29` times faster. They allocate
+`19.43` to `26.81` times fewer words.
+
+The current map operations are `58.83` to `73.84` times faster. They allocate
+`3,474.86` to `159,276.49` times fewer words.
+
+The previous dataset has no membership-change rows. The current implementation
+is much faster than the previous implementation, but it remains much slower
+than Incremental and `Incr_map`.
+
+This historical comparison is directional evidence and not a controlled A/B
+comparison. It has these additional limits:
+
+- Each historical process constructed all workloads before measurement. It
+  retained all graphs and measured the workloads in sequence. The current
+  harness starts a fresh process and constructs one graph for each workload.
+  Thus, the resident graphs, heap shape, GC state, and shared engine state
+  differed.
+- The previous public interface was effectful. One long-lived
+  `Eta.Runtime.run` executed each measured batch. The current public interface
+  is synchronous. The reported improvement includes this protocol replacement.
+- The previous Eta workload included one observer read inside each timed batch.
+  The current Eta workload performs that read after timing. This difference
+  favors the current implementation.
+
 ## Gate status
 
 All 11 public matched rows failed the wall-time gate in all three process
