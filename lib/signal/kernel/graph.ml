@@ -443,7 +443,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let value_exn = function
     | Some value -> value
     | None -> failwith "Eta_signal: uninitialized dependency"
-  let raw_value signal = Core.value signal.raw |> value_exn
+  let raw_value signal = signal.raw.node.current |> value_exn
   let check_signal signal =
     if not (Core.validate_handle signal.raw) then
       match signal.raw.node.scope with
