@@ -1525,7 +1525,6 @@ type ('key, 'data, 'input, 'output, 'output_map) keyed_owner = {
   output_ops : ('key, 'output, 'output_map) output_ops;
   data_cutoff : 'data -> 'data -> bool;
   builder : key:'key -> data:'data signal -> 'output signal;
-  mutable preflight : (unit -> unit) option;
   mutable precommit : (unit -> unit) option;
   mutable event_recorder : keyed_event -> unit;
   mutable committed_input : 'input;
@@ -1691,9 +1690,6 @@ let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
     bump_keyed_for owner.keyed_signal.graph `Reconciliation;
     graph.keyed_reconciliations_in_pass <-
       graph.keyed_reconciliations_in_pass + 1;
-    (match owner.preflight with
-    | Some f -> f ()
-    | None -> ());
     let old_children = owner.children in
     let old_output = owner.output_root in
     owner.candidate_children <- owner.children;
@@ -1804,7 +1800,6 @@ let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
       output_ops;
       data_cutoff;
       builder = build;
-      preflight = None;
       precommit = None;
       event_recorder = (fun _ -> ());
       committed_input = input_ops.empty_input;

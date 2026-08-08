@@ -461,7 +461,7 @@ let run_case matrix sample =
       let before = identity output key in
       P.fail_next_precommit (family output) (Failure "precommit");
       set input (M.set other (box 2 20) M.empty);
-      require name (expect_defect (fun () -> ignore (S.stabilize ()))) "missing preflight defect";
+      require name (expect_defect (fun () -> ignore (S.stabilize ()))) "missing precommit defect";
       require name (read observer == root) "rollback changed root";
       require name (same_identity before (identity output key)) "committed identity lost";
       require name (P.scope_valid before) "removal candidate invalid";
@@ -476,7 +476,7 @@ let run_case matrix sample =
       P.fail_next_precommit (family output) (Failure "precommit");
       let final = M.set third (box 4 40) (one (box 3 30)) in
       set input final;
-      require name (expect_defect (fun () -> ignore (S.stabilize ()))) "missing preflight defect";
+      require name (expect_defect (fun () -> ignore (S.stabilize ()))) "missing precommit defect";
       require name (read observer == root) "snapshot root changed";
       require name (same_identity kept_before (identity output key))
         "retained update identity changed";

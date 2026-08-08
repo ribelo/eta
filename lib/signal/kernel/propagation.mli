@@ -239,7 +239,6 @@ type ('key, 'data, 'input, 'output, 'output_map) keyed_owner = {
   output_ops : ('key, 'output, 'output_map) output_ops;
   data_cutoff : 'data -> 'data -> bool;
   builder : key:'key -> data:'data signal -> 'output signal;
-  mutable preflight : (unit -> unit) option;
   mutable precommit : (unit -> unit) option;
   mutable event_recorder : keyed_event -> unit;
   mutable committed_input : 'input;
