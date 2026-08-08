@@ -48,6 +48,13 @@ type scope = {
   mutable slot_head : int;
 }
 
+type height_queue = {
+  mutable heads : int array;
+  mutable tails : int array;
+  mutable lowest : int;
+  mutable highest : int;
+}
+
 type ('a : value_or_null) node = {
   graph : graph;
   handle : handle;
@@ -105,12 +112,8 @@ and graph = {
   mutable action_length : int;
   mutable capsules : capsule array;
   mutable capsule_length : int;
-  mutable heads : int array;
-  mutable tails : int array;
-  mutable highest : int;
-  mutable priority_heads : int array;
-  mutable priority_tails : int array;
-  mutable priority_highest : int;
+  queue : height_queue;
+  priority_queue : height_queue;
   mutable admissions : int array;
   mutable admission_length : int;
   mutable current_scope : scope option;
@@ -251,6 +254,14 @@ let set_keyed_counter_for graph counter value =
   | `Committed_child -> stats.keyed_committed_child_count <- value
 
 let create () =
+  let make_queue () =
+    {
+      heads = Array.make 4 (-1);
+      tails = Array.make 4 (-1);
+      lowest = -1;
+      highest = -1;
+    }
+  in
   {
     phase = Idle;
     pass = 0;
@@ -269,12 +280,8 @@ let create () =
       Array.make 8
         { rollback_capsule = (fun () -> ()); cleanup_capsule = (fun () -> ()) };
     capsule_length = 0;
-    heads = Array.make 4 (-1);
-    tails = Array.make 4 (-1);
-    highest = -1;
-    priority_heads = Array.make 4 (-1);
-    priority_tails = Array.make 4 (-1);
-    priority_highest = -1;
+    queue = make_queue ();
+    priority_queue = make_queue ();
     admissions = Array.make 8 0;
     admission_length = 0;
     current_scope = None;
@@ -339,25 +346,21 @@ let grow_capsules values =
   next
 
 let ensure_height graph height =
-  if height >= Array.length graph.heads then (
-    let length = ref (Array.length graph.heads) in
+  if height >= Array.length graph.queue.heads then (
+    let length = ref (Array.length graph.queue.heads) in
     while height >= !length do
       length := 2 * !length
     done;
-    let heads = Array.make !length (-1) in
-    let tails = Array.make !length (-1) in
-    let priority_heads = Array.make !length (-1) in
-    let priority_tails = Array.make !length (-1) in
-    Array.blit graph.heads 0 heads 0 (Array.length graph.heads);
-    Array.blit graph.tails 0 tails 0 (Array.length graph.tails);
-    Array.blit graph.priority_heads 0 priority_heads 0
-      (Array.length graph.priority_heads);
-    Array.blit graph.priority_tails 0 priority_tails 0
-      (Array.length graph.priority_tails);
-    graph.heads <- heads;
-    graph.tails <- tails;
-    graph.priority_heads <- priority_heads;
-    graph.priority_tails <- priority_tails)
+    let grow queue =
+      let heads = Array.make !length (-1) in
+      let tails = Array.make !length (-1) in
+      Array.blit queue.heads 0 heads 0 (Array.length queue.heads);
+      Array.blit queue.tails 0 tails 0 (Array.length queue.tails);
+      queue.heads <- heads;
+      queue.tails <- tails
+    in
+    grow graph.queue;
+    grow graph.priority_queue)
 
 let slot_contents (slot : slot) =
   match slot.strong, slot.contents with
@@ -633,22 +636,21 @@ let enqueue (P node) =
     node.queue_next <- -1;
     set_node_in_queue node true;
     ensure_height graph node.height;
-    let heads, tails =
+    let queue =
       if node.topology_priority > 0 then
-        graph.priority_heads, graph.priority_tails
-      else graph.heads, graph.tails
+        graph.priority_queue
+      else graph.queue
     in
-    if tails.(node.height) = -1 then (
-      heads.(node.height) <- node.handle.slot;
-      tails.(node.height) <- node.handle.slot)
+    if queue.tails.(node.height) = -1 then (
+      queue.heads.(node.height) <- node.handle.slot;
+      queue.tails.(node.height) <- node.handle.slot)
     else (
-      let P tail = resolve_slot graph tails.(node.height) in
+      let P tail = resolve_slot graph queue.tails.(node.height) in
       tail.queue_next <- node.handle.slot;
-      tails.(node.height) <- node.handle.slot);
-    if node.topology_priority > 0 then (
-      if node.height > graph.priority_highest then
-        graph.priority_highest <- node.height)
-    else if node.height > graph.highest then graph.highest <- node.height)
+      queue.tails.(node.height) <- node.handle.slot);
+    if queue.lowest = -1 || node.height < queue.lowest then
+      queue.lowest <- node.height;
+    if node.height > queue.highest then queue.highest <- node.height)
 
 (* Shared initializer body: enqueue [packed] when it is still live, necessary,
    and uninitialized. The graph stores packed nodes in its initializer list
@@ -675,11 +677,12 @@ let unlink_queued_node (P target) =
   let graph = target.graph in
   if target.queued_in = graph.pass then (
     let removed = ref false in
-    let remove_from heads tails =
-      for height = 0 to Array.length heads - 1 do
+    let remove_from queue =
+      let removed_before = !removed in
+      for height = 0 to Array.length queue.heads - 1 do
         if not !removed then (
           let previous = ref None in
-          let slot = ref heads.(height) in
+          let slot = ref queue.heads.(height) in
           while !slot <> -1 && not !removed do
             match slot_contents graph.slots.(!slot) with
             | None -> slot := -1
@@ -687,10 +690,10 @@ let unlink_queued_node (P target) =
                 let next = node.queue_next in
                 if same_handle node.handle target.handle then (
                   (match !previous with
-                  | None -> heads.(height) <- next
+                  | None -> queue.heads.(height) <- next
                   | Some (P previous) -> previous.queue_next <- next);
-                  if tails.(height) = node.handle.slot then
-                    tails.(height) <-
+                  if queue.tails.(height) = node.handle.slot then
+                    queue.tails.(height) <-
                       (match !previous with
                       | None -> -1
                       | Some (P previous) -> previous.handle.slot);
@@ -702,10 +705,20 @@ let unlink_queued_node (P target) =
                   previous := Some packed;
                   slot := next)
           done)
-      done
+      done;
+      if not removed_before && !removed && queue.heads.(queue.lowest) = -1 then (
+        while
+          queue.lowest <= queue.highest
+          && queue.heads.(queue.lowest) = -1
+        do
+          queue.lowest <- queue.lowest + 1
+        done;
+        if queue.lowest > queue.highest then (
+          queue.lowest <- -1;
+          queue.highest <- -1))
     in
-    remove_from graph.priority_heads graph.priority_tails;
-    remove_from graph.heads graph.tails)
+    remove_from graph.priority_queue;
+    remove_from graph.queue)
 
 let retain_admission graph node =
   if not (node_admitted node) then (
@@ -884,35 +897,38 @@ let evaluate (P node as packed) =
 
 let evaluate_node = evaluate
 
-let pop graph heads tails height =
-  let slot = heads.(height) in
+let pop graph queue =
+  let height = queue.lowest in
+  if height = -1 then None
+  else
+  let slot = queue.heads.(height) in
   if slot = -1 then None
   else
     let resolved = slot_contents graph.slots.(slot) in
     match resolved with
     | None -> raise Stale_handle
     | Some (P node) ->
-        heads.(height) <- node.queue_next;
-        if node.queue_next = -1 then tails.(height) <- -1;
+        queue.heads.(height) <- node.queue_next;
+        if node.queue_next = -1 then queue.tails.(height) <- -1;
         node.queue_next <- -1;
         set_node_in_queue node false;
+        if queue.heads.(height) = -1 then (
+          while
+            queue.lowest <= queue.highest
+            && queue.heads.(queue.lowest) = -1
+          do
+            queue.lowest <- queue.lowest + 1
+          done;
+          if queue.lowest > queue.highest then (
+            queue.lowest <- -1;
+            queue.highest <- -1));
         resolved
 
-let rec pop_from graph heads tails highest height =
-  if height > highest then None
-  else
-    match pop graph heads tails height with
-    | None -> pop_from graph heads tails highest (height + 1)
-    | Some node -> Some node
-
 let rec drain_from graph changed =
-  match
-    pop_from graph graph.priority_heads graph.priority_tails
-      graph.priority_highest 0
-  with
+  match pop graph graph.priority_queue with
   | Some node -> drain_from graph (evaluate node || changed)
   | None -> (
-      match pop_from graph graph.heads graph.tails graph.highest 0 with
+      match pop graph graph.queue with
       | Some node -> drain_from graph (evaluate node || changed)
       | None -> changed)
 
@@ -1006,14 +1022,14 @@ let discard_created graph =
   done
 
 let clear_queues graph =
-  Array.fill graph.heads 0 (Array.length graph.heads) (-1);
-  Array.fill graph.tails 0 (Array.length graph.tails) (-1);
-  graph.highest <- -1;
-  Array.fill graph.priority_heads 0
-    (Array.length graph.priority_heads) (-1);
-  Array.fill graph.priority_tails 0
-    (Array.length graph.priority_tails) (-1);
-  graph.priority_highest <- -1;
+  let clear queue =
+    Array.fill queue.heads 0 (Array.length queue.heads) (-1);
+    Array.fill queue.tails 0 (Array.length queue.tails) (-1);
+    queue.lowest <- -1;
+    queue.highest <- -1
+  in
+  clear graph.queue;
+  clear graph.priority_queue;
   for slot = 0 to graph.slot_count - 1 do
     match slot_contents graph.slots.(slot) with
     | Some (P node) ->

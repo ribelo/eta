@@ -46,6 +46,12 @@ type keyed_stats = {
   mutable keyed_committed_child_count : int;
 }
 type scope = { mutable valid : bool; mutable slot_head : int; }
+type height_queue = {
+  mutable heads : int array;
+  mutable tails : int array;
+  mutable lowest : int;
+  mutable highest : int;
+}
 type ('a : value_or_null) node = {
   graph : graph;
   handle : handle;
@@ -97,12 +103,8 @@ and graph = {
   mutable action_length : int;
   mutable capsules : capsule array;
   mutable capsule_length : int;
-  mutable heads : int array;
-  mutable tails : int array;
-  mutable highest : int;
-  mutable priority_heads : int array;
-  mutable priority_tails : int array;
-  mutable priority_highest : int;
+  queue : height_queue;
+  priority_queue : height_queue;
   mutable admissions : int array;
   mutable admission_length : int;
   mutable current_scope : scope option;
