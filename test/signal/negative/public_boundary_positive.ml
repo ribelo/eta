@@ -1,5 +1,5 @@
 module A = Eta_signal.Make_no_error ()
-module A_stream = Eta_signal_stream.Make (A.For_stream)
+module A_stream = Eta_signal_stream.Make (A)
 module B = Eta_signal.Make_no_error ()
 
 let a_source = A.Var.create 1
@@ -21,11 +21,11 @@ let _bind =
       if active then A.const 1 else A.const 0)
 
 let _observe =
-  A.Observer.observe a_signal ~on_update:(fun _update -> Eta.Effect.unit)
+  A.Observer.observe a_signal ~on_update:(fun _update -> Ok ())
 
 let _read
     (observer : int A.Observer.t) :
-    (int, A.observer_read_error) Eta.Effect.t =
+    (int, A.observer_read_error) result =
   A.Observer.read observer
 
 let _dispose observer = A.Observer.dispose observer

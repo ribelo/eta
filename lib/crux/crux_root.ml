@@ -632,10 +632,10 @@ module Root = struct
       let* () = root.signal.sig_ensure_observer in
       let* () =
         staged_sets
-        |> List.map (fun set_effect ->
+        |> List.map (fun set_thunk ->
                Eta.Effect.map_error
                  (fun err -> (err :> staging_error))
-                 set_effect)
+                 (Eta.Effect.from_result (set_thunk ())))
         |> Eta.Effect.concat
       in
       let* () = root.signal.sig_stabilize in

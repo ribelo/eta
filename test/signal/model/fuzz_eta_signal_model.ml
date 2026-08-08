@@ -73,14 +73,15 @@ let run_ok : type a. test_error Eta.Runtime.t -> (a, [< test_error ]) E.t -> a =
   | Eta.Exit.Error cause ->
       failf "expected Ok, got %a" (Eta.Cause.pp pp_hidden) cause
 
-let expect_uninitialized label runtime eff =
-  match Eta.Runtime.run runtime (widen eff) with
-  | Eta.Exit.Error (Eta.Cause.Fail `Uninitialized_observer) -> ()
-  | Eta.Exit.Error cause ->
-      failf "%s: expected Uninitialized_observer, got %a" label
-        (Eta.Cause.pp pp_hidden) cause
-  | Eta.Exit.Ok _ ->
-      failf "%s: expected Uninitialized_observer, got Ok" label
+let ok : type a e. (a, e) result -> a = function
+  | Ok value -> value
+  | Error _ -> failf "expected Ok result"
+
+let expect_uninitialized label result =
+  match result with
+  | Error `Uninitialized_observer -> ()
+  | Error _ -> failf "%s: expected Uninitialized_observer, got other error" label
+  | Ok _ -> failf "%s: expected Uninitialized_observer, got Ok" label
 
 let observed_of_signal_update = function
   | Signal.Initialized value -> Initialized value
@@ -143,26 +144,26 @@ let check_observed_updates label model actual_updates =
     failf "%s updates mismatch\nexpected: %a\nactual:   %a" label
       pp_observed_updates expected pp_observed_updates actual
 
-let check_read label runtime observer model =
+let check_read label observer model =
   match (observer, model.observer_active, model.observer_current) with
   | None, _, _ -> ()
   | Some actual_observer, true, Some expected ->
-      let actual = run_ok runtime (Signal.Observer.read actual_observer) in
+      let actual = ok (Signal.Observer.read actual_observer) in
       check_eq_int label expected actual
   | Some actual_observer, true, None ->
-      expect_uninitialized label runtime (Signal.Observer.read actual_observer)
+      expect_uninitialized label (Signal.Observer.read actual_observer)
   | Some _, false, _ -> ()
 
-let observe runtime output actual_updates =
+let observe _runtime output actual_updates =
   let record update =
-    E.sync (fun () ->
-        actual_updates := observed_of_signal_update update :: !actual_updates)
+    actual_updates := observed_of_signal_update update :: !actual_updates;
+    Ok ()
   in
-  run_ok runtime (Signal.Observer.observe output ~on_update:record)
+  ok (Signal.Observer.observe output ~on_update:record)
 
-let dispose runtime observer =
+let dispose _runtime observer =
   Option.iter
-    (fun observer -> run_ok runtime (Signal.Observer.dispose observer))
+    (fun observer -> ok (Signal.Observer.dispose observer))
     observer
 
 let with_runtime stdenv f =
@@ -206,13 +207,13 @@ let run_trace stdenv ops =
       match op with
       | Set_a value ->
           model.pending_a <- value;
-          run_ok runtime (Signal.Var.set source_a value)
+          ok (Signal.Var.set source_a value)
       | Set_b value ->
           model.pending_b <- value;
-          run_ok runtime (Signal.Var.set source_b value)
+          ok (Signal.Var.set source_b value)
       | Choose_a value ->
           model.pending_choose_a <- value;
-          run_ok runtime (Signal.Var.set choose_a value)
+          ok (Signal.Var.set choose_a value)
       | Observe ->
           if Option.is_none !actual_observer then
             actual_observer := Some (observe runtime output actual_updates);
@@ -223,9 +224,9 @@ let run_trace stdenv ops =
           model_dispose model
       | Stabilize ->
           stabilize_model model;
-          run_ok runtime Signal.stabilize;
+          ok (Signal.stabilize ());
           check_observed_updates label model actual_updates
-      | Read -> check_read label runtime !actual_observer model)
+      | Read -> check_read label !actual_observer model)
     ops
 
 let trace_failure stdenv ops =

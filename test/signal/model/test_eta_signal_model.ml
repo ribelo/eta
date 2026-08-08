@@ -8,7 +8,7 @@ module Observer_error = struct
 end
 
 module Signal = Eta_signal.Make (Observer_error) ()
-module Signal_stream = Eta_signal_stream.Make (Signal.For_stream)
+module Signal_stream = Eta_signal_stream.Make (Signal)
 
 type test_error =
   [ Signal.graph_error
@@ -45,6 +45,10 @@ let pp_hidden formatter _ = Format.pp_print_string formatter "<signal-error>"
 let widen (eff : ('a, [< test_error ]) E.t) : ('a, test_error) E.t =
   E.map_error (fun error -> (error :> test_error)) eff
 
+let ok = function
+  | Ok value -> value
+  | Error _ -> Alcotest.failf "expected Ok result"
+
 let run_ok runtime eff =
   match Eta.Runtime.run runtime (widen eff) with
   | Eta.Exit.Ok value -> value
@@ -61,23 +65,31 @@ let wait_until label predicate =
   in
   loop 200
 
-let expect_observer_failed label runtime eff =
-  match Eta.Runtime.run runtime (widen eff) with
-  | Eta.Exit.Error (Eta.Cause.Fail (`Observer_error `Observer_failed)) -> ()
-  | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected observer failure, got Ok" label
-  | Eta.Exit.Error cause ->
-      Alcotest.failf "%s: expected observer failure, got %a" label
-        (Eta.Cause.pp pp_hidden) cause
+let expect_observer_failed label result =
+  match result with
+  | Error (`Observer_error `Observer_failed) -> ()
+  | Ok _ -> Alcotest.failf "%s: expected observer failure, got Ok" label
+  | Error _ ->
+      Alcotest.failf "%s: expected observer failure, got other error" label
 
-let expect_graph_error label pred runtime eff =
-  match Eta.Runtime.run runtime (widen eff) with
-  | Eta.Exit.Error (Eta.Cause.Fail err) when pred err -> ()
-  | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected graph failure, got Ok" label
-  | Eta.Exit.Error cause ->
-      Alcotest.failf "%s: expected graph failure, got %a" label
-        (Eta.Cause.pp pp_hidden) cause
+let expect_graph_error label pred result =
+  match result with
+  | Error err when pred err -> ()
+  | Ok _ -> Alcotest.failf "%s: expected graph failure, got Ok" label
+  | Error _ ->
+      Alcotest.failf "%s: expected graph failure, got other error" label
 
-let expect_die label runtime eff =
+let expect_die label f =
+  match f () with
+  | _ -> Alcotest.failf "%s: expected defect, got value" label
+  | exception _ -> ()
+
+let expect_raise_failure label f =
+  match f () with
+  | _ -> Alcotest.failf "%s: expected Failure defect, got value" label
+  | exception Failure _ -> ()
+
+let expect_die_effect label runtime eff =
   match Eta.Runtime.run runtime (widen eff) with
   | Eta.Exit.Error (Eta.Cause.Die _) -> ()
   | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected die, got Ok" label
@@ -93,22 +105,21 @@ let expect_update_failed label runtime eff =
       Alcotest.failf "%s: expected update failure, got %a" label
         (Eta.Cause.pp pp_hidden) cause
 
-let expect_uninitialized_observer label runtime eff =
-  match Eta.Runtime.run runtime (widen eff) with
-  | Eta.Exit.Error (Eta.Cause.Fail `Uninitialized_observer) -> ()
-  | Eta.Exit.Ok _ ->
+let expect_uninitialized_observer label result =
+  match result with
+  | Error `Uninitialized_observer -> ()
+  | Ok _ ->
       Alcotest.failf "%s: expected uninitialized observer, got Ok" label
-  | Eta.Exit.Error cause ->
-      Alcotest.failf "%s: expected uninitialized observer, got %a" label
-        (Eta.Cause.pp pp_hidden) cause
+  | Error _ ->
+      Alcotest.failf "%s: expected uninitialized observer, got other error"
+        label
 
-let expect_disposed_observer label runtime eff =
-  match Eta.Runtime.run runtime (widen eff) with
-  | Eta.Exit.Error (Eta.Cause.Fail `Disposed_observer) -> ()
-  | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected disposed observer, got Ok" label
-  | Eta.Exit.Error cause ->
-      Alcotest.failf "%s: expected disposed observer, got %a" label
-        (Eta.Cause.pp pp_hidden) cause
+let expect_disposed_observer label result =
+  match result with
+  | Error `Disposed_observer -> ()
+  | Ok _ -> Alcotest.failf "%s: expected disposed observer, got Ok" label
+  | Error _ ->
+      Alcotest.failf "%s: expected disposed observer, got other error" label
 
 let pp_observed_update formatter = function
   | Initialized value -> Format.fprintf formatter "Initialized %d" value
@@ -169,11 +180,10 @@ let check_observed_updates label model actual_updates =
   Alcotest.(check (list observed_update))
     label (List.rev model.observed_updates) (List.rev !actual_updates)
 
-let check_read label runtime read_current model =
+let check_read label read_current model =
   match model.observer_current with
   | None -> ()
-  | Some expected ->
-      Alcotest.(check int) label expected (run_ok runtime read_current)
+  | Some expected -> Alcotest.(check int) label expected (ok read_current)
 
 let generate_trace ~seed ~steps =
   let random = Random.State.make [| seed |] in
@@ -214,10 +224,10 @@ let run_trace name ops =
   in
   let actual_updates = ref [] in
   let record update =
-    E.sync (fun () ->
-        actual_updates := observed_of_signal_update update :: !actual_updates)
+    actual_updates := observed_of_signal_update update :: !actual_updates;
+    Ok ()
   in
-  let observer = run_ok runtime (Signal.Observer.observe output ~on_update:record) in
+  let observer = ok (Signal.Observer.observe output ~on_update:record) in
   let model = create_model () in
   List.iteri
     (fun index op ->
@@ -225,21 +235,21 @@ let run_trace name ops =
       match op with
       | Set_a value ->
           model.pending_a <- value;
-          run_ok runtime (Signal.Var.set source_a value)
+          ok (Signal.Var.set source_a value)
       | Set_b value ->
           model.pending_b <- value;
-          run_ok runtime (Signal.Var.set source_b value)
+          ok (Signal.Var.set source_b value)
       | Choose_a value ->
           model.pending_choose_a <- value;
-          run_ok runtime (Signal.Var.set choose_a value)
+          ok (Signal.Var.set choose_a value)
       | Stabilize ->
           stabilize_model model;
-          run_ok runtime Signal.stabilize;
+          ok (Signal.stabilize ());
           check_observed_updates label model actual_updates
       | Read ->
-          check_read label runtime (Signal.Observer.read observer) model)
+          check_read label (Signal.Observer.read observer) model)
     ops;
-  run_ok runtime (Signal.Observer.dispose observer)
+  ok (Signal.Observer.dispose observer)
 
 let test_scripted_trace_matches_model () =
   run_trace "scripted"
@@ -304,19 +314,20 @@ type 'a timer_observer_state = {
 let create_timer_observer_state () =
   { timer_observer = None; timer_current = None }
 
-let timer_model_observe runtime signal state =
+let timer_model_observe _runtime signal state =
   match state.timer_observer with
   | Some _ -> ()
   | None ->
       state.timer_observer <-
-        Some (run_ok runtime (Signal.Observer.observe signal ~on_update:(fun _ -> E.unit)));
+        Some
+          (ok (Signal.Observer.observe signal ~on_update:(fun _ -> Ok ())));
       state.timer_current <- None
 
-let timer_model_dispose runtime state =
+let timer_model_dispose _runtime state =
   match state.timer_observer with
   | None -> ()
   | Some observer ->
-      run_ok runtime (Signal.Observer.dispose observer);
+      ok (Signal.Observer.dispose observer);
       state.timer_observer <- None;
       state.timer_current <- None
 
@@ -329,10 +340,10 @@ let timer_model_read runtime label state testable =
   match (state.timer_observer, state.timer_current) with
   | None, _ -> ()
   | Some observer, None ->
-      expect_uninitialized_observer label runtime (Signal.Observer.read observer)
+      expect_uninitialized_observer label (Signal.Observer.read observer)
   | Some observer, Some expected ->
       Alcotest.check testable label expected
-        (run_ok runtime (Signal.Observer.read observer))
+        (ok (Signal.Observer.read observer))
 
 let generate_timer_model_ops ~seed ~steps =
   let random = Random.State.make [| seed; steps; 53 |] in
@@ -466,7 +477,7 @@ let run_timer_model_trace name ~seed =
               Eta_test.Test_clock.adjust clock (Eta.Duration.ms ms);
               Eta_test.Async.yield ()
           | Timer_stabilize ->
-              run_ok runtime Signal.stabilize;
+              ok (Signal.stabilize ());
               timer_model_stabilize_state now_state !clock_ms;
               timer_model_stabilize_state after_state (after_value ());
               stabilize_interval ()
@@ -617,7 +628,7 @@ let run_timer_bind_model_trace name ~seed =
       | Bind_interval -> interval_timer)
   in
   let observer =
-    run_ok runtime (Signal.Observer.observe selected ~on_update:(fun _ -> E.unit))
+    ok (Signal.Observer.observe selected ~on_update:(fun _ -> Ok ()))
   in
   let check_demand label =
     if !active_choice = Bind_interval then (
@@ -636,7 +647,7 @@ let run_timer_bind_model_trace name ~seed =
     | Bind_interval -> !interval_value
   in
   let model_stabilize label =
-    run_ok runtime Signal.stabilize;
+    ok (Signal.stabilize ());
     let was_interval_active = !active_choice = Bind_interval in
     let previous_next_due = !interval_next_due in
     let next_due_after_catchup =
@@ -660,12 +671,12 @@ let run_timer_bind_model_trace name ~seed =
     let expected = expected_value () in
     observer_current := Some expected;
     Alcotest.(check int) (label ^ " selected value") expected
-      (run_ok runtime (Signal.Observer.read observer));
+      (ok (Signal.Observer.read observer));
     if !active_choice = Bind_interval || not was_interval_active then
       check_demand label
   in
   Fun.protect
-    ~finally:(fun () -> run_ok runtime (Signal.Observer.dispose observer))
+    ~finally:(fun () -> ok (Signal.Observer.dispose observer))
     (fun () ->
       generate_timer_bind_ops ~seed ~steps:90
       |> List.iteri (fun index op ->
@@ -675,7 +686,7 @@ let run_timer_bind_model_trace name ~seed =
              match op with
              | Timer_bind_select choice ->
                  pending_choice := choice;
-                 run_ok runtime (Signal.Var.set timer_choice choice)
+                 ok (Signal.Var.set timer_choice choice)
              | Timer_bind_advance ms ->
                  clock_ms := !clock_ms + ms;
                  Eta_test.Test_clock.adjust clock (Eta.Duration.ms ms);
@@ -685,11 +696,11 @@ let run_timer_bind_model_trace name ~seed =
              | Timer_bind_read -> (
                  match !observer_current with
                  | None ->
-                     expect_uninitialized_observer label runtime
+                     expect_uninitialized_observer label
                        (Signal.Observer.read observer)
                  | Some expected ->
                      Alcotest.(check int) label expected
-                       (run_ok runtime (Signal.Observer.read observer)))))
+                       (ok (Signal.Observer.read observer)))))
 
 let test_time_bind_demand_trace_matches_model () =
   List.iter
@@ -711,10 +722,10 @@ let test_coalesced_sets_match_model () =
   in
   let updates = ref [] in
   let record update =
-    E.sync (fun () ->
-        updates := observed_of_signal_update update :: !updates)
+    updates := observed_of_signal_update update :: !updates;
+    Ok ()
   in
-  let observer = run_ok runtime (Signal.Observer.observe signal ~on_update:record) in
+  let observer = ok (Signal.Observer.observe signal ~on_update:record) in
   let model_pending = ref 0 in
   let model_current = ref None in
   let model_recomputes = ref 0 in
@@ -733,7 +744,7 @@ let test_coalesced_sets_match_model () =
   in
   let set value =
     model_pending := value;
-    run_ok runtime (Signal.Var.set source value)
+    ok (Signal.Var.set source value)
   in
   let check label =
     Alcotest.(check int)
@@ -744,22 +755,22 @@ let test_coalesced_sets_match_model () =
     | None -> ()
     | Some expected ->
         Alcotest.(check int) (label ^ " read") expected
-          (run_ok runtime (Signal.Observer.read observer))
+          (ok (Signal.Observer.read observer))
   in
   set 1;
   set 2;
   set 3;
   check "before initial stabilize";
   stabilize_model ();
-  run_ok runtime Signal.stabilize;
+  ok (Signal.stabilize ());
   check "initial stabilize";
   set 4;
   set 5;
   set 6;
   stabilize_model ();
-  run_ok runtime Signal.stabilize;
+  ok (Signal.stabilize ());
   check "second stabilize";
-  run_ok runtime (Signal.Observer.dispose observer)
+  ok (Signal.Observer.dispose observer)
 
 type cutoff_op =
   | Cutoff_set of int
@@ -877,11 +888,11 @@ let test_effectful_update_trace_matches_model () =
     in
     let actual_updates = ref [] in
     let observer =
-      run_ok runtime
+      ok
         (Signal.Observer.observe combined ~on_update:(fun update ->
-             E.sync (fun () ->
-                 actual_updates :=
-                   observed_of_signal_update update :: !actual_updates)))
+             actual_updates :=
+               observed_of_signal_update update :: !actual_updates;
+             Ok ()))
     in
     let pending_left = ref 1 in
     let pending_right = ref 10 in
@@ -896,15 +907,15 @@ let test_effectful_update_trace_matches_model () =
     let check_read label =
       match !current with
       | None ->
-          expect_uninitialized_observer label runtime
+          expect_uninitialized_observer label
             (Signal.Observer.read observer)
       | Some expected ->
           Alcotest.(check int) label expected
-            (run_ok runtime (Signal.Observer.read observer))
+            (ok (Signal.Observer.read observer))
     in
     let set var pending value =
       pending := value;
-      run_ok runtime (Signal.Var.set var value)
+      ok (Signal.Var.set var value)
     in
     let update label var pending delta =
       let before = !pending in
@@ -957,7 +968,7 @@ let test_effectful_update_trace_matches_model () =
     in
     let defect_right_then_update () =
       let before = !pending_right in
-      expect_die "update callback defect" runtime
+      expect_die_effect "update callback defect" runtime
         (Signal.Var.update_effect right (fun _ -> failwith "update defect"));
       Alcotest.(check int) "defect preserves right" before
         (Signal.Var.value right);
@@ -965,7 +976,7 @@ let test_effectful_update_trace_matches_model () =
     in
     let stabilize label =
       publish_int current model_updates (!pending_left + !pending_right);
-      run_ok runtime Signal.stabilize;
+      ok (Signal.stabilize ());
       check_int_updates label model_updates actual_updates;
       check_read (label ^ " read")
     in
@@ -990,7 +1001,7 @@ let test_effectful_update_trace_matches_model () =
         | Effectful_read -> check_read label);
         check_sources label)
       ops;
-    run_ok runtime (Signal.Observer.dispose observer)
+    ok (Signal.Observer.dispose observer)
   in
   List.iter
     (fun seed ->
@@ -1012,10 +1023,10 @@ let test_source_equality_trace_matches_model () =
     in
     let updates = ref [] in
     let observer =
-      run_ok runtime
+      ok
         (Signal.Observer.observe (Signal.Var.watch source) ~on_update:(fun update ->
-             E.sync (fun () ->
-                 updates := observed_of_signal_update update :: !updates)))
+             updates := observed_of_signal_update update :: !updates;
+             Ok ()))
     in
     let pending = ref 0 in
     let committed = ref 0 in
@@ -1025,7 +1036,7 @@ let test_source_equality_trace_matches_model () =
     let set value =
       pending := value;
       source_dirty := not (parity_equal !committed value);
-      run_ok runtime (Signal.Var.set source value);
+      ok (Signal.Var.set source value);
       Alcotest.(check int) "source value updates immediately" !pending
         (Signal.Var.value source)
     in
@@ -1034,7 +1045,7 @@ let test_source_equality_trace_matches_model () =
         committed := !pending;
         source_dirty := false);
       publish_int current model_updates !committed;
-      run_ok runtime Signal.stabilize
+      ok (Signal.stabilize ())
     in
     List.iteri
       (fun index op ->
@@ -1049,13 +1060,13 @@ let test_source_equality_trace_matches_model () =
         | Cutoff_read -> (
             match !current with
             | None ->
-                expect_uninitialized_observer label runtime
+                expect_uninitialized_observer label
                   (Signal.Observer.read observer)
             | Some expected ->
                 Alcotest.(check int) label expected
-                  (run_ok runtime (Signal.Observer.read observer))))
+                  (ok (Signal.Observer.read observer))))
       ops;
-    run_ok runtime (Signal.Observer.dispose observer)
+    ok (Signal.Observer.dispose observer)
   in
   List.iter
     (fun seed ->
@@ -1101,34 +1112,37 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
     let normal_updates = ref [] in
     let suppressed_callbacks = ref 0 in
     let count callback_count _update =
-      E.sync (fun () -> incr callback_count)
+      incr callback_count;
+      Ok ()
     in
     let physical_observer =
-      run_ok runtime (Signal.Observer.observe physical ~on_update:(count physical_callbacks))    in
+      ok (Signal.Observer.observe physical ~on_update:(count physical_callbacks))    in
     let structural_observer =
-      run_ok runtime
+      ok
         (Signal.Observer.observe structural ~on_update:(count structural_callbacks))    in
     let structural_downstream_observer =
-      run_ok runtime
+      ok
         (Signal.Observer.observe structural_downstream ~on_update:(fun update ->
-             E.sync (fun () ->
-                 structural_downstream_updates :=
-                   observed_of_signal_update update
-                   :: !structural_downstream_updates)))
+             structural_downstream_updates :=
+               observed_of_signal_update update
+               :: !structural_downstream_updates;
+             Ok ()))
     in
     let bound_observer =
-      run_ok runtime (Signal.Observer.observe bound ~on_update:(count bound_callbacks))    in
+      ok (Signal.Observer.observe bound ~on_update:(count bound_callbacks))    in
     let normal_observer =
-      run_ok runtime
+      ok
         (Signal.Observer.observe source_signal ~on_update:(fun update ->
-             E.sync (fun () ->
-                 normal_updates :=
-                   observed_of_signal_update update :: !normal_updates)))
+             normal_updates :=
+               observed_of_signal_update update :: !normal_updates;
+             Ok ()))
     in
     let suppressed_observer =
-      run_ok runtime
+      ok
         (Signal.Observer.observe ~cutoff:Eta_signal.Cutoff.always source_signal
-           ~on_update:(fun _update -> E.sync (fun () -> incr suppressed_callbacks)))
+           ~on_update:(fun _update ->
+             incr suppressed_callbacks;
+             Ok ()))
     in
     let pending = ref 0 in
     let committed = ref 0 in
@@ -1148,7 +1162,7 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
     let set value =
       pending := value;
       source_dirty := !committed <> value;
-      run_ok runtime (Signal.Var.set source value)
+      ok (Signal.Var.set source value)
     in
     let maybe_publish_payload current callbacks next =
       match !current with
@@ -1184,7 +1198,7 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
              (cutoff_payload !committed));
         if !suppressed_model_callbacks = 0 then
           incr suppressed_model_callbacks);
-      run_ok runtime Signal.stabilize
+      ok (Signal.stabilize ())
     in
     let check label =
       check_int_updates label normal_model_updates normal_updates;
@@ -1212,31 +1226,31 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
     let check_reads label =
       match !normal_current with
       | None ->
-          expect_uninitialized_observer (label ^ " normal") runtime
+          expect_uninitialized_observer (label ^ " normal")
             (Signal.Observer.read normal_observer)
       | Some expected ->
           Alcotest.(check int) (label ^ " normal") expected
-            (run_ok runtime (Signal.Observer.read normal_observer));
+            (ok (Signal.Observer.read normal_observer));
           Alcotest.(check int) (label ^ " suppressed") expected
-            (run_ok runtime (Signal.Observer.read suppressed_observer));
+            (ok (Signal.Observer.read suppressed_observer));
           Alcotest.(check (list int))
             (label ^ " physical") (cutoff_payload expected)
-            (run_ok runtime (Signal.Observer.read physical_observer));
+            (ok (Signal.Observer.read physical_observer));
           Alcotest.(check (list int))
             (label ^ " structural")
             (Option.value ~default:(cutoff_payload expected) !structural_current)
-            (run_ok runtime (Signal.Observer.read structural_observer));
+            (ok (Signal.Observer.read structural_observer));
           Alcotest.(check int)
             (label ^ " structural downstream")
             (cutoff_payload_value
                (Option.value ~default:(cutoff_payload expected)
                   !structural_current))
-            (run_ok runtime
+            (ok
                (Signal.Observer.read structural_downstream_observer));
           Alcotest.(check (list int))
             (label ^ " bind")
             (Option.value ~default:(cutoff_payload expected) !bound_current)
-            (run_ok runtime (Signal.Observer.read bound_observer))
+            (ok (Signal.Observer.read bound_observer))
     in
     List.iteri
       (fun index op ->
@@ -1250,12 +1264,12 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
             check label
         | Cutoff_read -> check_reads label)
       ops;
-    run_ok runtime (Signal.Observer.dispose physical_observer);
-    run_ok runtime (Signal.Observer.dispose structural_observer);
-    run_ok runtime (Signal.Observer.dispose structural_downstream_observer);
-    run_ok runtime (Signal.Observer.dispose bound_observer);
-    run_ok runtime (Signal.Observer.dispose normal_observer);
-    run_ok runtime (Signal.Observer.dispose suppressed_observer)
+    ok (Signal.Observer.dispose physical_observer);
+    ok (Signal.Observer.dispose structural_observer);
+    ok (Signal.Observer.dispose structural_downstream_observer);
+    ok (Signal.Observer.dispose bound_observer);
+    ok (Signal.Observer.dispose normal_observer);
+    ok (Signal.Observer.dispose suppressed_observer)
   in
   List.iter
     (fun seed ->
@@ -1271,18 +1285,14 @@ let test_observer_phase_mutation_matches_model () =
   let actual_updates = ref [] in
   let callback update =
     let observed = observed_of_signal_update update in
-    E.sync (fun () -> actual_updates := observed :: !actual_updates)
-    |> E.bind (fun () ->
-           match observed with
-           | Initialized 1 ->
-               Signal.Var.set source 2
-               |> E.map_error (fun _ -> `Observer_failed)
-           | Changed (_, 2) ->
-               Signal.Var.set source 3
-               |> E.map_error (fun _ -> `Observer_failed)
-           | Initialized _ | Changed _ -> E.unit)
+    actual_updates := observed :: !actual_updates;
+    (match observed with
+     | Initialized 1 -> ignore (Signal.Var.set source 2)
+     | Changed (_, 2) -> ignore (Signal.Var.set source 3)
+     | Initialized _ | Changed _ -> ());
+    Ok ()
   in
-  let observer = run_ok runtime (Signal.Observer.observe signal ~on_update:callback) in
+  let observer = ok (Signal.Observer.observe signal ~on_update:callback) in
   let model_pending = ref 1 in
   let model_current = ref None in
   let model_updates = ref [] in
@@ -1306,19 +1316,19 @@ let test_observer_phase_mutation_matches_model () =
   in
   let check_step label =
     stabilize_model ();
-    run_ok runtime Signal.stabilize;
+    ok (Signal.stabilize ());
     Alcotest.(check (list observed_update))
       (label ^ " updates") (List.rev !model_updates) (List.rev !actual_updates);
     match !model_current with
     | None -> ()
     | Some expected ->
         Alcotest.(check int) (label ^ " read") expected
-          (run_ok runtime (Signal.Observer.read observer))
+          (ok (Signal.Observer.read observer))
   in
   check_step "initial";
   check_step "observer mutation";
   check_step "second observer mutation";
-  run_ok runtime (Signal.Observer.dispose observer)
+  ok (Signal.Observer.dispose observer)
 
 let test_observer_failure_retry_matches_model () =
   let pp_delivery_op formatter = function
@@ -1355,11 +1365,11 @@ let test_observer_failure_retry_matches_model () =
     let second_delivered_updates = ref [] in
     let next_delivery_outcome = ref `Ok in
     let record updates update =
-      E.sync (fun () ->
-          updates := observed_of_signal_update update :: !updates)
+      updates := observed_of_signal_update update :: !updates;
+      Ok ()
     in
     let first_observer =
-      run_ok runtime
+      ok
         (Signal.Observer.observe signal ~on_update:(record first_delivered_updates))    in
     let second_callback update =
       if !next_delivery_outcome = `Die then (
@@ -1367,14 +1377,14 @@ let test_observer_failure_retry_matches_model () =
         failwith "observer delivery defect");
       if !next_delivery_outcome = `Fail then (
         next_delivery_outcome := `Ok;
-        E.fail `Observer_failed)
-      else
-        E.sync (fun () ->
-            second_delivered_updates :=
-              observed_of_signal_update update :: !second_delivered_updates)
+        Error `Observer_failed)
+      else (
+        second_delivered_updates :=
+          observed_of_signal_update update :: !second_delivered_updates;
+        Ok ())
     in
     let second_observer =
-      run_ok runtime (Signal.Observer.observe signal ~on_update:second_callback)    in
+      ok (Signal.Observer.observe signal ~on_update:second_callback)    in
     let model_pending = ref 0 in
     let model_current = ref None in
     let model_next_outcome = ref `Ok in
@@ -1413,7 +1423,11 @@ let test_observer_failure_retry_matches_model () =
               delivered_updates := update :: !delivered_updates;
               delivery := `Delivered (delivered_value update);
               `Ok
-          | `Fail -> `Observer_failed
+          | `Fail ->
+              (* Typed observer failure settles the delivery: the event is
+                 consumed without a callback and is never retried. *)
+              delivery := `Delivered (delivered_value update);
+              `Observer_failed
           | `Die -> `Die)
     in
     let first_delivery =
@@ -1462,9 +1476,9 @@ let test_observer_failure_retry_matches_model () =
       | None -> ()
       | Some expected ->
           Alcotest.(check int) (label ^ " first read") expected
-            (run_ok runtime (Signal.Observer.read first_observer));
+            (ok (Signal.Observer.read first_observer));
           Alcotest.(check int) (label ^ " second read") expected
-            (run_ok runtime (Signal.Observer.read second_observer))
+            (ok (Signal.Observer.read second_observer))
     in
     List.iteri
       (fun index op ->
@@ -1474,7 +1488,7 @@ let test_observer_failure_retry_matches_model () =
         match op with
         | `Set value ->
             model_pending := value;
-            run_ok runtime (Signal.Var.set source value)
+            ok (Signal.Var.set source value)
         | `Fail_next ->
             model_next_outcome := `Fail;
             next_delivery_outcome := `Fail
@@ -1485,20 +1499,20 @@ let test_observer_failure_retry_matches_model () =
         | `Stabilize -> (
             match stabilize_model () with
             | `Ok ->
-                run_ok runtime Signal.stabilize;
+                ok (Signal.stabilize ());
                 check_delivered label;
                 check_read label
             | `Observer_failed ->
-                expect_observer_failed label runtime Signal.stabilize;
+                expect_observer_failed label (Signal.stabilize ());
                 check_delivered label;
                 check_read label
             | `Die ->
-                expect_die label runtime Signal.stabilize;
+                expect_die label (fun () -> ignore (Signal.stabilize ()));
                 check_delivered label;
                 check_read label))
       ops;
-    run_ok runtime (Signal.Observer.dispose first_observer);
-    run_ok runtime (Signal.Observer.dispose second_observer)
+    ok (Signal.Observer.dispose first_observer);
+    ok (Signal.Observer.dispose second_observer)
   in
   let scripted =
     [
@@ -1571,10 +1585,10 @@ let run_pure_failure_trace name ops =
   in
   let actual_updates = ref [] in
   let record update =
-    E.sync (fun () ->
-        actual_updates := observed_of_signal_update update :: !actual_updates)
+    actual_updates := observed_of_signal_update update :: !actual_updates;
+    Ok ()
   in
-  let observer = run_ok runtime (Signal.Observer.observe signal ~on_update:record) in
+  let observer = ok (Signal.Observer.observe signal ~on_update:record) in
   let model_pending = ref 1 in
   let model_current = ref None in
   let model_updates = ref [] in
@@ -1599,11 +1613,11 @@ let run_pure_failure_trace name ops =
       (label ^ " updates") (List.rev !model_updates) (List.rev !actual_updates);
     match !model_current with
     | None ->
-        expect_uninitialized_observer label runtime
+        expect_uninitialized_observer label
           (Signal.Observer.read observer)
     | Some expected ->
         Alcotest.(check int) (label ^ " read") expected
-          (run_ok runtime (Signal.Observer.read observer))
+          (ok (Signal.Observer.read observer))
   in
   List.iteri
     (fun index op ->
@@ -1613,15 +1627,16 @@ let run_pure_failure_trace name ops =
       (match op with
       | Pure_set value ->
           model_pending := value;
-          run_ok runtime (Signal.Var.set source value)
+          ok (Signal.Var.set source value)
       | Pure_stabilize -> (
           match stabilize_model () with
-          | `Committed -> run_ok runtime Signal.stabilize
-          | `Pure_failure -> expect_die label runtime Signal.stabilize)
+          | `Committed -> ok (Signal.stabilize ())
+          | `Pure_failure ->
+              expect_die label (fun () -> ignore (Signal.stabilize ())))
       | Pure_read -> ());
       check_model label)
     ops;
-  run_ok runtime (Signal.Observer.dispose observer)
+  ok (Signal.Observer.dispose observer)
 
 let test_pure_failure_matches_model () =
   run_pure_failure_trace "pure-failure-scripted"
@@ -1652,13 +1667,13 @@ let test_dynamic_cycle_preserves_snapshot_matches_model () =
   let a_updates = ref [] in
   let b_updates = ref [] in
   let record updates update =
-    E.sync (fun () ->
-        updates := observed_of_signal_update update :: !updates)
+    updates := observed_of_signal_update update :: !updates;
+    Ok ()
   in
   let a_observer =
-    run_ok runtime (Signal.Observer.observe a ~on_update:(record a_updates))  in
+    ok (Signal.Observer.observe a ~on_update:(record a_updates))  in
   let b_observer =
-    run_ok runtime (Signal.Observer.observe b ~on_update:(record b_updates))  in
+    ok (Signal.Observer.observe b ~on_update:(record b_updates))  in
   let model_a = ref None in
   let model_b = ref None in
   let model_a_updates = ref [] in
@@ -1687,37 +1702,37 @@ let test_dynamic_cycle_preserves_snapshot_matches_model () =
     Option.iter
       (fun expected ->
         Alcotest.(check int) (label ^ " a read") expected
-          (run_ok runtime (Signal.Observer.read a_observer)))
+          (ok (Signal.Observer.read a_observer)))
       !model_a;
     Option.iter
       (fun expected ->
         Alcotest.(check int) (label ^ " b read") expected
-          (run_ok runtime (Signal.Observer.read b_observer)))
+          (ok (Signal.Observer.read b_observer)))
       !model_b
   in
   commit_model ~a_value:1 ~b_value:10;
-  run_ok runtime Signal.stabilize;
+  ok (Signal.stabilize ());
   check "initial";
-  run_ok runtime (Signal.Var.set a_target b);
+  ok (Signal.Var.set a_target b);
   commit_model ~a_value:10 ~b_value:10;
-  run_ok runtime Signal.stabilize;
+  ok (Signal.stabilize ());
   check "one way";
-  run_ok runtime (Signal.Var.set a_target (Signal.const 2));
-  run_ok runtime (Signal.Var.set b_target a);
+  ok (Signal.Var.set a_target (Signal.const 2));
+  ok (Signal.Var.set b_target a);
   commit_model ~a_value:2 ~b_value:2;
-  run_ok runtime Signal.stabilize;
+  ok (Signal.stabilize ());
   check "reverse";
-  run_ok runtime (Signal.Var.set a_target b);
-  run_ok runtime (Signal.Var.set b_target a);
-  expect_graph_error "cycle" (( = ) `Cycle) runtime Signal.stabilize;
+  ok (Signal.Var.set a_target b);
+  ok (Signal.Var.set b_target a);
+  expect_graph_error "cycle" (( = ) `Cycle) (Signal.stabilize ());
   check "after cycle";
-  run_ok runtime (Signal.Var.set a_target (Signal.const 3));
-  run_ok runtime (Signal.Var.set b_target (Signal.const 4));
+  ok (Signal.Var.set a_target (Signal.const 3));
+  ok (Signal.Var.set b_target (Signal.const 4));
   commit_model ~a_value:3 ~b_value:4;
-  run_ok runtime Signal.stabilize;
+  ok (Signal.stabilize ());
   check "after recovery";
-  run_ok runtime (Signal.Observer.dispose a_observer);
-  run_ok runtime (Signal.Observer.dispose b_observer)
+  ok (Signal.Observer.dispose a_observer);
+  ok (Signal.Observer.dispose b_observer)
 
 let test_dispose_demand_matches_model () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1732,8 +1747,8 @@ let test_dispose_demand_matches_model () =
   let first_updates = ref [] in
   let second_updates = ref [] in
   let record updates update =
-    E.sync (fun () ->
-        updates := observed_of_signal_update update :: !updates)
+    updates := observed_of_signal_update update :: !updates;
+    Ok ()
   in
   let preinit_updates = ref [] in
   let model_pending = ref 0 in
@@ -1762,48 +1777,48 @@ let test_dispose_demand_matches_model () =
       label (List.rev !model) (List.rev !actual)
   in
   let preinit_observer =
-    run_ok runtime (Signal.Observer.observe signal ~on_update:(record preinit_updates))  in
-  run_ok runtime (Signal.Observer.dispose preinit_observer);
+    ok (Signal.Observer.observe signal ~on_update:(record preinit_updates))  in
+  ok (Signal.Observer.dispose preinit_observer);
   model_pending := 1;
-  run_ok runtime (Signal.Var.set source 1);
+  ok (Signal.Var.set source 1);
   stabilize_model ~demanded:false preinit_model_current preinit_model_updates;
-  run_ok runtime Signal.stabilize;
+  ok (Signal.stabilize ());
   Alcotest.(check int) "disposed uninitialized demand does not recompute"
     !model_recomputes !recomputes;
   check_updates "disposed uninitialized observer receives no update"
     preinit_model_updates preinit_updates;
-  expect_disposed_observer "disposed uninitialized read" runtime
+  expect_disposed_observer "disposed uninitialized read"
     (Signal.Observer.read preinit_observer);
   let first_observer =
-    run_ok runtime (Signal.Observer.observe signal ~on_update:(record first_updates))  in
+    ok (Signal.Observer.observe signal ~on_update:(record first_updates))  in
   stabilize_model ~demanded:true first_model_current first_model_updates;
-  run_ok runtime Signal.stabilize;
+  ok (Signal.stabilize ());
   Alcotest.(check int) "initial recompute" !model_recomputes !recomputes;
   check_updates "first observer initialized" first_model_updates first_updates;
   Alcotest.(check int) "first read" 1
-    (run_ok runtime (Signal.Observer.read first_observer));
-  run_ok runtime (Signal.Observer.dispose first_observer);
-  expect_disposed_observer "disposed initialized read" runtime
+    (ok (Signal.Observer.read first_observer));
+  ok (Signal.Observer.dispose first_observer);
+  expect_disposed_observer "disposed initialized read"
     (Signal.Observer.read first_observer);
   model_pending := 2;
-  run_ok runtime (Signal.Var.set source 2);
+  ok (Signal.Var.set source 2);
   stabilize_model ~demanded:false first_model_current first_model_updates;
-  run_ok runtime Signal.stabilize;
+  ok (Signal.stabilize ());
   Alcotest.(check int) "disposed demand does not recompute" !model_recomputes
     !recomputes;
   check_updates "disposed observer receives no update" first_model_updates
     first_updates;
   let second_observer =
-    run_ok runtime (Signal.Observer.observe signal ~on_update:(record second_updates))  in
+    ok (Signal.Observer.observe signal ~on_update:(record second_updates))  in
   stabilize_model ~demanded:true second_model_current second_model_updates;
-  run_ok runtime Signal.stabilize;
+  ok (Signal.stabilize ());
   Alcotest.(check int) "reobserve recomputes latest pending value"
     !model_recomputes !recomputes;
   check_updates "second observer initialized with latest value"
     second_model_updates second_updates;
   Alcotest.(check int) "second read" 2
-    (run_ok runtime (Signal.Observer.read second_observer));
-  run_ok runtime (Signal.Observer.dispose second_observer)
+    (ok (Signal.Observer.read second_observer));
+  ok (Signal.Observer.dispose second_observer)
 
 type observer_slot =
   | First_observer
@@ -1856,16 +1871,16 @@ let lifecycle_observer_slots first second = [ first; second ]
 let lifecycle_signal_value source_value = source_value * 2
 
 let lifecycle_record slot update =
-  E.sync (fun () ->
-      slot.actual_updates <-
-        observed_of_signal_update update :: slot.actual_updates)
+  slot.actual_updates <-
+    observed_of_signal_update update :: slot.actual_updates;
+  Ok ()
 
 let lifecycle_observe runtime signal slot =
   match slot.actual_observer with
   | Some _ -> ()
   | None ->
       let observer =
-        run_ok runtime
+        ok
           (Signal.Observer.observe signal ~on_update:(lifecycle_record slot))      in
       slot.actual_observer <- Some observer;
       slot.model_active <- true;
@@ -1875,7 +1890,7 @@ let lifecycle_dispose runtime slot =
   match slot.actual_observer with
   | None -> ()
   | Some observer ->
-      run_ok runtime (Signal.Observer.dispose observer);
+      ok (Signal.Observer.dispose observer);
       slot.actual_observer <- None;
       slot.model_active <- false;
       slot.model_current <- None
@@ -1908,11 +1923,11 @@ let lifecycle_read label runtime slot =
   | Some observer -> (
       match slot.model_current with
       | None ->
-          expect_uninitialized_observer label runtime
+          expect_uninitialized_observer label
             (Signal.Observer.read observer)
       | Some expected ->
           Alcotest.(check int) label expected
-            (run_ok runtime (Signal.Observer.read observer)))
+            (ok (Signal.Observer.read observer)))
 
 let generate_lifecycle_trace ~seed ~steps =
   let random = Random.State.make [| seed |] in
@@ -1958,14 +1973,14 @@ let run_lifecycle_trace name ops =
       match op with
       | Lifecycle_set value ->
           pending := value;
-          run_ok runtime (Signal.Var.set source value)
+          ok (Signal.Var.set source value)
       | Lifecycle_observe slot ->
           lifecycle_observe runtime signal (lifecycle_slot first second slot)
       | Lifecycle_dispose slot ->
           lifecycle_dispose runtime (lifecycle_slot first second slot)
       | Lifecycle_stabilize ->
           lifecycle_model_stabilize pending slots;
-          run_ok runtime Signal.stabilize;
+          ok (Signal.stabilize ());
           List.iter (lifecycle_check_slot label) slots
       | Lifecycle_read slot ->
           lifecycle_read label runtime (lifecycle_slot first second slot))
@@ -2098,7 +2113,7 @@ let generate_branch_demand_trace ~seed ~steps =
 
 let run_bind_branch_demand_trace name ops =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
-  let base_stats = run_ok runtime (Signal.stats ()) in
+  let base_stats = ok (Signal.stats ()) in
   let source_a = Signal.Var.create 0 in
   let source_b = Signal.Var.create 10 in
   let choose_a = Signal.Var.create true in
@@ -2118,7 +2133,7 @@ let run_bind_branch_demand_trace name ops =
   let branch_total_nodes = Array.make 2 None in
   let check_stats label model =
     Gc.full_major ();
-    let stats = run_ok runtime (Signal.stats ()) in
+    let stats = ok (Signal.stats ()) in
     Alcotest.(check int) (label ^ " active observers")
       (base_stats.Signal.active_observer_count + 1)
       stats.Signal.active_observer_count;
@@ -2138,10 +2153,10 @@ let run_bind_branch_demand_trace name ops =
   in
   let updates = ref [] in
   let record update =
-    E.sync (fun () ->
-        updates := observed_of_signal_update update :: !updates)
+    updates := observed_of_signal_update update :: !updates;
+    Ok ()
   in
-  let observer = run_ok runtime (Signal.Observer.observe selected ~on_update:record) in
+  let observer = ok (Signal.Observer.observe selected ~on_update:record) in
   let model = create_bind_demand_model () in
   List.iteri
     (fun index op ->
@@ -2151,28 +2166,28 @@ let run_bind_branch_demand_trace name ops =
       match op with
       | Branch_set_a value ->
           set_branch_model_source model.branch_a value;
-          run_ok runtime (Signal.Var.set source_a value)
+          ok (Signal.Var.set source_a value)
       | Branch_set_b value ->
           set_branch_model_source model.branch_b value;
-          run_ok runtime (Signal.Var.set source_b value)
+          ok (Signal.Var.set source_b value)
       | Branch_choose_a value ->
           model.pending_choose_a <- value;
-          run_ok runtime (Signal.Var.set choose_a value)
+          ok (Signal.Var.set choose_a value)
       | Branch_stabilize ->
           stabilize_bind_demand_model model;
-          run_ok runtime Signal.stabilize;
+          ok (Signal.stabilize ());
           check_bind_demand_model label model updates recomputes_a recomputes_b;
           check_stats label model
       | Branch_read -> (
           match model.bind_observer_current with
           | None ->
-              expect_uninitialized_observer label runtime
+              expect_uninitialized_observer label
                 (Signal.Observer.read observer)
           | Some expected ->
               Alcotest.(check int) label expected
-                (run_ok runtime (Signal.Observer.read observer))))
+                (ok (Signal.Observer.read observer))))
     ops;
-  run_ok runtime (Signal.Observer.dispose observer)
+  ok (Signal.Observer.dispose observer)
 
 let test_bind_branch_demand_trace_matches_model () =
   List.iter
@@ -2321,10 +2336,10 @@ let run_nested_bind_trace name ops =
   in
   let updates = ref [] in
   let record update =
-    E.sync (fun () ->
-        updates := observed_of_signal_update update :: !updates)
+    updates := observed_of_signal_update update :: !updates;
+    Ok ()
   in
-  let observer = run_ok runtime (Signal.Observer.observe selected ~on_update:record) in
+  let observer = ok (Signal.Observer.observe selected ~on_update:record) in
   let model = create_nested_bind_model () in
   List.iteri
     (fun index op ->
@@ -2334,38 +2349,38 @@ let run_nested_bind_trace name ops =
       match op with
       | Nested_set_a value ->
           model.nested_pending_a <- value;
-          run_ok runtime (Signal.Var.set source_a value)
+          ok (Signal.Var.set source_a value)
       | Nested_set_b value ->
           model.nested_pending_b <- value;
-          run_ok runtime (Signal.Var.set source_b value)
+          ok (Signal.Var.set source_b value)
       | Nested_set_c value ->
           model.nested_pending_c <- value;
-          run_ok runtime (Signal.Var.set source_c value)
+          ok (Signal.Var.set source_c value)
       | Nested_choose value ->
           model.nested_pending_choose <- value;
-          run_ok runtime (Signal.Var.set choose value)
+          ok (Signal.Var.set choose value)
       | Nested_inner_choose value ->
           model.nested_pending_inner_choose <- value;
-          run_ok runtime (Signal.Var.set inner_choose value)
+          ok (Signal.Var.set inner_choose value)
       | Nested_external_offset value ->
           model.nested_pending_external_offset <- value;
-          run_ok runtime (Signal.Var.set external_offset value)
+          ok (Signal.Var.set external_offset value)
       | Nested_stabilize ->
           stabilize_nested_bind_model model;
-          run_ok runtime Signal.stabilize;
+          ok (Signal.stabilize ());
           Alcotest.(check (list observed_update))
             (label ^ " updates") (List.rev model.nested_updates)
             (List.rev !updates)
       | Nested_read -> (
           match model.nested_current with
           | None ->
-              expect_uninitialized_observer label runtime
+              expect_uninitialized_observer label
                 (Signal.Observer.read observer)
           | Some expected ->
               Alcotest.(check int) label expected
-                (run_ok runtime (Signal.Observer.read observer))))
+                (ok (Signal.Observer.read observer))))
     ops;
-  run_ok runtime (Signal.Observer.dispose observer)
+  ok (Signal.Observer.dispose observer)
 
 let test_nested_bind_churn_trace_matches_model () =
   List.iter
@@ -2491,8 +2506,8 @@ let run_retained_branch_trace name ops =
         signal)
   in
   let selected_observer =
-    run_ok runtime
-      (Signal.Observer.observe selected ~on_update:(fun _ -> E.unit))
+    ok
+      (Signal.Observer.observe selected ~on_update:(fun _ -> Ok ()))
   in
   let model = create_retained_branch_model () in
   let check_retained_slot label index slot =
@@ -2503,24 +2518,23 @@ let run_retained_branch_trace name ops =
     if slot.retained_valid then (
       let updates = ref [] in
       let observer =
-        run_ok runtime
+        ok
           (Signal.Observer.observe slot.retained_signal ~on_update:(fun update ->
-               E.sync (fun () ->
-                   updates :=
-                     observed_of_signal_update update :: !updates)))
+               updates := observed_of_signal_update update :: !updates;
+               Ok ()))
       in
-      run_ok runtime Signal.stabilize;
+      ok (Signal.stabilize ());
       let expected = retained_branch_value model slot.retained_side in
       Alcotest.(check int) (slot_label ^ " read") expected
-        (run_ok runtime (Signal.Observer.read observer));
+        (ok (Signal.Observer.read observer));
       Alcotest.(check (list observed_update))
         (slot_label ^ " updates") [ Initialized expected ]
         (List.rev !updates);
-      run_ok runtime (Signal.Observer.dispose observer))
+      ok (Signal.Observer.dispose observer))
     else
       expect_graph_error (slot_label ^ " stale observe")
-        (( = ) `Invalid_scope) runtime
-        (Signal.Observer.observe slot.retained_signal ~on_update:(fun _ -> E.unit))
+        (( = ) `Invalid_scope)
+        (Signal.Observer.observe slot.retained_signal ~on_update:(fun _ -> Ok ()))
   in
   let check_retained_branches label =
     List.iteri (check_retained_slot label) !retained_slots
@@ -2533,19 +2547,19 @@ let run_retained_branch_trace name ops =
       match op with
       | Retained_set_left value ->
           model.retained_pending_left <- value;
-          run_ok runtime (Signal.Var.set left value)
+          ok (Signal.Var.set left value)
       | Retained_set_right value ->
           model.retained_pending_right <- value;
-          run_ok runtime (Signal.Var.set right value)
+          ok (Signal.Var.set right value)
       | Retained_choose_left value ->
           model.retained_pending_choose_left <- value;
-          run_ok runtime (Signal.Var.set choose_left value)
+          ok (Signal.Var.set choose_left value)
       | Retained_stabilize ->
           let before_retained_count = List.length !retained_slots in
           let switched =
             stabilize_retained_branch_model model retained_slots
           in
-          run_ok runtime Signal.stabilize;
+          ok (Signal.stabilize ());
           let expected_retained_count =
             before_retained_count + if switched then 1 else 0
           in
@@ -2554,7 +2568,7 @@ let run_retained_branch_trace name ops =
             (List.length !retained_slots);
           check_retained_branches label)
     ops;
-  run_ok runtime (Signal.Observer.dispose selected_observer)
+  ok (Signal.Observer.dispose selected_observer)
 
 let test_retained_branch_trace_matches_model () =
   List.iter
@@ -2697,32 +2711,25 @@ let run_diamond_trace name ops =
     | None -> Alcotest.fail "observer callback ran before registration"
   in
   let read_callback_snapshot label _update =
-    Signal.Observer.read (observer left_observer)
-    |> E.map_error (fun _ -> `Observer_failed)
-    |> E.bind (fun left_value ->
-           Signal.Observer.read (observer right_observer)
-           |> E.map_error (fun _ -> `Observer_failed)
-           |> E.bind (fun right_value ->
-                  Signal.Observer.read (observer output_observer)
-                  |> E.map_error (fun _ -> `Observer_failed)
-                  |> E.bind (fun output_value ->
-                         E.sync (fun () ->
-                             callback_snapshots :=
-                               diamond_snapshot_label label left_value
-                                 right_value output_value
-                               :: !callback_snapshots))))
+    let left_value = ok (Signal.Observer.read (observer left_observer)) in
+    let right_value = ok (Signal.Observer.read (observer right_observer)) in
+    let output_value = ok (Signal.Observer.read (observer output_observer)) in
+    callback_snapshots :=
+      diamond_snapshot_label label left_value right_value output_value
+      :: !callback_snapshots;
+    Ok ()
   in
   left_observer :=
     Some
-      (run_ok runtime
+      (ok
          (Signal.Observer.observe left ~on_update:(read_callback_snapshot "left")));
   right_observer :=
     Some
-      (run_ok runtime
+      (ok
          (Signal.Observer.observe right ~on_update:(read_callback_snapshot "right")));
   output_observer :=
     Some
-      (run_ok runtime
+      (ok
          (Signal.Observer.observe output ~on_update:(read_callback_snapshot "output")));
   let model = create_diamond_model () in
   List.iteri
@@ -2733,11 +2740,11 @@ let run_diamond_trace name ops =
       match op with
       | Diamond_set value ->
           model.diamond_pending <- value;
-          run_ok runtime (Signal.Var.set source value)
+          ok (Signal.Var.set source value)
       | Diamond_stabilize ->
           let before_callbacks = List.length !callback_snapshots in
           let expected_callbacks = stabilize_diamond_model model in
-          run_ok runtime Signal.stabilize;
+          ok (Signal.stabilize ());
           Alcotest.(check int)
             (label ^ " shared recomputes")
             model.diamond_recomputes !shared_recomputes;
@@ -2748,18 +2755,18 @@ let run_diamond_trace name ops =
           | None -> ()
           | Some (expected_left, expected_right, expected_output) ->
               Alcotest.(check int) (label ^ " left read") expected_left
-                (run_ok runtime
+                (ok
                    (Signal.Observer.read (observer left_observer)));
               Alcotest.(check int) (label ^ " right read") expected_right
-                (run_ok runtime
+                (ok
                    (Signal.Observer.read (observer right_observer)));
               Alcotest.(check int) (label ^ " output read") expected_output
-                (run_ok runtime
+                (ok
                    (Signal.Observer.read (observer output_observer)))))
     ops;
-  run_ok runtime (Signal.Observer.dispose (observer left_observer));
-  run_ok runtime (Signal.Observer.dispose (observer right_observer));
-  run_ok runtime (Signal.Observer.dispose (observer output_observer))
+  ok (Signal.Observer.dispose (observer left_observer));
+  ok (Signal.Observer.dispose (observer right_observer));
+  ok (Signal.Observer.dispose (observer output_observer))
 
 let test_diamond_trace_matches_model () =
   List.iter
@@ -3075,9 +3082,9 @@ let small_graph_observer_specs ~seed ~node_count ~observer_count =
       (node, policy))
 
 let small_graph_record observer update =
-  E.sync (fun () ->
-      observer.small_actual_updates <-
-        observed_of_signal_update update :: observer.small_actual_updates)
+  observer.small_actual_updates <-
+    observed_of_signal_update update :: observer.small_actual_updates;
+  Ok ()
 
 let small_graph_observe runtime signals observer =
   match observer.small_actual_observer with
@@ -3091,7 +3098,7 @@ let small_graph_observe runtime signals observer =
       in
       let cutoff = Option.map Eta_signal.Cutoff.of_equal equal in
       let actual_observer =
-        run_ok runtime
+        ok
           (Signal.Observer.observe ?cutoff signals.(observer.small_observed_node)
              ~on_update:(small_graph_record observer))      in
       observer.small_actual_observer <- Some actual_observer;
@@ -3102,7 +3109,7 @@ let small_graph_dispose runtime observer =
   match observer.small_actual_observer with
   | None -> ()
   | Some actual_observer ->
-      run_ok runtime (Signal.Observer.dispose actual_observer);
+      ok (Signal.Observer.dispose actual_observer);
       observer.small_actual_observer <- None;
       observer.small_model_active <- false;
       observer.small_model_current <- None
@@ -3121,11 +3128,11 @@ let small_graph_read label runtime observer =
   | Some actual_observer -> (
       match observer.small_model_current with
       | None ->
-          expect_uninitialized_observer label runtime
+          expect_uninitialized_observer label
             (Signal.Observer.read actual_observer)
       | Some expected ->
           Alcotest.(check int) label expected
-            (run_ok runtime (Signal.Observer.read actual_observer)))
+            (ok (Signal.Observer.read actual_observer)))
 
 let small_graph_check_observers label model =
   Array.iteri
@@ -3139,7 +3146,7 @@ let small_graph_active_observer_count model =
     0 model.small_observers
 
 let small_graph_check_stats label runtime model =
-  let stats = run_ok runtime (Signal.stats ()) in
+  let stats = ok (Signal.stats ()) in
   Alcotest.(check int)
     (label ^ " active observers")
     (small_graph_active_observer_count model)
@@ -3180,14 +3187,14 @@ let run_small_graph_trace ?(initial_values = [| -1; 0; 2 |])
       (match op with
       | Small_set (var, value) ->
           model.small_pending.(var) <- value;
-          run_ok runtime (Signal.Var.set vars.(var) value)
+          ok (Signal.Var.set vars.(var) value)
       | Small_observe slot ->
           small_graph_observe runtime signals model.small_observers.(slot)
       | Small_dispose slot ->
           small_graph_dispose runtime model.small_observers.(slot)
       | Small_stabilize ->
           small_graph_model_stabilize ast model;
-          run_ok runtime Signal.stabilize;
+          ok (Signal.stabilize ());
           small_graph_check_observers label model
       | Small_read slot ->
           small_graph_read label runtime model.small_observers.(slot));
@@ -3334,17 +3341,17 @@ let stream_model_read label runtime slot =
   | Some observer -> (
       match slot.stream_current with
       | None ->
-          expect_uninitialized_observer label runtime
+          expect_uninitialized_observer label
             (Signal.Observer.read observer)
       | Some expected ->
           Alcotest.(check int) (label ^ " read") expected
-            (run_ok runtime (Signal.Observer.read observer)))
+            (ok (Signal.Observer.read observer)))
 
 let stream_model_dispose label runtime slot =
   match slot.stream_observer with
   | None -> ()
   | Some observer ->
-      run_ok runtime (Signal.Observer.dispose observer);
+      ok (Signal.Observer.dispose observer);
       slot.stream_observer <- None;
       slot.stream_current <- None;
       (match slot.stream with
@@ -3370,7 +3377,7 @@ let stream_model_active_count slots =
     0 slots
 
 let stream_model_check_stats label runtime ~base_active slots =
-  let stats = run_ok runtime (Signal.stats ()) in
+  let stats = ok (Signal.stats ()) in
   Alcotest.(check int) (label ^ " active observers")
     (base_active + stream_model_active_count slots)
     stats.Signal.active_observer_count
@@ -3435,7 +3442,7 @@ let run_stream_model_trace name ~seed =
        create_stream_model_slot ~equal_policy:(Stream_mod_equal 3) 3;
        create_stream_model_slot 1; create_stream_model_slot 4 |]
   in
-  let base_stats = run_ok runtime (Signal.stats ()) in
+  let base_stats = ok (Signal.stats ()) in
   let base_active = base_stats.Signal.active_observer_count in
   let pending = ref 0 in
   let committed = ref 0 in
@@ -3451,7 +3458,7 @@ let run_stream_model_trace name ~seed =
       (match op with
       | Stream_set value ->
           pending := value;
-          run_ok runtime (Signal.Var.set source value)
+          ok (Signal.Var.set source value)
       | Stream_observe slot ->
           stream_model_observe runtime signal slots.(slot)
       | Stream_dispose slot ->
@@ -3465,7 +3472,7 @@ let run_stream_model_trace name ~seed =
           Array.iter
             (stream_model_stabilize_slot !committed)
             slots;
-          run_ok runtime Signal.stabilize);
+          ok (Signal.stabilize ()));
       Array.iteri (stream_model_check_slot label) slots;
       stream_model_check_stats label runtime ~base_active slots)
     ops;

@@ -37,6 +37,25 @@ let run_ok rt eff =
   | Exit.Error cause ->
       Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
 
+let expect_result_ok = function
+  | Ok value -> value
+  | Error _err -> Alcotest.fail "expected Ok result, got Error"
+
+let expect_result_fail :
+    type a e. string -> (e -> bool) -> (a, e) result -> unit =
+ fun label pred -> function
+  | Error err when pred err -> ()
+  | Error _err -> Alcotest.failf "%s: unexpected error variant" label
+  | Ok _ -> Alcotest.failf "%s: expected failure, got Ok" label
+
+let expect_raise label pred f =
+  match f () with
+  | value -> ignore value; Alcotest.failf "%s: expected raise, got value" label
+  | exception exn when pred exn -> ()
+  | exception exn ->
+      Alcotest.failf "%s: unexpected exception %s" label
+        (Printexc.to_string exn)
+
 let expect_fail :
     type a. string -> (test_error -> bool) -> (a, test_error) Exit.t -> unit =
  fun label pred -> function

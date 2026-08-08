@@ -3,7 +3,9 @@ exception Closed_with_invalid_scope =
 
 type stream_error = [ Eta_signal.graph_error | `Invalid_capacity ]
 
-module Make (Source : Eta_signal.Stream_source) = struct
+module type Source = Eta_signal_stream_bridge.Source
+
+module Make (Source : Eta_signal_stream_bridge.Source) = struct
   module Bridge = Eta_signal_stream_bridge.Make (Source)
 
   type 'a signal = 'a Source.signal
@@ -27,6 +29,7 @@ module Make (Source : Eta_signal.Stream_source) = struct
       ~acquire:
         (observe ?capacity ?on_drop ?cutoff signal
          |> Eta.Effect.map_error (fun e -> (e : stream_error :> [> stream_error ])))
-      ~release:(fun (observer, _stream) -> Source.dispose observer)
+      ~release:(fun (observer, _stream) ->
+        Eta.Effect.from_result (Source.Observer.dispose observer))
       (fun (_observer, stream) -> f stream)
 end

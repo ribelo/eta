@@ -1,10 +1,36 @@
 exception Closed_with_invalid_scope
 (** Defect raised when a bridge publication reaches a queue already closed by
-    invalid scope. The graph lane and lifecycle finish hooks normally
+    invalid scope. The delivery phase and lifecycle finish hooks normally
     serialize close and publication, so this path requires an interrupted
     delivery. *)
 
-module Make (Source : Eta_signal.Stream_source) = struct
+module type Source = sig
+  type 'a signal
+  type 'a observer
+  type observer_error
+
+  type 'a update =
+    | Initialized of 'a
+    | Changed of {
+        old_value : 'a;
+        new_value : 'a;
+      }
+
+  module Observer : sig
+    type 'a t = 'a observer
+
+    val observe :
+      ?cutoff:'a Eta_signal.Cutoff.t ->
+      ?on_finish:([ `Disposed | `Invalid_scope ] -> unit) ->
+      ?on_update:('a update -> (unit, observer_error) result) ->
+      'a signal ->
+      ('a t, Eta_signal.graph_error) result
+
+    val dispose : 'a t -> (unit, Eta_signal.graph_error) result
+  end
+end
+
+module Make (Source : Source) = struct
   module Effect = Eta.Effect
   module Queue = Eta.Queue
 
@@ -20,102 +46,60 @@ module Make (Source : Eta_signal.Stream_source) = struct
     | `Disposed -> Queue.close queue
     | `Invalid_scope -> Queue.close_with_error queue `Invalid_scope
 
-  let acknowledge_once acknowledged acknowledge =
-    if !acknowledged then Effect.unit
-    else
-      let open Eta.Syntax in
-      let* () = acknowledge () in
-      Effect.sync (fun () -> acknowledged := true)
+  let pending_reports : (string * exn) list ref = ref []
 
-  let acknowledge_after_published ~published ~acknowledged acknowledge =
-    if !acknowledged || not !published then Effect.unit
-    else acknowledge_once acknowledged acknowledge
-
-  let report_dropped_update ~on_drop ~acknowledge update =
-    let drop_published = ref false in
-    let drop_acknowledged = ref false in
-    let acknowledge_published_drop () =
-      acknowledge_after_published ~published:drop_published
-        ~acknowledged:drop_acknowledged acknowledge
-    in
-    let report_on_drop_failure exn =
-      Eta_observability.log_error
-        ~attrs:[ ("exception.message", Printexc.to_string exn) ]
-        "eta_signal.stream.on_drop_failure"
-    in
+  let flush_reports () =
+    let reports = List.rev !pending_reports in
+    pending_reports := [];
     let open Eta.Syntax in
-    (let* on_drop_failure =
-       Effect.sync (fun () ->
-           let on_drop_failure =
-             match on_drop with
-             | None -> None
-             | Some on_drop -> (
-                 try
-                   on_drop update;
-                   None
-                 with exn -> Some exn)
-           in
-           drop_published := true;
-           on_drop_failure)
-     in
-     let* () =
-       match on_drop_failure with
-       | None -> Effect.unit
-       | Some exn -> report_on_drop_failure exn
-     in
-     acknowledge_published_drop ())
-    |> Effect.on_exit (fun _exit -> acknowledge_published_drop ())
-
-  let acknowledge_sent_after_published ~queue ~sent_before ~sent_published
-      ~sent_acknowledged ~acknowledge_sent_once =
-    let open Eta.Syntax in
-    let* () =
-      if !sent_published then Effect.unit
-      else
-        Effect.sync (fun () ->
-            if not (Queue.same_sent_token (Queue.sent_token queue) sent_before)
-            then sent_published := true)
+    let rec loop = function
+      | [] -> Effect.unit
+      | (body, exn) :: rest ->
+          let* () =
+            Eta_observability.log_error
+              ~attrs:[ ("exception.message", Printexc.to_string exn) ]
+              body
+          in
+          loop rest
     in
-    acknowledge_after_published ~published:sent_published
-      ~acknowledged:sent_acknowledged acknowledge_sent_once
+    loop reports
 
-  let offer ~queue ~on_drop delivery =
-    let open Eta.Syntax in
-    let* current = Source.current delivery in
-    match current with
-    | None -> Effect.unit
-    | Some update ->
-        let* sent_before = Effect.sync (fun () -> Queue.sent_token queue) in
-        let sent_published = ref false in
-        let sent_acknowledged = ref false in
-        let acknowledge_sent_once () = Source.acknowledge delivery in
-        let acknowledge_published_sent () =
-          acknowledge_sent_after_published ~queue ~sent_before ~sent_published
-            ~sent_acknowledged ~acknowledge_sent_once
-        in
-        (let* send_result = Queue.try_offer queue update in
-         match send_result with
-         | `Sent ->
-             let* () = Effect.sync (fun () -> sent_published := true) in
-             acknowledge_published_sent ()
-         | `Closed -> Effect.unit
-         | `Dropped | `Full ->
-             report_dropped_update ~on_drop
-               ~acknowledge:(fun () -> Source.acknowledge delivery)
-               update
-         | `Closed_with_error `Invalid_scope ->
-             Effect.sync (fun () -> raise Closed_with_invalid_scope))
-        |> Effect.on_exit (fun _exit -> acknowledge_published_sent ())
+  let offer ~queue ~on_drop update : (unit, 'error) result =
+    match
+      try Ok (Queue.try_offer_now queue update) with exn -> Error exn
+    with
+    | Error exn ->
+        (* The queue commits a send before waking consumers, so a defect here
+           leaves an unknown outcome: the update may already be visible.
+           Retrying could duplicate it. Acknowledge and report instead. *)
+        pending_reports :=
+          ("eta_signal.stream.offer_failure", exn) :: !pending_reports;
+        Ok ()
+    | Ok (`Sent | `Closed) -> Ok ()
+    | Ok (`Dropped | `Full) ->
+        (match on_drop with
+        | None -> ()
+        | Some on_drop ->
+            (try on_drop update with exn ->
+              pending_reports :=
+                ("eta_signal.stream.on_drop_failure", exn)
+                :: !pending_reports));
+        Ok ()
+    | Ok (`Closed_with_error `Invalid_scope) ->
+        raise Closed_with_invalid_scope
 
   let observe ?(capacity = default_capacity) ?on_drop
       ?(cutoff = Eta_signal.Cutoff.phys_equal) signal =
     let open Eta.Syntax in
+    let* () = flush_reports () in
     let* queue, stream =
       Effect.sync (fun () -> create_stream ~capacity) |> Effect.flatten_result
     in
     let+ observer =
-      Source.observe_delivery ~cutoff ~on_finish:(finish_hook ~queue) signal
-        (fun delivery -> offer ~queue ~on_drop delivery)
+      Effect.sync_result (fun () ->
+        Source.Observer.observe ~cutoff ~on_finish:(finish_hook ~queue)
+          ~on_update:(fun update -> offer ~queue ~on_drop update)
+          signal)
       |> Effect.map_error (fun err -> (err :> [ Eta_signal.graph_error
                                               | `Invalid_capacity ]))
     in

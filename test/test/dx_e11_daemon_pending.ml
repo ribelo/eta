@@ -8,5 +8,5 @@ let () =
        Format.pp_print_string)
     outcome;
   match outcome.pending_fibers with
-  | [ { Eta_test.Run.kind = Daemon; _ } ] -> ()
+  | Some [ { Eta_test.Run.kind = Daemon; _ } ] -> ()
   | _ -> failwith "expected one runtime-owned daemon in the pending snapshot"

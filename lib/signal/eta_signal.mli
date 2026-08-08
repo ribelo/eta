@@ -101,14 +101,20 @@
     ]}
 
     A graph is single-domain: create and use all vars, signals, observers, and
-    stabilization effects from the domain that applied the functor. Effectful
-    graph operations acquire the graph lane to serialize Eta fibers on that
-    domain. Synchronous construction and read APIs are serialized only by
-    same-domain cooperative execution: they do not yield, do not acquire the
-    graph lane, and must remain free of Eta effect boundaries while mutating
-    graph state. The graph lane is not a multi-domain mutex. Signal APIs raise
+    stabilization calls from the domain that applied the functor. Public graph
+    operations are synchronous calls: they do not yield, do not acquire a lane,
+    and stay free of Eta effect boundaries while mutating graph state. Because
+    Eta fibers on one domain are cooperative, each synchronous operation is
+    atomic: competing fibers cannot interleave inside it. Signal APIs raise
     [Invalid_argument] when called from another domain or from a runtime worker
-    callback. *)
+    callback.
+
+    The domain check is a deliberate, documented fence. A later revision may
+    drop it to a caller contract; callers must not rely on its absence.
+
+    Only {!Time} operations and {!Var.update_effect} return Eta effects: they
+    are the graph's genuine runtime boundaries. Every other operation is a
+    plain call whose typed failures come back in [result]. *)
 
 module type Observer_error = sig
   type t
@@ -151,35 +157,6 @@ type graph_error =
   | `Reentrant_update ]
 (** Typed graph-construction and stabilization failures shared by every graph
     instance. *)
-
-module type Stream_source = sig
-  type 'a signal
-  type 'a observer
-  type 'a update
-  type 'a delivery
-  type observer_error
-  type observer_finish = [ `Disposed | `Invalid_scope ]
-
-  val observe_delivery :
-    ?cutoff:'a Cutoff.t ->
-    ?on_finish:(observer_finish -> unit) ->
-    'a signal ->
-    ('a delivery -> (unit, observer_error) Eta.Effect.t) ->
-    ('a observer, graph_error) Eta.Effect.t
-  (** Register an observer whose callback receives a sealed delivery handle
-      instead of a plain update. The delivery value contains no public
-      observer, token, or cursor. *)
-
-  val current : 'a delivery -> ('a update option, 'error) Eta.Effect.t
-  (** Read the event captured for that delivery. The result is [None] after
-      lifecycle finish or replacement by a newer event. *)
-
-  val acknowledge : 'a delivery -> (unit, 'error) Eta.Effect.t
-  (** Acknowledge using the captured event identity. Changes pending delivery
-      to delivered during one graph-lane transition. *)
-
-  val dispose : 'a observer -> (unit, graph_error) Eta.Effect.t
-end
 
 module type Package_graph = sig
   type 'a signal
@@ -228,9 +205,9 @@ module Make (Observer_error : Observer_error) () : sig
 
   exception Graph_error of graph_error
   (** Raised by synchronous graph construction APIs when construction violates a
-      graph contract and there is no Eta effect error channel available.
-      Effectful APIs such as {!Observer.observe} and {!stabilize} convert
-      graph failures into typed Eta failures instead.
+      graph contract. Operations that run inside a stabilization — including
+      graph APIs called from observer callbacks — report the same constructors
+      as typed results instead.
 
       Synchronous graph-node construction APIs include {!Var.watch}, {!const},
       {!map}, [map2] through [map9], {!all}, {!reduce_balanced}, and {!bind}.
@@ -311,8 +288,6 @@ module Make (Observer_error : Observer_error) () : sig
     dynamic_scope_invalidations : int;
     nodes_became_necessary : int;
     nodes_became_unnecessary : int;
-    lane_waiter_count : int;
-    lane_cancelled_waiter_count : int;
     keyed : keyed_stats;
   }
   (** Read-only graph counters for diagnostics.
@@ -324,9 +299,6 @@ module Make (Observer_error : Observer_error) () : sig
       disposed. [live_dirty_node_count] counts valid dirty nodes;
       [dead_node_count] counts invalid nodes retained in the bounded diagnostic
       tombstone index.
-      [lane_waiter_count] is the number of graph-lane waiters queued behind the
-      running stats read; [lane_cancelled_waiter_count] is the cumulative count
-      of waiters cancelled while acquiring or owning the graph lane.
 
       {!stats} fails with [`Counter_overflow name] if a public diagnostic count
       has reached [max_int] and would otherwise be indistinguishable from a
@@ -394,18 +366,25 @@ module Make (Observer_error : Observer_error) () : sig
         Raises [Graph_error] on graph construction failures; see
         {!exception:Graph_error}. *)
 
-    val set : 'a t -> 'a -> (unit, [> `Reentrant_update ] as 'err) Eta.Effect.t
+    val set : 'a t -> 'a -> (unit, [> `Reentrant_update ]) result
     (** Set the source value. Sets performed from observer callbacks are
         accepted, but are published by a later explicit stabilization rather
-        than by the currently running observer phase.
+        than by the currently running observer delivery phase.
 
-        Fails with [`Reentrant_update] if an effectful update currently owns
+        Returns [Error `Reentrant_update] if an effectful update currently owns
         this variable. *)
 
     val update_effect :
       'a t ->
       ('a -> ('a, 'err) Eta.Effect.t) ->
       ('a, [> `Reentrant_update ] as 'err) Eta.Effect.t
+    (** Effectful read-modify-write with exclusive update ownership. While the
+        returned effect is outstanding, {!set} and another [update_effect] on
+        the same variable return [Error `Reentrant_update]. Ownership is
+        restored after typed failure, defect, or interruption. This is one of
+        the graph's genuine runtime boundaries; a non-effectful
+        read-modify-write is an atomic {!value}-then-{!set} sequence on the
+        owner domain. *)
   end
 
   module Observer : sig
@@ -416,9 +395,9 @@ module Make (Observer_error : Observer_error) () : sig
     val observe :
       ?cutoff:'a Cutoff.t ->
       ?on_finish:(observer_finish -> unit) ->
-      ?on_update:('a update -> (unit, observer_error) Eta.Effect.t) ->
+      ?on_update:('a update -> (unit, observer_error) result) ->
       'a signal ->
-      ('a t, graph_error) Eta.Effect.t
+      ('a t, graph_error) result
     (** Create a lifecycle handle for observing [signal]. Registering an
         observer does not run its callback; the first explicit stabilization
         initializes observed values and callbacks run after a consistent
@@ -439,44 +418,38 @@ module Make (Observer_error : Observer_error) () : sig
             handle_view_model_update
         ]}
 
-        Callback typed failures must be returned by the effect, for example
-        with [Eta.Effect.fail err]; those failures are reported by
-        {!stabilize} as [`Observer_error err]. Ordinary exceptions raised while
-        constructing the callback effect, or defects raised by the returned
-        effect, are Eta defects, not typed observer errors. [Graph_error]
-        raised from graph APIs remains a typed graph failure.
+        The callback is synchronous and runs during the delivery phase of
+        {!stabilize}. It reports typed application failures as [Error err];
+        those failures are returned by {!stabilize} as
+        [Error (`Observer_error err)]. Exceptions raised by the callback are
+        defects: the graph restores the delivery phase and pending cursor,
+        then the exception propagates. [Graph_error] raised from graph APIs
+        called inside the callback remains a typed graph failure returned by
+        {!stabilize}.
 
         Callbacks collected for one stabilization follow one deterministic total
         plan. Dependency observers run before transitive consumers. Observers on
         the same signal run by ascending observer identity, and ready unrelated
         groups run by their smallest observer identity. *)
 
-    val read : 'a t -> ('a, observer_read_error) Eta.Effect.t
+    val read : 'a t -> ('a, observer_read_error) result
     (** Read the last stabilized observed value. This is the primary value-read
         surface for derived values and reports invalid observer state through
-        typed Eta failures.
+        typed results.
 
-        Returns [`Invalid_scope] when the observer was invalidated because its
-        dynamic-scope signal was replaced. *)
+        Returns [Error `Invalid_scope] when the observer was invalidated
+        because its dynamic-scope signal was replaced. *)
 
-    val dispose : 'a t -> (unit, graph_error) Eta.Effect.t
+    val dispose : 'a t -> (unit, graph_error) result
     (** Dispose an observer lifecycle handle. Disposal is idempotent. Pending
-        callbacks collected for the observer are skipped, and demand-owned
-        timer cleanup is refreshed before the effect returns.
+        callbacks collected for the observer are skipped, and the timer-demand
+        transition is handed to the timer runtime before the call returns.
 
         Timer demand-cleanup graph failures such as [`Runtime_mismatch] are
-        preserved in the typed error channel. The observer lifecycle state is
-        still changed before timer cleanup runs. Disposal-hook defects remain
-        Eta defects or finalizer diagnostics. *)
+        preserved in the typed result. The observer lifecycle state is still
+        changed before timer cleanup runs. Disposal-hook defects remain
+        defects or finalizer diagnostics. *)
   end
-
-  module For_stream :
-    Stream_source
-      with type 'a signal = 'a signal
-      with type 'a observer = 'a observer
-      with type 'a update = 'a update
-      with type observer_error = observer_error
-  (** Narrow sealed observer-delivery capability for [eta_signal_stream]. *)
 
   module Package : Package_graph with type 'a signal = 'a signal
 
@@ -649,21 +622,23 @@ module Make (Observer_error : Observer_error) () : sig
       Raises [Graph_error] on graph construction failures; see
       {!exception:Graph_error}. *)
 
-  val stabilize : (unit, stabilize_error) Eta.Effect.t
+  val stabilize : unit -> (unit, stabilize_error) result
   (** Run one explicit stabilization.
 
       Pure graph recomputation is transactional: graph failures before snapshot
       commit leave the previous stabilized snapshot in place and keep source
       updates retryable. Once a pure snapshot commits, observer current values
-      and pending callback deliveries are published before timer lifecycle
-      refresh, disposal cleanup, and observer callbacks run.
+      and pending callback deliveries are published, then observer callbacks
+      run synchronously in the delivery phase of this call, in the
+      deterministic plan order. Timer lifecycle refresh and disposal cleanup
+      are handed to the timer runtime before the call returns.
 
-      Fails with [`Counter_overflow name] if an internal stabilization,
+      Returns [Error (`Counter_overflow name)] if an internal stabilization,
       generation, version, or timer token counter reaches [max_int]. These
       counters are monotonic and do not wrap. Overflow is treated as a graph
       failure before any partial snapshot is published.
 
-      Failures after that commit point, including observer callback failures,
+      Failures after the commit point, including observer callback failures,
       timer start/stop lifecycle defects, disposal-hook failures, or
       interruption, do not roll back the committed snapshot. Undelivered
       observer callbacks keep the observer's delivery cursor pending. A later
@@ -671,11 +646,14 @@ module Make (Observer_error : Observer_error) () : sig
       intermediate failed blips are coalesced: if the value has returned to the
       observer's last successfully delivered value, the pending delivery is
       acknowledged without running a callback. Disposal or dynamic-scope
-      invalidation still skips pending callbacks. *)
+      invalidation still skips pending callbacks.
 
-  val stats : unit -> (stats, graph_error) Eta.Effect.t
+      Calling [stabilize] from an observer callback returns
+      [Error `Reentrant_stabilization]. *)
 
-  val to_dot : ?options:dot_options -> unit -> (string, 'err) Eta.Effect.t
+  val stats : unit -> (stats, graph_error) result
+
+  val to_dot : ?options:dot_options -> unit -> string
   (** Return a read-only DOT dump. The default is necessary-only for compact
       demand debugging. Use [dot_scope = `All_valid] to include retained valid
       nodes that are not currently necessary, or [`All_including_invalid] to

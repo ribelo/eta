@@ -58,67 +58,53 @@ let run_script ~diagnostic ops =
             (fun (key, data) -> Printf.sprintf "%d:%d" key data)
             bindings))
   in
-  let open Eta.Syntax in
-  let program =
-    let source = S.Var.create sentinel in
-    let selector = S.Var.create true in
-    let branch = S.map succ (S.Var.watch source) in
-    let selected =
-      S.bind (S.Var.watch selector) ~f:(fun use_branch ->
-          if use_branch then branch else S.const sentinel)
-    in
-    let input = S.Var.create (M.set 0 0 M.empty) in
-    let keyed = Keyed.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data -> data) in
-    let combined = S.map2 (fun left right -> (left, right)) selected keyed in
-    let trace = ref [] in
-    let dot_value_free = ref true in
-    let die stage _error = Failure ("signal script effect failed: " ^ stage) in
-    let* observer =
-      S.Observer.observe combined ~on_update:(fun _ -> Eta.Effect.unit)
-      |> Eta.Effect.or_die (die "observe")
-    in
-    let apply op =
-      match op with
-      | Set_source value -> S.Var.set source value
-      | Switch flag -> S.Var.set selector flag
-      | Put (key, data) ->
-          S.Var.set input (M.set (key mod 3) data (S.Var.value input))
-      | Drop key -> S.Var.set input (M.remove (key mod 3) (S.Var.value input))
-    in
-    let step op =
-      let operation = pp_op op in
-      let* () = apply op |> Eta.Effect.or_die (die ("apply " ^ operation)) in
-      let* () =
-        S.stabilize
-        |> Eta.Effect.or_die (fun error ->
-               Failure
-                 (Format.asprintf "signal script effect failed: stabilize %s: %a"
-                    operation S.pp_stabilize_error error))
-      in
-      let* value =
-        S.Observer.read observer |> Eta.Effect.or_die (die ("read " ^ operation))
-      in
-      trace := render_pair value :: !trace;
-      if diagnostic then (
-        let* _stats = S.stats () |> Eta.Effect.or_die (die ("stats " ^ operation)) in
-        let* dot = S.to_dot () |> Eta.Effect.or_die (die ("dot " ^ operation)) in
-        if string_contains ~needle:(string_of_int sentinel) dot then
-          dot_value_free := false;
-        Eta.Effect.unit)
-      else Eta.Effect.unit
-    in
-    let rec loop = function
-      | [] -> Eta.Effect.unit
-      | op :: rest ->
-          let* () = step op in
-          loop rest
-    in
-    let* () = loop ops in
-    let* () = S.Observer.dispose observer |> Eta.Effect.or_die (die "dispose") in
-    let* () = S.stabilize |> Eta.Effect.or_die (die "final stabilize") in
-    Eta.Effect.pure (List.rev !trace, !dot_value_free)
+  let source = S.Var.create sentinel in
+  let selector = S.Var.create true in
+  let branch = S.map succ (S.Var.watch source) in
+  let selected =
+    S.bind (S.Var.watch selector) ~f:(fun use_branch ->
+        if use_branch then branch else S.const sentinel)
   in
-  Eta_test.Run.run program
+  let input = S.Var.create (M.set 0 0 M.empty) in
+  let keyed = Keyed.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data -> data) in
+  let combined = S.map2 (fun left right -> (left, right)) selected keyed in
+  let trace = ref [] in
+  let dot_value_free = ref true in
+  let ok stage = function
+    | Ok value -> value
+    | Error _ -> failwith ("signal script failed: " ^ stage)
+  in
+  let observer =
+    ok "observe" (S.Observer.observe combined ~on_update:(fun _ -> Ok ()))
+  in
+  let apply op =
+    match op with
+    | Set_source value -> ok "set" (S.Var.set source value)
+    | Switch flag -> ok "set" (S.Var.set selector flag)
+    | Put (key, data) ->
+        ok "set" (S.Var.set input (M.set (key mod 3) data (S.Var.value input)))
+    | Drop key ->
+        ok "set" (S.Var.set input (M.remove (key mod 3) (S.Var.value input)))
+  in
+  let step op =
+    let operation = pp_op op in
+    apply op;
+    ok ("stabilize " ^ operation) (S.stabilize ());
+    let value = ok ("read " ^ operation) (S.Observer.read observer) in
+    trace := render_pair value :: !trace;
+    if diagnostic then (
+      ignore (ok ("stats " ^ operation) (S.stats ()));
+      let dot = S.to_dot () in
+      if string_contains ~needle:(string_of_int sentinel) dot then
+        dot_value_free := false)
+  in
+  List.iter step ops;
+  ok "dispose" (S.Observer.dispose observer);
+  ok "final stabilize" (S.stabilize ());
+  (* The graph engine is synchronous: it owns no fibers, so the census is
+     structurally empty. The harness still runs a capture effect so the law
+     keeps its available-census observation. *)
+  Eta_test.Run.run (Eta.Effect.sync (fun () -> (List.rev !trace, !dot_value_free)))
 
 let exit_value outcome =
   match outcome.Eta_test.Run.exit with

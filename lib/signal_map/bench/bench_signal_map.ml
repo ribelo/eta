@@ -60,11 +60,9 @@ let workload_name = function
 
 let failf format = Printf.ksprintf failwith format
 
-let widen (eff : ('a, [< error ]) E.t) : ('a, error) E.t =
-  E.map_error (fun error -> (error :> error)) eff
-
-let run_ok runtime eff =
-  Eta_test.Expect.expect_ok (Eta.Runtime.run runtime (widen eff))
+let run_ok = function
+  | Ok value -> value
+  | Error _ -> failwith "eta_signal_map bench failed"
 
 let measure run =
   Counting_order.reset ();
@@ -266,30 +264,27 @@ let run_map_size n base_array base_list =
     edit_counts;
   base
 
-let stats runtime = run_ok runtime (S.stats ())
-let stabilize runtime = run_ok runtime S.stabilize
-let set runtime source value = run_ok runtime (S.Var.set source value)
-let read runtime observer = run_ok runtime (S.Observer.read observer)
+let stats () = run_ok (S.stats ())
+let stabilize () = run_ok (S.stabilize ())
+let set source value = run_ok (S.Var.set source value)
+let read observer = run_ok (S.Observer.read observer)
+let observe signal = run_ok (S.Observer.observe signal ~on_update:(fun _update -> Ok ()))
+let dispose observer = run_ok (S.Observer.dispose observer)
 
-let observe runtime signal =
-  run_ok runtime (S.Observer.observe signal ~on_update:(fun _update -> E.unit))
-
-let dispose runtime observer = run_ok runtime (S.Observer.dispose observer)
-
-let run_keyed_case runtime ~n ~k ~workload base_array input observer base =
+let run_keyed_case ~n ~k ~workload base_array input observer base =
   let edits = make_edits workload base_array k in
   let insertions, _removals, changes = edit_classes edits in
   let changed = apply_edits edits base in
   let bound_n = max (M.cardinal base) (M.cardinal changed) in
-  let output_before = read runtime observer in
-  let before = (stats runtime).keyed in
+  let output_before = read observer in
+  let before = (stats ()).keyed in
   let (), reconciliation =
     measure (fun () ->
-        set runtime input changed;
-        stabilize runtime)
+        set input changed;
+        stabilize ())
   in
-  let output_after = read runtime observer in
-  let after = (stats runtime).keyed in
+  let output_after = read observer in
+  let after = (stats ()).keyed in
   verify_map_physical "keyed reconciliation" changed output_after;
   check_equal "keyed reconciliation count" 1
     (after.reconciliation_count - before.reconciliation_count);
@@ -318,35 +313,35 @@ let run_keyed_case runtime ~n ~k ~workload base_array input observer base =
     downstream ~events:downstream_events ~child_visits:0;
   emit ~section:"keyed" ~n ~k ~workload ~metric:"full_scan_control" full_scan
     ~events:0 ~child_visits:full_scan_visits;
-  set runtime input base;
-  stabilize runtime
+  set input base;
+  stabilize ()
 
-let run_keyed_input_size runtime n base_array base =
+let run_keyed_input_size n base_array base =
   let input = S.Var.create base in
   let output = K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data -> data) in
-  let observer = observe runtime output in
-  stabilize runtime;
+  let observer = observe output in
+  stabilize ();
   List.iter
     (fun k ->
       if k <= max 1 (n / 2) then
         List.iter
           (fun workload ->
-            run_keyed_case runtime ~n ~k ~workload base_array input observer base)
+            run_keyed_case ~n ~k ~workload base_array input observer base)
           workloads)
     edit_counts;
-  dispose runtime observer
+  dispose observer
 
-let run_child_case runtime ~n ~c child_sources observer =
+let run_child_case ~n ~c child_sources observer =
   let selected = positions n c in
-  let output_before = read runtime observer in
-  let before = (stats runtime).keyed in
+  let output_before = read observer in
+  let before = (stats ()).keyed in
   let (), reconciliation =
     measure (fun () ->
-        Array.iter (fun index -> set runtime child_sources.(index) 1) selected;
-        stabilize runtime)
+        Array.iter (fun index -> set child_sources.(index) 1) selected;
+        stabilize ())
   in
-  let output_after = read runtime observer in
-  let after = (stats runtime).keyed in
+  let output_after = read observer in
+  let after = (stats ()).keyed in
   check_equal "affected child visits" c
     (after.child_visit_count - before.child_visit_count);
   let downstream_events, downstream =
@@ -369,39 +364,38 @@ let run_child_case runtime ~n ~c child_sources observer =
   emit ~section:"child" ~n ~k:c ~workload:Data_changes
     ~metric:"downstream_diff" downstream ~events:downstream_events
     ~child_visits:0;
-  Array.iter (fun index -> set runtime child_sources.(index) 0) selected;
-  stabilize runtime
+  Array.iter (fun index -> set child_sources.(index) 0) selected;
+  stabilize ()
 
-let run_child_size runtime n base =
+let run_child_size n base =
   let child_sources = Array.init n (fun _ -> S.Var.create 0) in
   let input = S.Var.create base in
   let output =
     K.mapi (S.Var.watch input) ~f:(fun ~key ~data:_ ->
         S.Var.watch child_sources.(key / 2))
   in
-  let observer = observe runtime output in
-  stabilize runtime;
+  let observer = observe output in
+  stabilize ();
   List.iter
     (fun c ->
       if c <= max 1 (n / 2) then
-        run_child_case runtime ~n ~c child_sources observer)
+        run_child_case ~n ~c child_sources observer)
     edit_counts;
-  dispose runtime observer
+  dispose observer
 
 let run ~max_size =
   if !emit_enabled then
     Printf.printf
       "section,n,k,workload,metric,key_comparisons,events,child_visits,seconds\n%!";
-  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   List.iter
     (fun n ->
       if n <= max_size then (
         let base_list = make_base n in
         let base_array = Array.of_list base_list in
         let base = run_map_size n base_array base_list in
-        run_keyed_input_size runtime n base_array base;
+        run_keyed_input_size n base_array base;
         Gc.full_major ();
-        run_child_size runtime n base;
+        run_child_size n base;
         Gc.full_major ()))
     sizes
 

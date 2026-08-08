@@ -151,7 +151,7 @@ and work_payload =
    works in the post-commit batch; [undos] restore machine cells on
    rollback. *)
 and staging = {
-  mutable model_sets : (unit, Eta_signal.graph_error) Eta.Effect.t list;
+  mutable model_sets : (unit -> (unit, Eta_signal.graph_error) result) list;
   mutable undos : (unit -> unit) list;
   mutable works : work list;
   mutable message_owner : int option;
@@ -617,7 +617,8 @@ module State_machine = struct
             in
             let previous = cell.current_model in
             cell.current_model <- model;
-            staging.model_sets <- S.Var.set model_var (Obj.obj model)
+            staging.model_sets <-
+              (fun () -> S.Var.set model_var (Obj.obj model))
               :: staging.model_sets;
             staging.undos <- (fun () -> cell.current_model <- previous)
               :: staging.undos;
@@ -833,12 +834,18 @@ let create_signal_root (root : root_core) (description : 'output t) :
       (fun (output, (contribution : contribution)) -> { output; contribution })
       compiled
   in
+  (* Signal operations are synchronous results; defer them behind [E.sync]
+     so they execute when the effect is interpreted, not when this record is
+     constructed. *)
+  let sync_result f =
+    Eta.Effect.bind Eta.Effect.from_result (Eta.Effect.sync f)
+  in
   let observer_ref = ref None in
   let ensure_observer () =
     match !observer_ref with
     | Some _ -> Eta.Effect.unit
     | None ->
-        S.Observer.observe frame_signal
+        sync_result (fun () -> S.Observer.observe frame_signal)
         |> Eta.Effect.map_error (fun err -> (err :> staging_error))
         |> Eta.Effect.map (fun observer -> observer_ref := Some observer)
   in
@@ -846,13 +853,13 @@ let create_signal_root (root : root_core) (description : 'output t) :
     match !observer_ref with
     | None -> Eta.Effect.fail `Invalid_scope
     | Some observer ->
-        S.Observer.read observer
+        sync_result (fun () -> S.Observer.read observer)
         |> Eta.Effect.map_error (fun err -> (err :> staging_error))
   in
   {
     sig_ensure_observer = ensure_observer ();
     sig_stabilize =
-      S.stabilize
+      sync_result (fun () -> S.stabilize ())
       |> Eta.Effect.map_error (fun err -> (err :> staging_error));
     sig_read_frame;
     sig_dispose_observer =
@@ -860,6 +867,6 @@ let create_signal_root (root : root_core) (description : 'output t) :
         match !observer_ref with
         | None -> Eta.Effect.unit
         | Some observer ->
-            S.Observer.dispose observer
+            sync_result (fun () -> S.Observer.dispose observer)
             |> Eta.Effect.map_error (fun err -> (err :> staging_error)));
   }

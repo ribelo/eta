@@ -1,4 +1,4 @@
-open Eta
+module Mutable_ref = Eta.Mutable_ref
 
 module Signal = Eta_signal.Make (struct
   type t = |
@@ -6,18 +6,11 @@ module Signal = Eta_signal.Make (struct
   let pp _ppf (value : t) = match value with _ -> .
 end) ()
 
-let run_effect program =
-  Eio_main.run @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
-  in
-  match Runtime.run rt program with
-  | Exit.Ok value -> value
-  | Exit.Error cause ->
-      Format.eprintf "eta_signal bench failed: %a@."
-        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<signal>"))
-        cause;
+let run_ok = function
+  | Ok value -> value
+  | Error error ->
+      Format.eprintf "eta_signal bench failed: %a@." Signal.pp_graph_error
+        (Obj.magic error);
       exit 1
 
 let signal_static iterations =
@@ -27,14 +20,14 @@ let signal_static iterations =
   let right = Signal.map (fun n -> n * 3) shared in
   let total = Signal.map2 ( + ) left right in
   let observer =
-    run_effect (Signal.Observer.observe total ~on_update:(fun _ -> Effect.unit))
+    run_ok (Signal.Observer.observe total ~on_update:(fun _ -> Ok ()))
   in
-  run_effect Signal.stabilize;
+  run_ok (Signal.stabilize ());
   for i = 1 to iterations do
-    run_effect (Signal.Var.set source i);
-    run_effect Signal.stabilize
+    run_ok (Signal.Var.set source i);
+    run_ok (Signal.stabilize ())
   done;
-  ignore (run_effect (Signal.Observer.read observer) : int)
+  ignore (run_ok (Signal.Observer.read observer) : int)
 
 let mutable_ref_static iterations =
   let source = Mutable_ref.make 0 in
@@ -58,19 +51,19 @@ let signal_dynamic iterations =
     |> Signal.map (fun n -> n + 1)
   in
   let observer =
-    run_effect (Signal.Observer.observe selected ~on_update:(fun _ -> Effect.unit))
+    run_ok (Signal.Observer.observe selected ~on_update:(fun _ -> Ok ()))
   in
-  run_effect Signal.stabilize;
+  run_ok (Signal.stabilize ());
   for i = 1 to iterations do
     if i land 1 = 0 then (
-      run_effect (Signal.Var.set choose_left true);
-      run_effect (Signal.Var.set left i))
+      run_ok (Signal.Var.set choose_left true);
+      run_ok (Signal.Var.set left i))
     else (
-      run_effect (Signal.Var.set choose_left false);
-      run_effect (Signal.Var.set right i));
-    run_effect Signal.stabilize
+      run_ok (Signal.Var.set choose_left false);
+      run_ok (Signal.Var.set right i));
+    run_ok (Signal.stabilize ())
   done;
-  ignore (run_effect (Signal.Observer.read observer) : int)
+  ignore (run_ok (Signal.Observer.read observer) : int)
 
 let mutable_ref_dynamic iterations =
   let choose_left = Mutable_ref.make true in

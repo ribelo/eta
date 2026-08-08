@@ -105,7 +105,6 @@ module type S = sig
 
   val run :
     t ->
-    runtime:'runtime ->
     plan:packed_observer list ->
     (unit, 'error run_error) result
   val drain_cleanup : t -> (unit, 'error run_error) result
@@ -434,17 +433,12 @@ module Make (Execution : EXECUTION) :
 
   let queued_timers t = Queue.fold (fun rest timer -> timer :: rest) [] t.timers
 
-  let runtime_matches : type runtime error.
-      runtime -> packed_timer -> bool =
-   fun runtime (Timer timer) ->
-    timer.policy.same_runtime (Obj.magic runtime) timer.runtime
-
-  let claim_timer_actions t runtime =
+  let claim_timer_actions t =
     claim t @@ fun () ->
     let queued = List.rev (queued_timers t) in
-    if not (List.for_all (runtime_matches runtime) queued) then
-      Error Runtime_mismatch
-    else (
+    match queued with
+    | [] -> Ok []
+    | _ :: _ -> (
       Queue.clear t.timers;
       let actions = ref [] in
       List.iter
@@ -613,9 +607,12 @@ module Make (Execution : EXECUTION) :
             | Success () ->
                 settle_delivery observer token event true;
                 deliver t rest
-            | Failure failure ->
-                settle_delivery observer token event false;
+            | Failure (Typed_failure _ as failure) ->
+                settle_delivery observer token event true;
                 Error (Callback_failure (Obj.magic failure))
+            | Failure (Defect exn | Interrupted exn) ->
+                settle_delivery observer token event false;
+                raise exn
             | exception exn ->
                 settle_delivery observer token event false;
                 raise exn)
@@ -638,10 +635,10 @@ module Make (Execution : EXECUTION) :
     | [] -> Ok ()
     | failures -> Error (Cleanup_failures failures)
 
-  let run t ~runtime ~plan =
-    match claim_timer_actions t runtime with
-    | Error Runtime_mismatch -> Error Runtime_mismatch
-    | Error (Cleanup_failures _ | Callback_failure _) -> assert false
+  let run t ~plan =
+    match claim_timer_actions t with
+    | Error (Runtime_mismatch | Cleanup_failures _ | Callback_failure _) ->
+        assert false
     | Ok actions ->
         let action_failures = run_actions actions in
         let failures = action_failures @ drain_cleanup_failures t in

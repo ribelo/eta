@@ -100,14 +100,14 @@ for src in "$fixture_dir"/*_negative.ml; do
     map_mutation_value_negative.ml)
       expected_substrings=(
         'This expression has type'
-        'Eta.Effect.t Signal.signal'
+        'result Signal.signal'
         'but an expression was expected of type "int Signal.signal"'
       )
       ;;
     observer_read_error_negative.ml)
       expected_substrings=(
-        '(int, Signal.observer_read_error) Eta.Effect.t'
-        '(int, Signal.graph_error) Eta.Effect.t'
+        '(int, Signal.observer_read_error) result'
+        '(int, Signal.graph_error) result'
         'The second variant type does not allow tag(s)'
         '`Disposed_observer'
         '`No_current_value'

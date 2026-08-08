@@ -8,7 +8,7 @@ module Observer_error = struct
 end
 
 module Signal = Eta_signal.Make (Observer_error) ()
-module Signal_stream = Eta_signal_stream.Make (Signal.For_stream)
+module Signal_stream = Eta_signal_stream.Make (Signal)
 
 type test_error =
   [ `Timeout

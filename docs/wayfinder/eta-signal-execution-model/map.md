@@ -67,12 +67,12 @@ main Dune workspace.
 - [Timer and observer edges](issues/10-timer-and-observer-edges.md) — keep timer generations, runtime provenance, observer cursors, cleanup, and stream acknowledgement inside one opaque post-commit driver.
 - [Integrated finalist proof](issues/11-integrated-finalist-proof.md) — reject the behavior-complete finalist for final selection, then retain it as the production pre-alpha base.
 - [Promote selected finalist to pre-alpha](issues/17-promote-selected-finalist-to-pre-alpha.md) — use the promoted core and edge driver in production with the complete behavior, package, and frozen benchmark gates enabled.
+- [Public interface and graph ownership](issues/12-public-interface-depth.md) — make the public Signal interface synchronous on one owner domain, delete the lane and per-operation fiber protocol, and keep the frozen acceptance-matrix gates open for issues 13, 15, and 16.
 
 ## Current path
 
-1. Decide the [public interface and graph ownership](issues/12-public-interface-depth.md) on the promoted code.
-2. Decide [module and package ownership](issues/13-module-and-package-ownership.md) and move the production code.
-3. Write the [consolidated execution specification](issues/14-consolidated-execution-specification.md) after all gates pass.
+1. Decide [module and package ownership](issues/13-module-and-package-ownership.md) and move the production code.
+2. Write the [consolidated execution specification](issues/14-consolidated-execution-specification.md) after all gates pass.
 
 ## Not yet specified
 

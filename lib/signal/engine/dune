@@ -4,5 +4,5 @@
  (name eta_signal_engine)
  (package eta_signal)
  (wrapped false)
- (modules eta_signal_cutoff eta_signal_lane eta_signal_error selected_core selected_edges)
+ (modules eta_signal_cutoff eta_signal_error selected_core selected_edges)
  (libraries eta))

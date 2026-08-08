@@ -59,8 +59,6 @@ let property_names =
 let require name condition detail =
   if not condition then failwith (name ^ ": " ^ detail)
 
-let shared_runtime = ref None
-
 let run_case matrix sample =
   let generated_key = sample.generated_key in
   let name = property_names.(matrix - 1) in
@@ -76,35 +74,22 @@ let run_case matrix sample =
   let module KM = Eta_signal_map_kernel.Make (Order) in
   let module K = S.Keyed (Order) in
   let module T = K.Testing in
-  let module Test_error = struct
-    type t = [ S.graph_error | S.observer_read_error | S.stabilize_error ]
-  end in
-  let runtime : Test_error.t Eta.Runtime.t =
-    match !shared_runtime with
-    | Some runtime -> Obj.obj runtime
-    | None -> failwith "keyed property runtime is not initialized"
+  let run_ok = function
+    | Ok value -> value
+    | Error _ -> failwith (name ^ ": unexpected typed failure")
   in
-  let widen : type a. (a, [< Test_error.t ]) E.t -> (a, Test_error.t) E.t =
-   fun eff -> E.map_error (fun error -> (error :> Test_error.t)) eff
-  in
-  let run_ok : type a. (a, [< Test_error.t ]) E.t -> a =
-   fun eff -> Eta_test.Expect.expect_ok (Eta.Runtime.run runtime (widen eff))
-  in
-  let run_exit :
-      type a. (a, [< Test_error.t ]) E.t -> (a, Test_error.t) Eta.Exit.t =
-   fun eff -> Eta.Runtime.run runtime (widen eff)
-  in
-  let stabilize () = run_ok S.stabilize in
+  let stabilize () = run_ok (S.stabilize ()) in
   let set source value = run_ok (S.Var.set source value) in
   let read observer = run_ok (S.Observer.read observer) in
   let dispose observer = run_ok (S.Observer.dispose observer) in
-  let expect_defect = function
-    | Eta.Exit.Error (Eta.Cause.Die _) -> true
-    | Eta.Exit.Error _ | Eta.Exit.Ok _ -> false
+  let expect_defect f =
+    match f () with
+    | _ -> false
+    | exception _ -> true
   in
   let expect_invalid_scope = function
-    | Eta.Exit.Error (Eta.Cause.Fail `Invalid_scope) -> true
-    | Eta.Exit.Error _ | Eta.Exit.Ok _ -> false
+    | Error `Invalid_scope -> true
+    | Error _ | Ok _ -> false
   in
   let raw_data_cutoff f =
     Eta_signal.Cutoff.of_equal (fun published candidate ->
@@ -134,7 +119,7 @@ let run_case matrix sample =
       run_ok
         (S.Observer.observe output ~on_update:(fun _update ->
              incr observer_events;
-             E.unit))
+             Ok ()))
     in
     stabilize ();
     (input, output, observer)
@@ -198,7 +183,7 @@ let run_case matrix sample =
         RK.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data ->
             S.map (fun data -> data.value) data)
       in
-      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
+      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> Ok ())) in
       stabilize ();
       let before =
         match RK.Testing.entry_identity output first with
@@ -284,7 +269,7 @@ let run_case matrix sample =
             same := Some (mapped, mapped);
             S.map2 ( + ) mapped mapped)
       in
-      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
+      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> Ok ())) in
       stabilize ();
       (match !same with
        | Some (left, right) -> require name (left == right) "description duplicated"
@@ -320,7 +305,7 @@ let run_case matrix sample =
         K.mapi (S.Var.watch input) ~f:(fun ~key:_ ~data ->
             S.map (fun data -> data.id) data)
       in
-      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
+      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> Ok ())) in
       stabilize ();
       set input (one original);
       stabilize ();
@@ -388,7 +373,7 @@ let run_case matrix sample =
           (one old)
       in
       set input (one next);
-      require name (expect_defect (run_exit S.stabilize)) "missing defect";
+      require name (expect_defect (fun () -> ignore (S.stabilize ()))) "missing defect";
       require name (output_value observer key = 10) "failure published";
       fail := false;
       stabilize ();
@@ -445,7 +430,7 @@ let run_case matrix sample =
               (fun data local -> data.value + (local mod 1))
               data (S.Var.watch source))
       in
-      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
+      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> Ok ())) in
       stabilize ();
       let root = read observer in
       set (Option.get !local) 7;
@@ -458,7 +443,7 @@ let run_case matrix sample =
       let before = identity output key in
       T.set_preflight output (fun () -> failwith "preflight");
       set input (M.set other (box 2 20) M.empty);
-      require name (expect_defect (run_exit S.stabilize)) "missing preflight defect";
+      require name (expect_defect (fun () -> ignore (S.stabilize ()))) "missing preflight defect";
       require name (read observer == root) "rollback changed root";
       require name (same_identity before (identity output key)) "committed identity lost";
       require name (T.scope_valid before.keyed_scope_token) "removal candidate invalid";
@@ -473,7 +458,7 @@ let run_case matrix sample =
       T.set_preflight output (fun () -> failwith "preflight");
       let final = M.set third (box 4 40) (one (box 3 30)) in
       set input final;
-      require name (expect_defect (run_exit S.stabilize)) "missing preflight defect";
+      require name (expect_defect (fun () -> ignore (S.stabilize ()))) "missing preflight defect";
       require name (read observer == root) "snapshot root changed";
       require name (same_identity kept_before (identity output key))
         "retained update identity changed";
@@ -509,17 +494,17 @@ let run_case matrix sample =
               failwith "builder";
             data)
       in
-      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> E.unit)) in
+      let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> Ok ())) in
       stabilize ();
       set input (M.set other (box 2 20) (one (box 1 10)));
-      require name (expect_defect (run_exit S.stabilize)) "missing builder defect";
+      require name (expect_defect (fun () -> ignore (S.stabilize ()))) "missing builder defect";
       require name (M.is_empty (read observer)) "provisional output published";
       require name (not (T.pending output)) "pending plan retained";
       List.iter
         (fun data ->
           require name
             (expect_invalid_scope
-               (run_exit (S.Observer.observe data ~on_update:(fun _ -> E.unit))))
+                (S.Observer.observe data ~on_update:(fun _ -> Ok ())))
             "provisional scope remains valid")
         !captured;
       let first_tokens = !captured in
@@ -551,7 +536,7 @@ let run_case matrix sample =
           output
       in
       let observer =
-        run_ok (S.Observer.observe guarded ~on_update:(fun _ -> E.unit))
+        run_ok (S.Observer.observe guarded ~on_update:(fun _ -> Ok ()))
       in
       stabilize ();
       let before = identity output key in
@@ -559,7 +544,7 @@ let run_case matrix sample =
       fail_downstream := true;
       set input M.empty;
       require name
-        (expect_defect (run_exit S.stabilize))
+        (expect_defect (fun () -> ignore (S.stabilize ())))
         "missing downstream defect";
       let stats_after_failure = (run_ok (S.stats ())).keyed in
       require name
@@ -598,7 +583,7 @@ let run_case matrix sample =
               nested)
             else S.const M.empty)
       in
-      let observer = run_ok (S.Observer.observe owner ~on_update:(fun _ -> E.unit)) in
+      let observer = run_ok (S.Observer.observe owner ~on_update:(fun _ -> Ok ())) in
       stabilize ();
       set nested_input (one (box 1 10));
       set choose false;
@@ -675,8 +660,6 @@ let properties =
              true))
 
 let () =
-  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
-  shared_runtime := Some (Obj.repr runtime);
   properties
   |> List.iteri (fun index property ->
          let seed =
