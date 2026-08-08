@@ -1184,15 +1184,18 @@ let adjust_topology_priority delta nodes =
         enqueue packed))
     nodes
 
-let enqueue_uninitialized_topology root =
-  let seen = Hashtbl.create 8 in
-  let rec visit (P node as packed) =
-    if not (Hashtbl.mem seen node.handle.slot) then (
-      Hashtbl.add seen node.handle.slot ();
-      Array.iter visit node.dependencies;
-      if raw_is_null node.current then enqueue packed)
-  in
-  visit root
+let enqueue_uninitialized_topology (P root as packed) =
+  if Array.length root.dependencies = 0 then (
+    if raw_is_null root.current then enqueue packed)
+  else
+    let seen = Hashtbl.create 8 in
+    let rec visit (P node as packed) =
+      if not (Hashtbl.mem seen node.handle.slot) then (
+        Hashtbl.add seen node.handle.slot ();
+        Array.iter visit node.dependencies;
+        if raw_is_null node.current then enqueue packed)
+    in
+    visit packed
 
 let distinct_scopes root =
   let seen = Hashtbl.create 8 in

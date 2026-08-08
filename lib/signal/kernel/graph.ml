@@ -847,7 +847,13 @@ module Make_impl (Observer_error : Observer_error) () = struct
         else
           List.iter validate_scope (Core.distinct_scopes fresh.raw.packed);
         let owner_handle = (Option.get !owner).raw.handle in
-        if Core.reaches_handle fresh.raw.packed owner_handle then (
+        (* A dependency-free bind result is a leaf: it reaches only itself, so
+           it cannot form a cycle with the owner node and needs no reachability
+           walk. Only non-leaf results can depend on the owner. *)
+        if
+          Array.length fresh.raw.node.dependencies > 0
+          && Core.reaches_handle fresh.raw.packed owner_handle
+        then (
           let seen_pending = Hashtbl.create 8 in
           let rec has_pending_bind (Core.P node) =
             if Hashtbl.mem seen_pending node.handle.slot then false
