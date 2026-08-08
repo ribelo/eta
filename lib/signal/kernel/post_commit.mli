@@ -78,5 +78,6 @@ val timer_wake_with :
 
 val daemon_failed : t -> ('runtime, 'error) timer -> generation:int -> unit
 val drain_cleanup : t -> (unit, 'error run_error) result
+val is_quiescent : t -> packed_observer list -> bool
 val run : t -> plan:packed_observer list -> (unit, 'error run_error) result
 val queued_timer_count : t -> int

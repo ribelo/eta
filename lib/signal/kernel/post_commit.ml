@@ -558,13 +558,14 @@ let rec plan_is_idle t = function
       | Active, (Never_delivered | Delivered _ | Running _) | Finished _, _ ->
           plan_is_idle t rest)
 
+let is_quiescent t plan =
+  Queue.is_empty t.timers
+  && Queue.is_empty t.timer_hooks
+  && Queue.is_empty t.hooks
+  && plan_is_idle t plan
+
 let run t ~plan =
-  if
-    Queue.is_empty t.timers
-    && Queue.is_empty t.timer_hooks
-    && Queue.is_empty t.hooks
-    && plan_is_idle t plan
-  then Ok ()
+  if is_quiescent t plan then Ok ()
   else
     match claim_timer_actions t with
     | Error (Runtime_mismatch | Cleanup_failures _ | Callback_failure _) ->

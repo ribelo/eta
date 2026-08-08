@@ -1274,6 +1274,25 @@ module Make_impl (Observer_error : Observer_error) () = struct
     | [] -> invalid_arg "Eta_signal: empty cleanup failure list"
 
   let run_edge_plan_sync ?(registration = false) plan =
+    (* Quiescent fast path: with no pending finishes, no timers, no recorded
+       callback error, an idle plan, and no callback awaiting delivery, the
+       full delivery ceremony below provably computes [Ok ()] with no
+       observable effect (phase changes are transient, [edge_graph_error] is
+       reset before any reader, and no stats counters move). Registration
+       passes always take the full path because they drain edge disposals. *)
+    if
+      (not registration)
+      && !pending_finishes = []
+      && !timers = []
+      && !edge_graph_error = None
+      && Edges.is_quiescent edges plan
+      && not
+           (List.exists
+              (fun (O observer) ->
+                observer.has_callback && observer.callback_pending)
+              !observers)
+    then Ok ()
+    else
     (* The delivery body never escapes; the result binding keeps the call out of
        tail position, which stack_ requires. *)
     let outcome = with_phase `Delivering @@ stack_ (fun () ->
