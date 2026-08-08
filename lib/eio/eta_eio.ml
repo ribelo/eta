@@ -138,20 +138,26 @@ module Worker_context = struct
     else Hashtbl.replace workers id (count - 1);
     Mutex.unlock mutex
 
-  let run f =
-    let id = enter () in
-    Fun.protect ~finally:(fun () -> leave id) f
-
   let active () =
     let id = current_id () in
     Mutex.lock mutex;
     let result = Hashtbl.mem workers id in
     Mutex.unlock mutex;
     result
-end
 
-let () =
-  Eta.Runtime_contract.register_worker_context_probe Worker_context.active
+  (* The probe is registered on the first worker run, not at module load, so
+     graphs whose processes never block on the Eta blocking pool skip the
+     mutex-and-table lookup on every synchronous API call. Registration happens
+     before any worker body executes, so the check stays accurate. *)
+  let probe_registered = ref false
+
+  let run f =
+    if not !probe_registered then (
+      Eta.Runtime_contract.register_worker_context_probe active;
+      probe_registered := true);
+    let id = enter () in
+    Fun.protect ~finally:(fun () -> leave id) f
+end
 
 let protect_context_key : unit Eio.Fiber.key = Eio.Fiber.create_key ()
 let dls_new_key f =

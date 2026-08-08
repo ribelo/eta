@@ -644,9 +644,10 @@ let enqueue (P node) =
       let P tail = resolve_slot graph tails.(node.height) in
       tail.queue_next <- node.handle.slot;
       tails.(node.height) <- node.handle.slot);
-    if node.topology_priority > 0 then
-      graph.priority_highest <- max graph.priority_highest node.height
-    else graph.highest <- max graph.highest node.height)
+    if node.topology_priority > 0 then (
+      if node.height > graph.priority_highest then
+        graph.priority_highest <- node.height)
+    else if node.height > graph.highest then graph.highest <- node.height)
 
 let enqueue_deferred (P node as packed) =
   let topology_priority = node.topology_priority in
