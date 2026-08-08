@@ -263,14 +263,14 @@ module Make_impl (Observer_error : Observer_error) () = struct
   }
 
   type 'a signal = {
-    raw : 'a option Core.signal;
+    raw : 'a or_null Core.signal;
     timer : timer option;
   }
 
   let raw_for_testing signal = signal.raw
 
   type 'a var = {
-    source : 'a option Core.var;
+    source : 'a or_null Core.var;
     mutable value : 'a;
     cutoff : 'a Cutoff.t;
     mutable updating : bool;
@@ -435,14 +435,14 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let suppress cutoff old candidate =
     Cutoff.suppress cutoff ~published:old ~candidate
   let cutoff_or_default = Option.value ~default:Cutoff.phys_equal
-  let option_cutoff cutoff old candidate =
+  let or_null_cutoff cutoff old candidate =
     match old, candidate with
-    | Some old, Some candidate -> suppress cutoff old candidate
-    | None, None -> true
-    | None, Some _ | Some _, None -> false
+    | This old, This candidate -> suppress cutoff old candidate
+    | Null, Null -> true
+    | Null, This _ | This _, Null -> false
   let value_exn = function
-    | Some value -> value
-    | None -> failwith "Eta_signal: uninitialized dependency"
+    | This value -> value
+    | Null -> failwith "Eta_signal: uninitialized dependency"
   let raw_value signal = signal.raw.node.current |> value_exn
   let check_signal signal =
     if not (Core.validate_handle signal.raw) then
@@ -492,31 +492,27 @@ module Make_impl (Observer_error : Observer_error) () = struct
       in
       let compute_candidate =
         match dependencies with
-        | [||] -> (fun () -> Some (compute_once ()))
+        | [||] -> (fun () -> This (compute_once ()))
         | [| Core.P dependency |] ->
             (fun () ->
-              if
-                Option.is_none
-                  (Obj.magic dependency.current : Obj.t option)
-              then None
-              else Some (compute_once ()))
+              if Core.raw_is_null dependency.current then Null
+              else This (compute_once ()))
         | _ ->
             (fun () ->
               if
                 Array.exists
                   (fun (Core.P dependency) ->
-                    Option.is_none
-                      (Obj.magic dependency.current : Obj.t option))
+                    Core.raw_is_null dependency.current)
                   dependencies
-              then None
-              else Some (compute_once ()))
+              then Null
+              else This (compute_once ()))
       in
       Core.make_node graph ~height:(if scoped then height + 1 else height)
         ~dependencies
         ~compute:compute_candidate
         ~cutoff:(fun old candidate ->
-          !duplicate_evaluation || option_cutoff cutoff old candidate)
-        ~initial:None
+          !duplicate_evaluation || or_null_cutoff cutoff old candidate)
+        ~initial:Null
     in
     let raw =
       match inherited_scope with
@@ -556,7 +552,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     initializers :=
       (fun () ->
         if Core.validate_handle raw
-           && raw.node.necessary && Core.value raw = None then
+           && raw.node.necessary && Core.raw_is_null (Core.value raw) then
           Core.enqueue (Core.P raw.node))
       :: !initializers;
     raw
@@ -567,14 +563,15 @@ module Make_impl (Observer_error : Observer_error) () = struct
       raise (Graph_error `Ambiguous_scope);
     let raw =
       Core.make_node graph ~height:0 ~dependencies:[||]
-        ~compute:(fun () -> Some value)
-        ~cutoff:(fun old next -> old <> None && next <> None)
-        ~initial:None
+        ~compute:(fun () -> This value)
+        ~cutoff:(fun old next ->
+          (not (Core.raw_is_null old)) && not (Core.raw_is_null next))
+        ~initial:Null
     in
     initializers :=
       (fun () ->
         if Core.validate_handle raw
-           && raw.node.necessary && Core.value raw = None then
+           && raw.node.necessary && Core.raw_is_null (Core.value raw) then
           Core.enqueue (Core.P raw.node))
       :: !initializers;
     { raw; timer = None }
@@ -710,7 +707,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
       let cutoff = cutoff_or_default cutoff in
       {
         source =
-          Core.var ~cutoff:(fun _ _ -> false) graph (Some value);
+          Core.var ~cutoff:(fun _ _ -> false) graph (This value);
         value;
         cutoff;
         updating = false;
@@ -736,7 +733,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
       Execution.sync execution @@ fun () ->
       if var.updating then Error `Reentrant_update
       else (
-        Core.set graph var.source (Some value);
+        Core.set graph var.source (This value);
         var.value <- value;
         Ok ())
 
@@ -758,7 +755,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           | Eta.Exit.Ok value ->
               E.sync (fun () ->
                 ensure_context ();
-                Core.set graph var.source (Some value);
+                Core.set graph var.source (This value);
                 var.value <- value;
                 var.updating <- false)
           | Eta.Exit.Error _ ->
@@ -793,8 +790,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
       try
       let source_value =
         match Core.value source.raw with
-        | Some value -> value
-        | None -> raise Deferred_source
+        | This value -> value
+        | Null -> raise Deferred_source
       in
       let changed =
         match !selected with
@@ -926,8 +923,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
             cleanup_capsule = (fun () -> ());
           });
       (match Core.value (Option.get !inner).raw with
-      | Some _ as value -> value
-      | None ->
+      | This _ as value -> value
+      | Null ->
           let owner = Option.get !owner in
           if !yielded_no_value_in <> Core.current_pass graph then (
             yielded_no_value_in := Core.current_pass graph;
@@ -941,17 +938,21 @@ module Make_impl (Observer_error : Observer_error) () = struct
         let owner = Option.get !owner in
         Core.clear_queue_mark owner.raw.packed;
         Core.enqueue_deferred owner.raw.packed;
-        Option.bind !inner (fun signal -> Core.value signal.raw)
+        (match !inner with
+        | None -> Null
+        | Some signal -> Core.value signal.raw)
       | Deferred_source ->
         let owner = Option.get !owner in
         Core.clear_queue_mark owner.raw.packed;
-        Option.bind !inner (fun signal -> Core.value signal.raw)
+        (match !inner with
+        | None -> Null
+        | Some signal -> Core.value signal.raw)
     in
     let selected_cutoff = cutoff_or_default cutoff in
     let raw =
       Core.make_node graph ~height:(source.raw.node.height + 2)
         ~dependencies:[| Core.P source.raw.node |] ~compute
-        ~cutoff:(option_cutoff selected_cutoff) ~initial:None
+        ~cutoff:(or_null_cutoff selected_cutoff) ~initial:Null
     in
     raw.node.topology_priority <- 1;
     let selector_priority_active = ref false in
@@ -980,7 +981,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     initializers :=
       (fun () ->
         if Core.validate_handle raw
-           && raw.node.necessary && Core.value raw = None then
+           && raw.node.necessary && Core.raw_is_null (Core.value raw) then
           Core.enqueue (Core.P raw.node))
       :: !initializers;
     let result = { raw; timer = source.timer }
@@ -1145,8 +1146,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
       (fun (O observer) ->
         if observer.lifecycle = Active then
           match Core.value observer.signal.raw with
-          | Some value -> publish_observer observer value
-          | None -> ())
+          | This value -> publish_observer observer value
+          | Null -> ())
       ordered;
     List.map
       (fun (O observer) -> Edges.Observer observer.edge)
@@ -1661,15 +1662,15 @@ module Make_impl (Observer_error : Observer_error) () = struct
 
     let install (type output_map) (Plan plan : output_map plan) =
       Execution.sync execution @@ fun () ->
-      let input_ops : (_, _, _ option) Core.input_ops =
+      let input_ops : (_, _, _ or_null) Core.input_ops =
         {
-          empty_input = None;
+          empty_input = Null;
           compare_key = plan.input_ops.p_compare_key;
           iter_diff =
             (fun old next emit ->
               match old, next with
-              | None, None -> ()
-              | Some old, Some next ->
+              | Null, Null -> ()
+              | This old, This next ->
                   ignore
                     (plan.input_ops.p_fold old next
                        ~on_compare:(fun () ->
@@ -1686,46 +1687,49 @@ module Make_impl (Observer_error : Observer_error) () = struct
                              { s with input_diff_event_count =
                                         s.input_diff_event_count + 1 };
                          match change with
-                         | PLeft value -> emit key (Core.Left (Some value))
-                         | PRight value -> emit key (Core.Right (Some value))
+                         | PLeft value -> emit key (Core.Left (This value))
+                         | PRight value -> emit key (Core.Right (This value))
                          | PChanged (left, right) ->
                              emit key
-                               (Core.Changed (Some left, Some right))))
-              | None, Some next ->
+                               (Core.Changed (This left, This right))))
+              | Null, This next ->
                   ignore
                     (plan.input_ops.p_fold plan.input_ops.p_empty next
                        ~on_compare:(fun () -> ())
                        ~init:()
                        ~f:(fun () key change ->
                          match change with
-                         | PRight value -> emit key (Core.Right (Some value))
+                         | PRight value -> emit key (Core.Right (This value))
                          | PLeft _ | PChanged _ -> ()))
-              | Some old, None ->
+              | This old, Null ->
                   ignore
                     (plan.input_ops.p_fold old plan.input_ops.p_empty
                        ~on_compare:(fun () -> ())
                        ~init:()
                        ~f:(fun () key change ->
                          match change with
-                         | PLeft value -> emit key (Core.Left (Some value))
+                         | PLeft value -> emit key (Core.Left (This value))
                          | PRight _ | PChanged _ -> ())));
         }
       in
-      let output_ops : (_, _ option, _ option) Core.output_ops =
+      let output_ops : (_, _ or_null, _ or_null) Core.output_ops =
         {
-          empty_output = Some plan.output_ops.p_output_empty;
+          empty_output = This plan.output_ops.p_output_empty;
           set_output =
             (fun key value output ->
               match value with
-              | None -> output
-              | Some value ->
-                  Some
+              | Null -> output
+              | This value ->
+                  This
                     (plan.output_ops.p_set key value
-                       (Option.value output
-                          ~default:plan.output_ops.p_output_empty)));
+                       (match output with
+                       | This output -> output
+                       | Null -> plan.output_ops.p_output_empty)));
           remove_output =
             (fun key output ->
-              Option.map (plan.output_ops.p_remove key) output);
+              match output with
+              | Null -> Null
+              | This output -> This (plan.output_ops.p_remove key output));
         }
       in
       let owner_ref = ref None in
@@ -1739,7 +1743,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
       in
       let owner =
         Core.keyed_owner
-          ~data_cutoff:(option_cutoff plan.data_cutoff)
+          ~data_cutoff:(or_null_cutoff plan.data_cutoff)
           ~input:plan.input.raw ~input_ops ~output_ops
           ~build:(fun ~key ~data ->
             let previous_initializers = !initializers in
@@ -1769,7 +1773,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           if
             Core.validate_handle owner.Core.keyed_signal
             && owner.Core.keyed_signal.node.necessary
-            && Core.value owner.Core.keyed_signal = None
+            && Core.raw_is_null (Core.value owner.Core.keyed_signal)
           then Core.enqueue owner.Core.keyed_signal.packed)
         :: !initializers;
       let s = !keyed in
@@ -2115,7 +2119,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
                 | Ticks _ -> false
                 | Every _ | At _ | No_timer ->
                     (not !force_source) && old == next)
-              graph (Some initial);
+              graph (This initial);
           value = initial;
           cutoff = Cutoff.never;
           updating = false;
@@ -2281,7 +2285,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               force_source := false;
               sample := previous_sample;
               source.value <- previous_value;
-              source.source.accepted := Some previous_value;
+              source.source.accepted := This previous_value;
               Core.cancel_admission graph source.source.signal.packed);
       commit_refresh :=
         (fun () ->
@@ -2308,7 +2312,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
             candidate := None;
             force_source := true;
             source.value <- value;
-            Core.set graph source.source (Some value);
+            Core.set graph source.source (This value);
             Core.enqueue source.source.signal.packed;
             true
       in

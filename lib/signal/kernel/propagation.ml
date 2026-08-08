@@ -43,7 +43,7 @@ type scope = {
   mutable slot_head : int;
 }
 
-type 'a node = {
+type ('a : value_or_null) node = {
   graph : graph;
   handle : handle;
   mutable height : int;
@@ -70,7 +70,7 @@ type 'a node = {
   scope : scope option;
 }
 
-and packed = P : 'a node -> packed [@@unboxed]
+and packed = P : ('a : value_or_null). 'a node -> packed [@@unboxed]
 
 and slot = {
   mutable generation : int;
@@ -124,14 +124,14 @@ and graph = {
   work : work;
 }
 
-type 'a signal = {
+type ('a : value_or_null) signal = {
   graph : graph;
   handle : handle;
   node : 'a node;
   packed : packed;
 }
 
-type 'a var = {
+type ('a : value_or_null) var = {
   signal : 'a signal;
   accepted : 'a ref;
   source_cutoff : 'a -> 'a -> bool;
@@ -139,16 +139,41 @@ type 'a var = {
 
 type demand = packed
 
-type 'a change = Left of 'a | Right of 'a | Changed of 'a * 'a
+(* Public Signal values carry an uninitialized state, so kernel value slots use
+   the nullable [value_or_null] kind. These helpers inspect such a slot without
+   knowing its type: [Obj.magic] and [Obj.repr] only accept the non-null [value]
+   kind. *)
+external magic_or_null :
+  ('a : value_or_null) ('b : value_or_null). 'a -> 'b = "%identity"
 
-type ('key, 'data, 'map) input_ops = {
+let[@inline] raw_is_null : ('a : value_or_null). 'a -> bool =
+ fun value ->
+  match (magic_or_null value : Obj.t or_null) with Null -> true | This _ -> false
+
+let[@inline] raw_same : ('a : value_or_null) ('b : value_or_null). 'a -> 'b -> bool
+    =
+ fun left right ->
+  match
+    ( (magic_or_null left : Obj.t or_null),
+      (magic_or_null right : Obj.t or_null) )
+  with
+  | Null, Null -> true
+  | This left, This right -> left == right
+  | Null, This _ | This _, Null -> false
+
+type ('a : value_or_null) change =
+  | Left of 'a
+  | Right of 'a
+  | Changed of 'a * 'a
+
+type ('key, 'data : value_or_null, 'map : value_or_null) input_ops = {
   empty_input : 'map;
   compare_key : 'key -> 'key -> int;
   iter_diff :
     'map -> 'map -> ('key -> 'data change -> unit) -> unit;
 }
 
-type ('key, 'value, 'map) output_ops = {
+type ('key, 'value : value_or_null, 'map : value_or_null) output_ops = {
   empty_output : 'map;
   set_output : 'key -> 'value -> 'map -> 'map;
   remove_output : 'key -> 'map -> 'map;
@@ -1069,7 +1094,7 @@ let enqueue_all_uninitialized_necessary graph =
     | Some (P node as packed)
       when node.necessary
            && Array.length node.dependencies > 0
-           && Option.is_none (Obj.magic node.current : Obj.t option) ->
+           && raw_is_null node.current ->
         enqueue packed
     | Some _ | None -> ()
   done
@@ -1113,7 +1138,8 @@ let invalidate_scope_chain graph scope =
   scope.valid <- false;
   retired
 
-let prepend_change_listener (P node) (listener : 'a. 'a -> unit) =
+let prepend_change_listener (P node)
+    (listener : ('a : value_or_null). 'a -> unit) =
   node.change_listeners <- listener :: node.change_listeners
 
 let move_dependent_last (P dependency) handle =
@@ -1164,8 +1190,7 @@ let enqueue_uninitialized_topology root =
     if not (Hashtbl.mem seen node.handle.slot) then (
       Hashtbl.add seen node.handle.slot ();
       Array.iter visit node.dependencies;
-      if Option.is_none (Obj.magic node.current : Obj.t option) then
-        enqueue packed)
+      if raw_is_null node.current then enqueue packed)
   in
   visit root
 
@@ -1235,7 +1260,7 @@ let enqueue_stale_freshness graph ~bind_nodes ~custom_cutoff_nodes
           let P inner =
             node.dependencies.(Array.length node.dependencies - 1)
           in
-          if Obj.repr node.current != Obj.repr inner.current then (
+          if not (raw_same node.current inner.current) then (
             enqueue packed;
             stale := true)
       | Some _ | None -> ())
@@ -1438,7 +1463,7 @@ let bind ?cutoff source ~f = (bind_owner ?cutoff source ~f).bind_signal
 let bind_current owner = owner.inner
 let bind_scope_valid owner = owner.inner_scope.valid
 
-type ('key, 'data, 'output) keyed_child = {
+type ('key, 'data : value_or_null, 'output : value_or_null) keyed_child = {
   key : 'key;
   data : 'data var;
   output : 'output signal;
@@ -1564,7 +1589,8 @@ let rec child_iter f = function
       f branch.value;
       child_iter f branch.right
 
-type ('key, 'data, 'input, 'output, 'output_map) keyed_owner = {
+type ('key, 'data : value_or_null, 'input : value_or_null,
+      'output : value_or_null, 'output_map : value_or_null) keyed_owner = {
   keyed_signal : 'output_map signal;
   keyed_input : 'input signal;
   input_ops : ('key, 'data, 'input) input_ops;

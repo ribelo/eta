@@ -42,7 +42,7 @@ type keyed_stats = {
   mutable keyed_committed_child_count : int;
 }
 type scope = { mutable valid : bool; mutable slot_head : int; }
-type 'a node = {
+type ('a : value_or_null) node = {
   graph : graph;
   handle : handle;
   mutable height : int;
@@ -68,7 +68,7 @@ type 'a node = {
   scope_next : int;
   scope : scope option;
 }
-and packed = P : 'a node -> packed [@@unboxed]
+and packed = P : ('a : value_or_null). 'a node -> packed [@@unboxed]
 and slot = {
   mutable generation : int;
   mutable strong : packed option;
@@ -115,25 +115,28 @@ and graph = {
   keyed_stats : keyed_stats;
   work : work;
 }
-type 'a signal = {
+type ('a : value_or_null) signal = {
   graph : graph;
   handle : handle;
   node : 'a node;
   packed : packed;
 }
-type 'a var = {
+type ('a : value_or_null) var = {
   signal : 'a signal;
   accepted : 'a ref;
   source_cutoff : 'a -> 'a -> bool;
 }
 type demand = packed
-type 'a change = Left of 'a | Right of 'a | Changed of 'a * 'a
-type ('key, 'data, 'map) input_ops = {
+type ('a : value_or_null) change =
+  | Left of 'a
+  | Right of 'a
+  | Changed of 'a * 'a
+type ('key, 'data : value_or_null, 'map : value_or_null) input_ops = {
   empty_input : 'map;
   compare_key : 'key -> 'key -> int;
   iter_diff : 'map -> 'map -> ('key -> 'data change -> unit) -> unit;
 }
-type ('key, 'value, 'map) output_ops = {
+type ('key, 'value : value_or_null, 'map : value_or_null) output_ops = {
   empty_output : 'map;
   set_output : 'key -> 'value -> 'map -> 'map;
   remove_output : 'key -> 'map -> 'map;
@@ -155,29 +158,36 @@ val set_keyed_counter_for :
 val create : unit -> graph
 val work : graph -> work
 val enable_change_listeners : graph -> unit
-val validate_handle : 'a signal -> bool
-val handle : 'a signal -> handle
+
+(* Value slots carry the nullable [value_or_null] kind, so an existentially
+   packed node needs these helpers to inspect its slot. *)
+val raw_is_null : ('a : value_or_null). 'a -> bool
+val raw_same : ('a : value_or_null) ('b : value_or_null). 'a -> 'b -> bool
+val validate_handle : ('a : value_or_null). 'a signal -> bool
+val handle : ('a : value_or_null). 'a signal -> handle
 val push_capsule : graph -> capsule -> unit
 val attach : packed -> packed -> unit
 val detach : packed -> packed -> unit
 val make_node :
+  ('a : value_or_null).
   ?constant:bool ->
   graph ->
   height:int ->
   dependencies:packed array ->
   compute:(unit -> 'a) ->
   cutoff:('a -> 'a -> bool) -> initial:'a -> 'a signal
-val var : ?cutoff:('a -> 'a -> bool) -> graph -> 'a -> 'a var
-val watch : 'a var -> 'a signal
+val var :
+  ('a : value_or_null). ?cutoff:('a -> 'a -> bool) -> graph -> 'a -> 'a var
+val watch : ('a : value_or_null). 'a var -> 'a signal
 val enqueue : packed -> unit
 val enqueue_deferred : packed -> unit
 val unlink_queued_node : packed -> unit
 val activate : packed -> unit
-val demand : 'a signal -> packed
+val demand : ('a : value_or_null). 'a signal -> packed
 val deactivate : packed -> unit
 val release : packed -> unit
-val value : 'a signal -> 'a
-val set : graph -> 'a var -> 'a -> unit
+val value : ('a : value_or_null). 'a signal -> 'a
+val set : ('a : value_or_null). graph -> 'a var -> 'a -> unit
 val release_unreachable_roots : graph -> unit
 val count_necessary : graph -> int
 val unlink_unnecessary_queued : graph -> unit
@@ -190,7 +200,8 @@ val scope_valid : scope -> bool
 val current_scope : graph -> scope option
 val current_pass : graph -> int
 val invalidate_scope_chain : graph -> scope -> int
-val prepend_change_listener : packed -> ('a. 'a -> unit) -> unit
+val prepend_change_listener :
+  packed -> (('a : value_or_null). 'a -> unit) -> unit
 val move_dependent_last : packed -> handle -> unit
 val ensure_parent_height : graph -> ?current:bool -> packed -> int -> unit
 val dependency_subgraph : packed -> packed list
@@ -220,7 +231,7 @@ type ('a, 'b) bind_owner = {
   mutable rollback_scope : scope;
   mutable tentative_inner : 'b signal;
 }
-type ('key, 'data, 'output) keyed_child = {
+type ('key, 'data : value_or_null, 'output : value_or_null) keyed_child = {
   key : 'key;
   data : 'data var;
   output : 'output signal;
@@ -235,7 +246,8 @@ type ('key, 'value) child_tree =
   | Child_branch of { height : int; left : ('key, 'value) child_tree;
       key : 'key; value : 'value; right : ('key, 'value) child_tree;
     }
-type ('key, 'data, 'input, 'output, 'output_map) keyed_owner = {
+type ('key, 'data : value_or_null, 'input : value_or_null,
+      'output : value_or_null, 'output_map : value_or_null) keyed_owner = {
   keyed_signal : 'output_map signal;
   keyed_input : 'input signal;
   input_ops : ('key, 'data, 'input) input_ops;
@@ -260,8 +272,12 @@ val append_nodes_dot :
   only_necessary:bool ->
   scope_label:string -> dot_state:bool -> dot_dynamic_scopes:bool -> unit
 val keyed_find :
+  ('b : value_or_null) ('c : value_or_null) ('d : value_or_null)
+  ('e : value_or_null).
   ('a, 'b, 'c, 'd, 'e) keyed_owner -> 'a -> ('a, 'b, 'd) keyed_child option
 val keyed_owner :
+  ('a : value_or_null) ('b : value_or_null) ('d : value_or_null)
+  ('input : value_or_null).
   ?cutoff:('a -> 'a -> bool) ->
   ?data_cutoff:('b -> 'b -> bool) ->
   input:'input signal ->
@@ -270,10 +286,15 @@ val keyed_owner :
   build:(key:'c -> data:'b signal -> 'd signal) ->
   unit -> ('c, 'b, 'input, 'd, 'a) keyed_owner
 val set_keyed_event_recorder :
+  ('b : value_or_null) ('c : value_or_null) ('d : value_or_null)
+  ('e : value_or_null).
   ('a, 'b, 'c, 'd, 'e) keyed_owner -> (keyed_event -> unit) -> unit
 val set_keyed_precommit :
+  ('b : value_or_null) ('c : value_or_null) ('d : value_or_null)
+  ('e : value_or_null).
   ('a, 'b, 'c, 'd, 'e) keyed_owner -> (unit -> unit) -> unit
 val child_iter :
+  ('b : value_or_null) ('c : value_or_null).
   (('a, 'b, 'c) keyed_child -> unit) ->
   ('a, ('a, 'b, 'c) keyed_child) child_tree ->
   unit
