@@ -207,7 +207,8 @@ module Execution = struct
         "Eta_signal: signal graph APIs must be called on the domain that created \
          the graph and not from runtime worker callbacks"
 
-  let sync t f =
+  (* [f] never escapes, so callers may stack-allocate the closure. *)
+  let sync t (f @ local) =
     ensure_context t;
     f ()
 end
@@ -1799,7 +1800,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
     Core.enqueue_all_uninitialized_necessary graph
 
   let stabilize () =
-    Execution.sync execution @@ fun () ->
+    (* The pass body never escapes, so it is stack allocated. The result
+       binding keeps the call out of tail position, which stack_ requires. *)
+    let outcome = Execution.sync execution @@ stack_ (fun () ->
     if !phase = `Delivering then Error `Reentrant_stabilization
     else
       let first_pass () =
@@ -1923,7 +1926,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
           in
           (match second_pass () with
           | Error error -> Error (error :> stabilize_error)
-          | Ok batch -> run_edge_plan_sync batch)))
+          | Ok batch -> run_edge_plan_sync batch))))
+    in
+    outcome
 
   let pp_observer_read_error ppf = function
     | `Disposed_observer -> Format.pp_print_string ppf "disposed observer"
