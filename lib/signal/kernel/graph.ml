@@ -1034,7 +1034,21 @@ module Make_impl (Observer_error : Observer_error) () = struct
     !counter
 
   let publish_observer observer value =
-    if observer.lifecycle = Active then (
+    if observer.lifecycle = Active then
+      match observer.published with
+      | This old
+        when old == value
+             && observer.cutoff == Cutoff.phys_equal
+             && not observer.callback_pending
+             && not observer.deliver_pending ->
+          (* Identical value under the default physical cutoff: suppression is
+             definitional and the current/published writes would rewrite
+             identical bits, so only the Edges.publish call remains. That call
+             is load-bearing even here: after a defect retry acknowledged
+             through the edge_base path, the cursor can hold a divergent
+             delivered value, and publish re-bases it. *)
+          Edges.publish edges observer.edge value
+      | _ -> (
       if observer.callback_pending then (
         observer.current <- This value;
         observer.published <- This value;
