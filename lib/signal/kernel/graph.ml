@@ -810,15 +810,18 @@ module Make_impl (Observer_error : Observer_error) () = struct
                    !scope_parents
                 |> Option.join)
         in
-        List.iter
-          (fun candidate ->
+        let validate_scope candidate =
             if
               not (Core.scope_valid candidate)
               || not
                    (candidate == fresh_scope
                     || scope_is_ancestor candidate parent_scope)
-            then raise (Graph_error `Invalid_scope))
-          (Core.distinct_scopes fresh.raw.packed);
+            then raise (Graph_error `Invalid_scope)
+        in
+        if Array.length fresh.raw.node.dependencies = 0 then
+          Option.iter validate_scope fresh.raw.node.scope
+        else
+          List.iter validate_scope (Core.distinct_scopes fresh.raw.packed);
         let owner_handle = (Option.get !owner).raw.handle in
         if Core.reaches_handle fresh.raw.packed owner_handle then (
           let seen_pending = Hashtbl.create 8 in
