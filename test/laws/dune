@@ -45,3 +45,13 @@
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
+
+(rule
+ (alias signal-laws)
+ (action
+  (setenv EIO_BACKEND posix
+   (progn
+    (run %{exe:map_semantic_properties.exe})
+    (run %{exe:map_representation_properties.exe})
+    (run %{exe:keyed_mapi_properties.exe})
+    (run %{exe:signal_properties.exe})))))

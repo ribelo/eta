@@ -71,15 +71,18 @@
  (name eta-js-runtest)
  (deps (alias test/js_jsoo/runtest) (alias test/js_stream/runtest)))
 
-(alias
- (name signal-economics)
- (deps (alias test/signal/economics/signal-economics)))
-
-; Umbrella acceptance gate for the Eta Signal V1 contract: deterministic
-; economics, atomic-pass laws, and the model fuzz smoke run.
+; Umbrella acceptance gate for the current Eta Signal behavior contract.
 (alias
  (name signal-gates)
  (deps
-  (alias_rec signal-atomic-laws)
-  (alias_rec signal-economics)
-  (alias_rec signal-model-fuzz-smoke)))
+  (alias test/signal/runtest)
+  (alias test/signal/contract/runtest)
+  (alias test/signal/error/runtest)
+  (alias test/signal/model/runtest)
+  (alias test/signal/model/signal-model-fuzz-smoke)
+  (alias test/signal_map/runtest)
+  (alias test/signal_map/diagnostics/runtest)
+  (alias test/signal_map/keyed/runtest)
+  (alias test/signal_stream/runtest)
+  (alias test/laws/signal-laws)
+  (alias lib/signal_map/bench/signal-map-complexity)))

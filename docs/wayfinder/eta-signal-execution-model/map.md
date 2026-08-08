@@ -2,15 +2,16 @@
 
 ## Destination
 
-An implementation-ready replacement architecture and pre-alpha implementation
-for `eta_signal` and `eta_signal_map`. The implementation must preserve the
-Signal behavior contract and meet workload-specific performance gates.
+An implemented, usable, and behavior-correct replacement architecture for
+`eta_signal` and `eta_signal_map`, with one consolidated execution
+specification and a recorded performance baseline.
 
 ## Notes
 
 Planning and throwaway prototypes selected the pre-alpha base through issue 11.
 Issue 17 promotes that base into the production packages.
 Later tickets change the production pre-alpha implementation directly.
+This effort uses the order: make it work, make it right, then make it fast.
 
 Executable semantics and public behavior remain binding. All internal
 architecture decisions reopen. The prior Signal Wayfinder work and current
@@ -20,17 +21,8 @@ A pure graph kernel is the primary hypothesis. Only an executable semantic
 counterexample can reject this hypothesis. One kernel can activate structural,
 rollback, timer, or delivery machinery only when the current pass requires it.
 
-Incremental is the zero-effect performance reference, not a compatibility
-target. Comparisons must have three layers:
-
-1. Compare the raw Eta kernel with the matched Incremental kernel.
-2. Measure each Eta adapter around the same raw Eta kernel.
-3. Compare complete public operations with matched workloads.
-
-Affected-work complexity and correctness are eligibility gates. Rank eligible
-candidates by module depth, allocation, and wall time. Use workload-specific
-targets from the best relevant reference. Static scalar stabilization must
-allocate fewer than 100 words, independent of graph depth.
+Performance optimization is deferred. The frozen matrix remains unchanged and
+becomes input to a fresh effort. This map records only the current baseline.
 
 The preferred result retains the public Signal interface. The effort can change
 that interface when another design creates a substantially deeper module. It
@@ -63,21 +55,17 @@ main Dune workspace.
 - [Dynamic topology and keyed work](issues/08-dynamic-topology-and-keyed-work.md) — use owner-local shadow capsules with an O(1) verdict commit and affected-only rollback and cleanup.
 - [Node identity and index lifecycle](issues/15-node-identity-and-index-lifecycle.md) — reuse dense slots with generation-safe handles and per-pass quarantine, while active journals retain immediate slot integers.
 - [Generic typed value storage](issues/16-generic-typed-value-storage.md) — pack existential typed nodes with embedded undo values, preserve the four-word path for immediate and boxed values, and reject erased or closure-packed storage.
-- [Effect seam and Eta runtime](issues/09-effect-seam-and-runtime.md) — use one private serialized execution driver with a pre-publication cancellation checkpoint, keep claims opaque, and add no Eta runtime primitive.
+- [Effect seam and Eta runtime](issues/09-effect-seam-and-runtime.md) — selected a serialized finalist driver without a new Eta primitive. [Public Signal interface and graph ownership](issues/12-public-interface-depth.md) later replaced that driver.
 - [Timer and observer edges](issues/10-timer-and-observer-edges.md) — keep timer generations, runtime provenance, observer cursors, cleanup, and stream acknowledgement inside one opaque post-commit driver.
 - [Integrated finalist proof](issues/11-integrated-finalist-proof.md) — reject the behavior-complete finalist for final selection, then retain it as the production pre-alpha base.
 - [Promote selected finalist to pre-alpha](issues/17-promote-selected-finalist-to-pre-alpha.md) — use the promoted core and edge driver in production with the complete behavior, package, and frozen benchmark gates enabled.
 - [Public interface and graph ownership](issues/12-public-interface-depth.md) — make the public Signal interface synchronous on one owner domain, delete the lane and per-operation fiber protocol, and keep the frozen acceptance-matrix gates open for issues 13, 15, and 16.
 - [Module and package ownership](issues/13-module-and-package-ownership.md) — split the kernel into `Propagation` (generation-safe topological freshness with rollback), `Post_commit` (opaque post-commit settlement), and `Graph` (owner-domain phase authority) inside one wrapped uninstalled library; cut `eta_signal_map` to the public `Package_graph` protocol and replace the `Obj.t` token seam with a typed repo-private probe.
-
-## Current path
-
-1. Write the [consolidated execution specification](issues/14-consolidated-execution-specification.md) after all gates pass.
+- [Consolidated execution specification](issues/14-consolidated-execution-specification.md) — specify the usable production architecture, fix demanded-timer restart, repair its gates and example, and defer optimization with a recorded baseline.
 
 ## Not yet specified
 
-- Additional workload classes can become necessary when the behavior census
-  finds a capability without a matched benchmark.
+None.
 
 ## Out of scope
 
@@ -86,3 +74,4 @@ main Dune workspace.
 - Compatibility with the Incremental interface.
 - Compatibility shims for the current Signal implementation.
 - Changes to frozen benchmark workloads, checks, operation counts, or formulas.
+- Optimization to pass the [Performance acceptance matrix](issues/04-performance-acceptance-matrix.md), including new matched workloads. This work requires a fresh effort.

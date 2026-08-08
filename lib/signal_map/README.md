@@ -12,7 +12,7 @@ The authoritative APIs are:
 ## Package boundary
 
 `eta_signal_map` is an optional sibling of `eta_signal`. It depends on the exact
-same release of `eta_signal` because it uses a package-private graph protocol.
+same release of `eta_signal` because it uses the sealed `Package_graph` protocol.
 The root `eta` package does not contain the map or keyed operator.
 
 The runtime package has no Base, Core, Incremental, or `Incr_map` dependency.
@@ -24,15 +24,15 @@ for the package and private-kernel decision.
 ## Install
 
 ```sh
-opam install eta_signal_map eta_eio
+opam install eta_signal_map
 ```
 
-Use these libraries in a native Eio executable:
+Use these libraries in an executable:
 
 ```lisp
 (executable
  (name main)
- (libraries eta eta_signal_map eta_eio eio_main))
+ (libraries eta_signal eta_signal_map))
 ```
 
 ## Limits and footguns
@@ -52,8 +52,8 @@ Read the exact key, cutoff, child-lifecycle, diagnostic, and complexity rules in
 ## Quick start
 
 ```ocaml
-module E = Eta.Effect
-module S = Eta_signal_map.Make (Eta_signal.No_observer_error) ()
+module S = Eta_signal.Make (Eta_signal.No_observer_error) ()
+module Signal_map = Eta_signal_map.Make (S.Package)
 
 module Int_order = struct
   type t = int
@@ -61,38 +61,27 @@ module Int_order = struct
 end
 
 module M = Eta_signal_map.Map.Make (Int_order)
-module K = S.Keyed (Int_order)
+module K = Signal_map.Keyed (Int_order)
 
-type error = [ S.graph_error | S.observer_read_error | S.stabilize_error ]
-
-let widen (eff : ('a, [< error ]) E.t) : ('a, error) E.t =
-  E.map_error (fun error -> (error :> error)) eff
-
-let run runtime eff =
-  match Eta_eio.Runtime.run runtime (widen eff) with
-  | Eta.Exit.Ok value -> value
-  | Eta.Exit.Error _ -> failwith "eta_signal_map example failed"
+let get_ok = function
+  | Ok value -> value
+  | Error _ -> failwith "eta_signal_map example failed"
 
 let () =
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  let runtime =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
-  in
   let input = S.Var.create (M.of_list [ (1, 10); (2, 20) ] |> Result.get_ok) in
   let output =
     K.mapi (S.Var.watch input) ~f:(fun ~key ~data ->
         S.map (fun value -> key + value) data)
   in
   let observer =
-    run runtime (S.Observer.observe output (fun _update -> E.unit))
+    get_ok (S.Observer.observe output ~on_update:(fun _update -> Ok ()))
   in
-  run runtime S.stabilize;
-  M.to_list (run runtime (S.Observer.read observer))
+  get_ok (S.stabilize ());
+  M.to_list (get_ok (S.Observer.read observer))
   |> List.iter (fun (key, value) -> Printf.printf "%d -> %d\n" key value);
-  run runtime (S.Var.set input (M.set 2 30 M.empty));
-  run runtime S.stabilize;
-  run runtime (S.Observer.dispose observer)
+  get_ok (S.Var.set input (M.set 2 30 (S.Var.value input)));
+  get_ok (S.stabilize ());
+  get_ok (S.Observer.dispose observer)
 ```
 
 The graph uses explicit stabilization. Constructing or updating a source does

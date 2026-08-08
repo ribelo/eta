@@ -19,7 +19,7 @@ Bonsai, and Incremental are references, not compatibility targets.
 The original material was provisional input:
 
 - `docs/prds/0002-eta-signal-frp.md`
-- `docs/design/eta_signal-kernel-contract.md`
+- `docs/design/eta_signal-execution-model.md`
 - `/home/ribelo/projects/ribelo/sliml/docs/`
 - `/home/ribelo/projects/ribelo/taumel/`
 

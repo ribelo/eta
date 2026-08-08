@@ -310,6 +310,9 @@ let daemon_failed t (timer : (_, _) timer) ~generation =
   if timer.owner != t then invalid_arg "selected_edges: timer owner";
   claim t @@ fun () ->
   match timer.state with
+  | Starting active when active = generation ->
+      timer.state <- Inactive;
+      if timer.demanded then enqueue timer
   | Running (active, _) when active = generation ->
       timer.state <- Inactive;
       if timer.demanded then enqueue timer

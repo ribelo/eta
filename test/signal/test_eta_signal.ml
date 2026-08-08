@@ -1276,7 +1276,7 @@ let test_sync_operations_reject_foreign_domain () =
       ignore (Signal.Observer.dispose observer));
   expect_result_ok (Signal.Observer.dispose observer)
 
-let test_timer_daemon_wake_defect_recovers_on_next_stabilize () =
+let test_timer_daemon_wake_defect_restarts_while_demanded () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -1311,21 +1311,16 @@ let test_timer_daemon_wake_defect_recovers_on_next_stabilize () =
   Alcotest.(check int)
     "wake defect catch-up admitted by the same stabilize" 10
     (expect_result_ok (Signal.Observer.read observer));
-  for _ = 1 to 5 do
-    Eta_test.Async.yield ()
-  done;
-  Alcotest.(check int) "no autonomous restart before the next stabilize" 1
+  wait_until "timer daemon restart" (fun () -> !sleep_calls = 2);
+  Alcotest.(check int) "demanded daemon restarts after the wake defect" 2
     !sleep_calls;
   now_ms := 200;
   expect_result_ok (Signal.stabilize ());
   Alcotest.(check int)
     "timer keeps refreshing from the stabilize clock snapshot" 20
     (expect_result_ok (Signal.Observer.read observer));
-  for _ = 1 to 5 do
-    Eta_test.Async.yield ()
-  done;
   Alcotest.(check int)
-    "daemon does not restart even after a delivery-bearing stabilize" 1
+    "the restarted daemon remains active" 2
     !sleep_calls;
   expect_result_ok (Signal.Observer.dispose observer);
   Eio.Promise.resolve hold_resolver ()
@@ -2319,8 +2314,8 @@ let () =
             test_effectful_update_defect_releases_slot;
           Alcotest.test_case "sync operations reject foreign domain" `Quick
             test_sync_operations_reject_foreign_domain;
-          Alcotest.test_case "timer daemon wake defect recovers on stabilize"
-            `Quick test_timer_daemon_wake_defect_recovers_on_next_stabilize;
+          Alcotest.test_case "timer daemon wake defect restarts while demanded"
+            `Quick test_timer_daemon_wake_defect_restarts_while_demanded;
           Alcotest.test_case "time interval catches up after late sleep" `Quick
             test_time_interval_catches_up_after_late_sleep;
           Alcotest.test_case "time interval does not recount saturated due"
