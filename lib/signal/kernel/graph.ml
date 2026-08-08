@@ -1044,7 +1044,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
                (fun (O observer) -> observer.id <> selected_observer.id)
                remaining)
     in
-    loop [] observers
+    match observers with
+    | [] | [ _ ] -> observers
+    | _ -> loop [] observers
 
   let settle_invalid_observers () =
     List.iter
