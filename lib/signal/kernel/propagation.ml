@@ -116,6 +116,7 @@ and graph = {
   mutable pending_reclaims : handle array;
   mutable pending_reclaim_length : int;
   mutable suppress_reclaim : bool;
+  mutable change_listeners_enabled : bool;
   mutable tombstones : handle array;
   mutable tombstone_length : int;
   mutable keyed_reconciliations_in_pass : int;
@@ -230,6 +231,7 @@ let create () =
     pending_reclaims = Array.make 16 { slot = -1; generation = -1 };
     pending_reclaim_length = 0;
     suppress_reclaim = false;
+    change_listeners_enabled = false;
     tombstones = Array.make 16 { slot = -1; generation = -1 };
     tombstone_length = 0;
     keyed_reconciliations_in_pass = 0;
@@ -250,6 +252,7 @@ let create () =
   }
 
 let work graph = graph.work
+let enable_change_listeners graph = graph.change_listeners_enabled <- true
 
 let reset_work graph =
   let zero = empty_work () in
@@ -736,7 +739,8 @@ let rec evaluate_from changed_before (P node) =
       else (
         record_first_write node;
         node.current <- next;
-        List.iter (fun notify -> notify next) node.change_listeners;
+        if graph.change_listeners_enabled then
+          List.iter (fun notify -> notify next) node.change_listeners;
         true))
   in
   if changed then
@@ -1307,6 +1311,7 @@ type ('a, 'b) bind_owner = {
 
 let bind_owner ?(cutoff = ( == )) (source : 'a signal) ~f =
   let graph = source.graph in
+  enable_change_listeners graph;
   let scope = { valid = true; slot_head = -1 } in
   let inner : 'b signal =
     with_scope graph scope (fun () -> f source.node.current)
@@ -1655,6 +1660,7 @@ let keyed_find owner key =
 let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
     ~(input : 'input signal) ~input_ops ~output_ops ~build () =
   let graph = input.graph in
+  enable_change_listeners graph;
   let owner_ref = ref None in
   let stage_child_output owner key value =
     if owner.output_written_in <> graph.pass then (

@@ -516,8 +516,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
         if left_node.handle = right_node.handle then duplicate := true
       done
     done;
-    if !duplicate then
-      Hashtbl.replace duplicate_dependency_nodes raw.handle.slot raw.handle;
+    if !duplicate then (
+      Core.enable_change_listeners graph;
+      Hashtbl.replace duplicate_dependency_nodes raw.handle.slot raw.handle);
     if cutoff != Cutoff.phys_equal then
       Hashtbl.replace custom_cutoff_nodes raw.handle.slot raw.handle;
     let weak_raw = Weak.create 1 in
@@ -762,6 +763,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let bind ?cutoff ~f source =
     Execution.sync execution @@ fun () ->
     check_signal source;
+    Core.enable_change_listeners graph;
     let selected = ref None in
     let inner = ref None in
     let scope = ref None in

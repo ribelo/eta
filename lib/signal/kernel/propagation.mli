@@ -108,6 +108,7 @@ and graph = {
   mutable pending_reclaims : handle array;
   mutable pending_reclaim_length : int;
   mutable suppress_reclaim : bool;
+  mutable change_listeners_enabled : bool;
   mutable tombstones : handle array;
   mutable tombstone_length : int;
   mutable keyed_reconciliations_in_pass : int;
@@ -153,6 +154,7 @@ val set_keyed_counter_for :
   int -> unit
 val create : unit -> graph
 val work : graph -> work
+val enable_change_listeners : graph -> unit
 val validate_handle : 'a signal -> bool
 val handle : 'a signal -> handle
 val push_capsule : graph -> capsule -> unit
