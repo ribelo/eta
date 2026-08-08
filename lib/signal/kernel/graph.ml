@@ -406,6 +406,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let bind_nodes : (int, Core.handle) Hashtbl.t = Hashtbl.create 16
   let bind_evaluations : (int, Core.handle * int ref) Hashtbl.t =
     Hashtbl.create 16
+  let bind_evaluation_order : Core.handle list ref = ref []
   let next_observer_id = ref 0
   let pure_snapshot_commit_count = ref 0
   let callback_delivery_count = ref 0
@@ -1016,6 +1017,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     Hashtbl.replace bind_nodes raw.handle.slot raw.handle;
     Hashtbl.replace bind_evaluations raw.handle.slot
       (raw.handle, evaluated_in);
+    bind_evaluation_order := raw.handle :: !bind_evaluation_order;
     initializers := Core.P raw.node :: !initializers;
     let result = { raw; timer = source.timer }
     in
@@ -1942,8 +1944,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
           in
           let second_pass () =
             let stale =
-              Core.enqueue_stale_freshness graph ~bind_nodes
-                ~custom_cutoff_nodes ~duplicate_dependency_nodes
+              Core.enqueue_stale_freshness graph
+                ~bind_order:!bind_evaluation_order ~custom_cutoff_nodes
+                ~duplicate_dependency_nodes
             in
             if refreshed || stale then (
               enqueue_uninitialized_necessary ();

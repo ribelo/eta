@@ -1306,29 +1306,30 @@ let unlink_queued_descendants graph roots =
       in
       List.iter walk roots
 
-let enqueue_stale_freshness graph ~bind_nodes ~custom_cutoff_nodes
+let enqueue_stale_freshness graph ~bind_order ~custom_cutoff_nodes
     ~duplicate_dependency_nodes =
-  if
-    Hashtbl.length bind_nodes = 0
-    && Hashtbl.length duplicate_dependency_nodes = 0
-  then false
-  else
+  match bind_order with
+  | [] when Hashtbl.length duplicate_dependency_nodes = 0 -> false
+  | _ ->
   let stale = ref false in
-  Hashtbl.iter
-    (fun slot handle ->
-      match slot_contents graph.slots.(slot) with
-      | Some (P node as packed)
-        when same_handle node.handle handle
-             && node_necessary node
-             && Array.length node.dependencies > 1 ->
-          let P inner =
-            node.dependencies.(Array.length node.dependencies - 1)
-          in
-          if not (raw_same node.current inner.current) then (
-            enqueue packed;
-            stale := true)
-      | Some _ | None -> ())
-    bind_nodes;
+  let rec check = function
+    | [] -> ()
+    | handle :: rest -> (
+        match slot_contents graph.slots.(handle.slot) with
+        | Some (P node as packed)
+          when same_handle node.handle handle
+               && node_necessary node
+               && Array.length node.dependencies > 1 ->
+            let P inner =
+              node.dependencies.(Array.length node.dependencies - 1)
+            in
+            if not (raw_same node.current inner.current) then (
+              enqueue packed;
+              stale := true)
+        | Some _ | None -> ());
+        check rest
+  in
+  check bind_order;
   if Hashtbl.length duplicate_dependency_nodes <> 0 then (
     let committed_pass = graph.pass - 1 in
     let seen_descendants = Hashtbl.create 16 in

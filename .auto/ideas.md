@@ -33,3 +33,13 @@
 - Scope record (3) + ancestry tuple+cons pushes (12).
 - Escaping const compute/initializer closures (11), Post_commit event/cursor
   data (12), bind Null-branch closure (3).
+
+## Dynamic-switch wall progress (runs 49-54)
+
+- 557.7 -> 345.3 ns (-38.1%); words 273 -> 120.
+- Handle-record structural equality -> int-field same_handle (caml_equal gone).
+- Typed high-water compares in enqueue; lazy Eio worker-context probe.
+- Observer fields + bind selected -> or_null (immediate-payload options done).
+- Initializer list stores packed nodes with shared enqueue helper.
+- Eager evaluate of dependency-free bind inners removes the deferred retry and
+  the second compute per switch.
