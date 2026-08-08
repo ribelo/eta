@@ -1205,14 +1205,17 @@ let rec enqueue_reactivated (P node as packed) =
   if Array.length node.dependencies > 0 then enqueue packed
 
 let unlink_queued_descendants graph roots =
-  let seen = Hashtbl.create 16 in
-  let rec walk (P node as packed) =
-    if not (Hashtbl.mem seen node.handle.slot) then (
-      Hashtbl.add seen node.handle.slot ();
-      unlink_queued_node packed;
-      List.iter walk node.dependents)
-  in
-  List.iter walk roots
+  match roots with
+  | [] -> ()
+  | _ :: _ ->
+      let seen = Hashtbl.create 16 in
+      let rec walk (P node as packed) =
+        if not (Hashtbl.mem seen node.handle.slot) then (
+          Hashtbl.add seen node.handle.slot ();
+          unlink_queued_node packed;
+          List.iter walk node.dependents)
+      in
+      List.iter walk roots
 
 let enqueue_stale_freshness graph ~bind_nodes ~custom_cutoff_nodes
     ~duplicate_dependency_nodes =
