@@ -1122,42 +1122,72 @@ module Make_impl (Observer_error : Observer_error) () = struct
     | [] | [ _ ] -> observers
     | _ -> loop [] observers
 
-  let settle_invalid_observers () =
-    let settle (O observer) =
-      if observer.lifecycle = Active
-         && not (Core.validate_handle observer.signal.raw)
-      then (
-        let necessary_before = necessary_count () in
-        observer.lifecycle <- Invalid;
-        observer.current <- Null;
-        observer.published <- Null;
-        observer.edge_base <- Null;
-        observer.callback_pending <- false;
-        Core.release observer.demand;
-        Option.iter Core.release observer.scope_demand;
-        unlink_unnecessary_queued ();
+  let settle_observer (O observer) =
+    if observer.lifecycle = Active
+       && not (Core.validate_handle observer.signal.raw)
+    then (
+      let necessary_before = necessary_count () in
+      observer.lifecycle <- Invalid;
+      observer.current <- Null;
+      observer.published <- Null;
+      observer.edge_base <- Null;
+      observer.callback_pending <- false;
+      Core.release observer.demand;
+      Option.iter Core.release observer.scope_demand;
+      unlink_unnecessary_queued ();
+      List.iter
+        (fun (timer : timer) ->
+          timer.demand <- max 0 (timer.demand - 1);
+          if timer.demand = 0 then (
+            timer.start_pending <- false;
+            Edges.set_timer_demand edges timer.edge_timer false))
+        observer.timer_demands;
+      incr dynamic_scope_invalidations;
+      Option.iter
+        (fun finish ->
+          pending_finishes :=
+            (fun () -> finish Edges.Invalid_scope)
+            :: !pending_finishes)
+        observer.finish_edge;
+      Edges.invalidate edges observer.edge;
+      nodes_became_unnecessary :=
+        !nodes_became_unnecessary
+        + max 0 (necessary_before - necessary_count ()))
+
+  let settle_and_collect_observers () =
+    (* Settling an observer never touches another observer's handle, cursor,
+       or signal node, so per-observer settle+collect interleaving preserves
+       the old settle-all-then-collect ordering. Pending observers settle
+       first but are not collected. *)
+    List.iter settle_observer !pending_observers;
+    match !observers with
+    | [] -> []
+    | [ (O observer as packed) ] ->
+        settle_observer packed;
+        if observer.lifecycle = Active then (
+          (match observer.signal.raw.node.current with
+          | This value -> publish_observer observer value
+          | Null -> ());
+          [ Edges.Observer observer.edge ])
+        else []
+    | observers ->
+        List.iter settle_observer observers;
+        let ordered =
+          observer_order
+            (List.filter
+               (fun (O observer) -> observer.lifecycle = Active)
+               observers)
+        in
         List.iter
-          (fun (timer : timer) ->
-            timer.demand <- max 0 (timer.demand - 1);
-            if timer.demand = 0 then (
-              timer.start_pending <- false;
-              Edges.set_timer_demand edges timer.edge_timer false))
-          observer.timer_demands;
-        incr dynamic_scope_invalidations;
-        Option.iter
-          (fun finish ->
-            pending_finishes :=
-              (fun () -> finish Edges.Invalid_scope)
-              :: !pending_finishes)
-          observer.finish_edge;
-        Edges.invalidate edges observer.edge;
-        nodes_became_unnecessary :=
-          !nodes_became_unnecessary
-          + max 0 (necessary_before - necessary_count ()))
-    in
-    List.iter settle !pending_observers;
-    List.iter settle !observers;
-    ()
+          (fun (O observer) ->
+            if observer.lifecycle = Active then
+              match observer.signal.raw.node.current with
+              | This value -> publish_observer observer value
+              | Null -> ())
+          ordered;
+        List.map
+          (fun (O observer) -> Edges.Observer observer.edge)
+          ordered
 
   let reconcile_timer_demands () =
     match !timers with
@@ -1188,37 +1218,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
                 next;
               observer.timer_demands <- next))
           !observers
-
-  let collect_observers () =
-    match !observers with
-    | [] -> []
-    | [ (O observer) ] ->
-        (* Singleton fast path: the generic path filters, orders (identity for
-           one), publishes, and maps one edge. [settle_invalid_observers]
-           validated active handles immediately before collection. *)
-        if observer.lifecycle = Active then (
-          (match observer.signal.raw.node.current with
-          | This value -> publish_observer observer value
-          | Null -> ());
-          [ Edges.Observer observer.edge ])
-        else []
-    | _ ->
-        let ordered =
-          observer_order
-            (List.filter
-               (fun (O observer) -> observer.lifecycle = Active)
-               !observers)
-        in
-        List.iter
-          (fun (O observer) ->
-            if observer.lifecycle = Active then
-              match observer.signal.raw.node.current with
-              | This value -> publish_observer observer value
-              | Null -> ())
-          ordered;
-        List.map
-          (fun (O observer) -> Edges.Observer observer.edge)
-          ordered
 
   let sync_outcome f =
     match (try Ok (f ()) with exn -> Error exn) with
@@ -1908,7 +1907,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
             ignore result;
             incr pure_snapshot_commit_count;
             account_recomputations ();
-            settle_invalid_observers ();
+            let batch = settle_and_collect_observers () in
             reconcile_timer_demands ();
             if
               not
@@ -1917,7 +1916,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
                      timer.start_pending && timer.demand > 0)
                    !timers)
             then initializers := [];
-            Ok (collect_observers ())
+            Ok batch
       in
       (match first_pass () with
       | Error error -> Error (error :> stabilize_error)
@@ -1980,6 +1979,15 @@ module Make_impl (Observer_error : Observer_error) () = struct
                 started <> [] || started_admitted || active_refreshed
           in
           let second_pass () =
+            (* With no timers, binds, or duplicate-dependency nodes,
+               [refreshed] is false and enqueue_stale_freshness provably
+               returns false, so the whole second pass is a no-op. *)
+            if
+              !timers = []
+              && !bind_evaluation_order = []
+              && Hashtbl.length duplicate_dependency_nodes = 0
+            then Ok initial_batch
+            else
             let stale =
               Core.enqueue_stale_freshness graph
                 ~bind_order:!bind_evaluation_order ~custom_cutoff_nodes
@@ -2003,9 +2011,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
                   ignore result;
                   initializers := [];
                   account_recomputations ();
-                  settle_invalid_observers ();
+                  let batch = settle_and_collect_observers () in
                   reconcile_timer_demands ();
-                  Ok (collect_observers ()))
+                  Ok batch)
             else Ok initial_batch
           in
           (match second_pass () with
