@@ -548,15 +548,32 @@ let drain_cleanup t =
   | [] -> Ok ()
   | failures -> Error (Cleanup_failures failures)
 
+let rec plan_is_idle t = function
+  | [] -> true
+  | Observer observer :: rest ->
+      if observer.owner != t then
+        invalid_arg "selected_edges: observer plan owner";
+      (match observer.lifecycle, observer.cursor with
+      | Active, Pending _ -> false
+      | Active, (Never_delivered | Delivered _ | Running _) | Finished _, _ ->
+          plan_is_idle t rest)
+
 let run t ~plan =
-  match claim_timer_actions t with
-  | Error (Runtime_mismatch | Cleanup_failures _ | Callback_failure _) ->
-      assert false
-  | Ok actions ->
-      let action_failures = run_actions actions in
-      let failures = action_failures @ drain_cleanup_failures t in
-      if failures <> [] then Error (Cleanup_failures failures)
-      else deliver t plan
+  if
+    Queue.is_empty t.timers
+    && Queue.is_empty t.timer_hooks
+    && Queue.is_empty t.hooks
+    && plan_is_idle t plan
+  then Ok ()
+  else
+    match claim_timer_actions t with
+    | Error (Runtime_mismatch | Cleanup_failures _ | Callback_failure _) ->
+        assert false
+    | Ok actions ->
+        let action_failures = run_actions actions in
+        let failures = action_failures @ drain_cleanup_failures t in
+        if failures <> [] then Error (Cleanup_failures failures)
+        else deliver t plan
 
 let stats t : stats =
   claim t @@ fun () ->
