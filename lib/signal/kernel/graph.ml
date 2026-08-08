@@ -351,7 +351,14 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let graph = Core.create ()
   let execution = Execution.create ()
   let edges = Edges.create ()
-  let delivering = ref false
+  (* The single public-operation phase machine. [Planning] runs exactly
+     while a propagation pass executes; [Delivering] runs exactly while
+     post-commit delivery executes. *)
+  let phase : [ `Idle | `Planning | `Delivering ] ref = ref `Idle
+  let with_phase next f =
+    let previous = !phase in
+    phase := next;
+    Fun.protect ~finally:(fun () -> phase := previous) f
   let edge_graph_error : graph_error option ref = ref None
   let edge_start_failed = ref false
   let sampling_timer_starts = ref false
@@ -468,7 +475,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           Core.set_slot_contents entry (Some signal.raw.packed)
 
   let make_raw ?cutoff:cutoff_arg ~height ~dependencies compute =
-    if (graph.running || !delivering) && graph.current_scope = None then
+    if !phase <> `Idle && graph.current_scope = None then
       raise (Graph_error `Ambiguous_scope);
     let cutoff = cutoff_or_default cutoff_arg in
     let computed_in = ref (-1) in
@@ -558,7 +565,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
 
   let const value =
     Execution.sync execution @@ fun () ->
-    if (graph.running || !delivering) && graph.current_scope = None then
+    if !phase <> `Idle && graph.current_scope = None then
       raise (Graph_error `Ambiguous_scope);
     let raw =
       Core.make_node graph ~height:0 ~dependencies:[||]
@@ -713,7 +720,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
 
     let value var =
       Execution.sync execution @@ fun () ->
-      if graph.running then raise (Graph_error `Ambiguous_scope);
+      if !phase = `Planning then raise (Graph_error `Ambiguous_scope);
       var.value
 
     let watch var =
@@ -1284,11 +1291,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     | [] -> invalid_arg "Eta_signal: empty cleanup failure list"
 
   let run_edge_plan_sync ?(registration = false) plan =
-    let previous_delivering = !delivering in
-    delivering := true;
-    Fun.protect
-      ~finally:(fun () -> delivering := previous_delivering)
-    @@ fun () ->
+    with_phase `Delivering @@ fun () ->
     (if registration then (
        let disposals = List.rev !pending_edge_disposals in
        pending_edge_disposals := [];
@@ -1649,7 +1652,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           nodes_became_unnecessary :=
             !nodes_became_unnecessary
             + max 0 (necessary_before - necessary_count ()));
-      if !sampling_timer_starts || !delivering || graph.running then Ok ()
+      if !sampling_timer_starts || !phase <> `Idle then Ok ()
       else
         (match run_edge_plan_sync ~registration:true [] with
         | Ok () -> Ok ()
@@ -1873,7 +1876,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
 
   let stabilize () =
     Execution.sync execution @@ fun () ->
-    if !delivering then Error `Reentrant_stabilization
+    if !phase = `Delivering then Error `Reentrant_stabilization
     else
       let first_pass () =
         enqueue_uninitialized_necessary ();
@@ -1888,7 +1891,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           (fun (timer : timer) -> unlink_timer_work timer.source_node)
           !timers;
         incr stabilization_attempts;
-        match Core.stabilize graph with
+        match with_phase `Planning (fun () -> Core.stabilize graph) with
         | Error Core.Reentrant_stabilization ->
             List.iter (fun timer -> timer.rollback_refresh ()) !timers;
             Error `Reentrant_stabilization
@@ -2033,7 +2036,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
             if refreshed || !stale_bind || !stale_duplicate then (
               enqueue_uninitialized_necessary ();
               enqueue_all_uninitialized_necessary ();
-              match Core.stabilize graph with
+              match with_phase `Planning (fun () -> Core.stabilize graph) with
               | Error Core.Reentrant_stabilization ->
                   List.iter (fun timer -> timer.rollback_refresh ()) !timers;
                   Error `Reentrant_stabilization

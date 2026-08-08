@@ -91,7 +91,6 @@ and capsule = {
 and graph = {
   mutable phase : phase;
   mutable pass : int;
-  mutable running : bool;
   mutable slots : slot array;
   mutable slot_count : int;
   mutable free : int array;
@@ -204,7 +203,6 @@ let create () =
   {
     phase = Idle;
     pass = 0;
-    running = false;
     slots = [||];
     slot_count = 0;
     free = Array.make 8 0;
@@ -1000,9 +998,8 @@ let clear_admissions graph =
   graph.admission_length <- 0
 
 let run_stabilization graph checkpoint =
-  if graph.running then raise Exit
+  if graph.phase <> Idle then raise Exit
   else
-    graph.running <- true;
     match
       begin_pass graph;
       let changed = drain graph in
@@ -1011,7 +1008,6 @@ let run_stabilization graph checkpoint =
       commit graph;
       clear_admissions graph;
       if graph.phase = Cleanup_pending then cleanup graph;
-      graph.running <- false;
       changed
     with
     | changed -> changed
@@ -1020,7 +1016,6 @@ let run_stabilization graph checkpoint =
           bump_keyed_for graph `Reconciliation_rollback;
         done;
         rollback graph;
-        graph.running <- false;
         raise exn
 
 let stabilize ?checkpoint graph =
@@ -1489,7 +1484,6 @@ let keyed_child owner key = keyed_find owner key
 let set_keyed_event_recorder owner record = owner.event_recorder <- record
 let keyed_scope_valid (child : (_, _, _) keyed_child) = child.scope.valid
 let journal_high_water graph = graph.journal_high_water
-let phase graph = graph.phase
 let slot_count graph = graph.slot_count
 let free_count graph = graph.free_length
 
