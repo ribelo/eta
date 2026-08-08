@@ -712,8 +712,8 @@ let record_first_write (node : 'a node) =
     node.written_in <- graph.pass;
     graph.journal.(graph.journal_length) <- node.handle.slot;
     graph.journal_length <- graph.journal_length + 1;
-    graph.journal_high_water <-
-      max graph.journal_high_water graph.journal_length)
+    if graph.journal_length > graph.journal_high_water then
+      graph.journal_high_water <- graph.journal_length)
 
 let set graph variable candidate =
   if variable.signal.graph != graph then
