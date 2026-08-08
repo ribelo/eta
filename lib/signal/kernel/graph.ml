@@ -282,9 +282,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
     signal : 'a signal;
     cutoff : 'a Cutoff.t;
     mutable lifecycle : lifecycle;
-    mutable current : 'a option;
-    mutable published : 'a option;
-    mutable edge_base : 'a option;
+    mutable current : 'a or_null;
+    mutable published : 'a or_null;
+    mutable edge_base : 'a or_null;
     demand : Core.demand;
     scope_demand : Core.demand option;
     mutable timer_demands : timer list;
@@ -816,7 +816,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     Execution.sync execution @@ fun () ->
     check_signal source;
     Core.enable_change_listeners graph;
-    let selected = ref None in
+    let selected = ref Null in
     let inner = ref None in
     let scope = ref None in
     let owner = ref None in
@@ -835,8 +835,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
       in
       let changed =
         match !selected with
-        | None -> true
-        | Some old -> old != source_value
+        | Null -> true
+        | This old -> old != source_value
       in
       if changed then (
         let old_selected = !selected in
@@ -940,7 +940,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         scope_owners :=
           List.filter (fun ((scope : Core.scope), _) -> Core.scope_valid scope)
             !scope_owners;
-        selected := Some source_value;
+        selected := This source_value;
         inner := Some fresh;
         scope := Some fresh_scope;
         Core.push_capsule graph
@@ -1039,27 +1039,27 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let publish_observer observer value =
     if observer.lifecycle = Active then (
       if observer.callback_pending then (
-        observer.current <- Some value;
-        observer.published <- Some value;
+        observer.current <- This value;
+        observer.published <- This value;
         match observer.edge_base with
-        | Some base when base == value ->
+        | This base when base == value ->
             observer.callback_pending <- false;
             observer.deliver_pending <- false;
             Edges.publish edges observer.edge value
-        | None | Some _ ->
+        | Null | This _ ->
             observer.deliver_pending <- true;
             Edges.publish edges observer.edge value)
       else
       match observer.published with
-      | Some old when suppress observer.cutoff old value ->
-          observer.current <- Some value;
-          observer.published <- Some value;
+      | This old when suppress observer.cutoff old value ->
+          observer.current <- This value;
+          observer.published <- This value;
           observer.callback_pending <- false;
           observer.deliver_pending <- false;
           Edges.publish edges observer.edge value
       | _ ->
-          observer.current <- Some value;
-          observer.published <- Some value;
+          observer.current <- This value;
+          observer.published <- This value;
           observer.callback_pending <- observer.has_callback;
           observer.deliver_pending <- true;
           Edges.publish edges observer.edge value)
@@ -1119,9 +1119,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
         then (
           let necessary_before = necessary_count () in
           observer.lifecycle <- Invalid;
-          observer.current <- None;
-          observer.published <- None;
-          observer.edge_base <- None;
+          observer.current <- Null;
+          observer.published <- Null;
+          observer.edge_base <- Null;
           observer.callback_pending <- false;
           Core.release observer.demand;
           Option.iter Core.release observer.scope_demand;
@@ -1439,9 +1439,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
           signal;
           cutoff = cutoff_or_default cutoff;
           lifecycle = Active;
-          current = None;
-          published = None;
-          edge_base = None;
+          current = Null;
+          published = Null;
+          edge_base = Null;
           demand;
           scope_demand;
           timer_demands;
@@ -1548,9 +1548,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
           match on_update, Edges.current delivery with
           | None, Some update ->
               (Option.get !observer_ref).published <-
-                Some
-                  (match update with
-                  | Edges.Initialized value | Edges.Changed (_, value) -> value);
+                (match update with
+                | Edges.Initialized value | Edges.Changed (_, value) -> This value);
               Edges.Success ()
           | None, None -> Edges.Success ()
           | Some callback, Some update ->
@@ -1563,10 +1562,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
               | Edges.Success () ->
                   (Option.get !observer_ref).callback_pending <- false;
                   (Option.get !observer_ref).published <-
-                    Some
-                      (match update with
-                      | Edges.Initialized value | Edges.Changed (_, value) ->
-                          value);
+                    (match update with
+                    | Edges.Initialized value | Edges.Changed (_, value) ->
+                        This value);
                   ()
               | Edges.Failure _ -> ());
               outcome
@@ -1595,8 +1593,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
       match observer.lifecycle, observer.current with
       | Disposed, _ -> Error `Disposed_observer
       | Invalid, _ -> Error `Invalid_scope
-      | Active, Some value -> Ok value
-      | Active, None ->
+      | Active, This value -> Ok value
+      | Active, Null ->
           if !stabilization_attempts > observer.observed_attempt then
             Error `No_current_value
           else Error `Uninitialized_observer
@@ -2125,7 +2123,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
                  | Active -> "active"
                  | Invalid -> "invalid_scope"
                  | Disposed -> "disposed")
-                 (if Option.is_some observer.current then "current"
+                 (if (match observer.current with Null -> false | This _ -> true) then "current"
                   else "uninitialized")
                  (if
                     observer.lifecycle = Invalid

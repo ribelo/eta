@@ -1,4 +1,4 @@
-type 'a t = { suppress : published:'a -> candidate:'a -> bool }
+type ('a : value_or_null) t = { suppress : published:'a -> candidate:'a -> bool }
 
 let suppress cutoff = cutoff.suppress
 

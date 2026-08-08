@@ -12,7 +12,9 @@ type 'error failure =
   | Interrupted of exn
 
 type ('a, 'error) outcome = Success of 'a | Failure of 'error failure
-type 'a update = Initialized of 'a | Changed of 'a * 'a
+type ('a : value_or_null) update =
+  | Initialized of 'a
+  | Changed of 'a * 'a
 type finish_reason = Disposed | Invalid_scope
 
 type 'error run_error =
@@ -21,9 +23,10 @@ type 'error run_error =
   | Callback_failure of 'error failure
 
 type t
-type 'a observer
-type 'a delivery
-type packed_observer = Observer : 'a observer -> packed_observer
+type ('a : value_or_null) observer
+type ('a : value_or_null) delivery
+type packed_observer =
+  | Observer : ('a : value_or_null). 'a observer -> packed_observer
 type ('runtime, 'error) timer
 
 type ('runtime, 'error) timer_policy = {
@@ -37,15 +40,16 @@ type ('runtime, 'error) timer_policy = {
 val create : unit -> t
 
 val observe :
+  ('a : value_or_null).
   t ->
   ?finish:(finish_reason -> (unit, 'error) outcome) ->
   ('a delivery -> (unit, 'error) outcome) ->
   'a observer
 
-val publish : t -> 'a observer -> 'a -> unit
-val dispose : t -> 'a observer -> unit
-val invalidate : t -> 'a observer -> unit
-val current : 'a delivery -> 'a update option
+val publish : ('a : value_or_null). t -> 'a observer -> 'a -> unit
+val dispose : ('a : value_or_null). t -> 'a observer -> unit
+val invalidate : ('a : value_or_null). t -> 'a observer -> unit
+val current : ('a : value_or_null). 'a delivery -> 'a update option
 
 val create_timer_with_cleanup :
   t ->

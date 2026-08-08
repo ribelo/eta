@@ -12,7 +12,9 @@ type 'error failure =
   | Interrupted of exn
 
 type ('a, 'error) outcome = Success of 'a | Failure of 'error failure
-type 'a update = Initialized of 'a | Changed of 'a * 'a
+type ('a : value_or_null) update =
+  | Initialized of 'a
+  | Changed of 'a * 'a
 type finish_reason = Disposed | Invalid_scope
 type lifecycle = Active | Finished of finish_reason
 
@@ -30,13 +32,13 @@ type mutable_stats = {
   mutable releases : int;
 }
 
-type 'a cursor =
+type ('a : value_or_null) cursor =
   | Never_delivered
   | Delivered of 'a
   | Pending of int * 'a update
   | Running of int * 'a update
 
-type 'a observer = {
+type ('a : value_or_null) observer = {
   owner : t;
   mutable lifecycle : lifecycle;
   mutable cursor : 'a cursor;
@@ -44,14 +46,15 @@ type 'a observer = {
   finish : finish_reason -> (unit, Obj.t) outcome;
 }
 
-and 'a delivery = {
+and ('a : value_or_null) delivery = {
   observer : 'a observer;
   token : int;
   event : 'a update;
   mutable acknowledged : bool;
 }
 
-and packed_observer = Observer : 'a observer -> packed_observer
+and packed_observer =
+  | Observer : ('a : value_or_null). 'a observer -> packed_observer
 
 and hook =
   | Hook : (unit -> (unit, 'error) outcome) -> hook
@@ -115,7 +118,7 @@ type installed_timer =
       -> installed_timer
 
 type claimed_delivery =
-  | Claim : 'a observer * int * 'a update -> claimed_delivery
+  | Claim : ('a : value_or_null). 'a observer * int * 'a update -> claimed_delivery
 
 let checked_succ label value =
   if value = max_int then invalid_arg (label ^ " exhausted") else value + 1
@@ -137,7 +140,7 @@ let create () =
       };
   }
 
-let observe : type a error.
+let observe : type (a : value_or_null) error.
     t ->
     ?finish:(finish_reason -> (unit, error) outcome) ->
     (a delivery -> (unit, error) outcome) ->
