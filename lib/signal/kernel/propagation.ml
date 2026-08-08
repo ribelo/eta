@@ -497,6 +497,28 @@ let detach parent child =
   parent_node.graph.work.topology_edits <-
     parent_node.graph.work.topology_edits + 1
 
+(* Replace [old] with [child] in [parent]'s dependency array in place instead
+   of detach-then-attach, which rebuilds the array twice. Falls back to
+   [attach] when [old] is not present. Charges the same two topology edits. *)
+let replace_dependency parent old child =
+  let P parent_node = parent in
+  let P old_node = old in
+  let length = Array.length parent_node.dependencies in
+  let found = ref (-1) in
+  for index = 0 to length - 1 do
+    match parent_node.dependencies.(index) with
+    | P candidate when candidate.handle = old_node.handle -> found := index
+    | P _ -> ()
+  done;
+  match !found with
+  | -1 -> attach parent child
+  | index ->
+      parent_node.dependencies.(index) <- child;
+      remove_dependent old parent;
+      add_dependent child parent;
+      parent_node.graph.work.topology_edits <-
+        parent_node.graph.work.topology_edits + 2
+
 let make_node ?(constant = false) graph ~height ~dependencies ~compute ~cutoff
     ~initial =
   if graph.phase = Cleanup_pending then raise (Wrong_phase graph.phase);

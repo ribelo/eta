@@ -168,6 +168,7 @@ val handle : ('a : value_or_null). 'a signal -> handle
 val push_capsule : graph -> capsule -> unit
 val attach : packed -> packed -> unit
 val detach : packed -> packed -> unit
+val replace_dependency : packed -> packed -> packed -> unit
 val make_node :
   ('a : value_or_null).
   ?constant:bool ->

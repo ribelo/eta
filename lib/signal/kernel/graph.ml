@@ -902,13 +902,13 @@ module Make_impl (Observer_error : Observer_error) () = struct
             raise Deferred_bind
           else raise (Graph_error `Cycle));
         let packed_owner = Core.P (Option.get !owner).raw.node in
-        Option.iter
-          (fun old ->
-            Core.detach packed_owner (Core.P old.raw.node);
+        (match old_inner with
+        | None -> Core.attach packed_owner (Core.P fresh.raw.node)
+        | Some old ->
+            Core.replace_dependency packed_owner (Core.P old.raw.node)
+              (Core.P fresh.raw.node);
             if (Option.get !owner).raw.node.necessary then
-              Core.deactivate (Core.P old.raw.node))
-          old_inner;
-        Core.attach packed_owner (Core.P fresh.raw.node);
+              Core.deactivate (Core.P old.raw.node));
         if (Option.get !owner).raw.node.height <= fresh.raw.node.height then
           ensure_parent_height ~current:true packed_owner
             (fresh.raw.node.height + 1);
