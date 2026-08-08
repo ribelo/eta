@@ -1,49 +1,35 @@
-# Eta Signal dynamic-switch allocation ideas
+# Eta Signal dynamic-switch wall time ideas
 
-## Retained allocation findings
+## Wall-time work
 
-- OxCaml `or_null` raw values made changed/cutoff allocation depth independent
-  and dropped dynamic words from 322 to 290.
-- Empty timer-root descendant unlinking now returns immediately.
-- The stabilize and delivery pass bodies are stack allocated through local-mode
-  `Execution.sync` and `with_phase` parameters; dynamic words are now 273.
-- Duplicate-dependency freshness uses a generation-safe candidate registry.
-- Successful passes without checkpoints no longer scan all graph slots to clear
-  drained queues.
-- Timer-free graphs bypass timer discovery and refresh planning.
-- Zero or one observer bypasses dependency sorting.
-- Empty stale-freshness registries bypass repair setup.
+- Profile `eta_signal.dynamic.switch` with `perf` (release symbols) and compare
+  against Incremental's bind path. The allocation session removed ~70% of the
+  per-switch heap cost; wall time may now be dominated by scheduling, scope
+  invalidation, or the deferral protocol rather than allocation.
+- Measure dynamic wall at several operation counts to separate fixed pass
+  overhead from per-switch cost.
+- Inspect Incremental `Bind_lhs_change` for the measured operation.
+- Guard measured leaf helpers with `[@zero_alloc]` only after the profile shows
+  a specific allocation or branch dominating.
 
-## Dynamic-switch work
+## Retained allocation findings (dynamic switch)
 
-- Profile `eta_signal.dynamic.switch` with the bench-identical memtrace probe
-  (`.scratch/allocprobe` plus a temporary workspace copy of
-  `bench/signal_compare/compare.ml`); attribute every steady-state word.
-- Dynamic bind creates and retires a scope per switch; measure scope records,
-  the inner-graph node set, and the topology repair pass.
-- Measure bind `compute` re-evaluation, the selector `selected`/`inner` refs,
-  and `enqueue_stale_freshness` when the inner graph is rebuilt.
-- Test OxCaml `local_`/`stack_` on measured per-switch closures and `or_null`
-  on measured per-switch options, then guard changed leaves with
-  `[@zero_alloc]`.
+- 273 -> 130 words; dynamic wall 737 -> 563 ns.
+- Leaf fast paths, stack-allocated pass closures, hoisted recursive walks,
+  in-place dependency replacement, leaf-inner listener skip, node bool
+  bitfield.
+- Successful passes without checkpoints skip full queue scans; timer-free
+  graphs bypass timer discovery; zero/one observer bypasses sorting.
 
-## Dynamic-switch progress (runs 37-46)
+## Remaining measured allocation sites (130 words)
 
-- 273 -> 145 words (-46.9%); dynamic wall 737 -> 590 ns.
-- Leaf fast paths for owner-reachability and uninitialized-topology walks (212).
-- Stack-allocated Post_commit claim closures, bind validate/retire closures,
-  const pass closure; local-mode iter consumers (175 -> 161 area).
-- Hoisted recursive retire walks to module-level functions.
-- replace_dependency mutates the bind dependency array in place (155 -> 145).
-
-## Remaining measured dynamic sites (145 words)
-
-- make_node node record (25) + signal record (5).
-- Rollback capsule closure + record (14).
-- Ancestry List.filter (6), enqueue_stale_freshness Hashtbl closure (6).
-- Scope record (3) + ancestry cons cells (6).
-- Escaping const compute closure (4), change-listener closure (7), initializer
-  closures (7), Post_commit event/cursor data (12).
-- Candidate: convert the bind rollback capsule to a structured variant; shrink
-  the 24-field node record via bool packing (54 access sites); or reuse the
-  owner dependency array capacity instead of reallocating on rollback.
+- Node record (21) + signal record (5) = 26 (fresh inner const per switch).
+- Rollback capsule closure + record (14) - existential refs cap variant gains
+  at ~3 words; not worth the protocol change.
+- Ancestry List.filter (6) - bounded-growth requirement blocks allocation-free
+  redesign without a children-index structure.
+- enqueue_stale_freshness Hashtbl closure (6) - would need an array iteration
+  registry parallel to bind_evaluations.
+- Scope record (3) + ancestry tuple+cons pushes (12).
+- Escaping const compute/initializer closures (11), Post_commit event/cursor
+  data (12), bind Null-branch closure (3).

@@ -1,9 +1,9 @@
-# Autoresearch: Eta Signal dynamic-switch allocation
+# Autoresearch: Eta Signal dynamic-switch wall time
 
 ## Objective
 
-Reduce steady-state allocation for dynamic `bind` switching in
-`bench/signal_compare`. Jane Street Incremental is the fixed reference.
+Reduce the wall time of dynamic `bind` switching in `bench/signal_compare`.
+Jane Street Incremental is the fixed reference (145.03 ns frozen median).
 
 The workload set contains these operations:
 
@@ -16,9 +16,9 @@ the final observer read are outside the timed operation.
 
 ## Metrics
 
-- **Primary**: `signal_dynamic_words` (allocated words, lower is better).
+- **Primary**: `signal_dynamic_wall_ns` (nanoseconds, lower is better).
 - **Secondary**:
-  - `signal_dynamic_wall_ns`
+  - `signal_dynamic_words`
   - `signal_changed_100_words`
   - `signal_wall_ratio_geomean`
   - `signal_worst_wall_ratio`
@@ -81,8 +81,8 @@ behavior, law, model, package, complexity, and install gates.
 
 ## Initial Work
 
-1. Measure the retained dynamic-switch allocation baseline.
-2. Attribute every steady-state allocation category in the dynamic row with the
-   bench-identical memtrace probe.
-3. Inspect dynamic `bind` scope creation, retirement, and topology repair.
+1. Measure the retained dynamic-switch wall baseline.
+2. Profile the dynamic row with release symbols and `perf`.
+3. Inspect the matching Incremental bind path after the profile identifies
+   Eta's dominant cost.
 4. Prefer removal of generic pass work over workload-specific code.
