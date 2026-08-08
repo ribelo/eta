@@ -1,7 +1,7 @@
 # Module and package ownership
 
 Type: grilling
-Status:
+Status: claimed
 Blocked by: 09, 12, 17
 
 ## Question
