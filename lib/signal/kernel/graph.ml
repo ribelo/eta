@@ -379,6 +379,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
     Hashtbl.create 32
   let custom_cutoff_nodes : (int, Core.handle) Hashtbl.t =
     Hashtbl.create 16
+  let duplicate_dependency_nodes : (int, Core.handle) Hashtbl.t =
+    Hashtbl.create 16
   let bind_nodes : (int, Core.handle) Hashtbl.t = Hashtbl.create 16
   let bind_evaluations : (int, Core.handle * int ref) Hashtbl.t =
     Hashtbl.create 16
@@ -506,6 +508,16 @@ module Make_impl (Observer_error : Observer_error) () = struct
       | None -> create ()
       | Some scope -> Core.with_scope graph scope create
     in
+    let duplicate = ref false in
+    for left = 0 to Array.length dependencies - 1 do
+      for right = left + 1 to Array.length dependencies - 1 do
+        let Core.P left_node = dependencies.(left) in
+        let Core.P right_node = dependencies.(right) in
+        if left_node.handle = right_node.handle then duplicate := true
+      done
+    done;
+    if !duplicate then
+      Hashtbl.replace duplicate_dependency_nodes raw.handle.slot raw.handle;
     if cutoff != Cutoff.phys_equal then
       Hashtbl.replace custom_cutoff_nodes raw.handle.slot raw.handle;
     let weak_raw = Weak.create 1 in
@@ -1852,7 +1864,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           let second_pass () =
             let stale =
               Core.enqueue_stale_freshness graph ~bind_nodes
-                ~custom_cutoff_nodes
+                ~custom_cutoff_nodes ~duplicate_dependency_nodes
             in
             if refreshed || stale then (
               enqueue_uninitialized_necessary ();

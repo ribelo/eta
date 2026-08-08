@@ -1173,7 +1173,8 @@ let unlink_queued_descendants graph roots =
   in
   List.iter walk roots
 
-let enqueue_stale_freshness graph ~bind_nodes ~custom_cutoff_nodes =
+let enqueue_stale_freshness graph ~bind_nodes ~custom_cutoff_nodes
+    ~duplicate_dependency_nodes =
   let stale = ref false in
   Hashtbl.iter
     (fun slot handle ->
@@ -1198,17 +1199,11 @@ let enqueue_stale_freshness graph ~bind_nodes ~custom_cutoff_nodes =
       if node.necessary then enqueue packed;
       List.iter enqueue_descendants node.dependents)
   in
-  for slot = 0 to graph.slot_count - 1 do
-    match slot_contents graph.slots.(slot) with
-    | Some (P node) when node.necessary ->
-        let duplicate = ref false in
-        for left = 0 to Array.length node.dependencies - 1 do
-          for right = left + 1 to Array.length node.dependencies - 1 do
-            let P left_node = node.dependencies.(left) in
-            let P right_node = node.dependencies.(right) in
-            if left_node.handle = right_node.handle then duplicate := true
-          done
-        done;
+  Hashtbl.iter
+    (fun slot handle ->
+      match slot_contents graph.slots.(slot) with
+      | Some (P node)
+        when node.handle = handle && node.necessary ->
         let dependency_changed =
           Array.exists
             (fun (P dependency) -> dependency.written_in = committed_pass)
@@ -1221,12 +1216,12 @@ let enqueue_stale_freshness graph ~bind_nodes ~custom_cutoff_nodes =
               = Some dependency.handle)
             node.dependencies
         in
-        if !duplicate && dependency_changed && not custom_dependency then (
+        if dependency_changed && not custom_dependency then (
           enqueue (P node);
           List.iter enqueue_descendants node.dependents;
           stale := true)
-    | Some _ | None -> ()
-  done;
+      | Some _ | None -> ())
+    duplicate_dependency_nodes;
   !stale
 
 let reinstall_freed graph handle packed =

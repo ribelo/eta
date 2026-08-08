@@ -201,7 +201,8 @@ val unlink_queued_descendants : 'a -> packed list -> unit
 val enqueue_stale_freshness :
   graph ->
   bind_nodes:(int, handle) Hashtbl.t ->
-  custom_cutoff_nodes:(int, handle) Hashtbl.t -> bool
+  custom_cutoff_nodes:(int, handle) Hashtbl.t ->
+  duplicate_dependency_nodes:(int, handle) Hashtbl.t -> bool
 val reinstall_freed : graph -> handle -> packed -> bool
 val stabilize :
   ?checkpoint:(unit -> unit) -> graph -> (stabilization, error) result
