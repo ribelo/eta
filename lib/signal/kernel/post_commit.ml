@@ -388,6 +388,8 @@ let failed_stop (timer : (_, _) timer) =
   claim timer.owner (fun () -> enqueue timer)
 
 let run_actions actions =
+  if actions = [] then []
+  else
   let failures = ref [] in
   let installed = ref [] in
   let start_failed = ref false in
@@ -505,6 +507,8 @@ let rec deliver t = function
               raise exn)
 
 let drain_cleanup_failures t =
+  if Queue.is_empty t.timer_hooks && Queue.is_empty t.hooks then []
+  else
   let timer_hooks =
     claim t @@ fun () ->
     let hooks =
