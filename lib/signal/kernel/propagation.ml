@@ -1258,7 +1258,7 @@ let run_stabilization graph checkpoint =
       begin_pass graph;
       let changed = drain graph in
       Option.iter (fun checkpoint -> checkpoint ()) checkpoint;
-      clear_queues graph;
+      if Option.is_some checkpoint then clear_queues graph;
       commit graph;
       clear_admissions graph;
       if graph.phase = Cleanup_pending then cleanup graph;
