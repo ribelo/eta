@@ -820,7 +820,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
       evaluated_in := Core.current_pass graph;
       try
       let source_value =
-        match Core.value source.raw with
+        match source.raw.node.current with
         | This value -> value
         | Null -> raise Deferred_source
       in
@@ -958,7 +958,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
                 scope := old_scope);
             cleanup_capsule = (fun () -> ());
           });
-      (match Core.value (Option.get !inner).raw with
+      (* Both reads are from dependencies attached to the bind owner. The
+         dependency array keeps their nodes live during this computation. *)
+      (match (Option.get !inner).raw.node.current with
       | This _ as value -> value
       | Null ->
           let owner = Option.get !owner in
