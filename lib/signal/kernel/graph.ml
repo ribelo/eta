@@ -1163,22 +1163,34 @@ module Make_impl (Observer_error : Observer_error) () = struct
           !observers
 
   let collect_observers () =
-    let ordered =
-      observer_order
-        (List.filter
-           (fun (O observer) -> observer.lifecycle = Active)
-           !observers)
-    in
-    List.iter
-      (fun (O observer) ->
-        if observer.lifecycle = Active then
-          match Core.value observer.signal.raw with
+    match !observers with
+    | [] -> []
+    | [ (O observer) ] ->
+        (* Singleton fast path: the generic path filters, orders (identity for
+           one), publishes, and maps one edge. *)
+        if observer.lifecycle = Active then (
+          (match Core.value observer.signal.raw with
           | This value -> publish_observer observer value
-          | Null -> ())
-      ordered;
-    List.map
-      (fun (O observer) -> Edges.Observer observer.edge)
-      ordered
+          | Null -> ());
+          [ Edges.Observer observer.edge ])
+        else []
+    | _ ->
+        let ordered =
+          observer_order
+            (List.filter
+               (fun (O observer) -> observer.lifecycle = Active)
+               !observers)
+        in
+        List.iter
+          (fun (O observer) ->
+            if observer.lifecycle = Active then
+              match Core.value observer.signal.raw with
+              | This value -> publish_observer observer value
+              | Null -> ())
+          ordered;
+        List.map
+          (fun (O observer) -> Edges.Observer observer.edge)
+          ordered
 
   let sync_outcome f =
     match (try Ok (f ()) with exn -> Error exn) with
