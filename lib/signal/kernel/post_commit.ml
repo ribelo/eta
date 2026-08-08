@@ -120,7 +120,7 @@ type claimed_delivery =
 let checked_succ label value =
   if value = max_int then invalid_arg (label ^ " exhausted") else value + 1
 
-let claim _t f = f ()
+let claim _t (f @ local) = f ()
 
 let create () =
   {
@@ -161,23 +161,26 @@ let base = function
 
 let publish t observer value =
   if observer.owner != t then invalid_arg "selected_edges: observer owner";
-  claim t @@ fun () ->
-  match observer.lifecycle with
-  | Finished _ -> ()
-  | Active -> (
-      match base observer.cursor with
-      | Some old when old == value -> observer.cursor <- Delivered value
-      | previous ->
-          let token =
-            checked_succ "selected_edges observer token" t.next_token
-          in
-          let event =
-            match previous with
-            | None -> Initialized value
-            | Some old -> Changed (old, value)
-          in
-          t.next_token <- token;
-          observer.cursor <- Pending (token, event))
+  let outcome =
+    claim t @@ stack_ (fun () ->
+      match observer.lifecycle with
+      | Finished _ -> ()
+      | Active -> (
+          match base observer.cursor with
+          | Some old when old == value -> observer.cursor <- Delivered value
+          | previous ->
+              let token =
+                checked_succ "selected_edges observer token" t.next_token
+              in
+              let event =
+                match previous with
+                | None -> Initialized value
+                | Some old -> Changed (old, value)
+              in
+              t.next_token <- token;
+              observer.cursor <- Pending (token, event)))
+  in
+  outcome
 
 let finish_observer_under_lane t observer reason =
   match observer.lifecycle with
@@ -201,32 +204,38 @@ let invalidate t observer = finish_observer t observer Invalid_scope
 
 let current delivery =
   let observer = delivery.observer in
-  claim observer.owner @@ fun () ->
-  if delivery.acknowledged then None
-  else
-    match observer.lifecycle, observer.cursor with
-    | Active, (Pending (token, _) | Running (token, _))
-      when token = delivery.token ->
-        Some delivery.event
-    | Active, _ | Finished _, _ -> None
+  let outcome =
+    claim observer.owner @@ stack_ (fun () ->
+      if delivery.acknowledged then None
+      else
+        match observer.lifecycle, observer.cursor with
+        | Active, (Pending (token, _) | Running (token, _))
+          when token = delivery.token ->
+            Some delivery.event
+        | Active, _ | Finished _, _ -> None)
+  in
+  outcome
 
 let acknowledge delivery =
   let observer = delivery.observer in
-  claim observer.owner @@ fun () ->
-  if delivery.acknowledged then false
-  else
-    match observer.lifecycle, observer.cursor with
-    | Active, (Pending (token, event) | Running (token, event))
-      when token = delivery.token ->
-        delivery.acknowledged <- true;
-        observer.cursor <-
-          Delivered
-            (match event with
-            | Initialized value | Changed (_, value) -> value);
-        observer.owner.counts.acknowledgements <-
-          observer.owner.counts.acknowledgements + 1;
-        true
-    | Active, _ | Finished _, _ -> false
+  let outcome =
+    claim observer.owner @@ stack_ (fun () ->
+      if delivery.acknowledged then false
+      else
+        match observer.lifecycle, observer.cursor with
+        | Active, (Pending (token, event) | Running (token, event))
+          when token = delivery.token ->
+          delivery.acknowledged <- true;
+          observer.cursor <-
+            Delivered
+              (match event with
+              | Initialized value | Changed (_, value) -> value);
+          observer.owner.counts.acknowledgements <-
+            observer.owner.counts.acknowledgements + 1;
+          true
+        | Active, _ | Finished _, _ -> false)
+  in
+  outcome
 
 let publish_sealed delivery publish =
   Fun.protect
@@ -321,35 +330,38 @@ let daemon_failed t (timer : (_, _) timer) ~generation =
 let queued_timers t = Queue.fold (fun rest timer -> timer :: rest) [] t.timers
 
 let claim_timer_actions t =
-  claim t @@ fun () ->
-  let queued = List.rev (queued_timers t) in
-  match queued with
-  | [] -> Ok []
-  | _ :: _ -> (
-    Queue.clear t.timers;
-    let actions = ref [] in
-    List.iter
-      (fun (Timer timer) ->
-        if timer.queued then (
-          timer.queued <- false;
-          t.counts.timer_claims <- t.counts.timer_claims + 1;
-          match timer.demanded, timer.state with
-          | true, Inactive ->
-              let generation =
-                checked_succ "selected_edges timer generation"
-                  timer.generation
-              in
-              timer.generation <- generation;
-              timer.state <- Starting generation;
-              actions := Start (timer, generation) :: !actions
-          | false, Running (generation, stop) ->
-              actions := Stop (timer, generation, stop) :: !actions
-          | false, Starting _ ->
-              (* Installation will observe the generation fence. *)
-              ()
-          | true, (Starting _ | Running _) | false, Inactive -> ()))
-      queued;
-    Ok (List.rev !actions))
+  let outcome =
+    claim t @@ stack_ (fun () ->
+      let queued = List.rev (queued_timers t) in
+      match queued with
+      | [] -> Ok []
+      | _ :: _ -> (
+        Queue.clear t.timers;
+        let actions = ref [] in
+        List.iter
+          (fun (Timer timer) ->
+            if timer.queued then (
+              timer.queued <- false;
+              t.counts.timer_claims <- t.counts.timer_claims + 1;
+              match timer.demanded, timer.state with
+              | true, Inactive ->
+                  let generation =
+                    checked_succ "selected_edges timer generation"
+                      timer.generation
+                  in
+                  timer.generation <- generation;
+                  timer.state <- Starting generation;
+                  actions := Start (timer, generation) :: !actions
+              | false, Running (generation, stop) ->
+                  actions := Stop (timer, generation, stop) :: !actions
+              | false, Starting _ ->
+                  (* Installation will observe the generation fence. *)
+                  ()
+              | true, (Starting _ | Running _) | false, Inactive -> ()))
+          queued;
+        Ok (List.rev !actions)))
+  in
+  outcome
 
 let settle_start (timer : (_, _) timer) generation stop =
   claim timer.owner @@ fun () ->
@@ -458,30 +470,37 @@ let run_hooks hooks =
   List.rev !failures
 
 let claim_delivery t (Observer observer) =
-  claim t @@ fun () ->
-  if observer.owner != t then invalid_arg "selected_edges: observer plan owner";
-  match observer.lifecycle, observer.cursor with
-  | Active, Pending (token, event) ->
-      observer.cursor <- Running (token, event);
-      t.counts.callback_claims <- t.counts.callback_claims + 1;
-      Some (Claim (observer, token, event))
-  | Active, (Never_delivered | Delivered _ | Running _) | Finished _, _ -> None
+  let outcome =
+    claim t @@ stack_ (fun () ->
+      if observer.owner != t then invalid_arg "selected_edges: observer plan owner";
+      match observer.lifecycle, observer.cursor with
+      | Active, Pending (token, event) ->
+          observer.cursor <- Running (token, event);
+          t.counts.callback_claims <- t.counts.callback_claims + 1;
+          Some (Claim (observer, token, event))
+      | Active, (Never_delivered | Delivered _ | Running _) | Finished _, _ ->
+          None)
+  in
+  outcome
 
 let settle_delivery observer token event delivered =
-  claim observer.owner @@ fun () ->
-  match observer.lifecycle, observer.cursor with
-  | Active, Running (active, _) when active = token ->
-      if delivered then (
-        observer.cursor <-
-          Delivered
-            (match event with
-            | Initialized value | Changed (_, value) -> value);
-        observer.owner.counts.acknowledgements <-
-          observer.owner.counts.acknowledgements + 1)
-      else (
-        observer.cursor <- Pending (token, event);
-        observer.owner.counts.releases <- observer.owner.counts.releases + 1)
-  | Active, _ | Finished _, _ -> ()
+  let outcome =
+    claim observer.owner @@ stack_ (fun () ->
+      match observer.lifecycle, observer.cursor with
+      | Active, Running (active, _) when active = token ->
+          if delivered then (
+            observer.cursor <-
+              Delivered
+                (match event with
+                | Initialized value | Changed (_, value) -> value);
+            observer.owner.counts.acknowledgements <-
+              observer.owner.counts.acknowledgements + 1)
+          else (
+            observer.cursor <- Pending (token, event);
+            observer.owner.counts.releases <- observer.owner.counts.releases + 1)
+      | Active, _ | Finished _, _ -> ())
+  in
+  outcome
 
 let rec deliver t = function
   | [] -> Ok ()
