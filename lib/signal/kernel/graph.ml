@@ -1083,31 +1083,34 @@ module Make_impl (Observer_error : Observer_error) () = struct
     ()
 
   let reconcile_timer_demands () =
-    List.iter
-      (fun (O observer) ->
-        if observer.lifecycle = Active then (
-          let next = signal_timers observer.signal in
-          List.iter
-            (fun (timer : timer) ->
-              if not (List.exists (( == ) timer) next) then (
-                timer.demand <- max 0 (timer.demand - 1);
-                if timer.demand = 0 then (
-                  timer.start_pending <- false;
-                  Edges.set_timer_demand edges timer.edge_timer false)))
-            observer.timer_demands;
-          List.iter
-            (fun (timer : timer) ->
-              if
-                not
-                  (List.exists (( == ) timer) observer.timer_demands)
-              then (
-                timer.demand <- timer.demand + 1;
-                if timer.demand = 1 then (
-                  timer.start_pending <- true;
-                  Edges.set_timer_demand edges timer.edge_timer true)))
-            next;
-          observer.timer_demands <- next))
-      !observers
+    match !timers with
+    | [] -> ()
+    | _ ->
+        List.iter
+          (fun (O observer) ->
+            if observer.lifecycle = Active then (
+              let next = signal_timers observer.signal in
+              List.iter
+                (fun (timer : timer) ->
+                  if not (List.exists (( == ) timer) next) then (
+                    timer.demand <- max 0 (timer.demand - 1);
+                    if timer.demand = 0 then (
+                      timer.start_pending <- false;
+                      Edges.set_timer_demand edges timer.edge_timer false)))
+                observer.timer_demands;
+              List.iter
+                (fun (timer : timer) ->
+                  if
+                    not
+                      (List.exists (( == ) timer) observer.timer_demands)
+                  then (
+                    timer.demand <- timer.demand + 1;
+                    if timer.demand = 1 then (
+                      timer.start_pending <- true;
+                      Edges.set_timer_demand edges timer.edge_timer true)))
+                next;
+              observer.timer_demands <- next))
+          !observers
 
   let collect_observers () =
     let ordered =
@@ -1807,59 +1810,62 @@ module Make_impl (Observer_error : Observer_error) () = struct
       (match first_pass () with
       | Error error -> Error (error :> stabilize_error)
       | Ok initial_batch -> (
-          let _started_refreshed, started =
-            match
-              (try
-                 List.iter
-                   (fun (timer : timer) ->
-                     if timer.demand = 0 then timer.rollback_refresh ())
-                   !timers;
-                 Ok (prepare_timer_starts_now ())
-               with exn -> Error exn)
-            with
-            | Ok refreshed -> refreshed
-            | Error exn ->
-                drain_edge_cleanup_sync ();
-                raise exn
-          in
-          let started_admitted =
-            List.fold_left
-              (fun admitted (timer : timer) ->
-                (timer.demand > 0 && timer.admit_refresh ()) || admitted)
-              false started
-          in
-          let active_refreshed =
-            let active =
-              List.fold_left
-                (fun active (O observer) ->
-                  if observer.lifecycle <> Active then active
-                  else
-                    List.fold_left
-                      (fun active timer ->
-                        if
-                          List.exists (( == ) timer) started
-                          || List.exists (( == ) timer) active
-                        then active
-                        else timer :: active)
-                      active (signal_timers observer.signal))
-                [] !observers
-            in
-            match active with
-            | [] -> false
-            | timers ->
-                let now_for = make_now_sampler () in
-                List.iter
-                  (fun timer -> timer.refresh (now_for timer))
-                  timers;
-                ignore
-                  (List.fold_left
-                     (fun admitted timer ->
-                       timer.admit_refresh () || admitted)
-                     false timers);
-                true
-          in
           let refreshed =
-            started <> [] || started_admitted || active_refreshed
+            match !timers with
+            | [] -> false
+            | _ ->
+                let _started_refreshed, started =
+                  match
+                    (try
+                       List.iter
+                         (fun (timer : timer) ->
+                           if timer.demand = 0 then timer.rollback_refresh ())
+                         !timers;
+                       Ok (prepare_timer_starts_now ())
+                     with exn -> Error exn)
+                  with
+                  | Ok refreshed -> refreshed
+                  | Error exn ->
+                      drain_edge_cleanup_sync ();
+                      raise exn
+                in
+                let started_admitted =
+                  List.fold_left
+                    (fun admitted (timer : timer) ->
+                      (timer.demand > 0 && timer.admit_refresh ()) || admitted)
+                    false started
+                in
+                let active_refreshed =
+                  let active =
+                    List.fold_left
+                      (fun active (O observer) ->
+                        if observer.lifecycle <> Active then active
+                        else
+                          List.fold_left
+                            (fun active timer ->
+                              if
+                                List.exists (( == ) timer) started
+                                || List.exists (( == ) timer) active
+                              then active
+                              else timer :: active)
+                            active (signal_timers observer.signal))
+                      [] !observers
+                  in
+                  match active with
+                  | [] -> false
+                  | timers ->
+                      let now_for = make_now_sampler () in
+                      List.iter
+                        (fun timer -> timer.refresh (now_for timer))
+                        timers;
+                      ignore
+                        (List.fold_left
+                           (fun admitted timer ->
+                             timer.admit_refresh () || admitted)
+                           false timers);
+                      true
+                in
+                started <> [] || started_admitted || active_refreshed
           in
           let second_pass () =
             let stale =
