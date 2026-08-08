@@ -721,7 +721,7 @@ let set graph variable candidate =
     retain_admission graph variable.signal.node;
     enqueue variable.signal.packed)
 
-let rec evaluate (P node as packed) =
+let rec evaluate_from changed_before (P node) =
   let graph = node.graph in
   graph.work.claims <- graph.work.claims + 1;
   let changed =
@@ -739,23 +739,25 @@ let rec evaluate (P node as packed) =
         List.iter (fun notify -> notify next) node.change_listeners;
         true))
   in
-  (if changed then
+  if changed then
     match node.dependents with
     | [ (P parent_node as parent) ]
       when parent_node.necessary
            && Array.length parent_node.dependencies = 1
            && parent_node.height = node.height + 1 ->
         graph.work.propagation_edges <- graph.work.propagation_edges + 1;
-        ignore (evaluate parent)
+        evaluate_from true parent
     | parents ->
         List.iter
           (fun parent ->
             let P parent_node = parent in
             graph.work.propagation_edges <- graph.work.propagation_edges + 1;
             if parent_node.necessary then enqueue parent)
-          parents);
-  ignore packed;
-  changed
+          parents;
+        true
+  else changed_before
+
+let evaluate packed = evaluate_from false packed
 
 let pop graph heads tails height =
   let slot = heads.(height) in
