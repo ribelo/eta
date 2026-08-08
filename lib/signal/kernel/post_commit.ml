@@ -170,7 +170,7 @@ let publish t observer value =
       | Finished _ -> ()
       | Active -> (
           match base observer.cursor with
-          | Some old when old == value -> observer.cursor <- Delivered value
+          | Some old when old == value -> ()
           | previous ->
               let token =
                 checked_succ "selected_edges observer token" t.next_token
