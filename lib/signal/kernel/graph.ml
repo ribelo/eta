@@ -466,6 +466,28 @@ module Make_impl (Observer_error : Observer_error) () = struct
     | This value -> value
     | Null -> failwith "Eta_signal: uninitialized dependency"
   let raw_value signal = signal.raw.current |> value_exn
+
+  (* A derived node publishes Null while any dependency is uninitialized. The
+     guard belongs in the same closure as the computation, so one node
+     evaluation makes one call and reads each dependency once. These helpers
+     are inlined at the construction site, so each builds exactly one closure. *)
+  let[@inline] guarded_1 (dependency : 'a Core.signal) f () =
+    match dependency.current with
+    | Null -> Null
+    | This value -> This (f value)
+
+  let[@inline] guarded_2 (left : 'a Core.signal) (right : 'b Core.signal) f () =
+    match left.current, right.current with
+    | This left_value, This right_value -> This (f left_value right_value)
+    | Null, _ | _, Null -> Null
+
+  let[@inline] guarded_many dependencies compute () =
+    if
+      Array.exists
+        (fun (Core.P dependency) -> Core.raw_is_null dependency.current)
+        dependencies
+    then Null
+    else This (compute ())
   let check_signal signal =
     if not (Core.validate_handle signal.raw) then
       match signal.raw.scope with
@@ -496,26 +518,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
       let scoped =
         Option.is_some (Core.current_scope graph) || Option.is_some inherited_scope
       in
-      let compute_candidate =
-        match dependencies with
-        | [||] -> (fun () -> This (compute ()))
-        | [| Core.P dependency |] ->
-            (fun () ->
-              if Core.raw_is_null dependency.current then Null
-              else This (compute ()))
-        | _ ->
-            (fun () ->
-              if
-                Array.exists
-                  (fun (Core.P dependency) ->
-                    Core.raw_is_null dependency.current)
-                  dependencies
-              then Null
-              else This (compute ()))
-      in
       Core.make_node graph ~pass_memoized:true
         ~height:(if scoped then height + 1 else height) ~dependencies
-        ~compute:compute_candidate
+        ~compute
         ~cutoff:
           (if cutoff == Cutoff.phys_equal then Core.Physical_cutoff
            else Core.Cutoff_test (or_null_cutoff cutoff))
@@ -578,7 +583,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
       raw =
         make_raw ?cutoff ~height:(child.raw.height + 1)
           ~dependencies:[| Core.P child.raw |]
-          (fun () -> f (raw_value child));
+          (guarded_1 child.raw f);
       timer = child.timer;
       }
     in
@@ -592,12 +597,13 @@ module Make_impl (Observer_error : Observer_error) () = struct
       Array.fold_left
         (fun height signal -> max height signal.raw.height) 0 dependencies
     in
+    let raw_dependencies =
+      Array.map (fun signal -> Core.P signal.raw) dependencies
+    in
     {
       raw =
-        make_raw ?cutoff ~height:(height + 1)
-          ~dependencies:
-            (Array.map (fun signal -> Core.P signal.raw) dependencies)
-          compute;
+        make_raw ?cutoff ~height:(height + 1) ~dependencies:raw_dependencies
+          (guarded_many raw_dependencies compute);
       timer =
         Array.fold_left
           (fun found signal ->
@@ -612,61 +618,65 @@ module Make_impl (Observer_error : Observer_error) () = struct
       raw = make_raw ?cutoff
           ~height:(1 + max a.raw.height b.raw.height)
           ~dependencies:[| Core.P a.raw; Core.P b.raw |]
-          (fun () -> f (raw_value a) (raw_value b));
+          (guarded_2 a.raw b.raw f);
       timer = (match a.timer with Some _ -> a.timer | None -> b.timer);
     }
   let map3 ?cutoff f a b c =
     Execution.sync execution @@ fun () ->
     check_signal a; check_signal b; check_signal c;
     {
-      raw = make_raw ?cutoff
-          ~height:(1 + max a.raw.height (max b.raw.height c.raw.height))
-          ~dependencies:[| Core.P a.raw; Core.P b.raw; Core.P c.raw |]
-          (fun () -> f (raw_value a) (raw_value b) (raw_value c));
+      raw =
+        (let deps = [| Core.P a.raw; Core.P b.raw; Core.P c.raw |] in
+         make_raw ?cutoff
+           ~height:(1 + max a.raw.height (max b.raw.height c.raw.height))
+           ~dependencies:deps
+           (guarded_many deps (fun () ->
+                f (raw_value a) (raw_value b) (raw_value c))));
       timer = (match a.timer, b.timer with Some _ as t, _ | None, (Some _ as t) -> t | None, None -> c.timer);
     }
   let map4 ?cutoff f a b c d =
     Execution.sync execution @@ fun () ->
     check_signal a; check_signal b; check_signal c; check_signal d;
     let height = List.fold_left max 0 [a.raw.height; b.raw.height; c.raw.height; d.raw.height] in
-    { raw = make_raw ?cutoff ~height:(height + 1)
-        ~dependencies:[| Core.P a.raw; Core.P b.raw; Core.P c.raw; Core.P d.raw |]
-        (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d));
+    let deps = [| Core.P a.raw; Core.P b.raw; Core.P c.raw; Core.P d.raw |] in
+    { raw = make_raw ?cutoff ~height:(height + 1) ~dependencies:deps
+        (guarded_many deps (fun () ->
+             f (raw_value a) (raw_value b) (raw_value c) (raw_value d)));
       timer = List.find_map Fun.id [a.timer; b.timer; c.timer; d.timer] }
   let map5 ?cutoff f a b c d e =
     Execution.sync execution @@ fun () ->
     let deps = [| Core.P a.raw; Core.P b.raw; Core.P c.raw; Core.P d.raw; Core.P e.raw |] in
     let height = Array.fold_left (fun h (Core.P n) -> max h n.height) 0 deps in
     { raw = make_raw ?cutoff ~height:(height + 1) ~dependencies:deps
-        (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e));
+        (guarded_many deps (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e)));
       timer = List.find_map Fun.id [a.timer; b.timer; c.timer; d.timer; e.timer] }
   let map6 ?cutoff f a b c d e g =
     Execution.sync execution @@ fun () ->
     let deps = [| Core.P a.raw; Core.P b.raw; Core.P c.raw; Core.P d.raw; Core.P e.raw; Core.P g.raw |] in
     let height = Array.fold_left (fun h (Core.P n) -> max h n.height) 0 deps in
     { raw = make_raw ?cutoff ~height:(height + 1) ~dependencies:deps
-        (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e) (raw_value g));
+        (guarded_many deps (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e) (raw_value g)));
       timer = List.find_map Fun.id [a.timer; b.timer; c.timer; d.timer; e.timer; g.timer] }
   let map7 ?cutoff f a b c d e g h =
     Execution.sync execution @@ fun () ->
     let deps = [| Core.P a.raw; Core.P b.raw; Core.P c.raw; Core.P d.raw; Core.P e.raw; Core.P g.raw; Core.P h.raw |] in
     let height = Array.fold_left (fun x (Core.P n) -> max x n.height) 0 deps in
     { raw = make_raw ?cutoff ~height:(height + 1) ~dependencies:deps
-        (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e) (raw_value g) (raw_value h));
+        (guarded_many deps (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e) (raw_value g) (raw_value h)));
       timer = List.find_map Fun.id [a.timer;b.timer;c.timer;d.timer;e.timer;g.timer;h.timer] }
   let map8 ?cutoff f a b c d e g h i =
     Execution.sync execution @@ fun () ->
     let deps = [| Core.P a.raw; Core.P b.raw; Core.P c.raw; Core.P d.raw; Core.P e.raw; Core.P g.raw; Core.P h.raw; Core.P i.raw |] in
     let height = Array.fold_left (fun x (Core.P n) -> max x n.height) 0 deps in
     { raw = make_raw ?cutoff ~height:(height + 1) ~dependencies:deps
-        (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e) (raw_value g) (raw_value h) (raw_value i));
+        (guarded_many deps (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e) (raw_value g) (raw_value h) (raw_value i)));
       timer = List.find_map Fun.id [a.timer;b.timer;c.timer;d.timer;e.timer;g.timer;h.timer;i.timer] }
   let map9 ?cutoff f a b c d e g h i j =
     Execution.sync execution @@ fun () ->
     let deps = [| Core.P a.raw; Core.P b.raw; Core.P c.raw; Core.P d.raw; Core.P e.raw; Core.P g.raw; Core.P h.raw; Core.P i.raw; Core.P j.raw |] in
     let height = Array.fold_left (fun x (Core.P n) -> max x n.height) 0 deps in
     { raw = make_raw ?cutoff ~height:(height + 1) ~dependencies:deps
-        (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e) (raw_value g) (raw_value h) (raw_value i) (raw_value j));
+        (guarded_many deps (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e) (raw_value g) (raw_value h) (raw_value i) (raw_value j)));
       timer = List.find_map Fun.id [a.timer;b.timer;c.timer;d.timer;e.timer;g.timer;h.timer;i.timer;j.timer] }
 
   let all ?cutoff signals =
@@ -731,7 +741,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               make_raw ~cutoff:var.cutoff
                 ~height:(source.height + 1)
                 ~dependencies:[| Core.P source |]
-                (fun () -> Core.value source |> value_exn);
+                (guarded_1 source (fun value -> value));
             timer = None;
           }
 
@@ -791,7 +801,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           raw =
             make_raw ~height:(source.raw.height + 1)
               ~dependencies:[| Core.P source.raw |]
-              (fun () -> Core.value source.raw |> value_exn);
+              (guarded_1 source.raw (fun value -> value));
           timer = None;
         }
       else source
