@@ -994,20 +994,13 @@ let pop graph queue =
             queue.highest <- -1));
         resolved
 
-let rec drain_from (pending @ local) graph changed =
-  match pop graph graph.priority_queue with
-  | Some node ->
-      drain_from pending graph (evaluate_from pending false node || changed)
-  | None -> (
-      match pop graph graph.queue with
-      | Some node ->
-          drain_from pending graph (evaluate_from pending false node || changed)
-      | None -> changed)
-
 let drain graph =
   (* One stack-local work accumulator per drain: [graph.work] is only read by
      sync-guarded stats outside stabilization, so per-node flushing is
-     unobservable. The exception path flushes exactly what accumulated. *)
+     unobservable. The exception path flushes exactly what accumulated.
+     The queue record pointers are immutable fields; binding them once keeps
+     them in registers instead of reloading graph fields every iteration. *)
+  let queue = graph.queue and priority_queue = graph.priority_queue in
   let local_ pending =
     {
       pending_claims = 0;
@@ -1016,7 +1009,15 @@ let drain graph =
       pending_propagation_edges = 0;
     }
   in
-  match drain_from pending graph false with
+  let rec loop changed =
+    match pop graph priority_queue with
+    | Some node -> loop (evaluate_from pending false node || changed)
+    | None -> (
+        match pop graph queue with
+        | Some node -> loop (evaluate_from pending false node || changed)
+        | None -> changed)
+  in
+  match loop false with
   | changed ->
       flush_pending_work pending graph.work;
       changed
