@@ -117,9 +117,6 @@ type installed_timer =
       * (unit -> (unit, 'error) outcome)
       -> installed_timer
 
-type claimed_delivery =
-  | Claim : ('a : value_or_null). 'a observer * int * 'a update -> claimed_delivery
-
 let checked_succ label value =
   if value = max_int then invalid_arg (label ^ " exhausted") else value + 1
 
@@ -472,20 +469,6 @@ let run_hooks hooks =
     hooks;
   List.rev !failures
 
-let claim_delivery t (Observer observer) =
-  let outcome =
-    claim t @@ stack_ (fun () ->
-      if observer.owner != t then invalid_arg "selected_edges: observer plan owner";
-      match observer.lifecycle, observer.cursor with
-      | Active, Pending (token, event) ->
-          observer.cursor <- Running (token, event);
-          t.counts.callback_claims <- t.counts.callback_claims + 1;
-          Some (Claim (observer, token, event))
-      | Active, (Never_delivered | Delivered _ | Running _) | Finished _, _ ->
-          None)
-  in
-  outcome
-
 let settle_delivery observer token event delivered =
   let outcome =
     claim observer.owner @@ stack_ (fun () ->
@@ -507,10 +490,15 @@ let settle_delivery observer token event delivered =
 
 let rec deliver t = function
   | [] -> Ok ()
-  | observer :: rest -> (
-      match claim_delivery t observer with
-      | None -> deliver t rest
-      | Some (Claim (observer, token, event)) ->
+  | Observer observer :: rest -> (
+      (* claim_delivery inlined: the Claim existential and Some wrappers cost
+         six words per delivery for a single caller. *)
+      if observer.owner != t then
+        invalid_arg "selected_edges: observer plan owner";
+      match observer.lifecycle, observer.cursor with
+      | Active, Pending (token, event) -> (
+          observer.cursor <- Running (token, event);
+          t.counts.callback_claims <- t.counts.callback_claims + 1;
           let delivery =
             { observer; token; event; acknowledged = false }
           in
@@ -527,6 +515,8 @@ let rec deliver t = function
           | exception exn ->
               settle_delivery observer token event false;
               raise exn)
+      | Active, (Never_delivered | Delivered _ | Running _) | Finished _, _ ->
+          deliver t rest)
 
 let drain_cleanup_failures t =
   if Queue.is_empty t.timer_hooks && Queue.is_empty t.hooks then []
