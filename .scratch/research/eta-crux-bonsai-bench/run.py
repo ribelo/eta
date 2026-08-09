@@ -227,7 +227,7 @@ def main():
     repetitions = 1 if args.quick else 8
     samples_per_process = 1 if args.quick else 2
     warmups = 1 if args.quick else 5
-    target_ms = 5.0 if args.quick else 50.0
+    target_ms = 5.0 if args.quick else 75.0
     all_samples = []
     calibrations = {}
     operation_counts = {}
