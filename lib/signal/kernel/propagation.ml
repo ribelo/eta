@@ -97,7 +97,7 @@ and scope = {
 
 and slot = {
   mutable generation : int;
-  mutable strong : packed option;
+  mutable strong : packed or_null;
   mutable contents : packed Weak.t option;
   mutable is_free : bool;
 }
@@ -424,11 +424,19 @@ let grow_height graph height =
 let[@inline always] ensure_height graph height =
   if height >= Array.length graph.queue.heads then grow_height graph height
 
+(* A slot holds its live node as a nullable pointer, so resolving a slot reads
+   the node without an intermediate option block. The weak cell is consulted
+   only for a node that lost its strong residency. *)
 let slot_contents (slot : slot) =
-  match slot.strong, slot.contents with
-  | (Some _ as value), _ -> value
-  | None, Some contents -> Weak.get contents 0
-  | None, None -> None
+  match slot.strong with
+  | This _ as value -> value
+  | Null -> (
+      match slot.contents with
+      | None -> Null
+      | Some contents -> (
+          match Weak.get contents 0 with
+          | None -> Null
+          | Some packed -> This packed))
 
 let set_slot_contents (slot : slot) value =
   slot.strong <- value;
@@ -436,8 +444,8 @@ let set_slot_contents (slot : slot) value =
      that transition installs the current packed node first. A strong install
      therefore need not rewrite the weak cell left by an older generation. *)
   match value, slot.contents with
-  | Some _, _ | None, None -> ()
-  | None, Some contents -> Weak.set contents 0 None
+  | This _, _ | Null, None -> ()
+  | Null, Some contents -> Weak.set contents 0 None
 
 let weaken_slot (slot : slot) packed =
   let contents =
@@ -449,12 +457,12 @@ let weaken_slot (slot : slot) packed =
         contents
   in
   Weak.set contents 0 (Some packed);
-  slot.strong <- None
+  slot.strong <- Null
 
 let make_slot () =
   {
     generation = 0;
-    strong = None;
+    strong = Null;
     contents = None;
     is_free = false;
   }
@@ -462,14 +470,14 @@ let make_slot () =
 let resolve_slot graph index =
   if index < 0 || index >= graph.slot_count then raise Stale_handle;
   match slot_contents graph.slots.(index) with
-  | Some packed -> packed
-  | None -> raise Stale_handle
+  | This packed -> packed
+  | Null -> raise Stale_handle
 
 let resolve graph handle =
-  if handle.slot < 0 || handle.slot >= graph.slot_count then None
+  if handle.slot < 0 || handle.slot >= graph.slot_count then Null
   else
     let slot = graph.slots.(handle.slot) in
-    if slot.generation <> handle.generation then None else slot_contents slot
+    if slot.generation <> handle.generation then Null else slot_contents slot
 
 let validate_handle (signal : 'a signal) =
   (* Every invalidation flows through [retire_packed]: freed slots and
@@ -650,7 +658,7 @@ let make_node ?(constant = false) ?(pass_memoized = false) graph ~height
     }
   in
   let packed = P node in
-  set_slot_contents graph.slots.(handle.slot) (Some packed);
+  set_slot_contents graph.slots.(handle.slot) (This packed);
   Option.iter
     (fun (scope : scope) -> scope.slot_head <- handle.slot)
     graph.current_scope;
@@ -727,14 +735,14 @@ let enqueue (P node) =
    instead of allocating one closure per created node. *)
 let enqueue_if_uninitialized graph (P node as packed) =
   match resolve graph node.handle with
-  | Some (P current) ->
+  | This (P current) ->
       if
         same_handle current.handle node.handle
         && (match node.scope with None -> true | Some scope -> scope.valid)
         && node_necessary node
         && raw_is_null node.current
       then enqueue packed
-  | None -> ()
+  | Null -> ()
 
 let enqueue_deferred (P node as packed) =
   let topology_priority = node.topology_priority in
@@ -755,8 +763,8 @@ let unlink_queued_node (P target) =
           let slot = ref queue.heads.(height) in
           while !slot <> -1 && not !removed do
             match slot_contents graph.slots.(!slot) with
-            | None -> slot := -1
-            | Some (P node as packed) ->
+            | Null -> slot := -1
+            | This (P node as packed) ->
                 let next = node.queue_next in
                 if same_handle node.handle target.handle then (
                   (match !previous with
@@ -802,7 +810,9 @@ let rec activate (P node as packed) =
   node.demand <- node.demand + 1;
   if not (node_necessary node) then (
     let slot = node.graph.slots.(node.handle.slot) in
-    if slot.strong = None then set_slot_contents slot (Some packed);
+    (match slot.strong with
+     | Null -> set_slot_contents slot (This packed)
+     | This _ -> ());
     let reverse_edges_detached = node_reclaim_queued node in
     set_node_reclaim_queued node false;
     set_node_necessary node true;
@@ -996,15 +1006,15 @@ let evaluate_node = evaluate
 
 let pop graph queue =
   let height = queue.lowest in
-  if height = -1 then None
+  if height = -1 then Null
   else
   let slot = queue.heads.(height) in
-  if slot = -1 then None
+  if slot = -1 then Null
   else
     let resolved = slot_contents graph.slots.(slot) in
     match resolved with
-    | None -> raise Stale_handle
-    | Some (P node) ->
+    | Null -> raise Stale_handle
+    | This (P node) ->
         queue.heads.(height) <- node.queue_next;
         if node.queue_next = -1 then queue.tails.(height) <- -1;
         node.queue_next <- -1;
@@ -1038,11 +1048,11 @@ let drain graph =
   in
   let rec loop changed =
     match pop graph priority_queue with
-    | Some node -> loop (evaluate_from pending false node || changed)
-    | None -> (
+    | This node -> loop (evaluate_from pending false node || changed)
+    | Null -> (
         match pop graph queue with
-        | Some node -> loop (evaluate_from pending false node || changed)
-        | None -> changed)
+        | This node -> loop (evaluate_from pending false node || changed)
+        | Null -> changed)
   in
   match loop false with
   | changed ->
@@ -1074,7 +1084,7 @@ let retire_packed graph (P node as packed) =
         remove_dependent dependency packed;
         deactivate dependency));
   let entry = graph.slots.(node.handle.slot) in
-  set_slot_contents entry None;
+  set_slot_contents entry Null;
   set_node_retired node true;
   Option.iter (fun scope -> scope.valid <- false) node.scope;
   if graph.quarantine_length = Array.length graph.quarantine then
@@ -1101,7 +1111,7 @@ let restore_retired graph =
   for index = graph.action_length - 1 downto 0 do
     match graph.actions.(index) with
     | Retired (slot, (P node as packed)) ->
-        set_slot_contents graph.slots.(slot) (Some packed);
+        set_slot_contents graph.slots.(slot) (This packed);
         set_node_retired node false;
         Option.iter (fun scope -> scope.valid <- true) node.scope;
         graph.work.rollback_visits <- graph.work.rollback_visits + 1
@@ -1132,14 +1142,14 @@ let discard_created graph =
     | Created slot ->
         let entry = graph.slots.(slot) in
         (match slot_contents entry with
-        | Some (P node) ->
+        | This (P node) ->
             Option.iter
               (fun scope ->
                 scope.valid <- false;
                 detach_scope graph scope)
               node.scope
-        | None -> ());
-        set_slot_contents entry None;
+        | Null -> ());
+        set_slot_contents entry Null;
         push_free graph slot;
         graph.work.rollback_visits <- graph.work.rollback_visits + 1
     | Retired _ -> ()
@@ -1156,20 +1166,20 @@ let clear_queues graph =
   clear graph.priority_queue;
   for slot = 0 to graph.slot_count - 1 do
     match slot_contents graph.slots.(slot) with
-    | Some (P node) ->
+    | This (P node) ->
         node.queue_next <- -1;
         set_node_in_queue node false
-    | None -> ()
+    | Null -> ()
   done
 
 let replay_admissions graph =
   for index = 0 to graph.admission_length - 1 do
     match slot_contents graph.slots.(graph.admissions.(index)) with
-    | Some packed ->
+    | This packed ->
         let P node = packed in
         node.queued_in <- -1;
         enqueue packed
-    | None -> ()
+    | Null -> ()
   done
 
 let rollback graph =
@@ -1240,14 +1250,14 @@ let reclaim_unreachable graph =
         if entry.generation <> handle.generation || entry.is_free then false
         else
           match slot_contents entry with
-          | None ->
+          | Null ->
               remember_tombstone graph handle;
               push_free graph handle.slot;
               false
-          | Some (P node) when node_necessary node ->
+          | This (P node) when node_necessary node ->
               set_node_reclaim_queued node false;
               false
-          | Some _ -> true
+          | This _ -> true
       else false
     in
     if keep then (
@@ -1257,31 +1267,32 @@ let reclaim_unreachable graph =
   graph.pending_reclaim_length <- !retained
 
 let release_unreachable_roots = reclaim_unreachable
-let handle_is_live graph handle = Option.is_some (resolve graph handle)
+let handle_is_live graph handle =
+  match resolve graph handle with This _ -> true | Null -> false
 let tombstone_count graph = graph.tombstone_length
 
 let count_necessary graph =
   let count = ref 0 in
   for slot = 0 to graph.slot_count - 1 do
     match slot_contents graph.slots.(slot) with
-    | Some (P node) when node_necessary node -> incr count
-    | Some _ | None -> ()
+    | This (P node) when node_necessary node -> incr count
+    | This _ | Null -> ()
   done;
   !count
 
 let unlink_unnecessary_queued graph =
   for slot = 0 to graph.slot_count - 1 do
     match slot_contents graph.slots.(slot) with
-    | Some (P node as packed) when not (node_necessary node) ->
+    | This (P node as packed) when not (node_necessary node) ->
         unlink_queued_node packed
-    | Some _ | None -> ()
+    | This _ | Null -> ()
   done
 
 let rec retire_scope_loop graph scope count slot =
   if slot = -1 then count
   else
     match slot_contents graph.slots.(slot) with
-    | Some (P node as packed) ->
+    | This (P node as packed) ->
         let next = node.scope_next in
         (match node.scope with
         | Some owner when owner == scope ->
@@ -1289,7 +1300,7 @@ let rec retire_scope_loop graph scope count slot =
             retire_packed graph packed;
             retire_scope_loop graph scope (count + 1) next
         | None | Some _ -> count)
-    | None -> count
+    | Null -> count
 
 let retire_scope_chain graph scope =
   retire_scope_loop graph scope 0 scope.slot_head
@@ -1297,12 +1308,12 @@ let retire_scope_chain graph scope =
 let enqueue_all_uninitialized_necessary graph =
   for slot = 0 to graph.slot_count - 1 do
     match slot_contents graph.slots.(slot) with
-    | Some (P node as packed)
+    | This (P node as packed)
       when node_necessary node
            && Array.length node.dependencies > 0
            && raw_is_null node.current ->
         enqueue packed
-    | Some _ | None -> ()
+    | This _ | Null -> ()
   done
 
 let clear_queue_mark (P node) = node.queued_in <- -1
@@ -1327,8 +1338,8 @@ let public_node_counts graph =
   let total = ref 0 and necessary = ref 0 and dirty = ref 0 in
   for slot = 0 to graph.slot_count - 1 do
     match slot_contents graph.slots.(slot) with
-    | None -> ()
-    | Some (P node) ->
+    | Null -> ()
+    | This (P node) ->
         let internal_source =
           not (node_constant node)
           && not (node_public_source node)
@@ -1488,7 +1499,7 @@ let enqueue_stale_freshness graph ~bind_order ~custom_cutoff_nodes
     | [] -> ()
     | handle :: rest -> (
         match slot_contents graph.slots.(handle.slot) with
-        | Some (P node as packed)
+        | This (P node as packed)
           when same_handle node.handle handle
                && node_necessary node
                && Array.length node.dependencies > 1 ->
@@ -1498,7 +1509,7 @@ let enqueue_stale_freshness graph ~bind_order ~custom_cutoff_nodes
             if not (raw_same node.current inner.current) then (
               enqueue packed;
               stale := true)
-        | Some _ | None -> ());
+        | This _ | Null -> ());
         check rest
   in
   check bind_order;
@@ -1514,7 +1525,7 @@ let enqueue_stale_freshness graph ~bind_order ~custom_cutoff_nodes
     Hashtbl.iter
       (fun slot handle ->
         match slot_contents graph.slots.(slot) with
-        | Some (P node)
+        | This (P node)
           when same_handle node.handle handle && node_necessary node ->
           let dependency_changed =
             Array.exists
@@ -1532,7 +1543,7 @@ let enqueue_stale_freshness graph ~bind_order ~custom_cutoff_nodes
             enqueue (P node);
             List.iter enqueue_descendants node.dependents;
             stale := true)
-        | Some _ | None -> ())
+        | This _ | Null -> ())
       duplicate_dependency_nodes);
   !stale
 
@@ -1551,7 +1562,7 @@ let reinstall_freed graph handle packed =
     done;
     graph.free_length <- !retained;
     entry.is_free <- false;
-    set_slot_contents entry (Some packed);
+    set_slot_contents entry (This packed);
     let (P node) = packed in
     set_node_retired node false;
     true)
@@ -1559,9 +1570,9 @@ let reinstall_freed graph handle packed =
 let[@inline] clear_admissions graph =
   for index = 0 to graph.admission_length - 1 do
     match slot_contents graph.slots.(graph.admissions.(index)) with
-    | Some (P node) ->
+    | This (P node) ->
         set_node_admitted node false
-    | None -> ()
+    | Null -> ()
   done;
   graph.admission_length <- 0
 
@@ -1859,7 +1870,7 @@ let keyed_node_counts graph =
   let committed_child_count = ref 0 in
   for slot = 0 to graph.slot_count - 1 do
     match slot_contents graph.slots.(slot) with
-    | Some (P node) -> (
+    | This (P node) -> (
         match node.keyed_owner with
         | None -> ()
         | Some packed_owner ->
@@ -1871,7 +1882,7 @@ let keyed_node_counts graph =
               incr keyed_node_count;
               committed_child_count :=
                 count_children !committed_child_count owner.children))
-    | None -> ()
+    | Null -> ()
   done;
   (!keyed_node_count, !committed_child_count)
 
@@ -1879,8 +1890,8 @@ let append_nodes_dot buffer graph ~only_necessary ~scope_label ~dot_state
     ~dot_dynamic_scopes =
   for slot = 0 to graph.slot_count - 1 do
     match slot_contents graph.slots.(slot) with
-    | None -> ()
-    | Some (P node) ->
+    | Null -> ()
+    | This (P node) ->
         let internal_source =
           not (node_constant node)
           && not (node_public_source node)
@@ -1891,13 +1902,13 @@ let append_nodes_dot buffer graph ~only_necessary ~scope_label ~dot_state
           let dependent_count = ref 0 in
           for candidate_slot = 0 to graph.slot_count - 1 do
             match slot_contents graph.slots.(candidate_slot) with
-            | Some (P candidate) ->
+            | This (P candidate) ->
                 Array.iter
                   (fun (P dependency) ->
                     if same_handle dependency.handle node.handle then
                       incr dependent_count)
                   candidate.dependencies
-            | None -> ()
+            | Null -> ()
           done;
           let owner_opt = node.keyed_owner in
           let keyed_extra =

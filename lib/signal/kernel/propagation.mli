@@ -95,7 +95,7 @@ and scope = {
 
 and slot = {
   mutable generation : int;
-  mutable strong : packed option;
+  mutable strong : packed or_null;
   mutable contents : packed Weak.t option;
   mutable is_free : bool;
 }
