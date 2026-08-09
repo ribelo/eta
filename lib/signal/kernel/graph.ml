@@ -1262,17 +1262,20 @@ module Make_impl (Observer_error : Observer_error) () = struct
        observable effect (phase changes are transient, [edge_graph_error] is
        reset before any reader, and no stats counters move). Registration
        passes always take the full path because they drain edge disposals. *)
+    (* One observer walk per pass: the quiescent test and the delivery counter
+       ask the same question, so the answer is computed once. *)
+    let had_callback_delivery =
+      List.exists
+        (fun (O observer) -> observer.has_callback && observer.callback_pending)
+        !observers
+    in
     if
       (not registration)
       && !pending_finishes = []
       && !timers = []
       && !edge_graph_error = None
+      && (not had_callback_delivery)
       && Edges.is_quiescent edges plan
-      && not
-           (List.exists
-              (fun (O observer) ->
-                observer.has_callback && observer.callback_pending)
-              !observers)
     then Ok ()
     else
     (* The delivery body never escapes; the result binding keeps the call out of
@@ -1286,12 +1289,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
     let finishes = List.rev !pending_finishes in
     pending_finishes := [];
     List.iter (fun finish -> ignore (finish ())) finishes;
-    let had_callback_delivery =
-      List.exists
-        (fun (O observer) ->
-          observer.has_callback && observer.callback_pending)
-        !observers
-    in
     if !timers <> [] then ignore (prepare_timer_starts_now ());
     edge_start_failed := false;
     let result =
