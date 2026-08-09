@@ -100,7 +100,8 @@ let make_unchanged_workload runtime =
         (model, Eta.Effect.unit))
   in
   let projected =
-    Crux.cutoff (Crux.map machine ~f:fst) ~equal:Int.equal
+    Crux.cutoff (Crux.map machine ~f:fst)
+      ~cutoff:(Crux.Cutoff.of_equal Int.equal)
     |> Crux.map ~f:(fun model ->
            incr projections;
            model)
@@ -129,8 +130,13 @@ module Counting_order = struct
   let count () = !comparisons
 end
 
-module Int_map = Map.Make (Counting_order)
-module Assoc = Crux.Assoc (Int_map)
+module Int_map = Eta_signal_map.Map.Make (Counting_order)
+module Assoc = Crux.Assoc (Counting_order)
+
+let int_map_find key map =
+  match Int_map.find_opt key map with
+  | Some value -> value
+  | None -> invalid_arg "Eta Crux benchmark: missing map key"
 
 type assoc_setup = {
   driver :
@@ -144,8 +150,9 @@ type assoc_setup = {
 }
 
 let make_map size =
-  List.init size (fun key -> (key, 0))
-  |> List.to_seq |> Int_map.of_seq
+  match Int_map.of_list (List.init size (fun key -> (key, 0))) with
+  | Ok map -> map
+  | Error (`Duplicate_key _) -> assert false
 
 let setup_assoc runtime size =
   let child_visits = ref 0 in
@@ -157,7 +164,9 @@ let setup_assoc runtime size =
         (action, Eta.Effect.unit))
   in
   let children =
-    Assoc.assoc ~data_equal:Int.equal (Crux.map config ~f:fst)
+    Assoc.assoc
+      ~data_cutoff:(Crux.Cutoff.of_equal Int.equal)
+      (Crux.map config ~f:fst)
       ~f:(fun ~key ~data ->
         Crux.map data ~f:(fun value ->
             incr child_visits;
@@ -170,10 +179,10 @@ let setup_assoc runtime size =
 
 let change_assoc runtime setup =
   let key = Int_map.cardinal setup.input / 2 in
-  let previous = Int_map.find key setup.input in
+  let previous = int_map_find key setup.input in
   Counting_order.reset ();
   let before_visits = !(setup.child_visits) in
-  let changed = Int_map.add key (previous + 1) setup.input in
+  let changed = Int_map.set key (previous + 1) setup.input in
   send runtime setup.endpoint changed;
   let delivery = poll_delivery runtime setup.driver in
   let (_, _), output = Crux.Driver.Delivery.output delivery in
@@ -198,14 +207,8 @@ let make_assoc_workload runtime size =
 let bench_eta_crux_assoc = make_assoc_workload
 
 let changed_rows left right =
-  Int_map.merge
-    (fun _ left right ->
-      match left, right with
-      | Some left, Some right when left = right -> None
-      | None, None -> None
-      | _ -> Some ())
-    left right
-  |> Int_map.cardinal
+  Int_map.fold_symmetric_diff left right ~init:0
+    ~f:(fun count _key _change -> count + 1)
 
 let make_reconciliation_workload runtime size =
   let setup = setup_assoc runtime size in

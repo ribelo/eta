@@ -1,5 +1,10 @@
 module Crux = Eta_crux
-module Int_map = Map.Make (Int)
+module Int_map = Eta_signal_map.Map.Make (Int)
+
+let int_map_find key map =
+  match Int_map.find_opt key map with
+  | Some value -> value
+  | None -> invalid_arg "Eta Crux law: missing map key"
 
 let shared_runtime : Crux.never Eta.Runtime.t option ref = ref None
 
@@ -43,17 +48,19 @@ let small_actions =
     - [qcheck_description_identity] generates bounded action lists. It observes
       transition count and both outputs from one shared description.
     - [qcheck_cutoff_boundary] generates bounded action lists. It observes
-      projection count and each delivered parity.
+      projection counts for every public cutoff constructor and every committed
+      model.
     - [qcheck_assoc_key_order] generates bounded key-value bindings. It observes
       the complete ordered child map.
     - [qcheck_assoc_continuous_presence] generates one retained key and action.
       It observes the retained endpoint and model.
-    - [qcheck_assoc_data_update] generates old data, new data, and one action.
-      It observes the retained model and current data.
+    - [qcheck_assoc_data_update] generates one key, data, and action. It observes
+      cutoff direction, baseline retention, builder count, endpoint identity,
+      retained model, and accepted data.
     - [qcheck_assoc_remove_reenter] generates one key and action. It observes the
       stale old endpoint and the fresh child state.
-    - [qcheck_source_spec_identity] generates spec and mapper changes. It
-      observes producer incarnations and committed mapped output.
+    - [qcheck_source_spec_identity] generates spec changes. It observes cutoff
+      direction, retained published baselines, and exact producer incarnations.
     - [qcheck_source_latest_mapper] generates mapper replacements. It observes
       the mapper used for the next source item.
     - [qcheck_source_terminal_outcome] generates completion or failure. It
@@ -160,53 +167,202 @@ let qcheck_cutoff_boundary =
     ~count:200
     (QCheck.make ~print:QCheck.Print.(list int) small_actions)
     (fun actions ->
-      let projections = ref 0 in
+      let actions = 1 :: -1 :: 0 :: actions in
+      let equal_projections = ref 0 in
+      let compare_projections = ref 0 in
+      let always_projections = ref 0 in
+      let never_projections = ref 0 in
+      let physical_projections = ref 0 in
+      let asymmetric_projections = ref 0 in
       let machine =
-        Crux.State_machine.create (Crux.return ()) ~default_model:0
+        Crux.State_machine.create
+          ~model_cutoff:Crux.Cutoff.never
+          (Crux.return ()) ~default_model:0
           ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
             (model + action, Eta.Effect.unit))
       in
-      let parity =
-        Crux.map machine ~f:fst
-        |> Crux.cutoff ~equal:(fun left right -> left mod 2 = right mod 2)
+      let model = Crux.map machine ~f:fst in
+      let project cutoff projections =
+        Crux.cutoff model ~cutoff
         |> Crux.map ~f:(fun value ->
                incr projections;
-               value mod 2)
+               value)
+      in
+      let equal =
+        project
+          (Crux.Cutoff.of_equal (fun left right ->
+               left mod 2 = right mod 2))
+          equal_projections
+      in
+      let compare =
+        project
+          (Crux.Cutoff.of_compare (fun left right ->
+               Int.compare (left mod 2) (right mod 2)))
+          compare_projections
+      in
+      let always = project Crux.Cutoff.always always_projections in
+      let never = project Crux.Cutoff.never never_projections in
+      let physical = project Crux.Cutoff.phys_equal physical_projections in
+      let asymmetric =
+        project
+          (Crux.Cutoff.of_equal (fun published candidate ->
+               candidate = published + 1))
+          asymmetric_projections
+      in
+      let probes =
+        Crux.both equal
+          (Crux.both compare (Crux.both always (Crux.both never physical)))
+      in
+      let structural =
+        Crux.bind (Crux.map model ~f:(fun value -> value mod 2))
+          ~f:(fun parity ->
+            Crux.both (Crux.return parity)
+              (Crux.lifecycle (Crux.return Eta.Effect.unit))
+            |> Crux.map ~f:fst)
+        |> Crux.cutoff ~cutoff:Crux.Cutoff.always
       in
       let root =
         Crux.Root.create ~ingress_capacity:32 ~request_capacity:1
-          (Crux.both machine parity)
+          (Crux.map
+             (Crux.both machine
+                (Crux.both probes (Crux.both asymmetric structural)))
+             ~f:(fun (machine, (_, (asymmetric, structural))) ->
+               (machine, asymmetric, structural)))
       in
       let initial_output, initial_post_commit =
         committed (run_ok (Crux.Root.advance root))
       in
-      let (initial_model, endpoint), _ = initial_output in
+      let (initial_model, endpoint), initial_asymmetric, initial_structural =
+        initial_output
+      in
       start initial_post_commit;
-      let _, changes =
+      let final_model, parity_changes, physical_changes, asymmetric_changes, _ =
         List.fold_left
-          (fun (model, changes) action ->
+          (fun
+            ( model,
+              parity_changes,
+              physical_changes,
+              asymmetric_changes,
+              asymmetric_published )
+            action ->
             send endpoint action;
             let output, post_commit = committed (run_ok (Crux.Root.advance root)) in
             start post_commit;
-            let (new_model, _), observed_parity = output in
-            if observed_parity <> new_model mod 2 then
-              failwith "cutoff changed the delivered value";
-            (new_model, changes + Bool.to_int (model mod 2 <> new_model mod 2)))
-          (initial_model, 0) actions
+            let (new_model, _), observed_asymmetric, observed_structural =
+              output
+            in
+            let suppress_asymmetric =
+              new_model = asymmetric_published + 1
+            in
+            let expected_asymmetric =
+              if suppress_asymmetric then asymmetric_published else new_model
+            in
+            if
+              observed_asymmetric <> expected_asymmetric
+              || observed_structural <> initial_structural
+            then
+              QCheck.Test.fail_reportf
+                "candidate=%d asymmetric=%d/%d structural=%d/%d"
+                new_model observed_asymmetric expected_asymmetric
+                observed_structural initial_structural;
+            ( new_model,
+              parity_changes
+              + Bool.to_int (model mod 2 <> new_model mod 2),
+              physical_changes + Bool.to_int (model != new_model),
+              asymmetric_changes + Bool.to_int (not suppress_asymmetric),
+              expected_asymmetric ))
+          (initial_model, 0, 0, 0, initial_asymmetric)
+          actions
       in
-      !projections = changes + 1)
+      let expected_model = List.fold_left ( + ) 0 actions in
+      let expected_parity = parity_changes + 1 in
+      let expected_never = List.length actions + 1 in
+      let expected_physical = physical_changes + 1 in
+      if
+        final_model <> expected_model
+        || !equal_projections <> expected_parity
+        || !compare_projections <> expected_parity
+        || !always_projections <> 1
+        || !never_projections <> expected_never
+        || !physical_projections <> expected_physical
+        || !asymmetric_projections <> asymmetric_changes + 1
+      then
+        QCheck.Test.fail_reportf
+          "model=%d/%d equal=%d/%d compare=%d/%d always=%d/1 never=%d/%d physical=%d/%d asymmetric=%d/%d"
+          final_model expected_model
+          !equal_projections expected_parity
+          !compare_projections expected_parity
+          !always_projections !never_projections expected_never
+          !physical_projections expected_physical
+          !asymmetric_projections (asymmetric_changes + 1);
+      stop_root root;
+      let ref_physical = ref 0 in
+      let ref_structural = ref 0 in
+      let ref_machine =
+        Crux.State_machine.create
+          ~model_cutoff:Crux.Cutoff.never
+          (Crux.return ()) ~default_model:(ref 0)
+          ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
+            ((if action = 0 then model else ref !model), Eta.Effect.unit))
+      in
+      let ref_model = Crux.map ref_machine ~f:fst in
+      let count cutoff counter =
+        Crux.cutoff ref_model ~cutoff
+        |> Crux.map ~f:(fun value ->
+               incr counter;
+               value)
+      in
+      let ref_root =
+        Crux.Root.create ~ingress_capacity:32 ~request_capacity:1
+          (Crux.map
+             (Crux.both ref_machine
+                (Crux.both
+                   (count Crux.Cutoff.phys_equal ref_physical)
+                   (count
+                      (Crux.Cutoff.of_equal (fun left right ->
+                           !left = !right))
+                      ref_structural)))
+             ~f:fst)
+      in
+      let (_, ref_endpoint), ref_post =
+        committed (run_ok (Crux.Root.advance ref_root))
+      in
+      start ref_post;
+      List.iter
+        (fun action ->
+          send ref_endpoint action;
+          let _, post = committed (run_ok (Crux.Root.advance ref_root)) in
+          start post)
+        actions;
+      let fresh_refs =
+        List.fold_left
+          (fun count action -> count + Bool.to_int (action <> 0))
+          0 actions
+      in
+      if
+        !ref_physical <> fresh_refs + 1
+        || !ref_structural <> 1
+      then
+        QCheck.Test.fail_reportf
+          "reference physical=%d/%d structural=%d/1"
+          !ref_physical (fresh_refs + 1) !ref_structural;
+      stop_root ref_root;
+      true)
 
-let assoc_description initial =
+let assoc_description
+    ?(data_cutoff = Crux.Cutoff.of_equal Int.equal)
+    ?builds initial =
   let parent =
     Crux.State_machine.create (Crux.return ()) ~default_model:initial
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
         (action, Eta.Effect.unit))
   in
   let children =
-    let module Assoc = Crux.Assoc (Int_map) in
+    let module Assoc = Crux.Assoc (Int) in
     Assoc.assoc (Crux.map parent ~f:fst)
-      ~data_equal:Int.equal
+      ~data_cutoff
       ~f:(fun ~key:_ ~data ->
+        Option.iter incr builds;
         let machine =
           Crux.State_machine.create data ~default_model:0
             ~apply_action:(fun ~self:_ ~input:_ ~model ~action ->
@@ -230,7 +386,7 @@ let qcheck_assoc_key_order =
     (fun bindings ->
       let input =
         List.fold_left
-          (fun map (key, value) -> Int_map.add key value map)
+          (fun map (key, value) -> Int_map.set key value map)
           Int_map.empty bindings
       in
       let root =
@@ -242,8 +398,8 @@ let qcheck_assoc_key_order =
       in
       start post_commit;
       List.map (fun (key, (data, _, _)) -> (key, data))
-        (Int_map.bindings children)
-      = Int_map.bindings input)
+        (Int_map.to_list children)
+      = Int_map.to_list input)
 
 let assoc_sample =
   let open QCheck.Gen in
@@ -266,8 +422,8 @@ let qcheck_assoc_continuous_presence =
         committed (run_ok (Crux.Root.advance root))
       in
       start first_post;
-      let _, _, retained_endpoint = Int_map.find key children in
-      send parent_endpoint (Int_map.add (key + 1) 17 initial);
+      let _, _, retained_endpoint = int_map_find key children in
+      send parent_endpoint (Int_map.set (key + 1) 17 initial);
       let _, update_post = committed (run_ok (Crux.Root.advance root)) in
       start update_post;
       send retained_endpoint delta;
@@ -275,31 +431,57 @@ let qcheck_assoc_continuous_presence =
         committed (run_ok (Crux.Root.advance root))
       in
       start child_post;
-      let _, model, _ = Int_map.find key children in
+      let _, model, _ = int_map_find key children in
       model = delta)
 
 let qcheck_assoc_data_update =
   QCheck.Test.make ~name:"qcheck_assoc_data_update" ~count:200 assoc_sample
-    (fun (key, first, second, delta) ->
+    (fun (key, first, _second, delta) ->
+      let builds = ref 0 in
+      let data_cutoff =
+        Crux.Cutoff.of_equal (fun published candidate ->
+            candidate = published + 1)
+      in
       let root =
         Crux.Root.create ~ingress_capacity:8 ~request_capacity:1
-          (assoc_description (Int_map.singleton key first))
+          (assoc_description ~data_cutoff ~builds
+             (Int_map.singleton key first))
       in
       let (((_, parent_endpoint), children), first_post) =
         committed (run_ok (Crux.Root.advance root))
       in
       start first_post;
-      let _, _, child_endpoint = Int_map.find key children in
+      let _, _, child_endpoint = int_map_find key children in
       send child_endpoint delta;
       let _, child_post = committed (run_ok (Crux.Root.advance root)) in
       start child_post;
-      send parent_endpoint (Int_map.singleton key second);
-      let ((_, children), update_post) =
+      send parent_endpoint (Int_map.singleton key (first + 1));
+      let ((_, suppressed_children), suppressed_post) =
         committed (run_ok (Crux.Root.advance root))
       in
-      start update_post;
-      let data, model, _ = Int_map.find key children in
-      data = second && model = delta)
+      start suppressed_post;
+      let suppressed_data, suppressed_model, suppressed_endpoint =
+        int_map_find key suppressed_children
+      in
+      send parent_endpoint (Int_map.singleton key (first + 2));
+      let ((_, accepted_children), accepted_post) =
+        committed (run_ok (Crux.Root.advance root))
+      in
+      start accepted_post;
+      let accepted_data, accepted_model, accepted_endpoint =
+        int_map_find key accepted_children
+      in
+      let result =
+        suppressed_data = first
+        && suppressed_model = delta
+        && suppressed_endpoint == child_endpoint
+        && accepted_data = first + 2
+        && accepted_model = delta
+        && accepted_endpoint == child_endpoint
+        && !builds = 1
+      in
+      stop_root root;
+      result)
 
 let qcheck_assoc_remove_reenter =
   QCheck.Test.make ~name:"qcheck_assoc_remove_reenter" ~count:200 assoc_sample
@@ -312,7 +494,7 @@ let qcheck_assoc_remove_reenter =
         committed (run_ok (Crux.Root.advance root))
       in
       start first_post;
-      let _, _, old_endpoint = Int_map.find key children in
+      let _, _, old_endpoint = int_map_find key children in
       send parent_endpoint Int_map.empty;
       let _, remove_post = committed (run_ok (Crux.Root.advance root)) in
       start remove_post;
@@ -327,13 +509,13 @@ let qcheck_assoc_remove_reenter =
         committed (run_ok (Crux.Root.advance root))
       in
       start reenter_post;
-      let _, _, new_endpoint = Int_map.find key children in
+      let _, _, new_endpoint = int_map_find key children in
       send new_endpoint delta;
       let ((_, children), child_post) =
         committed (run_ok (Crux.Root.advance root))
       in
       start child_post;
-      let _, model, _ = Int_map.find key children in
+      let _, model, _ = int_map_find key children in
       stale && model = delta)
 
 type source_command =
@@ -354,12 +536,19 @@ type source_harness = {
   root : source_output Crux.Root.t;
   commands : (source_command, Crux.never) Eta.Queue.t;
   openings : int ref;
+  opened_specs : int list ref;
+  mapped_multipliers : int list ref;
   config_endpoint : (int * int) Crux.Endpoint.t;
 }
 
-let make_source_harness ~spec ~mapper =
+let make_source_harness
+    ?(spec_cutoff = Crux.Cutoff.of_equal Int.equal)
+    ?fail_mapper
+    ~spec ~mapper () =
   let commands = Eta.Queue.unbounded () in
   let openings = ref 0 in
+  let opened_specs = ref [] in
+  let mapped_multipliers = ref [] in
   let rec running ~emit =
     let open Eta.Syntax in
     let* command =
@@ -380,9 +569,13 @@ let make_source_harness ~spec ~mapper =
     | Complete -> Eta.Effect.unit
     | Fail message -> Eta.Effect.fail message
   in
-  let producer _spec ~emit =
+  let producer spec ~emit =
     let open Eta.Syntax in
-    let* () = Eta.Effect.sync (fun () -> incr openings) in
+    let* () =
+      Eta.Effect.sync (fun () ->
+          incr openings;
+          opened_specs := !opened_specs @ [ spec ])
+    in
     Eta.Effect.pure (running ~emit)
   in
   let config =
@@ -397,17 +590,31 @@ let make_source_harness ~spec ~mapper =
         (model @ [ action ], Eta.Effect.unit))
   in
   let source =
-    Crux.Source.create ~spec_equal:Int.equal
+    Crux.Source.create
+      ~spec_cutoff
       ~spec:(Crux.map config ~f:(fun ((spec, _), _) -> spec))
       ~producer:(Crux.return producer)
       ~target:(Crux.map sink ~f:snd)
       ~on_item:
         (Crux.map config ~f:(fun ((_, mapper), _) item ->
+             mapped_multipliers := !mapped_multipliers @ [ mapper ];
              Item (item * mapper)))
       ~on_terminal:
         (Crux.return (function
           | Crux.Source.Completed -> Completed
           | Crux.Source.Failed message -> Failed message))
+  in
+  let source =
+    match fail_mapper with
+    | None -> source
+    | Some fail_mapper ->
+        Crux.map
+          (Crux.both source
+             (Crux.map config ~f:(fun ((_, mapper), _) -> mapper)))
+          ~f:(fun ((), mapper) ->
+            if mapper = fail_mapper then
+              failwith "source mapper rollback probe";
+            ())
   in
   let root =
     Crux.Root.create ~ingress_capacity:16 ~request_capacity:1
@@ -416,7 +623,14 @@ let make_source_harness ~spec ~mapper =
   let output, post_commit = committed (run_ok (Crux.Root.advance root)) in
   start post_commit;
   let ((_, config_endpoint), _) = output in
-  { root; commands; openings; config_endpoint }
+  {
+    root;
+    commands;
+    openings;
+    opened_specs;
+    mapped_multipliers;
+    config_endpoint;
+  }
 
 let source_send_command harness command =
   run_ok
@@ -461,17 +675,27 @@ let qcheck_source_spec_identity =
   QCheck.Test.make ~name:"qcheck_source_spec_identity" ~count:100
     (QCheck.make ~print:QCheck.Print.(list int) specs)
     (fun specs ->
-      let harness = make_source_harness ~spec:0 ~mapper:1 in
-      let _, expected =
+      let specs = 1 :: 2 :: specs in
+      let spec_cutoff =
+        Crux.Cutoff.of_equal (fun published candidate ->
+            candidate = published + 1)
+      in
+      let harness =
+        make_source_harness ~spec_cutoff ~spec:0 ~mapper:1 ()
+      in
+      let _, expected_specs =
         List.fold_left
-          (fun (previous, expected) spec ->
+          (fun (published, expected_specs) spec ->
             ignore (source_update_config harness (spec, 1));
-            (spec, expected + Bool.to_int (spec <> previous)))
-          (0, 1) specs
+            if spec = published + 1 then (published, expected_specs)
+            else (spec, expected_specs @ [ spec ]))
+          (0, [ 0 ]) specs
       in
       let observed = !(harness.openings) in
+      let observed_specs = !(harness.opened_specs) in
       stop_source_harness harness;
-      observed = expected)
+      observed = List.length expected_specs
+      && observed_specs = expected_specs)
 
 let source_sample =
   let open QCheck.Gen in
@@ -484,19 +708,48 @@ let qcheck_source_latest_mapper =
   QCheck.Test.make ~name:"qcheck_source_latest_mapper" ~count:100
     source_sample
     (fun (mapper, item) ->
-      let harness = make_source_harness ~spec:0 ~mapper:1 in
+      let harness = make_source_harness ~spec:0 ~mapper:1 () in
       ignore (source_update_config harness (0, mapper));
       source_send_command harness (Emit item);
       let _, ((observations, _), _) = await_source_commit harness 100 in
       let openings = !(harness.openings) in
       stop_source_harness harness;
-      observations = [ Item (item * mapper) ] && openings = 1)
+      let committed_result =
+        observations = [ Item (item * mapper) ]
+        && openings = 1
+        && !(harness.mapped_multipliers) = [ mapper ]
+      in
+      let failing_mapper = if mapper = 1 then 2 else mapper in
+      let rollback =
+        make_source_harness ~fail_mapper:failing_mapper ~spec:0 ~mapper:1 ()
+      in
+      send rollback.config_endpoint (0, failing_mapper);
+      let crash_post =
+        match run_ok (Crux.Root.advance rollback.root) with
+        | Ok (Crux.Root.Failed { post_commit; _ }) -> post_commit
+        | _ -> failwith "source mapper rollback probe did not fail"
+      in
+      source_send_command rollback (Emit item);
+      let rec await_mapping attempts =
+        if !(rollback.mapped_multipliers) <> [] then ()
+        else if attempts = 0 then
+          failwith "source mapper rollback probe did not emit"
+        else (
+          Eio.Fiber.yield ();
+          await_mapping (attempts - 1))
+      in
+      await_mapping 100;
+      let rollback_result =
+        !(rollback.mapped_multipliers) = [ 1 ]
+      in
+      start crash_post;
+      committed_result && rollback_result)
 
 let qcheck_source_terminal_outcome =
   QCheck.Test.make ~name:"qcheck_source_terminal_outcome" ~count:100
     QCheck.(pair bool string_small)
     (fun (complete, message) ->
-      let harness = make_source_harness ~spec:0 ~mapper:1 in
+      let harness = make_source_harness ~spec:0 ~mapper:1 () in
       source_send_command harness
         (if complete then Complete else Fail message);
       let _, ((observations, _), _) = await_source_commit harness 100 in
@@ -1172,7 +1425,7 @@ let qcheck_assoc_rollback =
           ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
             (action, Eta.Effect.unit))
       in
-      let module Assoc = Crux.Assoc (Int_map) in
+      let module Assoc = Crux.Assoc (Int) in
       let children =
         Assoc.assoc (Crux.map parent ~f:fst)
           ~f:(fun ~key ~data:_ ->
@@ -1196,9 +1449,9 @@ let qcheck_assoc_rollback =
       let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
       start initial_post;
       let ((_, parent_endpoint), initial_children) = initial in
-      let retained = Int_map.find retained_key initial_children in
+      let retained = int_map_find retained_key initial_children in
       send parent_endpoint
-        (Int_map.add failing_key (data + 1)
+        (Int_map.set failing_key (data + 1)
            (Int_map.singleton retained_key data));
       let failed_post =
         match run_ok (Crux.Root.advance root) with
@@ -1239,7 +1492,7 @@ let qcheck_assoc_lifecycle_order =
       let map_from start count =
         List.init count (fun offset -> (start + offset, offset))
         |> List.fold_left
-             (fun map (key, data) -> Int_map.add key data map)
+             (fun map (key, data) -> Int_map.set key data map)
              Int_map.empty
       in
       let initial_map = map_from 0 removed_count in
@@ -1250,7 +1503,7 @@ let qcheck_assoc_lifecycle_order =
           ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
             (action, Eta.Effect.unit))
       in
-      let module Assoc = Crux.Assoc (Int_map) in
+      let module Assoc = Crux.Assoc (Int) in
       let children =
         Assoc.assoc (Crux.map parent ~f:fst)
           ~f:(fun ~key:_ ~data:_ ->
@@ -1275,13 +1528,13 @@ let qcheck_assoc_lifecycle_order =
       in
       let _, new_children = replacement in
       let removed_before_added =
-        Int_map.bindings old_children
+        Int_map.to_list old_children
         |> List.for_all (fun (_, export) ->
                Crux.Exported_endpoint.try_invoke export 1
                = Error Crux.Exported_endpoint.Revoked)
       in
       let additions_active =
-        Int_map.bindings new_children
+        Int_map.to_list new_children
         |> List.for_all (fun (_, export) ->
                Crux.Exported_endpoint.try_invoke export 1
                = Ok (Ok (Ok ())))
@@ -2830,7 +3083,8 @@ let controlled_source_root controlled =
         | Controlled_terminal -> (model, Eta.Effect.unit))
   in
   let source =
-    Crux.Source.create ~spec_equal:(fun () () -> true)
+    Crux.Source.create
+      ~spec_cutoff:(Crux.Cutoff.of_equal (fun () () -> true))
       ~spec:(Crux.return ())
       ~producer:
         (Crux.return

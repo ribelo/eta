@@ -1,10 +1,20 @@
+module Cutoff : sig
+  type 'a t
+
+  val always : 'a t
+  val never : 'a t
+  val phys_equal : 'a t
+  val of_equal : ('a -> 'a -> bool) -> 'a t
+  val of_compare : ('a -> 'a -> int) -> 'a t
+end
+
 type 'a t
 type never = |
 
 val return : 'a -> 'a t
 val map : 'a t -> f:('a -> 'b) -> 'b t
 val both : 'a t -> 'b t -> ('a * 'b) t
-val cutoff : 'a t -> equal:('a -> 'a -> bool) -> 'a t
+val cutoff : 'a t -> cutoff:'a Cutoff.t -> 'a t
 val bind : 'a t -> f:('a -> 'b t) -> 'b t
 
 module Syntax : sig
@@ -39,7 +49,7 @@ end
 
 module State_machine : sig
   val create :
-    ?equal:('model -> 'model -> bool) ->
+    ?model_cutoff:'model Cutoff.t ->
     ?diagnostics:('model, 'action) Diagnostic.state_machine ->
     'input t ->
     default_model:'model ->
@@ -54,12 +64,13 @@ end
 
 val lifecycle : (unit, never) Eta.Effect.t t -> unit t
 
-module Assoc (M : Map.S) : sig
+module Assoc
+    (Order : Eta_signal_map.Map.Ordered_type) : sig
   val assoc :
-    ?data_equal:('data -> 'data -> bool) ->
-    'data M.t t ->
-    f:(key:M.key -> data:'data t -> 'result t) ->
-    'result M.t t
+    ?data_cutoff:'data Cutoff.t ->
+    'data Eta_signal_map.Map.Make(Order).t t ->
+    f:(key:Order.t -> data:'data t -> 'result t) ->
+    'result Eta_signal_map.Map.Make(Order).t t
 end
 
 module Source : sig
@@ -76,7 +87,7 @@ module Source : sig
     ((unit, 'error) Eta.Effect.t, 'error) Eta.Effect.t
 
   val create :
-    spec_equal:('spec -> 'spec -> bool) ->
+    spec_cutoff:'spec Cutoff.t ->
     spec:'spec t ->
     producer:('spec -> ('item, 'error) producer) t ->
     target:'action Endpoint.t t ->
@@ -571,7 +582,7 @@ module Root : sig
 
   val advance :
     'output t ->
-    (('output outcome, advance_error) result, 'err) Eta.Effect.t
+    (('output outcome, advance_error) result, never) Eta.Effect.t
   (** Select one ingress event, run one stabilization of the root's private
       signal graph, and install the committed frame. The effect is
       synchronous work on the caller's fiber; it never blocks. *)

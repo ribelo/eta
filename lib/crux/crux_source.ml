@@ -44,7 +44,7 @@ let source_open producer spec mapping ~scope =
       in
       Eta.Effect.pure (Some running)
 
-let create ~spec_equal ~spec ~producer ~target ~on_item ~on_terminal =
+let create ~spec_cutoff ~spec ~producer ~target ~on_item ~on_terminal =
   make @@ fun ctx ->
   let (module S) = unpack_package ctx in
   let spec_signal : ('spec * contribution) S.signal =
@@ -76,7 +76,7 @@ let create ~spec_equal ~spec ~producer ~target ~on_item ~on_terminal =
       (pair producer_signal
          (pair target_signal (pair on_item_signal on_terminal_signal)))
   in
-  (* The open node republishes only when [spec_equal] rejects the previous
+  (* The open node republishes only when [spec_cutoff] rejects the previous
      spec. Each publication allocates one scope, one mapping, and one open
      work; the root stages them when the frame carrying them is installed.
      Computes discarded by the cutoff allocate inert garbage because a
@@ -85,9 +85,9 @@ let create ~spec_equal ~spec ~producer ~target ~on_item ~on_terminal =
     S.map
       ~cutoff:
         (Eta_signal.Cutoff.of_equal (fun (left, _) (right, _) ->
-             spec_equal (fst left) (fst right)))
+             spec_cutoff (fst left) (fst right)))
       (fun ( (spec_value, (producer_value, (target_value, (on_item_value, on_terminal_value)))),
-             (contribution : contribution) )
+             (_input_contribution : contribution) )
          ->
         let scope = fresh_scope ctx.ctx_root ~parent:ctx.ctx_scope in
         let mapping =
@@ -110,23 +110,31 @@ let create ~spec_equal ~spec ~producer ~target ~on_item ~on_terminal =
         in
         ( (spec_value, mapping),
           {
-            contribution with
-            works = work :: contribution.works;
-            added_scopes = scope :: contribution.added_scopes;
+            contribution_empty with
+            works = [ work ];
+            added_scopes = [ scope ];
           } ))
       inputs
   in
-  (* The refresh node republishes when the mapping target or handlers
-     change and rewrites the live mapping. Publications and commits share
-     one serialized advancement, so the writes land with the frame. *)
+  (* Mapper refresh is a structural commit hook. Stabilization can construct
+     the hook, but only frame installation can mutate the live mapping. *)
   pack_signal
     (S.map2
        (fun ((_, mapping), (open_contribution : contribution))
             ( (_, (_, (target_value, (on_item_value, on_terminal_value)))),
               (refresh_contribution : contribution) )
          ->
-         mapping.target <- target_value;
-         mapping.on_item <- on_item_value;
-         mapping.on_terminal <- on_terminal_value;
-         ( (), contribution_append open_contribution refresh_contribution ))
+         let refresh () =
+           mapping.target <- target_value;
+           mapping.on_item <- on_item_value;
+           mapping.on_terminal <- on_terminal_value
+         in
+         let contribution =
+           contribution_append open_contribution refresh_contribution
+         in
+         ( (),
+           {
+             contribution with
+             commit_hooks = refresh :: contribution.commit_hooks;
+           } ))
        openings inputs)

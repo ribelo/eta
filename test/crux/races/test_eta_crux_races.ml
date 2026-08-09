@@ -16,6 +16,13 @@ let start runtime post_commit =
   |> run_ok runtime
   |> ignore
 
+let start_result runtime post_commit =
+  Crux.Post_commit.start post_commit
+  |> Eta.Effect.or_die (function
+       | Crux.Post_commit.Already_started ->
+           Failure "post-commit token started twice")
+  |> run_ok runtime
+
 let counter_root () =
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
@@ -172,7 +179,7 @@ let race_failure_observation_order () =
        failure.primary.position);
   Alcotest.(check int64) "secondary position" 1L
     (Crux.Failure.Observation_position.to_int64 secondary.position);
-  (match run_ok runtime (Crux.Post_commit.start crash_post) with
+  (match start_result runtime crash_post with
   | Crux.Post_commit.Crash_settled settlement ->
       Alcotest.(check int) "settlement preserves both records" 1
         (List.length settlement.failure.secondary)
@@ -232,7 +239,7 @@ let race_commit_vs_crash_both_winners () =
     | Ok (Crux.Root.Failed { post_commit; _ }) -> post_commit
     | _ -> Alcotest.fail "fatal winner did not roll back advancement"
   in
-  (match run_ok runtime (Crux.Post_commit.start fatal_post) with
+  (match start_result runtime fatal_post with
   | Crux.Post_commit.Crash_settled _ -> ()
   | _ -> Alcotest.fail "fatal winner did not settle as crash");
 
@@ -249,7 +256,7 @@ let race_commit_vs_crash_both_winners () =
   let (committed_model, _), _ = committed_output in
   trigger_crash commit_export;
   Alcotest.(check int) "commit winner preserves output" 7 committed_model;
-  (match run_ok runtime (Crux.Post_commit.start committed_post) with
+  (match start_result runtime committed_post with
   | Crux.Post_commit.Crash_settled _ -> ()
   | _ -> Alcotest.fail "commit winner batch did not convert to crash teardown")
 
@@ -313,7 +320,7 @@ let race_commit_atomicity () =
     !transition_effect_started;
   Alcotest.(check bool) "provisional lifecycle did not activate" false
     !provisional_lifecycle_started;
-  (match run_ok runtime (Crux.Post_commit.start crash_post) with
+  (match start_result runtime crash_post with
   | Crux.Post_commit.Crash_settled _ -> ()
   | _ -> Alcotest.fail "atomic rollback did not settle as crash");
   Alcotest.(check bool) "teardown did not admit transition effect" false

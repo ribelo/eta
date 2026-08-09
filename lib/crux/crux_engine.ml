@@ -1,5 +1,16 @@
 type never = |
 
+module Cutoff = struct
+  type 'a t = 'a -> 'a -> bool
+
+  let always _published _candidate = true
+  let never _published _candidate = false
+  let phys_equal published candidate = published == candidate
+  let of_equal equal = equal
+  let of_compare compare published candidate = compare published candidate = 0
+  let to_signal cutoff = Eta_signal.Cutoff.of_equal cutoff
+end
+
 module Diagnostic = Crux_failure.Diagnostic
 module Failure = Crux_failure.Failure
 
@@ -461,20 +472,26 @@ let both left right =
            contribution_append left_contribution right_contribution ))
        left_signal right_signal)
 
-let cutoff input ~equal =
+let cutoff input ~cutoff =
   make @@ fun ctx ->
   let (module S) = unpack_package ctx in
   let signal : ('a * contribution) S.signal =
     unpack_signal (input.compile ctx)
   in
-  (* The value gates propagation; manifest churn still flows so scope and
-     lifecycle state upstream of the cutoff stay live. *)
+  let value =
+    S.map ~cutoff:(Cutoff.to_signal cutoff) fst signal
+  in
+  let contribution =
+    S.map
+      ~cutoff:(Eta_signal.Cutoff.of_equal contribution_equal)
+      snd signal
+  in
+  (* Value suppression and structural manifests are independent channels.
+     Manifest churn republishes the last accepted value. *)
   pack_signal
-    (S.map
-       ~cutoff:(Eta_signal.Cutoff.of_equal (fun left right ->
-           equal (fst left) (fst right)
-           && contribution_equal (snd left) (snd right)))
-       Fun.id signal)
+    (S.map2
+       (fun value contribution -> (value, contribution))
+       value contribution)
 
 (* A bind branch allocates one fresh Crux scope per incarnation. Signal
    rebuilds the branch when the selector publishes, which closes the previous
@@ -514,7 +531,8 @@ module Syntax = struct
 end
 
 module State_machine = struct
-  let create (type model input action) ?equal ?diagnostics
+  let create (type model input action)
+      ?(model_cutoff = Cutoff.phys_equal) ?diagnostics
       (input_description : input t) ~(default_model : model) ~apply_action =
     let node = next_global "state-machine node" in
     make @@ fun ctx ->
@@ -528,9 +546,7 @@ module State_machine = struct
     let endpoint_id = root.next_endpoint in
     root.next_endpoint <- endpoint_id + 1;
     let equal_model left right =
-      match equal with
-      | None -> left == right
-      | Some equal -> equal (Obj.obj left) (Obj.obj right)
+      model_cutoff (Obj.obj left) (Obj.obj right)
     in
     let apply endpoint ~input ~model ~action =
       let self =
@@ -549,7 +565,9 @@ module State_machine = struct
             (fun action -> diagnostics.action (Obj.obj action)) ))
         diagnostics
     in
-    let model_var = S.Var.create default_model in
+    let model_var =
+      S.Var.create ~cutoff:Eta_signal.Cutoff.never default_model
+    in
     let cell =
       {
         current_model = Obj.repr default_model;
@@ -703,10 +721,14 @@ let lifecycle effect_description =
        signal)
 
 module Assoc = struct
-  module Make (M : Map.S) = struct
-    let assoc ?(data_equal = ( == )) input_description ~f =
+  module Make (Order : Eta_signal_map.Map.Ordered_type) = struct
+    module M = Eta_signal_map.Map.Make (Order)
+
+    let assoc ?(data_cutoff = Cutoff.phys_equal) input_description ~f =
       make @@ fun ctx ->
       let (module S) = unpack_package ctx in
+      let module Signal_map = Eta_signal_map.Make (S.Package) in
+      let module Keyed = Signal_map.Keyed (Order) in
       let input_signal : ('data M.t * contribution) S.signal =
         unpack_signal (input_description.compile ctx)
       in
@@ -719,74 +741,38 @@ module Assoc = struct
                 (S.map (fun value -> (value, contribution_empty)) data));
         }
       in
-      let key_compare left right =
-        (* Map.S does not expose the key comparison directly; comparing two
-           singleton maps reduces to the map's key ordering. *)
-        M.compare
-          (fun _ _ -> 0)
-          (M.singleton left ()) (M.singleton right ())
-      in
-      let input_ops : (_, _, _) S.Package.input_ops =
-        {
-          S.Package.empty = M.empty;
-          compare_key = key_compare;
-          fold_symmetric_diff =
-            (fun left right ~on_compare ~init ~f:emit ->
-              let acc =
-                M.fold
-                  (fun key old_data acc ->
-                    on_compare ();
-                    match M.find_opt key right with
-                    | None -> emit acc key (S.Package.Left old_data)
-                    | Some new_data ->
-                        emit acc key (S.Package.Changed (old_data, new_data)))
-                  left init
-              in
-              M.fold
-                (fun key new_data acc ->
-                  if M.mem key left then acc
-                  else (
-                    on_compare ();
-                    emit acc key (S.Package.Right new_data)))
-                right acc);
-        }
-      in
-      let output_ops : (_, _, _) S.Package.output_ops =
-        { S.Package.empty = M.empty; set = M.add; remove = M.remove }
-      in
       let children =
-        S.Package.install
-          (S.Package.stable_family
-             ~data_cutoff:(Eta_signal.Cutoff.of_equal data_equal)
-             ~input:(S.map fst input_signal)
-             ~input_ops ~output_ops
-             ~build:(fun ~key ~data ->
-               let scope = fresh_scope ctx.ctx_root ~parent:ctx.ctx_scope in
-               let child_ctx = { ctx with ctx_scope = scope.id } in
-               let child : ('result * contribution) S.signal =
-                 unpack_signal
-                   ((f ~key ~data:(data_description data)).compile child_ctx)
-               in
-               S.map
-                 (fun (value, (contribution : contribution)) ->
-                   ( value,
-                     {
-                       contribution with
-                       added_scopes = scope :: contribution.added_scopes;
-                     } ))
-                 child)
-             ())
+        Keyed.mapi
+          ~data_cutoff:(Cutoff.to_signal data_cutoff)
+          (S.map fst input_signal)
+          ~f:(fun ~key ~data ->
+            let scope = fresh_scope ctx.ctx_root ~parent:ctx.ctx_scope in
+            let child_ctx = { ctx with ctx_scope = scope.id } in
+            let child : ('result * contribution) S.signal =
+              unpack_signal
+                ((f ~key ~data:(data_description data)).compile child_ctx)
+            in
+            S.map
+              (fun (value, (contribution : contribution)) ->
+                ( value,
+                  {
+                    contribution with
+                    added_scopes = scope :: contribution.added_scopes;
+                  } ))
+              child)
       in
       pack_signal
         (S.map2
            (fun (_, (input_contribution : contribution)) children_map ->
-             let output, contribution =
+             let output =
+               M.map (fun (value, _) -> value) children_map
+             in
+             let contribution =
                M.fold
-                 (fun key (value, (child_contribution : contribution)) (out_acc, contrib_acc) ->
-                   ( M.add key value out_acc,
-                     contribution_append contrib_acc child_contribution ))
+                 (fun _key (_, child) acc ->
+                   contribution_append acc child)
                  children_map
-                 (M.empty, contribution_empty)
+                 contribution_empty
              in
              (output, contribution_append input_contribution contribution))
            input_signal children)
@@ -841,13 +827,15 @@ let create_signal_root (root : root_core) (description : 'output t) :
     Eta.Effect.bind Eta.Effect.from_result (Eta.Effect.sync f)
   in
   let observer_ref = ref None in
-  let ensure_observer () =
-    match !observer_ref with
-    | Some _ -> Eta.Effect.unit
-    | None ->
-        sync_result (fun () -> S.Observer.observe frame_signal)
-        |> Eta.Effect.map_error (fun err -> (err :> staging_error))
-        |> Eta.Effect.map (fun observer -> observer_ref := Some observer)
+  let ensure_observer =
+    Eta.Effect.bind
+      (fun observed ->
+        if observed then Eta.Effect.unit
+        else
+          sync_result (fun () -> S.Observer.observe frame_signal)
+          |> Eta.Effect.map_error (fun err -> (err :> staging_error))
+          |> Eta.Effect.map (fun observer -> observer_ref := Some observer))
+      (Eta.Effect.sync (fun () -> Option.is_some !observer_ref))
   in
   let sig_read_frame () =
     match !observer_ref with
@@ -857,7 +845,7 @@ let create_signal_root (root : root_core) (description : 'output t) :
         |> Eta.Effect.map_error (fun err -> (err :> staging_error))
   in
   {
-    sig_ensure_observer = ensure_observer ();
+    sig_ensure_observer = ensure_observer;
     sig_stabilize =
       sync_result (fun () -> S.stabilize ())
       |> Eta.Effect.map_error (fun err -> (err :> staging_error));

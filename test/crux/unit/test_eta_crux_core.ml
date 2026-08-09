@@ -275,7 +275,10 @@ let test_cutoff_suppresses_only_dependent_recomputation () =
   in
   let model = Crux.map machine ~f:fst in
   let parity =
-    Crux.cutoff model ~equal:(fun left right -> left mod 2 = right mod 2)
+    Crux.cutoff model
+      ~cutoff:
+        (Crux.Cutoff.of_equal (fun left right ->
+             left mod 2 = right mod 2))
     |> Crux.map ~f:(fun value ->
            incr projections;
            value mod 2)
@@ -654,7 +657,9 @@ let test_concurrent_source_opening () =
   in
   let target = Crux.map machine ~f:snd in
   let source id =
-    Crux.Source.create ~spec_equal:Int.equal ~spec:(Crux.return id)
+    Crux.Source.create
+      ~spec_cutoff:(Crux.Cutoff.of_equal Int.equal)
+      ~spec:(Crux.return id)
       ~producer:(Crux.return producer) ~target
       ~on_item:(Crux.return (fun item -> item))
       ~on_terminal:
@@ -748,7 +753,8 @@ let test_source_opening_barrier () =
         ((), Eta.Effect.unit))
   in
   let source =
-    Crux.Source.create ~spec_equal:Unit.equal
+    Crux.Source.create
+      ~spec_cutoff:(Crux.Cutoff.of_equal Unit.equal)
       ~spec:(Crux.return ()) ~producer:(Crux.return producer)
       ~target:(Crux.map machine ~f:snd)
       ~on_item:(Crux.return (fun (_ : int) -> ()))
@@ -809,6 +815,67 @@ let test_source_opening_barrier () =
                 | Crux.Post_commit.Already_started ->
                     Failure "source stop token started twice")))
   | _ -> Alcotest.fail "source barrier root did not stop"
+
+let test_source_argument_work_starts_once () =
+  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  let starts = ref 0 in
+  let producer () ~emit:_ =
+    Eta.Effect.pure Eta.Effect.never
+  in
+  let machine =
+    Crux.State_machine.create (Crux.return ()) ~default_model:()
+      ~apply_action:(fun ~self:_ ~input:() ~model:() ~action:() ->
+        ((), Eta.Effect.unit))
+  in
+  let producer =
+    Crux.map
+      (Crux.both (Crux.return producer)
+         (Crux.lifecycle
+            (Crux.return
+               (Eta.Effect.sync (fun () -> incr starts)))))
+      ~f:fst
+  in
+  let source =
+    Crux.Source.create
+      ~spec_cutoff:(Crux.Cutoff.of_equal Unit.equal)
+      ~spec:(Crux.return ()) ~producer
+      ~target:(Crux.map machine ~f:snd)
+      ~on_item:(Crux.return (fun (_ : int) -> ()))
+      ~on_terminal:
+        (Crux.return (fun (_ : string Crux.Source.terminal) -> ()))
+  in
+  let root =
+    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+      (Crux.both machine source)
+  in
+  let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
+  ignore
+    (run_runtime_ok runtime
+       (Crux.Post_commit.start initial_post
+       |> Eta.Effect.or_die (function
+            | Crux.Post_commit.Already_started ->
+                Failure "post-commit token started twice")));
+  let rec await_start attempts =
+    if !starts = 1 then ()
+    else if attempts = 0 then
+      Alcotest.failf "source argument work started %d times" !starts
+    else (
+      Eio.Fiber.yield ();
+      await_start (attempts - 1))
+  in
+  await_start 100;
+  Crux.Root.request_stop root;
+  let stop_post =
+    match run_ok (Crux.Root.advance root) with
+    | Ok (Crux.Root.Stopped { post_commit }) -> post_commit
+    | _ -> Alcotest.fail "source argument root did not stop"
+  in
+  ignore
+    (run_runtime_ok runtime
+       (Crux.Post_commit.start stop_post
+       |> Eta.Effect.or_die (function
+            | Crux.Post_commit.Already_started ->
+                Failure "post-commit token started twice")))
 
 let test_crash_latch () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
@@ -949,7 +1016,9 @@ let test_source_opening_defect () =
         ((), Eta.Effect.unit))
   in
   let source =
-    Crux.Source.create ~spec_equal:Unit.equal ~spec:(Crux.return ())
+    Crux.Source.create
+      ~spec_cutoff:(Crux.Cutoff.of_equal Unit.equal)
+      ~spec:(Crux.return ())
       ~producer:
         (Crux.return (fun () ~emit:_ ->
              Eta.Effect.die_message "source opening defect"))
@@ -1015,7 +1084,8 @@ let test_source_opening_failures_do_not_block_admission () =
     Eta.Effect.fail "opening failed"
   in
   let source () =
-    Crux.Source.create ~spec_equal:Unit.equal
+    Crux.Source.create
+      ~spec_cutoff:(Crux.Cutoff.of_equal Unit.equal)
       ~spec:(Crux.return ()) ~producer:(Crux.return producer)
       ~target:(Crux.map sink ~f:snd)
       ~on_item:(Crux.return (fun (_ : int) -> 0))
@@ -1082,7 +1152,8 @@ let test_stop_cancels_source_opening () =
         ((), Eta.Effect.unit))
   in
   let source =
-    Crux.Source.create ~spec_equal:Unit.equal
+    Crux.Source.create
+      ~spec_cutoff:(Crux.Cutoff.of_equal Unit.equal)
       ~spec:(Crux.return ()) ~producer:(Crux.return producer)
       ~target:(Crux.map machine ~f:snd)
       ~on_item:(Crux.return (fun (_ : int) -> ()))
@@ -1145,7 +1216,8 @@ let test_post_commit_phase_order () =
           Eta.Effect.sync (fun () -> transition_started := true) ))
   in
   let source =
-    Crux.Source.create ~spec_equal:Int.equal
+    Crux.Source.create
+      ~spec_cutoff:(Crux.Cutoff.of_equal Int.equal)
       ~spec:(Crux.map machine ~f:fst)
       ~producer:(Crux.return producer)
       ~target:(Crux.map machine ~f:snd)
@@ -1291,7 +1363,8 @@ let test_self_disposing_effect () =
           Eta.Effect.sync (fun () -> incr transition_effect_starts) ))
   in
   let source =
-    Crux.Source.create ~spec_equal:Int.equal
+    Crux.Source.create
+      ~spec_cutoff:(Crux.Cutoff.of_equal Int.equal)
       ~spec:(Crux.map machine ~f:fst)
       ~producer:(Crux.return producer)
       ~target:(Crux.map machine ~f:snd)
@@ -2074,6 +2147,8 @@ let () =
             test_concurrent_source_opening;
           Alcotest.test_case "source opening barrier" `Quick
             test_source_opening_barrier;
+          Alcotest.test_case "source argument work starts once" `Quick
+            test_source_argument_work_starts_once;
           Alcotest.test_case "crash latch" `Quick test_crash_latch;
           Alcotest.test_case "driver await wakes on fatal" `Quick
             test_driver_await_wakes_on_fatal;

@@ -1,6 +1,7 @@
 type never = Crux_engine.never = |
 type 'a t = 'a Crux_engine.t
 
+module Cutoff = Crux_engine.Cutoff
 module Diagnostic = Crux_failure.Diagnostic
 module Failure = struct
   include Crux_failure.Failure
