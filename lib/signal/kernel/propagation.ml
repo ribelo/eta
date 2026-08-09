@@ -1025,7 +1025,7 @@ let drain graph =
       flush_pending_work pending graph.work;
       raise exn
 
-let begin_pass graph =
+let[@inline] begin_pass graph =
   if graph.phase <> Idle then raise (Wrong_phase graph.phase);
   if graph.pass = max_int then raise Pass_identity_exhausted;
   graph.phase <- Active;
@@ -1161,7 +1161,7 @@ let rollback graph =
   graph.phase <- Idle;
   replay_admissions graph
 
-let commit graph =
+let[@inline] commit graph =
   (* Successful publication is only fixed scalar work. *)
   graph.journal_length <- 0;
   graph.pass <- graph.pass + 1;
@@ -1525,7 +1525,7 @@ let reinstall_freed graph handle packed =
     set_node_retired node false;
     true)
 
-let clear_admissions graph =
+let[@inline] clear_admissions graph =
   for index = 0 to graph.admission_length - 1 do
     match slot_contents graph.slots.(graph.admissions.(index)) with
     | Some (P node) ->
