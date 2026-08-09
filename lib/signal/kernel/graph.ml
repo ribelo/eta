@@ -465,6 +465,10 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let value_exn = function
     | This value -> value
     | Null -> failwith "Eta_signal: uninitialized dependency"
+
+  let or_null_get = function
+    | This value -> value
+    | Null -> failwith "Eta_signal: unset bind state"
   let raw_value signal = signal.raw.current |> value_exn
 
   (* A derived node publishes Null while any dependency is uninitialized. The
@@ -808,9 +812,11 @@ module Make_impl (Observer_error : Observer_error) () = struct
     in
     Core.enable_change_listeners graph;
     let selected = ref Null in
-    let inner = ref None in
-    let scope = ref None in
-    let owner = ref None in
+    (* These hold pointers, so or_null keeps them nullable without a block per
+       switch and without a second load per read. *)
+    let inner = ref Null in
+    let scope = ref Null in
+    let owner = ref Null in
     let evaluated_in = ref (-1) in
     let yielded_no_value_in = ref (-1) in
     let topology_nodes = Core.dependency_subgraph in
@@ -835,8 +841,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
         let old_scope = !scope in
         let parent_scope =
           match !owner with
-          | Some owner -> owner.raw.scope
-          | None -> Core.current_scope graph
+          | This owner -> owner.raw.scope
+          | Null -> Core.current_scope graph
         in
         let fresh_scope = Core.create_scope ?parent:parent_scope graph () in
         let fresh =
@@ -865,7 +871,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
           iter_option_local validate_scope fresh.raw.scope
         else
           iter_list_local validate_scope (Core.distinct_scopes (Core.P fresh.raw));
-        let owner_handle = (Option.get !owner).raw.handle in
+        let owner_signal = or_null_get !owner in
+        let owner_node = owner_signal.raw in
+        let owner_handle = owner_node.handle in
         (* A dependency-free bind result is a leaf: it reaches only itself, so
            it cannot form a cycle with the owner node and needs no reachability
            walk. Only non-leaf results can depend on the owner. *)
@@ -890,15 +898,15 @@ module Make_impl (Observer_error : Observer_error) () = struct
           if has_pending_bind (Core.P fresh.raw) then
             raise Deferred_bind
           else raise (Graph_error `Cycle));
-        let packed_owner = Core.P (Option.get !owner).raw in
+        let packed_owner = Core.P owner_node in
         (match old_inner with
-        | None -> Core.attach packed_owner (Core.P fresh.raw)
-        | Some old ->
+        | Null -> Core.attach packed_owner (Core.P fresh.raw)
+        | This old ->
             Core.replace_dependency packed_owner (Core.P old.raw)
               (Core.P fresh.raw);
-            if Core.node_necessary (Option.get !owner).raw then
+            if Core.node_necessary owner_node then
               Core.deactivate_for_retirement (Core.P old.raw));
-        if (Option.get !owner).raw.height <= fresh.raw.height then
+        if owner_node.height <= fresh.raw.height then
           ensure_parent_height ~current:true packed_owner
             (fresh.raw.height + 1);
         (* A dependency-free inner never changes after its first write, and the
@@ -908,7 +916,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           Core.prepend_change_listener (Core.P fresh.raw) (fun _ ->
               Core.invalidate_computation packed_owner);
         fresh_scope.owner <- This packed_owner;
-        if Core.node_necessary (Option.get !owner).raw then (
+        if Core.node_necessary owner_node then (
           Core.activate (Core.P fresh.raw);
           if Option.is_none fresh.timer then
             iter_list_local
@@ -923,23 +931,23 @@ module Make_impl (Observer_error : Observer_error) () = struct
           dead_nodes :=
             !dead_nodes + Core.invalidate_scope_chain graph old_scope
         in
-        iter_option_local retire_old_scope old_scope;
+        (match old_scope with Null -> () | This old -> retire_old_scope old);
         selected := This source_value;
-        inner := Some fresh;
-        scope := Some fresh_scope;
+        inner := This fresh;
+        scope := This fresh_scope;
         Core.push_capsule graph
           {
             Core.rollback_capsule =
               (fun () ->
                 Core.detach packed_owner (Core.P fresh.raw);
-                if Core.node_necessary (Option.get !owner).raw then
+                if Core.node_necessary owner_node then
                   Core.deactivate (Core.P fresh.raw);
-                Option.iter
-                  (fun old ->
+                (match old_inner with
+                | Null -> ()
+                | This old ->
                     Core.attach packed_owner (Core.P old.raw);
-                    if Core.node_necessary (Option.get !owner).raw then
-                      Core.activate (Core.P old.raw))
-                  old_inner;
+                    if Core.node_necessary owner_node then
+                      Core.activate (Core.P old.raw));
                 selected := old_selected;
                 inner := old_inner;
                 scope := old_scope);
@@ -947,13 +955,13 @@ module Make_impl (Observer_error : Observer_error) () = struct
           });
       (* Both reads are from dependencies attached to the bind owner. The
          dependency array keeps their nodes live during this computation. *)
-      (match (Option.get !inner).raw.current with
+      (match (or_null_get !inner).raw.current with
       | This _ as value -> value
       | Null ->
-          let owner = Option.get !owner in
+          let owner = or_null_get !owner in
           if !yielded_no_value_in <> Core.current_pass graph then (
             yielded_no_value_in := Core.current_pass graph;
-            let inner = Option.get !inner in
+            let inner = or_null_get !inner in
             if
               (match !timers with [] -> true | _ -> false)
               || (match signal_timers inner with [] -> true | _ -> false)
@@ -963,18 +971,18 @@ module Make_impl (Observer_error : Observer_error) () = struct
               Core.enqueue_deferred (Core.P owner.raw)));
           Core.value owner.raw)
       with Deferred_bind ->
-        let owner = Option.get !owner in
+        let owner = or_null_get !owner in
         Core.clear_queue_mark (Core.P owner.raw);
         Core.enqueue_deferred (Core.P owner.raw);
         (match !inner with
-        | None -> Null
-        | Some signal -> Core.value signal.raw)
+        | Null -> Null
+        | This signal -> Core.value signal.raw)
       | Deferred_source ->
-        let owner = Option.get !owner in
+        let owner = or_null_get !owner in
         Core.clear_queue_mark (Core.P owner.raw);
         (match !inner with
-        | None -> Null
-        | Some signal -> Core.value signal.raw)
+        | Null -> Null
+        | This signal -> Core.value signal.raw)
     in
     let selected_cutoff = cutoff_or_default cutoff in
     let raw =
@@ -1007,7 +1015,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     initializers := Core.P raw :: !initializers;
     let result = { raw; timer = source.timer }
     in
-    owner := Some result;
+    owner := This result;
     result
 
   let checked_next name counter =
