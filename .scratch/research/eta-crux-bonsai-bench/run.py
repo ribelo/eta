@@ -334,6 +334,16 @@ def main():
                 f"/sys/devices/system/cpu/cpu{args.cpu or 0}/cpufreq/"
                 "scaling_governor"
             ),
+            "thread_siblings": read_optional(
+                f"/sys/devices/system/cpu/cpu{args.cpu or 0}/topology/"
+                "thread_siblings_list"
+            ),
+            "kernel_isolated_cpus": read_optional(
+                "/sys/devices/system/cpu/isolated"
+            ),
+            "boost_enabled": read_optional(
+                "/sys/devices/system/cpu/cpufreq/boost"
+            ),
             "turbo_disabled": read_optional(
                 "/sys/devices/system/cpu/intel_pstate/no_turbo"
             ),
