@@ -287,17 +287,15 @@ Never_delivered
 Pending(token, Initialized value)
       |
       v
-Running(token, event)
-      |
-      v
 Delivered(value)
 ```
 
 A later publication creates `Pending(token, Changed(old, new))`. A typed callback
-failure settles the running event and reports the typed error.
+failure settles the pending event and reports the typed error.
 
-A callback exception returns `Running` to `Pending`. The next stabilization can
-retry that exact event.
+A callback exception leaves the event pending. The next stabilization can
+retry that exact event. The settle guard matches the pending delivery token,
+so a claimed event needs no separate running state.
 
 ### Timer lifecycle
 

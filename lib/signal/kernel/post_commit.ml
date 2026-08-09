@@ -32,11 +32,14 @@ type mutable_stats = {
   mutable releases : int;
 }
 
+(* The claimed state needs no constructor of its own: delivery tokens are
+   unique per publication, so the settle guard matches the pending token
+   directly. A failed or interrupted callback simply leaves the pending
+   event in place for the next retry. *)
 type ('a : value_or_null) cursor =
   | Never_delivered
   | Delivered of 'a
   | Pending of int * 'a update
-  | Running of int * 'a update
 
 type ('a : value_or_null) observer = {
   owner : t;
@@ -152,12 +155,9 @@ let observe : type (a : value_or_null) error.
   }
 
 let base = function
-  | Never_delivered | Pending (_, Initialized _) | Running (_, Initialized _) ->
-      None
+  | Never_delivered | Pending (_, Initialized _) -> None
   | Delivered value -> Some value
-  | Pending (_, Changed (old_value, _))
-  | Running (_, Changed (old_value, _)) ->
-      Some old_value
+  | Pending (_, Changed (old_value, _)) -> Some old_value
 
 let publish t observer value =
   if observer.owner != t then invalid_arg "selected_edges: observer owner";
@@ -209,8 +209,7 @@ let current delivery =
       if delivery.acknowledged then None
       else
         match observer.lifecycle, observer.cursor with
-        | Active, (Pending (token, _) | Running (token, _))
-          when token = delivery.token ->
+        | Active, Pending (token, _) when token = delivery.token ->
             Some delivery.event
         | Active, _ | Finished _, _ -> None)
   in
@@ -223,9 +222,8 @@ let acknowledge delivery =
       if delivery.acknowledged then false
       else
         match observer.lifecycle, observer.cursor with
-        | Active, (Pending (token, event) | Running (token, event))
-          when token = delivery.token ->
-          delivery.acknowledged <- true;
+        | Active, Pending (token, event) when token = delivery.token ->
+            delivery.acknowledged <- true;
           observer.cursor <-
             Delivered
               (match event with
@@ -473,7 +471,7 @@ let settle_delivery observer token event delivered =
   let outcome =
     claim observer.owner @@ stack_ (fun () ->
       match observer.lifecycle, observer.cursor with
-      | Active, Running (active, _) when active = token ->
+      | Active, Pending (active, _) when active = token ->
           if delivered then (
             observer.cursor <-
               Delivered
@@ -481,9 +479,8 @@ let settle_delivery observer token event delivered =
                 | Initialized value | Changed (_, value) -> value);
             observer.owner.counts.acknowledgements <-
               observer.owner.counts.acknowledgements + 1)
-          else (
-            observer.cursor <- Pending (token, event);
-            observer.owner.counts.releases <- observer.owner.counts.releases + 1)
+          else
+            observer.owner.counts.releases <- observer.owner.counts.releases + 1
       | Active, _ | Finished _, _ -> ())
   in
   outcome
@@ -497,7 +494,6 @@ let rec deliver t = function
         invalid_arg "selected_edges: observer plan owner";
       match observer.lifecycle, observer.cursor with
       | Active, Pending (token, event) -> (
-          observer.cursor <- Running (token, event);
           t.counts.callback_claims <- t.counts.callback_claims + 1;
           let delivery =
             { observer; token; event; acknowledged = false }
@@ -515,7 +511,7 @@ let rec deliver t = function
           | exception exn ->
               settle_delivery observer token event false;
               raise exn)
-      | Active, (Never_delivered | Delivered _ | Running _) | Finished _, _ ->
+      | Active, (Never_delivered | Delivered _) | Finished _, _ ->
           deliver t rest)
 
 let drain_cleanup_failures t =
@@ -545,7 +541,7 @@ let rec plan_is_idle t = function
         invalid_arg "selected_edges: observer plan owner";
       (match observer.lifecycle, observer.cursor with
       | Active, Pending _ -> false
-      | Active, (Never_delivered | Delivered _ | Running _) | Finished _, _ ->
+      | Active, (Never_delivered | Delivered _) | Finished _, _ ->
           plan_is_idle t rest)
 
 let is_quiescent t plan =
