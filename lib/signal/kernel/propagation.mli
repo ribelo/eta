@@ -102,7 +102,9 @@ and slot = {
 and topology_action = Created of int | Retired of int * packed
 and capsule = {
   rollback_capsule : unit -> unit;
-  cleanup_capsule : unit -> unit;
+  (** A capsule with nothing to commit carries [Null], so a successful pass
+      makes no call for it. *)
+  cleanup_capsule : (unit -> unit) or_null;
 }
 and graph = {
   mutable phase : phase;

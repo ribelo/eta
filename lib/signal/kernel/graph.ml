@@ -951,7 +951,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
                 selected := old_selected;
                 inner := old_inner;
                 scope := old_scope);
-            cleanup_capsule = (fun () -> ());
+            cleanup_capsule = Null;
           });
       (* Both reads are from dependencies attached to the bind owner. The
          dependency array keeps their nodes live during this computation. *)

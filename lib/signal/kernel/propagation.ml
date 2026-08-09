@@ -108,7 +108,9 @@ and topology_action =
 
 and capsule = {
   rollback_capsule : unit -> unit;
-  cleanup_capsule : unit -> unit;
+  (* A capsule that has nothing to commit carries Null, so a successful pass
+     makes no call for it. *)
+  cleanup_capsule : (unit -> unit) or_null;
 }
 
 and graph = {
@@ -337,7 +339,7 @@ let create () =
     action_length = 0;
     capsules =
       Array.make 8
-        { rollback_capsule = (fun () -> ()); cleanup_capsule = (fun () -> ()) };
+        { rollback_capsule = (fun () -> ()); cleanup_capsule = Null };
     capsule_length = 0;
     queue = make_queue ();
     priority_queue = make_queue ();
@@ -399,7 +401,7 @@ let grow_actions values =
 
 let grow_capsules values =
   let inert =
-    { rollback_capsule = (fun () -> ()); cleanup_capsule = (fun () -> ()) }
+    { rollback_capsule = (fun () -> ()); cleanup_capsule = Null }
   in
   let next = Array.make (max 1 (2 * Array.length values)) inert in
   Array.blit values 0 next 0 (Array.length values);
@@ -1086,7 +1088,7 @@ let retire_packed graph (P node as packed) =
   let entry = graph.slots.(node.handle.slot) in
   set_slot_contents entry Null;
   set_node_retired node true;
-  Option.iter (fun scope -> scope.valid <- false) node.scope;
+  (match node.scope with None -> () | Some scope -> scope.valid <- false);
   if graph.quarantine_length = Array.length graph.quarantine then
     graph.quarantine <- grow_int graph.quarantine;
   graph.quarantine.(graph.quarantine_length) <- node.handle.slot;
@@ -1113,7 +1115,7 @@ let restore_retired graph =
     | Retired (slot, (P node as packed)) ->
         set_slot_contents graph.slots.(slot) (This packed);
         set_node_retired node false;
-        Option.iter (fun scope -> scope.valid <- true) node.scope;
+        (match node.scope with None -> () | Some scope -> scope.valid <- true);
         graph.work.rollback_visits <- graph.work.rollback_visits + 1
     | Created _ -> ()
   done
@@ -1210,19 +1212,22 @@ let[@inline] commit graph =
 let cleanup graph =
   if graph.phase <> Cleanup_pending then raise (Wrong_phase graph.phase);
   for index = 0 to graph.capsule_length - 1 do
-    graph.capsules.(index).cleanup_capsule ();
+    (match graph.capsules.(index).cleanup_capsule with
+    | Null -> ()
+    | This cleanup -> cleanup ());
     graph.work.cleanup_visits <- graph.work.cleanup_visits + 1
   done;
   for index = 0 to graph.action_length - 1 do
     (match graph.actions.(index) with
     | Retired (slot, P node) ->
-        Option.iter
-          (fun scope ->
-            if not scope.valid then detach_scope graph scope)
-          node.scope;
-        push_free graph slot
+        (match node.scope with
+        | None -> ()
+        | Some scope -> if not scope.valid then detach_scope graph scope);
+        push_free graph slot;
+        (* Only a retirement entry holds a node, so only it needs clearing to
+           release that node for reclamation. *)
+        graph.actions.(index) <- Created 0
     | Created _ -> ());
-    graph.actions.(index) <- Created 0;
     graph.work.cleanup_visits <- graph.work.cleanup_visits + 1
   done;
   graph.action_length <- 0;
@@ -1658,7 +1663,7 @@ let bind_owner ?(cutoff = Physical_cutoff) (source : 'a signal) ~f =
           owner.rollback_scope <- old_scope;
           owner.tentative_inner <- old_inner);
       cleanup_capsule =
-        (fun () ->
+        This (fun () ->
           let owner = Option.get !owner_ref in
           owner.rollback_scope.valid <- false;
           owner.rollback_inner <- owner.inner;
@@ -1990,7 +1995,7 @@ let keyed_owner ?(cutoff = Physical_cutoff) ?(data_cutoff = ( == ))
             (fun () ->
               owner.output_root <- owner.output_undo;
               owner.output_written_in <- -1);
-          cleanup_capsule = (fun () -> owner.output_written_in <- -1);
+          cleanup_capsule = This (fun () -> owner.output_written_in <- -1);
         });
     owner.output_root <-
       output_ops.set_output key value owner.output_root
@@ -2093,7 +2098,7 @@ let keyed_owner ?(cutoff = Physical_cutoff) ?(data_cutoff = ( == ))
             owner.children <- old_children;
             owner.output_root <- old_output);
         cleanup_capsule =
-          (fun () ->
+          This (fun () ->
             List.iter
               (fun _ ->
                 bump_keyed_for owner.keyed_signal.graph `Committed_addition)
