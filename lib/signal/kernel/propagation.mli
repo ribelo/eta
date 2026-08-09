@@ -51,6 +51,12 @@ type height_queue = {
   mutable lowest : int;
   mutable highest : int;
 }
+(** A node suppresses a publication either by physical equality on the stored
+    representation, which is the default, or by an explicit test. *)
+type ('a : value_or_null) cutoff_test =
+  | Physical_cutoff
+  | Cutoff_test of ('a -> 'a -> bool)
+
 type ('a : value_or_null) node = {
   graph : graph;
   handle : handle;
@@ -61,7 +67,7 @@ type ('a : value_or_null) node = {
   mutable computed_in : int;
   mutable flags : int;
   compute : unit -> 'a;
-  mutable cutoff : 'a -> 'a -> bool;
+  mutable cutoff : 'a cutoff_test;
   mutable dependencies : packed array;
   mutable dependents : packed list;
   mutable demand : int;
@@ -150,7 +156,7 @@ type ('a : value_or_null) signal = 'a node
 type ('a : value_or_null) var = {
   signal : 'a signal;
   accepted : 'a ref;
-  source_cutoff : 'a -> 'a -> bool;
+  source_cutoff : 'a cutoff_test;
 }
 type demand = packed
 type ('a : value_or_null) change =
@@ -207,12 +213,12 @@ val make_node :
   height:int ->
   dependencies:packed array ->
   compute:(unit -> 'a) ->
-  cutoff:('a -> 'a -> bool) -> initial:'a -> 'a signal
+  cutoff:'a cutoff_test -> initial:'a -> 'a signal
 val var :
-  ('a : value_or_null). ?cutoff:('a -> 'a -> bool) -> graph -> 'a -> 'a var
+  ('a : value_or_null). ?cutoff:'a cutoff_test -> graph -> 'a -> 'a var
 val watch : ('a : value_or_null). 'a var -> 'a signal
 val set_cutoff :
-  ('a : value_or_null). 'a signal -> ('a -> 'a -> bool) -> unit
+  ('a : value_or_null). 'a signal -> 'a cutoff_test -> unit
 val mark_public_source : ('a : value_or_null). 'a signal -> unit
 val enqueue : packed -> unit
 (* Run the propagation step for [packed] immediately (used to initialize a
@@ -323,7 +329,7 @@ val keyed_find :
 val keyed_owner :
   ('a : value_or_null) ('b : value_or_null) ('d : value_or_null)
   ('input : value_or_null).
-  ?cutoff:('a -> 'a -> bool) ->
+  ?cutoff:'a cutoff_test ->
   ?data_cutoff:('b -> 'b -> bool) ->
   input:'input signal ->
   input_ops:('c, 'b, 'input) input_ops ->

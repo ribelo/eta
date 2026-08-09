@@ -50,6 +50,14 @@ type height_queue = {
   mutable highest : int;
 }
 
+(* The default cutoff is physical equality on the stored representation, so the
+   kernel names it instead of storing a closure. or_null values are unboxed, so
+   [Physical_cutoff] on the representation matches physical equality on the
+   published value and equality of the null case. *)
+type ('a : value_or_null) cutoff_test =
+  | Physical_cutoff
+  | Cutoff_test of ('a -> 'a -> bool)
+
 type ('a : value_or_null) node = {
   graph : graph;
   handle : handle;
@@ -60,7 +68,7 @@ type ('a : value_or_null) node = {
   mutable computed_in : int;
   mutable flags : int;
   compute : unit -> 'a;
-  mutable cutoff : 'a -> 'a -> bool;
+  mutable cutoff : 'a cutoff_test;
   mutable dependencies : packed array;
   mutable dependents : packed list;
   mutable demand : int;
@@ -145,7 +153,7 @@ type ('a : value_or_null) signal = 'a node
 type ('a : value_or_null) var = {
   signal : 'a signal;
   accepted : 'a ref;
-  source_cutoff : 'a -> 'a -> bool;
+  source_cutoff : 'a cutoff_test;
 }
 
 type demand = packed
@@ -656,7 +664,7 @@ let make_node ?(constant = false) ?(pass_memoized = false) graph ~height
   if graph.phase = Active then push_action graph (Created handle.slot);
   node
 
-let var ?(cutoff = ( == )) graph initial =
+let var ?(cutoff = Physical_cutoff) graph initial =
   let accepted = ref initial in
   let signal =
     make_node graph ~height:0 ~dependencies:[||]
@@ -672,16 +680,16 @@ let constant_compute () = failwith "selected_core: evaluated constant"
 let const graph value =
   make_node ~constant:true graph ~height:0 ~dependencies:[||]
     ~compute:constant_compute
-    ~cutoff:(fun _ _ -> true) ~initial:value
+    ~cutoff:(Cutoff_test (fun _ _ -> true)) ~initial:value
 
-let map ?(cutoff = ( == )) f child =
+let map ?(cutoff = Physical_cutoff) f child =
   if not (validate_handle child) then raise Stale_handle;
   let initial = f child.current in
   make_node child.graph ~height:(child.height + 1)
     ~dependencies:[| P child |]
     ~compute:(fun () -> f child.current) ~cutoff ~initial
 
-let map2 ?(cutoff = ( == )) f (left : 'a signal) (right : 'b signal) =
+let map2 ?(cutoff = Physical_cutoff) f (left : 'a signal) (right : 'b signal) =
   if left.graph != right.graph then invalid_arg "selected_core: graph mismatch";
   if not (validate_handle left && validate_handle right) then raise Stale_handle;
   let initial = f left.current right.current in
@@ -888,7 +896,13 @@ let set graph variable candidate =
   if variable.signal.graph != graph then
     invalid_arg "selected_core: graph mismatch";
   graph.work.admissions <- graph.work.admissions + 1;
-  if not (variable.source_cutoff !(variable.accepted) candidate) then (
+  let published = !(variable.accepted) in
+  if
+    not
+      (match variable.source_cutoff with
+      | Physical_cutoff -> published == candidate
+      | Cutoff_test test -> test published candidate)
+  then (
     variable.accepted := candidate;
     retain_admission graph variable.signal;
     enqueue (P variable.signal))
@@ -935,7 +949,11 @@ let rec evaluate_from (pending @ local) changed_before (P node) =
           pending.pending_dependency_edges + dependency_count);
       let next = node.compute () in
       node.computed_in <- graph.pass;
-      if node.cutoff node.current next then false
+      if
+        (match node.cutoff with
+        | Physical_cutoff -> node.current == next
+        | Cutoff_test test -> test node.current next)
+      then false
       else (
         record_first_write node;
         node.current <- next;
@@ -1593,7 +1611,7 @@ type ('a, 'b) bind_owner = {
   mutable tentative_inner : 'b signal;
 }
 
-let bind_owner ?(cutoff = ( == )) (source : 'a signal) ~f =
+let bind_owner ?(cutoff = Physical_cutoff) (source : 'a signal) ~f =
   let graph = source.graph in
   enable_change_listeners graph;
   let scope = create_detached_scope () in
@@ -1946,7 +1964,7 @@ let append_nodes_dot buffer graph ~only_necessary ~scope_label ~dot_state
 let keyed_find owner key =
   child_find owner.input_ops.compare_key key owner.children
 
-let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
+let keyed_owner ?(cutoff = Physical_cutoff) ?(data_cutoff = ( == ))
     ~(input : 'input signal) ~input_ops ~output_ops ~build () =
   let graph = input.graph in
   enable_change_listeners graph;
@@ -2165,7 +2183,7 @@ let raw_scalar ?(cutoff = false) depth =
   let graph = create () in
   let source = var graph 0 in
   let base =
-    if cutoff then map ~cutoff:Int.equal (fun _ -> 0) (watch source)
+    if cutoff then map ~cutoff:(Cutoff_test Int.equal) (fun _ -> 0) (watch source)
     else watch source
   in
   let rec loop n signal =

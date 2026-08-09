@@ -516,7 +516,10 @@ module Make_impl (Observer_error : Observer_error) () = struct
       Core.make_node graph ~pass_memoized:true
         ~height:(if scoped then height + 1 else height) ~dependencies
         ~compute:compute_candidate
-        ~cutoff:(or_null_cutoff cutoff) ~initial:Null
+        ~cutoff:
+          (if cutoff == Cutoff.phys_equal then Core.Physical_cutoff
+           else Core.Cutoff_test (or_null_cutoff cutoff))
+        ~initial:Null
     in
     let raw =
       match inherited_scope with
@@ -556,8 +559,10 @@ module Make_impl (Observer_error : Observer_error) () = struct
         let raw =
           Core.make_node graph ~height:0 ~dependencies:[||]
             ~compute:(fun () -> This value)
-            ~cutoff:(fun old next ->
-              (not (Core.raw_is_null old)) && not (Core.raw_is_null next))
+            ~cutoff:
+              (Core.Cutoff_test
+                 (fun old next ->
+                   (not (Core.raw_is_null old)) && not (Core.raw_is_null next)))
             ~initial:Null
         in
         initializers := Core.P raw :: !initializers;
@@ -695,7 +700,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
       Execution.sync execution @@ fun () ->
       let cutoff = cutoff_or_default cutoff in
       let source =
-        Core.var ~cutoff:(fun _ _ -> false) graph (This value)
+        Core.var ~cutoff:(Core.Cutoff_test (fun _ _ -> false)) graph (This value)
       in
       {
         source;
@@ -716,7 +721,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
       match Core.current_scope graph, var.direct_watch with
       | None, true when !phase = `Idle && var.cutoff == Cutoff.phys_equal ->
           Core.mark_public_source source;
-          Core.set_cutoff source (or_null_cutoff var.cutoff);
+          Core.set_cutoff source
+            (if var.cutoff == Cutoff.phys_equal then Core.Physical_cutoff
+             else Core.Cutoff_test (or_null_cutoff var.cutoff));
           { raw = source; timer = None }
       | (None | Some _), _ ->
           {
@@ -963,7 +970,10 @@ module Make_impl (Observer_error : Observer_error) () = struct
     let raw =
       Core.make_node graph ~height:(source.raw.height + 2)
         ~dependencies:[| Core.P source.raw |] ~compute
-        ~cutoff:(or_null_cutoff selected_cutoff) ~initial:Null
+        ~cutoff:
+          (if selected_cutoff == Cutoff.phys_equal then Core.Physical_cutoff
+           else Core.Cutoff_test (or_null_cutoff selected_cutoff))
+        ~initial:Null
     in
     raw.topology_priority <- 1;
     let selector_priority_active = ref false in
@@ -2170,11 +2180,13 @@ module Make_impl (Observer_error : Observer_error) () = struct
         {
           source =
             Core.var
-              ~cutoff:(fun old next ->
-                match kind with
-                | Ticks _ -> false
-                | Every _ | At _ | No_timer ->
-                    (not !force_source) && old == next)
+              ~cutoff:
+                (Core.Cutoff_test
+                   (fun old next ->
+                     match kind with
+                     | Ticks _ -> false
+                     | Every _ | At _ | No_timer ->
+                         (not !force_source) && old == next))
               graph (This initial);
           value = initial;
           cutoff = Cutoff.never;
