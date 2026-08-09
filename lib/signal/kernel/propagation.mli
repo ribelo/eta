@@ -65,6 +65,7 @@ type ('a : value_or_null) node = {
   mutable undo : 'a;
   mutable written_in : int;
   mutable computed_in : int;
+  mutable admitted_in : int;
   mutable flags : int;
   compute : unit -> 'a;
   mutable cutoff : 'a cutoff_test;
@@ -143,12 +144,11 @@ and graph = {
 val node_constant : ('a : value_or_null). 'a node -> bool
 val node_necessary : ('a : value_or_null). 'a node -> bool
 val node_in_queue : ('a : value_or_null). 'a node -> bool
-val node_admitted : ('a : value_or_null). 'a node -> bool
+val node_admitted : ('a : value_or_null). graph -> 'a node -> bool
 val node_reclaim_queued : ('a : value_or_null). 'a node -> bool
 val set_node_constant : ('a : value_or_null). 'a node -> bool -> unit
 val set_node_necessary : ('a : value_or_null). 'a node -> bool -> unit
 val set_node_in_queue : ('a : value_or_null). 'a node -> bool -> unit
-val set_node_admitted : ('a : value_or_null). 'a node -> bool -> unit
 val set_node_reclaim_queued : ('a : value_or_null). 'a node -> bool -> unit
 
 (* Signals are the nodes themselves: the node record already carries graph

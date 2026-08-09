@@ -66,6 +66,7 @@ type ('a : value_or_null) node = {
   mutable undo : 'a;
   mutable written_in : int;
   mutable computed_in : int;
+  mutable admitted_in : int;
   mutable flags : int;
   compute : unit -> 'a;
   mutable cutoff : 'a cutoff_test;
@@ -161,11 +162,14 @@ type ('a : value_or_null) var = {
 type demand = packed
 
 (* Packed per-node flags: 1 = constant, 2 = necessary, 4 = in_queue,
-   8 = admitted, 16 = reclaim_queued, 32 = public source, 64 = retired. *)
+   8 unused, 16 = reclaim_queued, 32 = public source, 64 = retired. *)
 let node_constant node = node.flags land 1 <> 0
 let node_necessary node = node.flags land 2 <> 0
 let node_in_queue node = node.flags land 4 <> 0
-let node_admitted node = node.flags land 8 <> 0
+(* A source records the pass it was admitted for, so the ledger needs no
+   clearing walk: committing or rolling back moves the pass and every stamp
+   from an earlier pass is already stale. *)
+let node_admitted graph node = node.admitted_in = graph.pass
 let node_reclaim_queued node = node.flags land 16 <> 0
 let node_public_source node = node.flags land 32 <> 0
 
@@ -177,9 +181,6 @@ let set_node_necessary node value =
 
 let set_node_in_queue node value =
   node.flags <- if value then node.flags lor 4 else node.flags land (lnot 4)
-
-let set_node_admitted node value =
-  node.flags <- if value then node.flags lor 8 else node.flags land (lnot 8)
 
 let set_node_reclaim_queued node value =
   node.flags <- if value then node.flags lor 16 else node.flags land (lnot 16)
@@ -643,6 +644,7 @@ let make_node ?(constant = false) ?(pass_memoized = false) graph ~height
       undo = initial;
       written_in = -1;
       computed_in = -1;
+      admitted_in = -1;
       flags = (if constant then 1 else 0) lor (if pass_memoized then 128 else 0);
       compute;
       cutoff;
@@ -801,10 +803,10 @@ let unlink_queued_node (P target) =
     remove_from graph.queue)
 
 let retain_admission graph node =
-  if not (node_admitted node) then (
+  if node.admitted_in <> graph.pass then (
     if graph.admission_length = Array.length graph.admissions then
       graph.admissions <- grow_int graph.admissions;
-    set_node_admitted node true;
+    node.admitted_in <- graph.pass;
     graph.admissions.(graph.admission_length) <- node.handle.slot;
     graph.admission_length <- graph.admission_length + 1)
 
@@ -1180,6 +1182,9 @@ let replay_admissions graph =
     | This packed ->
         let P node = packed in
         node.queued_in <- -1;
+        (* The retry pass keeps these sources admitted, so diagnostics report
+           the same pending work a rollback used to leave behind. *)
+        node.admitted_in <- graph.pass;
         enqueue packed
     | Null -> ()
   done
@@ -1336,7 +1341,7 @@ let cancel_admission graph (P node as packed) =
       incr retained)
   done;
   graph.admission_length <- !retained;
-  set_node_admitted node false;
+  node.admitted_in <- -1;
   unlink_queued_node packed
 
 let public_node_counts graph =
@@ -1352,7 +1357,7 @@ let public_node_counts graph =
         in
         if not internal_source then incr total;
         if node_necessary node && not internal_source then incr necessary;
-        if node_admitted node then incr dirty
+        if node_admitted graph node then incr dirty
   done;
   (!total, !necessary, !dirty)
 
@@ -1572,14 +1577,7 @@ let reinstall_freed graph handle packed =
     set_node_retired node false;
     true)
 
-let[@inline] clear_admissions graph =
-  for index = 0 to graph.admission_length - 1 do
-    match slot_contents graph.slots.(graph.admissions.(index)) with
-    | This (P node) ->
-        set_node_admitted node false
-    | Null -> ()
-  done;
-  graph.admission_length <- 0
+let[@inline] clear_admissions graph = graph.admission_length <- 0
 
 let run_stabilization graph checkpoint =
   if graph.phase <> Idle then raise Exit
@@ -1943,14 +1941,14 @@ let append_nodes_dot buffer graph ~only_necessary ~scope_label ~dot_state
                   Printf.sprintf
                     " necessary=%b dirty=%b queued=%b dependencies=%d dependents=%d signal_id=s%d%s"
                     (node_necessary node)
-                    (node_admitted node
+                    (node_admitted graph node
                     || Array.exists
-                         (fun (P dependency) -> node_admitted dependency)
+                         (fun (P dependency) -> node_admitted graph dependency)
                          node.dependencies)
                     (node.queued_in = graph.pass
                     || Array.exists
                          (fun (P dependency) ->
-                           node_admitted dependency
+                           node_admitted graph dependency
                            || dependency.queued_in = graph.pass)
                          node.dependencies)
                     (Array.length node.dependencies) !dependent_count slot
