@@ -1,0 +1,15 @@
+(library
+ (name bench_common)
+ (modules bench_common)
+ (libraries mtime.clock.os str unix))
+
+(executable
+ (name eta_adapter)
+ (modules eta_adapter)
+ (libraries bench_common eio_main eta eta_crux eta_eio))
+
+(executable
+ (name bonsai_adapter)
+ (modules bonsai_adapter)
+ (libraries bench_common bonsai bonsai.driver
+   bonsai_concrete.ui_time_source core))
