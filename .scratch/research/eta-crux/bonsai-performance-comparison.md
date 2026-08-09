@@ -385,9 +385,12 @@ is excluded, and timed intervals are summed into one sample.
 ### CPU and host
 
 - Run native executables on the same machine and kernel.
-- Pin the process to one isolated physical CPU with `taskset`.
+- Pin every measured process to one logical CPU with `taskset`.
+- Prefer a kernel-isolated physical core. If none is available, record the
+  isolation state and SMT sibling and disclose this limit in the report.
 - Keep the same CPU governor and turbo policy for both systems.
-- Record the CPU model, microcode, kernel, governor, turbo state, and affinity.
+- Record the CPU model, microcode, kernel, governor, boost state, affinity,
+  kernel-isolation state, and SMT sibling.
 - Stop unrelated load or record it as a failed run.
 - Do not compare Node results with native Eta results.
 
