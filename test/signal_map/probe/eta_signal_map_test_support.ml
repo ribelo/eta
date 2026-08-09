@@ -35,7 +35,7 @@ struct
 
   let family signal =
     let keyed_signal = Signal.raw_for_testing signal in
-    match keyed_signal.node.Propagation.keyed_owner with
+    match keyed_signal.Propagation.keyed_owner with
     | None -> None
     | Some packed_owner ->
         let owner :
@@ -77,12 +77,12 @@ struct
       (List.filter
          (fun (Propagation.P node) ->
            node.handle = owner.Propagation.keyed_signal.handle)
-         child.output.node.dependents)
+         child.output.dependents)
 
   let has_exact_child_edge entry = child_edge_count entry = 1
 
   let is_settled (Family owner) =
-    owner.committed_input == owner.keyed_input.node.current
+    owner.committed_input == owner.keyed_input.current
     &&
     let intact = ref true in
     Propagation.child_iter

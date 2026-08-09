@@ -135,12 +135,11 @@ and graph = {
   work : work;
 }
 
-type ('a : value_or_null) signal = {
-  graph : graph;
-  handle : handle;
-  node : 'a node;
-  packed : packed;
-}
+(* Signals are the nodes themselves: the node record already carries graph
+   and handle under the same field names, and [packed] is the free unboxed
+   existential re-wrap. Aliasing removes a five-word wrapper record and one
+   pointer indirection per node reference. *)
+type ('a : value_or_null) signal = 'a node
 
 type ('a : value_or_null) var = {
   signal : 'a signal;
@@ -179,7 +178,7 @@ let set_node_retired node value =
   node.flags <- if value then node.flags lor 64 else node.flags land (lnot 64)
 
 let mark_public_source signal =
-  signal.node.flags <- signal.node.flags lor 32
+  signal.flags <- signal.flags lor 32
 
 let make_scope ?(counted = false) parent =
   {
@@ -467,8 +466,8 @@ let validate_handle (signal : 'a signal) =
      generation bumps only happen after retirement, and the revival paths
      ([restore_retired], [reinstall_freed]) clear the flag. The signal
      carries its node directly, so validation needs no slot resolution. *)
-  not (node_retired signal.node)
-  && Option.fold ~none:true ~some:(fun scope -> scope.valid) signal.node.scope
+  not (node_retired signal)
+  && Option.fold ~none:true ~some:(fun scope -> scope.valid) signal.scope
 
 
 let handle (signal : 'a signal) = signal.handle
@@ -652,7 +651,7 @@ let make_node ?(constant = false) graph ~height ~dependencies ~compute ~cutoff
         (fun child -> add_fresh_dependent child packed));
   ensure_height graph height;
   if graph.phase = Active then push_action graph (Created handle.slot);
-  { graph; handle; node; packed }
+  node
 
 let var ?(cutoff = ( == )) graph initial =
   let accepted = ref initial in
@@ -663,7 +662,7 @@ let var ?(cutoff = ( == )) graph initial =
   { signal; accepted; source_cutoff = cutoff }
 
 let watch variable = variable.signal
-let set_cutoff signal cutoff = signal.node.cutoff <- cutoff
+let set_cutoff signal cutoff = signal.cutoff <- cutoff
 
 let constant_compute () = failwith "selected_core: evaluated constant"
 
@@ -674,19 +673,19 @@ let const graph value =
 
 let map ?(cutoff = ( == )) f child =
   if not (validate_handle child) then raise Stale_handle;
-  let initial = f child.node.current in
-  make_node child.graph ~height:(child.node.height + 1)
-    ~dependencies:[| child.packed |]
-    ~compute:(fun () -> f child.node.current) ~cutoff ~initial
+  let initial = f child.current in
+  make_node child.graph ~height:(child.height + 1)
+    ~dependencies:[| P child |]
+    ~compute:(fun () -> f child.current) ~cutoff ~initial
 
 let map2 ?(cutoff = ( == )) f (left : 'a signal) (right : 'b signal) =
   if left.graph != right.graph then invalid_arg "selected_core: graph mismatch";
   if not (validate_handle left && validate_handle right) then raise Stale_handle;
-  let initial = f left.node.current right.node.current in
+  let initial = f left.current right.current in
   make_node left.graph
-    ~height:(1 + max left.node.height right.node.height)
-    ~dependencies:[| left.packed; right.packed |]
-    ~compute:(fun () -> f left.node.current right.node.current)
+    ~height:(1 + max left.height right.height)
+    ~dependencies:[| P left; P right |]
+    ~compute:(fun () -> f left.current right.current)
     ~cutoff ~initial
 
 let enqueue (P node) =
@@ -816,8 +815,8 @@ let rec activate (P node as packed) =
 
 let demand signal =
   if not (validate_handle signal) then raise Stale_handle;
-  activate signal.packed;
-  signal.packed
+  activate (P signal);
+  P signal
 
 let rec deactivate (P node as packed) =
   if node.demand > 0 then node.demand <- node.demand - 1;
@@ -868,7 +867,7 @@ let release demand = deactivate demand
 
 let value signal =
   if not (validate_handle signal) then raise Stale_handle;
-  signal.node.current
+  signal.current
 
 let[@inline always] record_first_write (node : 'a node) =
   let graph = node.graph in
@@ -888,8 +887,8 @@ let set graph variable candidate =
   graph.work.admissions <- graph.work.admissions + 1;
   if not (variable.source_cutoff !(variable.accepted) candidate) then (
     variable.accepted := candidate;
-    retain_admission graph variable.signal.node;
-    enqueue variable.signal.packed)
+    retain_admission graph variable.signal;
+    enqueue (P variable.signal))
 
 type pending_work = {
   mutable pending_claims : int;
@@ -1068,7 +1067,7 @@ let retire_scope graph scope =
 
 let retire signal =
   if not (validate_handle signal) then raise Stale_handle;
-  retire_packed signal.graph (P signal.node)
+  retire_packed signal.graph (P signal)
 
 let restore_retired graph =
   for index = graph.action_length - 1 downto 0 do
@@ -1585,19 +1584,19 @@ let bind_owner ?(cutoff = ( == )) (source : 'a signal) ~f =
   enable_change_listeners graph;
   let scope = create_detached_scope () in
   let inner : 'b signal =
-    with_scope graph scope (fun () -> f source.node.current)
+    with_scope graph scope (fun () -> f source.current)
   in
   if inner.graph != graph then invalid_arg "selected_core: graph mismatch";
   let owner_ref = ref None in
   let switch_dependency owner old_inner fresh_inner =
-    owner.bind_signal.node.dependencies.(1) <- fresh_inner.packed;
-    remove_dependent old_inner.packed owner.bind_signal.packed;
-    add_dependent fresh_inner.packed owner.bind_signal.packed;
-    if node_necessary owner.bind_signal.node then (
+    owner.bind_signal.dependencies.(1) <- P fresh_inner;
+    remove_dependent (P old_inner) (P owner.bind_signal);
+    add_dependent (P fresh_inner) (P owner.bind_signal);
+    if node_necessary owner.bind_signal then (
       graph.suppress_reclaim <- true;
-      deactivate old_inner.packed;
+      deactivate (P old_inner);
       graph.suppress_reclaim <- false;
-      activate fresh_inner.packed);
+      activate (P fresh_inner));
     graph.work.topology_edits <- graph.work.topology_edits + 2
   in
   let capsule =
@@ -1609,7 +1608,7 @@ let bind_owner ?(cutoff = ( == )) (source : 'a signal) ~f =
           let old_scope = owner.rollback_scope in
           let fresh_inner = owner.tentative_inner in
           switch_dependency owner fresh_inner old_inner;
-          owner.selected_source <- source.node.undo;
+          owner.selected_source <- source.undo;
           owner.inner <- old_inner;
           owner.inner_scope <- old_scope;
           owner.rollback_inner <- old_inner;
@@ -1626,7 +1625,7 @@ let bind_owner ?(cutoff = ( == )) (source : 'a signal) ~f =
   in
   let compute () =
     let owner = Option.get !owner_ref in
-    let next_source = source.node.current in
+    let next_source = source.current in
     if owner.selected_source != next_source then (
       let old_inner = owner.inner in
       let old_scope = owner.inner_scope in
@@ -1643,20 +1642,20 @@ let bind_owner ?(cutoff = ( == )) (source : 'a signal) ~f =
       owner.rollback_scope <- old_scope;
       owner.tentative_inner <- fresh_inner;
       push_capsule graph capsule);
-    owner.inner.node.current
+    owner.inner.current
   in
   let bind_signal =
     make_node graph
-      ~height:(1 + max source.node.height inner.node.height)
-      ~dependencies:[| P source.node; P inner.node |]
-      ~compute ~cutoff ~initial:inner.node.current
+      ~height:(1 + max source.height inner.height)
+      ~dependencies:[| P source; P inner |]
+      ~compute ~cutoff ~initial:inner.current
   in
   let owner =
     {
       bind_signal;
       source;
       selector = f;
-      selected_source = source.node.current;
+      selected_source = source.current;
       inner;
       inner_scope = scope;
       rollback_inner = inner;
@@ -1954,20 +1953,20 @@ let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
       output_ops.set_output key value owner.output_root
   in
   let install_child_listener owner child =
-    child.output.node.change_listeners <-
+    child.output.change_listeners <-
       (fun value -> stage_child_output owner child.key value)
-      :: child.output.node.change_listeners
+      :: child.output.change_listeners
   in
   let attach_child owner child =
-    add_dependent child.output.packed owner.keyed_signal.packed;
-    if node_necessary owner.keyed_signal.node then activate child.output.packed;
+    add_dependent (P child.output) (P owner.keyed_signal);
+    if node_necessary owner.keyed_signal then activate (P child.output);
     graph.work.topology_edits <- graph.work.topology_edits + 1
   in
   let detach_child owner child =
-    remove_dependent child.output.packed owner.keyed_signal.packed;
-    if node_necessary child.output.node then (
+    remove_dependent (P child.output) (P owner.keyed_signal);
+    if node_necessary child.output then (
       graph.suppress_reclaim <- true;
-      deactivate child.output.packed;
+      deactivate (P child.output);
       graph.suppress_reclaim <- false);
     graph.work.topology_edits <- graph.work.topology_edits + 1
   in
@@ -1988,7 +1987,7 @@ let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
             match keyed_find owner key with
             | None -> raise Stale_handle
             | Some child ->
-                let published = child.data.signal.node.current in
+                let published = child.data.signal.current in
                 if not (owner.data_cutoff published data) then
                   set graph child.data data)
         | Left _ -> (
@@ -2013,7 +2012,7 @@ let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
               child_add input_ops.compare_key key child
                 owner.candidate_children;
             owner.candidate_output <-
-              output_ops.set_output key output.node.current
+              output_ops.set_output key output.current
                 owner.candidate_output);
     (match owner.precommit with
     | Some f ->
@@ -2040,7 +2039,7 @@ let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
       {
         rollback_capsule =
           (fun () ->
-            enqueue owner.keyed_signal.packed;
+            enqueue (P owner.keyed_signal);
             List.iter
               (fun child -> detach_child owner child)
               !added;
@@ -2068,13 +2067,13 @@ let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
   in
   let compute () =
     let owner = Option.get !owner_ref in
-    let next = input.node.current in
+    let next = input.current in
     if owner.committed_input != next then reconcile owner next;
     owner.output_root
   in
   let keyed_signal =
-    make_node graph ~height:(input.node.height + 2)
-      ~dependencies:[| P input.node |] ~compute ~cutoff
+    make_node graph ~height:(input.height + 2)
+      ~dependencies:[| P input |] ~compute ~cutoff
       ~initial:output_ops.empty_output
   in
   let owner =
@@ -2097,18 +2096,18 @@ let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
     }
   in
   owner_ref := Some owner;
-  owner.keyed_signal.node.keyed_owner <- Some (Obj.repr owner);
-  keyed_signal.node.demand_listeners <-
+  owner.keyed_signal.keyed_owner <- Some (Obj.repr owner);
+  keyed_signal.demand_listeners <-
     [
       (fun necessary ->
         child_iter
           (fun child ->
-            if necessary then activate child.output.packed
-            else deactivate child.output.packed)
+            if necessary then activate (P child.output)
+            else deactivate (P child.output))
           owner.children);
     ];
   (* Initial reconciliation is construction, not a transaction. *)
-  input_ops.iter_diff input_ops.empty_input input.node.current
+  input_ops.iter_diff input_ops.empty_input input.current
     (fun key -> function
       | Right data ->
           let scope = create_detached_scope () in
@@ -2122,12 +2121,12 @@ let keyed_owner ?(cutoff = ( == )) ?(data_cutoff = ( == ))
           owner.children <-
             child_add input_ops.compare_key key child owner.children;
           owner.output_root <-
-            output_ops.set_output key output.node.current owner.output_root;
-          add_dependent output.packed keyed_signal.packed
+            output_ops.set_output key output.current owner.output_root;
+          add_dependent (P output) (P keyed_signal)
       | Left _ | Changed _ -> ());
-  owner.committed_input <- input.node.current;
-  keyed_signal.node.current <- owner.output_root;
-  keyed_signal.node.undo <- owner.output_root;
+  owner.committed_input <- input.current;
+  keyed_signal.current <- owner.output_root;
+  keyed_signal.undo <- owner.output_root;
   owner
 
 let keyed ?cutoff ?data_cutoff ~input ~input_ops ~output_ops ~build () =

@@ -452,7 +452,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         | Some _ | None -> ());
         Array.iter visit node.dependencies)
     in
-    visit signal.raw.packed;
+    visit (Core.P signal.raw);
     !found
   let enqueue_reactivated = Core.enqueue_reactivated
   let necessary_count () = Core.count_necessary graph
@@ -467,15 +467,15 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let value_exn = function
     | This value -> value
     | Null -> failwith "Eta_signal: uninitialized dependency"
-  let raw_value signal = signal.raw.node.current |> value_exn
+  let raw_value signal = signal.raw.current |> value_exn
   let check_signal signal =
     if not (Core.validate_handle signal.raw) then
-      match signal.raw.node.scope with
+      match signal.raw.scope with
       | Some _ -> raise (Graph_error `Invalid_scope)
       | None ->
           if
             not
-              (Core.reinstall_freed graph signal.raw.handle signal.raw.packed)
+              (Core.reinstall_freed graph signal.raw.handle (Core.P signal.raw))
           then raise (Graph_error `Invalid_scope)
 
   let make_raw ?cutoff:cutoff_arg ~height ~dependencies compute =
@@ -557,7 +557,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     if cutoff != Cutoff.phys_equal then
       Hashtbl.replace custom_cutoff_nodes raw.handle.slot raw.handle;
     let weak_raw = Weak.create 1 in
-    Weak.set weak_raw 0 (Some raw.packed);
+    Weak.set weak_raw 0 (Some (Core.P raw));
     let invalidate () =
       if !computed_in = Core.current_pass graph then (
         match Weak.get weak_raw 0 with
@@ -569,11 +569,11 @@ module Make_impl (Observer_error : Observer_error) () = struct
     Hashtbl.replace compute_invalidators raw.handle.slot invalidate;
     Array.iter
       (fun (Core.P dependency as packed_dependency) ->
-        Core.move_dependent_last packed_dependency raw.node.handle;
+        Core.move_dependent_last packed_dependency raw.handle;
         Core.prepend_change_listener packed_dependency (fun _ ->
             if !computed_in = Core.current_pass graph then invalidate ()))
       dependencies;
-    initializers := Core.P raw.node :: !initializers;
+    initializers := Core.P raw :: !initializers;
     raw
 
   let const value =
@@ -590,7 +590,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               (not (Core.raw_is_null old)) && not (Core.raw_is_null next))
             ~initial:Null
         in
-        initializers := Core.P raw.node :: !initializers;
+        initializers := Core.P raw :: !initializers;
         { raw; timer = None })
     in
     outcome
@@ -601,27 +601,27 @@ module Make_impl (Observer_error : Observer_error) () = struct
     let result =
       {
       raw =
-        make_raw ?cutoff ~height:(child.raw.node.height + 1)
-          ~dependencies:[| Core.P child.raw.node |]
+        make_raw ?cutoff ~height:(child.raw.height + 1)
+          ~dependencies:[| Core.P child.raw |]
           (fun () -> f (raw_value child));
       timer = child.timer;
       }
     in
     if Option.is_some result.timer then
-      timer_roots := result.raw.packed :: !timer_roots;
+      timer_roots := (Core.P result.raw) :: !timer_roots;
     result
 
   let mapn ?cutoff dependencies compute =
     Array.iter check_signal dependencies;
     let height =
       Array.fold_left
-        (fun height signal -> max height signal.raw.node.height) 0 dependencies
+        (fun height signal -> max height signal.raw.height) 0 dependencies
     in
     {
       raw =
         make_raw ?cutoff ~height:(height + 1)
           ~dependencies:
-            (Array.map (fun signal -> Core.P signal.raw.node) dependencies)
+            (Array.map (fun signal -> Core.P signal.raw) dependencies)
           compute;
       timer =
         Array.fold_left
@@ -635,8 +635,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
     check_signal a; check_signal b;
     {
       raw = make_raw ?cutoff
-          ~height:(1 + max a.raw.node.height b.raw.node.height)
-          ~dependencies:[| Core.P a.raw.node; Core.P b.raw.node |]
+          ~height:(1 + max a.raw.height b.raw.height)
+          ~dependencies:[| Core.P a.raw; Core.P b.raw |]
           (fun () -> f (raw_value a) (raw_value b));
       timer = (match a.timer with Some _ -> a.timer | None -> b.timer);
     }
@@ -645,50 +645,50 @@ module Make_impl (Observer_error : Observer_error) () = struct
     check_signal a; check_signal b; check_signal c;
     {
       raw = make_raw ?cutoff
-          ~height:(1 + max a.raw.node.height (max b.raw.node.height c.raw.node.height))
-          ~dependencies:[| Core.P a.raw.node; Core.P b.raw.node; Core.P c.raw.node |]
+          ~height:(1 + max a.raw.height (max b.raw.height c.raw.height))
+          ~dependencies:[| Core.P a.raw; Core.P b.raw; Core.P c.raw |]
           (fun () -> f (raw_value a) (raw_value b) (raw_value c));
       timer = (match a.timer, b.timer with Some _ as t, _ | None, (Some _ as t) -> t | None, None -> c.timer);
     }
   let map4 ?cutoff f a b c d =
     Execution.sync execution @@ fun () ->
     check_signal a; check_signal b; check_signal c; check_signal d;
-    let height = List.fold_left max 0 [a.raw.node.height; b.raw.node.height; c.raw.node.height; d.raw.node.height] in
+    let height = List.fold_left max 0 [a.raw.height; b.raw.height; c.raw.height; d.raw.height] in
     { raw = make_raw ?cutoff ~height:(height + 1)
-        ~dependencies:[| Core.P a.raw.node; Core.P b.raw.node; Core.P c.raw.node; Core.P d.raw.node |]
+        ~dependencies:[| Core.P a.raw; Core.P b.raw; Core.P c.raw; Core.P d.raw |]
         (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d));
       timer = List.find_map Fun.id [a.timer; b.timer; c.timer; d.timer] }
   let map5 ?cutoff f a b c d e =
     Execution.sync execution @@ fun () ->
-    let deps = [| Core.P a.raw.node; Core.P b.raw.node; Core.P c.raw.node; Core.P d.raw.node; Core.P e.raw.node |] in
+    let deps = [| Core.P a.raw; Core.P b.raw; Core.P c.raw; Core.P d.raw; Core.P e.raw |] in
     let height = Array.fold_left (fun h (Core.P n) -> max h n.height) 0 deps in
     { raw = make_raw ?cutoff ~height:(height + 1) ~dependencies:deps
         (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e));
       timer = List.find_map Fun.id [a.timer; b.timer; c.timer; d.timer; e.timer] }
   let map6 ?cutoff f a b c d e g =
     Execution.sync execution @@ fun () ->
-    let deps = [| Core.P a.raw.node; Core.P b.raw.node; Core.P c.raw.node; Core.P d.raw.node; Core.P e.raw.node; Core.P g.raw.node |] in
+    let deps = [| Core.P a.raw; Core.P b.raw; Core.P c.raw; Core.P d.raw; Core.P e.raw; Core.P g.raw |] in
     let height = Array.fold_left (fun h (Core.P n) -> max h n.height) 0 deps in
     { raw = make_raw ?cutoff ~height:(height + 1) ~dependencies:deps
         (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e) (raw_value g));
       timer = List.find_map Fun.id [a.timer; b.timer; c.timer; d.timer; e.timer; g.timer] }
   let map7 ?cutoff f a b c d e g h =
     Execution.sync execution @@ fun () ->
-    let deps = [| Core.P a.raw.node; Core.P b.raw.node; Core.P c.raw.node; Core.P d.raw.node; Core.P e.raw.node; Core.P g.raw.node; Core.P h.raw.node |] in
+    let deps = [| Core.P a.raw; Core.P b.raw; Core.P c.raw; Core.P d.raw; Core.P e.raw; Core.P g.raw; Core.P h.raw |] in
     let height = Array.fold_left (fun x (Core.P n) -> max x n.height) 0 deps in
     { raw = make_raw ?cutoff ~height:(height + 1) ~dependencies:deps
         (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e) (raw_value g) (raw_value h));
       timer = List.find_map Fun.id [a.timer;b.timer;c.timer;d.timer;e.timer;g.timer;h.timer] }
   let map8 ?cutoff f a b c d e g h i =
     Execution.sync execution @@ fun () ->
-    let deps = [| Core.P a.raw.node; Core.P b.raw.node; Core.P c.raw.node; Core.P d.raw.node; Core.P e.raw.node; Core.P g.raw.node; Core.P h.raw.node; Core.P i.raw.node |] in
+    let deps = [| Core.P a.raw; Core.P b.raw; Core.P c.raw; Core.P d.raw; Core.P e.raw; Core.P g.raw; Core.P h.raw; Core.P i.raw |] in
     let height = Array.fold_left (fun x (Core.P n) -> max x n.height) 0 deps in
     { raw = make_raw ?cutoff ~height:(height + 1) ~dependencies:deps
         (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e) (raw_value g) (raw_value h) (raw_value i));
       timer = List.find_map Fun.id [a.timer;b.timer;c.timer;d.timer;e.timer;g.timer;h.timer;i.timer] }
   let map9 ?cutoff f a b c d e g h i j =
     Execution.sync execution @@ fun () ->
-    let deps = [| Core.P a.raw.node; Core.P b.raw.node; Core.P c.raw.node; Core.P d.raw.node; Core.P e.raw.node; Core.P g.raw.node; Core.P h.raw.node; Core.P i.raw.node; Core.P j.raw.node |] in
+    let deps = [| Core.P a.raw; Core.P b.raw; Core.P c.raw; Core.P d.raw; Core.P e.raw; Core.P g.raw; Core.P h.raw; Core.P i.raw; Core.P j.raw |] in
     let height = Array.fold_left (fun x (Core.P n) -> max x n.height) 0 deps in
     { raw = make_raw ?cutoff ~height:(height + 1) ~dependencies:deps
         (fun () -> f (raw_value a) (raw_value b) (raw_value c) (raw_value d) (raw_value e) (raw_value g) (raw_value h) (raw_value i) (raw_value j));
@@ -752,8 +752,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
           {
             raw =
               make_raw ~cutoff:var.cutoff
-                ~height:(source.node.height + 1)
-                ~dependencies:[| source.packed |]
+                ~height:(source.height + 1)
+                ~dependencies:[| Core.P source |]
                 (fun () -> Core.value source |> value_exn);
             timer = None;
           }
@@ -807,13 +807,13 @@ module Make_impl (Observer_error : Observer_error) () = struct
     let source =
       if
         Option.is_none source.timer
-        && Array.length source.raw.node.dependencies = 0
-        && not (Core.node_constant source.raw.node)
+        && Array.length source.raw.dependencies = 0
+        && not (Core.node_constant source.raw)
       then
         {
           raw =
-            make_raw ~height:(source.raw.node.height + 1)
-              ~dependencies:[| source.raw.packed |]
+            make_raw ~height:(source.raw.height + 1)
+              ~dependencies:[| Core.P source.raw |]
               (fun () -> Core.value source.raw |> value_exn);
           timer = None;
         }
@@ -833,7 +833,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
       evaluated_in := Core.current_pass graph;
       try
       let source_value =
-        match source.raw.node.current with
+        match source.raw.current with
         | This value -> value
         | Null -> raise Deferred_source
       in
@@ -848,7 +848,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         let old_scope = !scope in
         let parent_scope =
           match !owner with
-          | Some owner -> owner.raw.node.scope
+          | Some owner -> owner.raw.scope
           | None -> Core.current_scope graph
         in
         let fresh_scope = Core.create_scope ?parent:parent_scope graph () in
@@ -874,17 +874,17 @@ module Make_impl (Observer_error : Observer_error) () = struct
                     | Some parent -> scope_is_ancestor candidate parent)
             then raise (Graph_error `Invalid_scope)
         in
-        if Array.length fresh.raw.node.dependencies = 0 then
-          iter_option_local validate_scope fresh.raw.node.scope
+        if Array.length fresh.raw.dependencies = 0 then
+          iter_option_local validate_scope fresh.raw.scope
         else
-          iter_list_local validate_scope (Core.distinct_scopes fresh.raw.packed);
+          iter_list_local validate_scope (Core.distinct_scopes (Core.P fresh.raw));
         let owner_handle = (Option.get !owner).raw.handle in
         (* A dependency-free bind result is a leaf: it reaches only itself, so
            it cannot form a cycle with the owner node and needs no reachability
            walk. Only non-leaf results can depend on the owner. *)
         if
-          Array.length fresh.raw.node.dependencies > 0
-          && Core.reaches_handle fresh.raw.packed owner_handle
+          Array.length fresh.raw.dependencies > 0
+          && Core.reaches_handle (Core.P fresh.raw) owner_handle
         then (
           let seen_pending = Hashtbl.create 8 in
           let rec has_pending_bind (Core.P node) =
@@ -900,41 +900,41 @@ module Make_impl (Observer_error : Observer_error) () = struct
               | Some _ | None ->
                   Array.exists has_pending_bind node.dependencies)
           in
-          if has_pending_bind fresh.raw.packed then
+          if has_pending_bind (Core.P fresh.raw) then
             raise Deferred_bind
           else raise (Graph_error `Cycle));
-        let packed_owner = Core.P (Option.get !owner).raw.node in
+        let packed_owner = Core.P (Option.get !owner).raw in
         (match old_inner with
-        | None -> Core.attach packed_owner (Core.P fresh.raw.node)
+        | None -> Core.attach packed_owner (Core.P fresh.raw)
         | Some old ->
-            Core.replace_dependency packed_owner (Core.P old.raw.node)
-              (Core.P fresh.raw.node);
-            if Core.node_necessary (Option.get !owner).raw.node then
-              Core.deactivate_for_retirement (Core.P old.raw.node));
-        if (Option.get !owner).raw.node.height <= fresh.raw.node.height then
+            Core.replace_dependency packed_owner (Core.P old.raw)
+              (Core.P fresh.raw);
+            if Core.node_necessary (Option.get !owner).raw then
+              Core.deactivate_for_retirement (Core.P old.raw));
+        if (Option.get !owner).raw.height <= fresh.raw.height then
           ensure_parent_height ~current:true packed_owner
-            (fresh.raw.node.height + 1);
+            (fresh.raw.height + 1);
         (* A dependency-free inner never changes after its first write, and the
            owner is already a dependent of the inner, so a change listener on it
            would be dead weight; only non-leaf inners can change later. *)
-        if Array.length fresh.raw.node.dependencies > 0 then
+        if Array.length fresh.raw.dependencies > 0 then
           iter_option_local
             (stack_ (fun invalidate ->
-                Core.prepend_change_listener (Core.P fresh.raw.node) (fun _ ->
+                Core.prepend_change_listener (Core.P fresh.raw) (fun _ ->
                     invalidate ())))
             (Hashtbl.find_opt compute_invalidators
                (Option.get !owner).raw.handle.slot);
         fresh_scope.owner <- This packed_owner;
-        if Core.node_necessary (Option.get !owner).raw.node then (
-          Core.activate (Core.P fresh.raw.node);
+        if Core.node_necessary (Option.get !owner).raw then (
+          Core.activate (Core.P fresh.raw);
           if Option.is_none fresh.timer then
             iter_list_local
               (stack_ (fun packed -> Core.enqueue_if_uninitialized graph packed))
               !initializers;
           (* A dependency-free inner is pure and initialized by one evaluation,
              so the owner publishes in this pass without a deferred retry. *)
-          if Array.length fresh.raw.node.dependencies = 0 then
-            ignore (Core.evaluate_node (Core.P fresh.raw.node)));
+          if Array.length fresh.raw.dependencies = 0 then
+            ignore (Core.evaluate_node (Core.P fresh.raw)));
         let local_ retire_old_scope (old_scope : Core.scope) =
           incr dynamic_scope_invalidations;
           dead_nodes :=
@@ -948,14 +948,14 @@ module Make_impl (Observer_error : Observer_error) () = struct
           {
             Core.rollback_capsule =
               (fun () ->
-                Core.detach packed_owner (Core.P fresh.raw.node);
-                if Core.node_necessary (Option.get !owner).raw.node then
-                  Core.deactivate (Core.P fresh.raw.node);
+                Core.detach packed_owner (Core.P fresh.raw);
+                if Core.node_necessary (Option.get !owner).raw then
+                  Core.deactivate (Core.P fresh.raw);
                 Option.iter
                   (fun old ->
-                    Core.attach packed_owner (Core.P old.raw.node);
-                    if Core.node_necessary (Option.get !owner).raw.node then
-                      Core.activate (Core.P old.raw.node))
+                    Core.attach packed_owner (Core.P old.raw);
+                    if Core.node_necessary (Option.get !owner).raw then
+                      Core.activate (Core.P old.raw))
                   old_inner;
                 selected := old_selected;
                 inner := old_inner;
@@ -964,7 +964,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           });
       (* Both reads are from dependencies attached to the bind owner. The
          dependency array keeps their nodes live during this computation. *)
-      (match (Option.get !inner).raw.node.current with
+      (match (Option.get !inner).raw.current with
       | This _ as value -> value
       | Null ->
           let owner = Option.get !owner in
@@ -975,47 +975,47 @@ module Make_impl (Observer_error : Observer_error) () = struct
               (match !timers with [] -> true | _ -> false)
               || (match signal_timers inner with [] -> true | _ -> false)
             then (
-              enqueue_uninitialized_topology inner.raw.packed;
-              Core.clear_queue_mark owner.raw.packed;
-              Core.enqueue_deferred owner.raw.packed));
+              enqueue_uninitialized_topology (Core.P inner.raw);
+              Core.clear_queue_mark (Core.P owner.raw);
+              Core.enqueue_deferred (Core.P owner.raw)));
           Core.value owner.raw)
       with Deferred_bind ->
         let owner = Option.get !owner in
-        Core.clear_queue_mark owner.raw.packed;
-        Core.enqueue_deferred owner.raw.packed;
+        Core.clear_queue_mark (Core.P owner.raw);
+        Core.enqueue_deferred (Core.P owner.raw);
         (match !inner with
         | None -> Null
         | Some signal -> Core.value signal.raw)
       | Deferred_source ->
         let owner = Option.get !owner in
-        Core.clear_queue_mark owner.raw.packed;
+        Core.clear_queue_mark (Core.P owner.raw);
         (match !inner with
         | None -> Null
         | Some signal -> Core.value signal.raw)
     in
     let selected_cutoff = cutoff_or_default cutoff in
     let raw =
-      Core.make_node graph ~height:(source.raw.node.height + 2)
-        ~dependencies:[| Core.P source.raw.node |] ~compute
+      Core.make_node graph ~height:(source.raw.height + 2)
+        ~dependencies:[| Core.P source.raw |] ~compute
         ~cutoff:(or_null_cutoff selected_cutoff) ~initial:Null
     in
-    raw.node.topology_priority <- 1;
+    raw.topology_priority <- 1;
     let selector_priority_active = ref false in
     let selector_priority_nodes = ref [] in
-    raw.node.demand_listeners <-
+    raw.demand_listeners <-
       (fun necessary ->
         if necessary <> !selector_priority_active then (
           selector_priority_active := necessary;
           if necessary then (
-            let nodes = topology_nodes source.raw.packed in
+            let nodes = topology_nodes (Core.P source.raw) in
             selector_priority_nodes := nodes;
             adjust_topology_priority 1 nodes)
           else (
             adjust_topology_priority (-1) !selector_priority_nodes;
             selector_priority_nodes := [])))
-      :: raw.node.demand_listeners;
+      :: raw.demand_listeners;
     let weak_raw = Weak.create 1 in
-    Weak.set weak_raw 0 (Some raw.packed);
+    Weak.set weak_raw 0 (Some (Core.P raw));
     Hashtbl.replace compute_invalidators raw.handle.slot (fun () ->
         match Weak.get weak_raw 0 with
         | Some packed -> Core.clear_queue_mark packed
@@ -1024,7 +1024,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     Hashtbl.replace bind_evaluations raw.handle.slot
       (raw.handle, evaluated_in);
     bind_evaluation_order := raw.handle :: !bind_evaluation_order;
-    initializers := Core.P raw.node :: !initializers;
+    initializers := Core.P raw :: !initializers;
     let result = { raw; timer = source.timer }
     in
     owner := Some result;
@@ -1084,7 +1084,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         Hashtbl.add seen node.handle.slot ();
         Array.exists visit node.dependencies)
     in
-    Array.exists visit signal.raw.node.dependencies
+    Array.exists visit signal.raw.dependencies
 
   let observer_order observers =
     let rec loop ordered remaining =
@@ -1163,7 +1163,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     | [ (O observer as packed) ] ->
         settle_observer packed;
         if observer.lifecycle = Active then (
-          (match observer.signal.raw.node.current with
+          (match observer.signal.raw.current with
           | This value -> publish_observer observer value
           | Null -> ());
           [ observer.packed_edge ])
@@ -1179,7 +1179,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         List.iter
           (fun (O observer) ->
             if observer.lifecycle = Active then
-              match observer.signal.raw.node.current with
+              match observer.signal.raw.current with
               | This value -> publish_observer observer value
               | Null -> ())
           ordered;
@@ -1408,11 +1408,11 @@ module Make_impl (Observer_error : Observer_error) () = struct
     else
       let id = checked_next "observer id" next_observer_id in
       let necessary_before = necessary_count () in
-      let was_necessary = Core.node_necessary signal.raw.node in
+      let was_necessary = Core.node_necessary signal.raw in
       let demand = Core.demand signal.raw in
-      if not was_necessary then enqueue_reactivated signal.raw.packed;
+      if not was_necessary then enqueue_reactivated (Core.P signal.raw);
       let scope_demand =
-        match signal.raw.node.scope with
+        match signal.raw.scope with
         | None -> None
         | Some scope -> (
             match scope.owner with
@@ -1841,18 +1841,18 @@ module Make_impl (Observer_error : Observer_error) () = struct
                     { s with child_visit_count = s.child_visit_count + 1 };
                 Option.iter
                   (fun owner ->
-                    Core.clear_queue_mark owner.Core.keyed_signal.packed)
+                    Core.clear_queue_mark (Core.P owner.Core.keyed_signal))
                   !owner_ref;
                 value)
                 output
             in
-            Core.activate (Core.P wrapped.raw.node);
+            Core.activate (Core.P wrapped.raw);
             initialize_added previous_initializers !initializers;
             wrapped.raw)
           ()
       in
       owner_ref := Some owner;
-      initializers := owner.Core.keyed_signal.packed :: !initializers;
+      initializers := (Core.P owner.Core.keyed_signal) :: !initializers;
       let s = !keyed in
       if s.node_count <> max_int then keyed := { s with node_count = s.node_count + 1 };
       { raw = owner.Core.keyed_signal; timer = plan.input.timer }
@@ -2383,7 +2383,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               sample := previous_sample;
               source.value <- previous_value;
               source.source.accepted := This previous_value;
-              Core.cancel_admission graph source.source.signal.packed);
+              Core.cancel_admission graph (Core.P source.source.signal));
       commit_refresh :=
         (fun () ->
           speculative := None;
@@ -2410,7 +2410,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
             force_source := true;
             source.value <- value;
             Core.set graph source.source (This value);
-            Core.enqueue source.source.signal.packed;
+            Core.enqueue (Core.P source.source.signal);
             true
       in
       admit_ref :=
@@ -2426,7 +2426,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           generation = 0;
           cancel = None;
           edge_timer;
-          source_node = source.source.signal.packed;
+          source_node = Core.P source.source.signal;
           now_ms = runtime.Eta.Runtime_contract.now_ms;
           reset;
           refresh;
@@ -2437,7 +2437,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
       in
       timers := timer :: !timers;
       let watched = Var.watch source in
-      timer_roots := watched.raw.packed :: !timer_roots;
+      timer_roots := (Core.P watched.raw) :: !timer_roots;
       Hashtbl.replace timer_nodes watched.raw.handle.slot
         (watched.raw.handle, timer);
       ({ watched with timer = Some timer }, source)

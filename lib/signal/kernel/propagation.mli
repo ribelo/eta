@@ -142,12 +142,10 @@ val set_node_in_queue : ('a : value_or_null). 'a node -> bool -> unit
 val set_node_admitted : ('a : value_or_null). 'a node -> bool -> unit
 val set_node_reclaim_queued : ('a : value_or_null). 'a node -> bool -> unit
 
-type ('a : value_or_null) signal = {
-  graph : graph;
-  handle : handle;
-  node : 'a node;
-  packed : packed;
-}
+(* Signals are the nodes themselves: the node record already carries graph
+   and handle under the same field names, and [packed] is the free unboxed
+   existential re-wrap. *)
+type ('a : value_or_null) signal = 'a node
 type ('a : value_or_null) var = {
   signal : 'a signal;
   accepted : 'a ref;
