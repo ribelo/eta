@@ -566,6 +566,12 @@ let is_quiescent t plan =
 
 let run t ~plan =
   if is_quiescent t plan then Ok ()
+  else if Queue.is_empty t.timers then (
+    (* No timers are queued, so there are no timer actions to claim; only
+       cleanup hooks and the plan delivery remain. *)
+    let failures = drain_cleanup_failures t in
+    if failures <> [] then Error (Cleanup_failures failures)
+    else deliver t plan)
   else
     match claim_timer_actions t with
     | Error (Runtime_mismatch | Cleanup_failures _ | Callback_failure _) ->

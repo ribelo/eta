@@ -1340,6 +1340,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     in
     if
       Result.is_ok result
+      && !timers <> []
       && Edges.queued_timer_count edges > 0
       && List.for_all (fun (timer : timer) -> timer.demand = 0) !timers
     then
