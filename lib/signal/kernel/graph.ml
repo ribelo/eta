@@ -296,6 +296,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
     finish_edge :
       (Edges.finish_reason -> (unit, observer_error) Edges.outcome) option;
     edge : 'a Edges.observer;
+    (* The existential wrapper for delivery plans is stable per observer, so it
+       is packed once at registration instead of on every pass. *)
+    packed_edge : Edges.packed_observer;
   }
 
   type 'a delivery = 'a Edges.delivery
@@ -1163,7 +1166,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           (match observer.signal.raw.node.current with
           | This value -> publish_observer observer value
           | Null -> ());
-          [ Edges.Observer observer.edge ])
+          [ observer.packed_edge ])
         else []
     | observers ->
         List.iter settle_observer observers;
@@ -1181,7 +1184,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               | Null -> ())
           ordered;
         List.map
-          (fun (O observer) -> Edges.Observer observer.edge)
+          (fun (O observer) -> observer.packed_edge)
           ordered
 
   let reconcile_timer_demands () =
@@ -1476,6 +1479,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           transferred = false;
           finish_edge = finish;
           edge;
+          packed_edge = Edges.Observer edge;
         }
       in
       observer_ref := Some observer;
