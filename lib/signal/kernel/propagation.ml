@@ -57,6 +57,7 @@ type ('a : value_or_null) node = {
   mutable current : 'a;
   mutable undo : 'a;
   mutable written_in : int;
+  mutable computed_in : int;
   mutable flags : int;
   compute : unit -> 'a;
   mutable cutoff : 'a -> 'a -> bool;
@@ -173,6 +174,7 @@ let set_node_admitted node value =
 let set_node_reclaim_queued node value =
   node.flags <- if value then node.flags lor 16 else node.flags land (lnot 16)
 
+let node_pass_memoized node = node.flags land 128 <> 0
 let node_retired node = node.flags land 64 <> 0
 let set_node_retired node value =
   node.flags <- if value then node.flags lor 64 else node.flags land (lnot 64)
@@ -606,8 +608,8 @@ let replace_dependency parent old child =
       parent_node.graph.work.topology_edits <-
         parent_node.graph.work.topology_edits + 2
 
-let make_node ?(constant = false) graph ~height ~dependencies ~compute ~cutoff
-    ~initial =
+let make_node ?(constant = false) ?(pass_memoized = false) graph ~height
+    ~dependencies ~compute ~cutoff ~initial =
   if graph.phase = Cleanup_pending then raise (Wrong_phase graph.phase);
   let handle = allocate_slot graph in
   let scope_next =
@@ -622,7 +624,8 @@ let make_node ?(constant = false) graph ~height ~dependencies ~compute ~cutoff
       current = initial;
       undo = initial;
       written_in = -1;
-      flags = if constant then 1 else 0;
+      computed_in = -1;
+      flags = (if constant then 1 else 0) lor (if pass_memoized then 128 else 0);
       compute;
       cutoff;
       dependencies;
@@ -918,6 +921,12 @@ let rec evaluate_from (pending @ local) changed_before (P node) =
   pending.pending_claims <- pending.pending_claims + 1;
   let changed =
     if node_constant node then false
+    else if node_pass_memoized node && node.computed_in = graph.pass then
+      (* A pass-memoized node evaluates its compute at most once per pass: a
+         repeated visit reuses the committed decision instead of recomputing
+         and republishing. A dependency that publishes again invalidates this
+         freshness through invalidate_computation. *)
+      false
     else (
       let dependency_count = Array.length node.dependencies in
       if dependency_count > 0 then (
@@ -925,6 +934,7 @@ let rec evaluate_from (pending @ local) changed_before (P node) =
         pending.pending_dependency_edges <-
           pending.pending_dependency_edges + dependency_count);
       let next = node.compute () in
+      node.computed_in <- graph.pass;
       if node.cutoff node.current next then false
       else (
         record_first_write node;
@@ -1278,6 +1288,10 @@ let enqueue_all_uninitialized_necessary graph =
   done
 
 let clear_queue_mark (P node) = node.queued_in <- -1
+
+let invalidate_computation (P node) =
+  if node.computed_in = node.graph.pass then node.queued_in <- -1;
+  node.computed_in <- -1
 
 let cancel_admission graph (P node as packed) =
   let retained = ref 0 in

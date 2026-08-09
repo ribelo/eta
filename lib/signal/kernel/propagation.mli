@@ -58,6 +58,7 @@ type ('a : value_or_null) node = {
   mutable current : 'a;
   mutable undo : 'a;
   mutable written_in : int;
+  mutable computed_in : int;
   mutable flags : int;
   compute : unit -> 'a;
   mutable cutoff : 'a -> 'a -> bool;
@@ -195,9 +196,13 @@ val push_capsule : graph -> capsule -> unit
 val attach : packed -> packed -> unit
 val detach : packed -> packed -> unit
 val replace_dependency : packed -> packed -> packed -> unit
+(** [make_node] with [pass_memoized] evaluates the node's compute at most once
+    per pass. Callers that publish a node more than once in one pass, such as
+    keyed incarnations and bind owners under retry, leave it unset. *)
 val make_node :
   ('a : value_or_null).
   ?constant:bool ->
+  ?pass_memoized:bool ->
   graph ->
   height:int ->
   dependencies:packed array ->
@@ -227,6 +232,12 @@ val count_necessary : graph -> int
 val unlink_unnecessary_queued : graph -> unit
 val enqueue_all_uninitialized_necessary : graph -> unit
 val clear_queue_mark : packed -> unit
+
+(** [invalidate_computation node] drops the node's current-pass evaluation
+    freshness so the next visit recomputes it. It also releases the queue mark
+    when the node already evaluated in this pass, so the node can be admitted
+    again. *)
+val invalidate_computation : packed -> unit
 val cancel_admission : graph -> packed -> unit
 val public_node_counts : graph -> int * int * int
 val create_scope : ?parent:scope -> graph -> unit -> scope

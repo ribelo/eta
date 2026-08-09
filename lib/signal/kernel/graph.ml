@@ -398,8 +398,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let timer_roots : Core.packed list ref = ref []
   let timer_nodes : (int, Core.handle * timer) Hashtbl.t =
     Hashtbl.create 8
-  let compute_invalidators : (int, unit -> unit) Hashtbl.t =
-    Hashtbl.create 32
   let custom_cutoff_nodes : (int, Core.handle) Hashtbl.t =
     Hashtbl.create 16
   let duplicate_dependency_nodes : (int, Core.handle) Hashtbl.t =
@@ -482,22 +480,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
     if !phase <> `Idle && Core.current_scope graph = None then
       raise (Graph_error `Ambiguous_scope);
     let cutoff = cutoff_or_default cutoff_arg in
-    let computed_in = ref (-1) in
-    let computed = ref Null in
-    let duplicate_evaluation = ref false in
-    let compute_once () =
-      if !computed_in = Core.current_pass graph then (
-        duplicate_evaluation := true;
-        match !computed with
-        | This value -> value
-        | Null -> assert false)
-      else
-        let value = compute () in
-        computed_in := Core.current_pass graph;
-        computed := This value;
-        duplicate_evaluation := false;
-        value
-    in
     let inherited_scope =
       if Option.is_some (Core.current_scope graph) then None
       else
@@ -516,11 +498,11 @@ module Make_impl (Observer_error : Observer_error) () = struct
       in
       let compute_candidate =
         match dependencies with
-        | [||] -> (fun () -> This (compute_once ()))
+        | [||] -> (fun () -> This (compute ()))
         | [| Core.P dependency |] ->
             (fun () ->
               if Core.raw_is_null dependency.current then Null
-              else This (compute_once ()))
+              else This (compute ()))
         | _ ->
             (fun () ->
               if
@@ -529,14 +511,12 @@ module Make_impl (Observer_error : Observer_error) () = struct
                     Core.raw_is_null dependency.current)
                   dependencies
               then Null
-              else This (compute_once ()))
+              else This (compute ()))
       in
-      Core.make_node graph ~height:(if scoped then height + 1 else height)
-        ~dependencies
+      Core.make_node graph ~pass_memoized:true
+        ~height:(if scoped then height + 1 else height) ~dependencies
         ~compute:compute_candidate
-        ~cutoff:(fun old candidate ->
-          !duplicate_evaluation || or_null_cutoff cutoff old candidate)
-        ~initial:Null
+        ~cutoff:(or_null_cutoff cutoff) ~initial:Null
     in
     let raw =
       match inherited_scope with
@@ -556,22 +536,12 @@ module Make_impl (Observer_error : Observer_error) () = struct
       Hashtbl.replace duplicate_dependency_nodes raw.handle.slot raw.handle);
     if cutoff != Cutoff.phys_equal then
       Hashtbl.replace custom_cutoff_nodes raw.handle.slot raw.handle;
-    let weak_raw = Weak.create 1 in
-    Weak.set weak_raw 0 (Some (Core.P raw));
-    let invalidate () =
-      if !computed_in = Core.current_pass graph then (
-        match Weak.get weak_raw 0 with
-        | Some packed -> Core.clear_queue_mark packed
-        | None -> ());
-      computed_in := -1;
-      duplicate_evaluation := false
-    in
-    Hashtbl.replace compute_invalidators raw.handle.slot invalidate;
+    let packed_raw = Core.P raw in
     Array.iter
       (fun (Core.P dependency as packed_dependency) ->
         Core.move_dependent_last packed_dependency raw.handle;
         Core.prepend_change_listener packed_dependency (fun _ ->
-            if !computed_in = Core.current_pass graph then invalidate ()))
+            Core.invalidate_computation packed_raw))
       dependencies;
     initializers := Core.P raw :: !initializers;
     raw
@@ -918,12 +888,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
            owner is already a dependent of the inner, so a change listener on it
            would be dead weight; only non-leaf inners can change later. *)
         if Array.length fresh.raw.dependencies > 0 then
-          iter_option_local
-            (stack_ (fun invalidate ->
-                Core.prepend_change_listener (Core.P fresh.raw) (fun _ ->
-                    invalidate ())))
-            (Hashtbl.find_opt compute_invalidators
-               (Option.get !owner).raw.handle.slot);
+          Core.prepend_change_listener (Core.P fresh.raw) (fun _ ->
+              Core.invalidate_computation packed_owner);
         fresh_scope.owner <- This packed_owner;
         if Core.node_necessary (Option.get !owner).raw then (
           Core.activate (Core.P fresh.raw);
@@ -1014,12 +980,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
             adjust_topology_priority (-1) !selector_priority_nodes;
             selector_priority_nodes := [])))
       :: raw.demand_listeners;
-    let weak_raw = Weak.create 1 in
-    Weak.set weak_raw 0 (Some (Core.P raw));
-    Hashtbl.replace compute_invalidators raw.handle.slot (fun () ->
-        match Weak.get weak_raw 0 with
-        | Some packed -> Core.clear_queue_mark packed
-        | None -> ());
     Hashtbl.replace bind_nodes raw.handle.slot raw.handle;
     Hashtbl.replace bind_evaluations raw.handle.slot
       (raw.handle, evaluated_in);
