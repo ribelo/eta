@@ -151,7 +151,7 @@ type ('a : value_or_null) var = {
 type demand = packed
 
 (* Packed per-node flags: 1 = constant, 2 = necessary, 4 = in_queue,
-   8 = admitted, 16 = reclaim_queued, 32 = public source. *)
+   8 = admitted, 16 = reclaim_queued, 32 = public source, 64 = retired. *)
 let node_constant node = node.flags land 1 <> 0
 let node_necessary node = node.flags land 2 <> 0
 let node_in_queue node = node.flags land 4 <> 0
@@ -173,6 +173,10 @@ let set_node_admitted node value =
 
 let set_node_reclaim_queued node value =
   node.flags <- if value then node.flags lor 16 else node.flags land (lnot 16)
+
+let node_retired node = node.flags land 64 <> 0
+let set_node_retired node value =
+  node.flags <- if value then node.flags lor 64 else node.flags land (lnot 64)
 
 let mark_public_source signal =
   signal.node.flags <- signal.node.flags lor 32
@@ -459,11 +463,12 @@ let resolve graph handle =
     if slot.generation <> handle.generation then None else slot_contents slot
 
 let validate_handle (signal : 'a signal) =
-  match resolve signal.graph signal.handle with
-  | Some (P node) ->
-      same_handle node.handle signal.handle
-      && Option.fold ~none:true ~some:(fun scope -> scope.valid) node.scope
-  | None -> false
+  (* Every invalidation flows through [retire_packed]: freed slots and
+     generation bumps only happen after retirement, and the revival paths
+     ([restore_retired], [reinstall_freed]) clear the flag. The signal
+     carries its node directly, so validation needs no slot resolution. *)
+  not (node_retired signal.node)
+  && Option.fold ~none:true ~some:(fun scope -> scope.valid) signal.node.scope
 
 
 let handle (signal : 'a signal) = signal.handle
@@ -1042,6 +1047,7 @@ let retire_packed graph (P node as packed) =
         deactivate dependency));
   let entry = graph.slots.(node.handle.slot) in
   set_slot_contents entry None;
+  set_node_retired node true;
   Option.iter (fun scope -> scope.valid <- false) node.scope;
   if graph.quarantine_length = Array.length graph.quarantine then
     graph.quarantine <- grow_int graph.quarantine;
@@ -1068,6 +1074,7 @@ let restore_retired graph =
     match graph.actions.(index) with
     | Retired (slot, (P node as packed)) ->
         set_slot_contents graph.slots.(slot) (Some packed);
+        set_node_retired node false;
         Option.iter (fun scope -> scope.valid <- true) node.scope;
         graph.work.rollback_visits <- graph.work.rollback_visits + 1
     | Created _ -> ()
@@ -1513,6 +1520,8 @@ let reinstall_freed graph handle packed =
     graph.free_length <- !retained;
     entry.is_free <- false;
     set_slot_contents entry (Some packed);
+    let (P node) = packed in
+    set_node_retired node false;
     true)
 
 let clear_admissions graph =
