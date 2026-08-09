@@ -284,7 +284,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
     cutoff : 'a Cutoff.t;
     mutable lifecycle : lifecycle;
     mutable current : 'a or_null;
-    mutable published : 'a or_null;
     mutable edge_base : 'a or_null;
     demand : Core.demand;
     scope_demand : Core.demand option;
@@ -1035,7 +1034,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
 
   let publish_observer observer value =
     if observer.lifecycle = Active then
-      match observer.published with
+      match observer.current with
       | This old
         when old == value
              && observer.cutoff == Cutoff.phys_equal
@@ -1051,7 +1050,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
       | _ -> (
       if observer.callback_pending then (
         observer.current <- This value;
-        observer.published <- This value;
         match observer.edge_base with
         | This base when base == value ->
             observer.callback_pending <- false;
@@ -1061,16 +1059,14 @@ module Make_impl (Observer_error : Observer_error) () = struct
             observer.deliver_pending <- true;
             Edges.publish edges observer.edge value)
       else
-      match observer.published with
+      match observer.current with
       | This old when suppress observer.cutoff old value ->
           observer.current <- This value;
-          observer.published <- This value;
           observer.callback_pending <- false;
           observer.deliver_pending <- false;
           Edges.publish edges observer.edge value
       | _ ->
           observer.current <- This value;
-          observer.published <- This value;
           observer.callback_pending <- observer.has_callback;
           observer.deliver_pending <- true;
           Edges.publish edges observer.edge value)
@@ -1129,7 +1125,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
       let necessary_before = necessary_count () in
       observer.lifecycle <- Invalid;
       observer.current <- Null;
-      observer.published <- Null;
       observer.edge_base <- Null;
       observer.callback_pending <- false;
       Core.release observer.demand;
@@ -1470,7 +1465,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
           cutoff = cutoff_or_default cutoff;
           lifecycle = Active;
           current = Null;
-          published = Null;
           edge_base = Null;
           demand;
           scope_demand;
@@ -1577,7 +1571,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
           observe_with ?cutoff ?on_finish signal @@ fun delivery ->
           match on_update, Edges.current delivery with
           | None, Some update ->
-              (Option.get !observer_ref).published <-
+              (Option.get !observer_ref).current <-
                 (match update with
                 | Edges.Initialized value | Edges.Changed (_, value) -> This value);
               Edges.Success ()
@@ -1591,7 +1585,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               (match outcome with
               | Edges.Success () ->
                   (Option.get !observer_ref).callback_pending <- false;
-                  (Option.get !observer_ref).published <-
+                  (Option.get !observer_ref).current <-
                     (match update with
                     | Edges.Initialized value | Edges.Changed (_, value) ->
                         This value);
