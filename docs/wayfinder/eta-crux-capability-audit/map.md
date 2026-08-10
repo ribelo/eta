@@ -91,6 +91,9 @@ ticket, and research prose with `$simple-english`.
 - [External graph input](issues/10-external-graph-input.md)
   — Reject a separate external graph input because ordered endpoint actions
   already own live host changes.
+- [Startup facts and flags](issues/11-startup-facts-and-flags.md)
+  — Reject a distinct startup-input capability because typed construction
+  dependencies already carry validated startup data.
 
 ## Not yet specified
 
