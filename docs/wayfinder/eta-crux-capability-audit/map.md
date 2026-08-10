@@ -83,13 +83,13 @@ ticket, and research prose with `$simple-english`.
   — No external Eta Crux consumer exists. Repository evidence shows repeated
   time, assertion, cache, and dispatch work. Other evidence is limited or
   absent.
+- [Complete capability relevance census](issues/08-complete-capability-relevance-census.md)
+  — The complete census maps every reference family and local evidence source
+  to 11 decision tickets, including two new structural candidates.
 
 ## Not yet specified
 
-The reference census can expose candidate capability gaps beyond the nine
-reported items. These candidates cannot be named until
-[Complete capability relevance census](issues/08-complete-capability-relevance-census.md)
-classifies the reference families.
+None.
 
 ## Out of scope
 
