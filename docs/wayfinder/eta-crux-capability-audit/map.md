@@ -97,6 +97,9 @@ ticket, and research prose with `$simple-english`.
 - [Staged-effect observability](issues/12-staged-effect-observability.md)
   — Adopt opaque per-commit transition-effect lifecycle observations and make
   effect absence explicit.
+- [Host-owned streaming operations](issues/13-host-owned-streaming-operations.md)
+  — Reject many-response host operations because `Source` already owns the
+  repeated-event lifecycle. Providers own host binding and buffering.
 
 ## Not yet specified
 
