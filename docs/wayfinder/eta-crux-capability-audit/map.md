@@ -61,6 +61,10 @@ ticket, and research prose with `$simple-english`.
 
 ## Decisions so far
 
+- [Current Eta Crux capability baseline](issues/01-current-eta-crux-capability-baseline.md)
+  — The baseline records one missing, three partial, three
+  application-composable, and two deliberately excluded capabilities.
+
 ## Not yet specified
 
 The reference census can expose candidate capability gaps beyond the nine
