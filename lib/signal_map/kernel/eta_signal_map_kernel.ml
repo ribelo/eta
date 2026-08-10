@@ -112,10 +112,14 @@ module Make (Order : Ordered_type) = struct
         else if order < 0 then
           let left = set key data node.left in
           if left == node.left then map
+          else if cardinal left = cardinal node.left then
+            make left node.key node.data node.right
           else balance left node.key node.data node.right
         else
           let right = set key data node.right in
           if right == node.right then map
+          else if cardinal right = cardinal node.right then
+            make node.left node.key node.data right
           else balance node.left node.key node.data right
 
   let rec remove_min = function
@@ -253,64 +257,74 @@ module Make (Order : Ordered_type) = struct
     | Item (key, data) :: tail -> Some (key, data, tail)
     | Tree tree :: tail -> next_item (expand tree tail)
 
-  let cursor_diff compare left right ~init ~f =
-    let rec loop left right acc =
-      let left, right = drop_shared left right in
-      match (next_item left, next_item right) with
-      | None, None -> acc
-      | Some (key, data, left), None ->
-          loop left [] (f acc key (Left data))
-      | None, Some (key, data, right) ->
-          loop [] right (f acc key (Right data))
-      | ( Some (left_key, left_data, left_tail),
-          Some (right_key, right_data, right_tail) ) ->
-          let order = compare left_key right_key in
+  (* The diff loops thread their counter and emitter explicitly so a per-call
+     closure is never allocated. [max_int] is the saturated/no-count sentinel. *)
+  let ignored_comparisons = ref max_int
+
+  let[@inline always] count_comparison comparisons =
+    if !comparisons <> max_int then incr comparisons
+
+  let right_change data = Right data
+  let left_change data = Left data
+
+  let rec add_all f map change acc =
+    fold (fun key data acc -> f acc key (change data)) map acc
+
+  let rec cursor_diff_loop comparisons f left right acc =
+    let left, right = drop_shared left right in
+    match (next_item left, next_item right) with
+    | None, None -> acc
+    | Some (key, data, left), None ->
+        cursor_diff_loop comparisons f left [] (f acc key (Left data))
+    | None, Some (key, data, right) ->
+        cursor_diff_loop comparisons f [] right (f acc key (Right data))
+    | ( Some (left_key, left_data, left_tail),
+        Some (right_key, right_data, right_tail) ) ->
+        count_comparison comparisons;
+        let order = Order.compare left_key right_key in
+        if order = 0 then
+          let acc =
+            if left_data == right_data then acc
+            else f acc left_key (Changed (left_data, right_data))
+          in
+            cursor_diff_loop comparisons f left_tail right_tail acc
+        else if order < 0 then
+          cursor_diff_loop comparisons f left_tail right
+            (f acc left_key (Left left_data))
+        else
+          cursor_diff_loop comparisons f left right_tail
+            (f acc right_key (Right right_data))
+
+  let cursor_diff comparisons left right ~init ~f =
+    cursor_diff_loop comparisons f [ Tree left ] [ Tree right ] init
+
+  let rec diff_loop comparisons f left right acc =
+    if left == right then acc
+    else
+      match (left, right) with
+      | Empty, right -> add_all f right right_change acc
+      | left, Empty -> add_all f left left_change acc
+      | Node left_node, Node right_node ->
+          count_comparison comparisons;
+          let order = Order.compare left_node.key right_node.key in
           if order = 0 then
             let acc =
-              if left_data == right_data then acc
-              else f acc left_key (Changed (left_data, right_data))
+              diff_loop comparisons f left_node.left right_node.left acc
             in
-            loop left_tail right_tail acc
-          else if order < 0 then
-            loop left_tail right (f acc left_key (Left left_data))
-          else loop left right_tail (f acc right_key (Right right_data))
-    in
-    loop [ Tree left ] [ Tree right ] init
-
-  let fold_symmetric_diff_with compare left right ~init ~f =
-    let add_all map change acc =
-      fold (fun key data acc -> f acc key (change data)) map acc
-    in
-    let rec loop left right acc =
-      if left == right then acc
-      else
-        match (left, right) with
-        | Empty, right -> add_all right (fun data -> Right data) acc
-        | left, Empty -> add_all left (fun data -> Left data) acc
-        | Node left_node, Node right_node ->
-            let order = compare left_node.key right_node.key in
-            if order = 0 then
-              let acc = loop left_node.left right_node.left acc in
-              let acc =
-                if left_node.data == right_node.data then acc
-                else
-                  f acc left_node.key
-                    (Changed (left_node.data, right_node.data))
-              in
-              loop left_node.right right_node.right acc
-            else cursor_diff compare left right ~init:acc ~f
-    in
-    loop left right init
+            let acc =
+              if left_node.data == right_node.data then acc
+              else
+                f acc left_node.key
+                  (Changed (left_node.data, right_node.data))
+            in
+            diff_loop comparisons f left_node.right right_node.right acc
+          else cursor_diff comparisons left right ~init:acc ~f
 
   let fold_symmetric_diff left right ~init ~f =
-    fold_symmetric_diff_with Order.compare left right ~init ~f
+    diff_loop ignored_comparisons f left right init
 
-  let fold_symmetric_diff_counted left right ~on_compare ~init ~f =
-    let compare left right =
-      on_compare ();
-      Order.compare left right
-    in
-    fold_symmetric_diff_with compare left right ~init ~f
+  let fold_symmetric_diff_counted left right ~comparisons ~init ~f =
+    diff_loop comparisons f left right init
 
   let check_invariants map =
     let fail path message = Error (Printf.sprintf "%s: %s" path message) in

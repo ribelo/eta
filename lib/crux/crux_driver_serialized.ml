@@ -102,7 +102,7 @@ let latch_adapter_delivery_failure (driver : _ t) cause =
        ~origin:Failure.Adapter_delivery
        ~trigger:Failure.Output_delivery cause);
   Eta.Sync_lock.use driver.root.core.lock @@ fun () ->
-  Option.get driver.root.core.failure
+  Option.get (Atomic.get driver.root.core.failure)
 
 let handle_session_closed (driver : _ t) =
   let open Eta.Syntax in
@@ -317,10 +317,10 @@ let handle_serialized_frame (driver : _ t) frame =
             match result with
             | `Accepted ->
                 Eta.Sync_lock.use driver.root.core.lock @@ fun () ->
-                (match driver.root.core.failure with
+                (match Atomic.get driver.root.core.failure with
                 | Some failure ->
                     Serialized_session.Crashed failure
-                | None when driver.root.core.stop_requested ->
+                | None when Atomic.get driver.root.core.stop_requested ->
                     Serialized_session.Stopped
                 | None -> Serialized_session.Replaced)
             | `Failed message ->
@@ -335,7 +335,7 @@ let handle_serialized_frame (driver : _ t) frame =
                      ~trigger:Failure.Output_delivery cause);
                 let failure =
                   Eta.Sync_lock.use driver.root.core.lock @@ fun () ->
-                  Option.get driver.root.core.failure
+                  Option.get (Atomic.get driver.root.core.failure)
                 in
                 Serialized_session.Crashed failure
           in

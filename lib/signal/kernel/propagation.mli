@@ -131,7 +131,6 @@ and graph = {
   mutable pending_reclaims : handle array;
   mutable pending_reclaim_length : int;
   mutable suppress_reclaim : bool;
-  mutable change_listeners_enabled : bool;
   mutable tombstones : handle array;
   mutable tombstone_length : int;
   mutable dynamic_scope_count : int;
@@ -191,8 +190,6 @@ val set_keyed_counter_for :
   int -> unit
 val create : unit -> graph
 val work : graph -> work
-val enable_change_listeners : graph -> unit
-
 (* Value slots carry the nullable [value_or_null] kind, so an existentially
    packed node needs these helpers to inspect its slot. *)
 val raw_is_null : ('a : value_or_null). 'a -> bool
@@ -302,7 +299,8 @@ type ('key, 'value) child_tree =
 type ('key, 'data : value_or_null, 'input : value_or_null,
       'output : value_or_null, 'output_map : value_or_null) keyed_owner = {
   keyed_signal : 'output_map signal;
-  keyed_input : 'input signal;
+  mutable keyed_projected_input : 'input;
+  mutable keyed_projected_revision : int;
   input_ops : ('key, 'data, 'input) input_ops;
   output_ops : ('key, 'output, 'output_map) output_ops;
   data_cutoff : 'data -> 'data -> bool;
@@ -317,6 +315,23 @@ type ('key, 'data : value_or_null, 'input : value_or_null,
   mutable candidate_output : 'output_map;
   mutable output_undo : 'output_map;
   mutable output_written_in : int;
+  mutable stage_capsule : capsule;
+  mutable reconcile_removed : ('key, 'data, 'output) keyed_child list;
+  mutable reconcile_added : ('key, 'data, 'output) keyed_child list;
+  mutable reconcile_old_children :
+    ('key, ('key, 'data, 'output) keyed_child) child_tree;
+  mutable reconcile_old_output : 'output_map;
+  mutable reconcile_old_input : 'input;
+  mutable reconcile_structure_changed : bool;
+  mutable reconcile_diff_callback : 'key -> 'data change -> unit;
+  mutable reconcile_detach_iter : ('key, 'data, 'output) keyed_child -> unit;
+  mutable reconcile_attach_iter : ('key, 'data, 'output) keyed_child -> unit;
+  mutable reconcile_rollback_detach : ('key, 'data, 'output) keyed_child -> unit;
+  mutable reconcile_rollback_attach : ('key, 'data, 'output) keyed_child -> unit;
+  mutable reconcile_cleanup_added : ('key, 'data, 'output) keyed_child -> unit;
+  mutable reconcile_cleanup_removed : ('key, 'data, 'output) keyed_child -> unit;
+  mutable reconcile_cleanup_invalidate : ('key, 'data, 'output) keyed_child -> unit;
+  mutable reconcile_capsule : capsule;
 }
 val keyed_node_counts : graph -> int * int
 val append_nodes_dot :
@@ -330,10 +345,11 @@ val keyed_find :
   ('a, 'b, 'c, 'd, 'e) keyed_owner -> 'a -> ('a, 'b, 'd) keyed_child option
 val keyed_owner :
   ('a : value_or_null) ('b : value_or_null) ('d : value_or_null)
-  ('input : value_or_null).
+  ('input : value_or_null) ('raw_input : value_or_null).
   ?cutoff:'a cutoff_test ->
   ?data_cutoff:('b -> 'b -> bool) ->
-  input:'input signal ->
+  input:'raw_input signal ->
+  project:('raw_input -> 'input) ->
   input_ops:('c, 'b, 'input) input_ops ->
   output_ops:('c, 'd, 'a) output_ops ->
   build:(key:'c -> data:'b signal -> 'd signal) ->

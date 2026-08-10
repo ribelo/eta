@@ -141,6 +141,23 @@ module type PACKAGE = Eta_signal.Package_graph
 
 module Make (Package : PACKAGE) : sig
   module Keyed (Order : Map.Ordered_type) : sig
+    val mapi_fold :
+      ?data_cutoff:'data Eta_signal.Cutoff.t ->
+      'data Map.Make(Order).t Package.signal ->
+      f:(key:Order.t -> data:'data Package.signal -> 'output Package.signal) ->
+      empty:'accumulator ->
+      add:(Order.t -> 'output -> 'accumulator -> 'accumulator) ->
+      remove:(Order.t -> 'accumulator -> 'accumulator) ->
+      'accumulator Package.signal
+    (** Keeps one stable child per present key exactly like {!mapi}, and
+        publishes a caller-defined accumulator instead of a map of outputs.
+        [add] receives every child output publication, including a child's first
+        one, and [remove] receives each departing key. Both run once per event,
+        in the same order the keyed engine applies them, so the accumulator
+        observes the same sequence a map of outputs would record. A rolled-back
+        stabilization restores the accumulator together with the rest of the
+        keyed state. {!mapi} is [mapi_fold] with map insertion and removal. *)
+
     val mapi :
       ?data_cutoff:'data Eta_signal.Cutoff.t ->
       'data Map.Make(Order).t Package.signal ->
@@ -205,5 +222,18 @@ module Make (Package : PACKAGE) : sig
         It does not bound builder, cutoff, child computation, cleanup, callback,
         allocation, memory, wall-time, or constant-factor costs. [smperf-3v0d]
         [smperf-mnvd] [smperf-2vzo] *)
+
+    val mapi_fold_project :
+      ?data_cutoff:'data Eta_signal.Cutoff.t ->
+      'input Package.signal ->
+      project:('input -> 'data Map.Make(Order).t) ->
+      f:(key:Order.t -> data:'data Package.signal -> 'output Package.signal) ->
+      empty:'accumulator ->
+      add:(Order.t -> 'output -> 'accumulator -> 'accumulator) ->
+      remove:(Order.t -> 'accumulator -> 'accumulator) ->
+      'accumulator Package.signal
+    (** Like {!mapi_fold}, but [project] derives the keyed map inside the keyed
+        node. It runs once for the initial input and once per input publication,
+        before reconciliation. *)
   end
 end

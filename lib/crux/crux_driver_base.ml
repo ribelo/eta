@@ -118,7 +118,7 @@ let latch_adapter_delivery_failure driver cause =
        ~origin:Failure.Adapter_delivery
        ~trigger:Failure.Output_delivery cause);
   Eta.Sync_lock.use driver.root.core.lock @@ fun () ->
-  Option.get driver.root.core.failure
+  Option.get (Atomic.get driver.root.core.failure)
 
 module Delivery = struct
   type 'output t = 'output delivery

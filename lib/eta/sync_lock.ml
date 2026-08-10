@@ -11,12 +11,18 @@
     runtime operations that can suspend, wake fibers, or invoke callbacks fail
     fast instead of yielding under the lock. *)
 
+(* The owner is the immediate domain identity rather than [Domain.id option]:
+   an unboxed field keeps acquisition allocation-free and lets the atomic
+   store avoid the pointer write barrier. [no_owner] is not a valid
+   [Domain.id], which is always non-negative. *)
 type t = {
   mutex : Mutex.t;
-  owner : Domain.id option Atomic.t;
+  owner : int Atomic.t;
 }
 
-let create () = { mutex = Mutex.create (); owner = Atomic.make None }
+let no_owner = -1
+let create () = { mutex = Mutex.create (); owner = Atomic.make no_owner }
+let[@inline always] self_id () = (Domain.self () :> int)
 
 let reentrant_message = "Eta.Sync_lock: reentrant lock acquisition"
 let runtime_operation_message =
@@ -46,25 +52,29 @@ let leave_critical_section () =
   if depth <= 1 then dls_set critical_depth_key 0
   else dls_set critical_depth_key (depth - 1)
 
-let lock t =
-  let current = Domain.self () in
-  match Atomic.get t.owner with
-  | Some owner when owner = current -> invalid_arg reentrant_message
-  | _ ->
-      Mutex.lock t.mutex;
-      Atomic.set t.owner (Some current);
-      enter_critical_section ()
+let lock_as t current =
+  if Atomic.get t.owner = current then invalid_arg reentrant_message;
+  Mutex.lock t.mutex;
+  Atomic.set t.owner current;
+  enter_critical_section ()
 
-let unlock t =
-  let current = Domain.self () in
-  match Atomic.get t.owner with
-  | Some owner when owner = current ->
-      leave_critical_section ();
-      Atomic.set t.owner None;
-      Mutex.unlock t.mutex
-  | Some _ -> invalid_arg "Eta.Sync_lock: unlock from non-owner domain"
-  | None -> invalid_arg "Eta.Sync_lock: unlock of unlocked lock"
+let unlock_as t current =
+  let owner = Atomic.get t.owner in
+  if owner = current then (
+    leave_critical_section ();
+    Atomic.set t.owner no_owner;
+    Mutex.unlock t.mutex)
+  else if owner = no_owner then
+    invalid_arg "Eta.Sync_lock: unlock of unlocked lock"
+  else invalid_arg "Eta.Sync_lock: unlock from non-owner domain"
 
-let use t (f @ local once) =
-  lock t;
-  Fun.protect ~finally:(fun () -> unlock t) f
+let[@inline always] use t (f @ local once) =
+  let current = self_id () in
+  lock_as t current;
+  try
+    let result = f () in
+    unlock_as t current;
+    result
+  with exn ->
+    unlock_as t current;
+    raise exn

@@ -82,7 +82,7 @@ struct
   let has_exact_child_edge entry = child_edge_count entry = 1
 
   let is_settled (Family owner) =
-    owner.committed_input == owner.keyed_input.current
+    owner.committed_input == owner.keyed_projected_input
     &&
     let intact = ref true in
     Propagation.child_iter

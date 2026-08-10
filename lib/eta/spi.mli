@@ -43,6 +43,93 @@ module Expert : sig
       to the current {!Runtime_contract.t}; ordinary user code should prefer the
       typed combinators in {!Effect}. *)
 
+  val sync1 : 'value -> ('value -> 'a) -> ('a, 'err) Effect.t
+  (** Build an allocation-conscious synchronous effect with one captured value.
+
+      Runtime packages may use this helper for hot internal paths. Ordinary
+      application code should use {!Effect.sync}. *)
+
+  val sync4 :
+    'value1 ->
+    'value2 ->
+    'value3 ->
+    'value4 ->
+    ('value1 -> 'value2 -> 'value3 -> 'value4 -> 'a) ->
+    ('a, 'err) Effect.t
+  (** Four-value form of {!sync1} for hot runtime-package paths. *)
+
+  val sync1_result :
+    'value ->
+    ('value -> ('a, 'err) result) ->
+    ('a, 'err) Effect.t
+  (** One-value synchronous effect whose body returns a typed [result]. *)
+
+  val sync1_result_bind_value :
+    'value ->
+    ('value -> ('a, 'err) result) ->
+    ('value -> 'a -> ('b, 'err) Effect.t) ->
+    ('b, 'err) Effect.t
+  (** Result effect and continuation that both receive the captured value. *)
+
+  val sync1_result_bind_value_direct :
+    'value ->
+    ('value -> ('a, 'err) result) ->
+    ('a -> bool) ->
+    ('value -> 'a -> 'b) ->
+    ('value -> 'a -> ('b, 'err) Effect.t) ->
+    ('b, 'err) Effect.t
+  (** Result effect with a direct synchronous branch and an effect fallback. *)
+
+  val sync1_result_map_error :
+    'value ->
+    ('value -> ('a, 'err1) result) ->
+    ('err1 -> 'err2) ->
+    ('a, 'err2) Effect.t
+  (** One-value synchronous result effect with typed-error mapping. *)
+
+  val map_error_seq :
+    (unit, 'err2) Effect.t ->
+    ('err1 -> 'err2) ->
+    (unit, 'err1) Effect.t ->
+    (unit, 'err2) Effect.t
+  (** Map failures from one unit effect and sequence a second unit effect. *)
+
+  val sync_contract2_result_map_error_sync1 :
+    'next_value ->
+    ('next_value -> unit) ->
+    ('err1 -> 'err2) ->
+    (unit, 'err1) Effect.t ->
+    (unit, 'err2) Effect.t
+  (** Direct fused form for a two-value result effect followed by a sync1. *)
+
+  val then_ :
+    ('a, 'err) Effect.t ->
+    (unit, 'err) Effect.t ->
+    ('a, 'err) Effect.t
+  (** Sequence a unit effect before an already-built next effect. *)
+
+  val to_exit_bind_ok4_sync :
+    'value1 ->
+    'value2 ->
+    'value3 ->
+    'value4 ->
+    (('a, 'err1) Exit.t ->
+     'value1 ->
+     'value2 ->
+     'value3 ->
+     'value4 ->
+     ('b, 'err3) result) ->
+    ('a, 'err1) Effect.t ->
+    (('b, 'err3) result, 'err2) Effect.t
+  (** Direct synchronous callback form of four-value exit fusion. *)
+
+  val seq3 :
+    (unit, 'err) Effect.t ->
+    (unit, 'err) Effect.t ->
+    (unit, 'err) Effect.t ->
+    (unit, 'err) Effect.t
+  (** Sequence three already-built unit effects. *)
+
   val contract : context -> Runtime_contract.t
   (** Runtime contract selected by the current interpreter. *)
 

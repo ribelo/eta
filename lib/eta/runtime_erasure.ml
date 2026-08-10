@@ -7,5 +7,10 @@
 external effect_of_public : ('a, 'err) Effect.t -> ('a, 'err) Effect_core.t =
   "%identity"
 
+external effect_continuation_of_public :
+  ('value -> 'a -> ('b, 'err) Effect.t) ->
+  ('value -> 'a -> ('b, 'err) Effect_core.t) =
+  "%identity"
+
 let erase_runtime_error (runtime : 'err Runtime_core.t) : Obj.t Runtime_core.t =
   (Obj.magic runtime : Obj.t Runtime_core.t)

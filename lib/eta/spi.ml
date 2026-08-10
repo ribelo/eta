@@ -47,6 +47,65 @@ module Expert = struct
 
   let[@inline always] make ?leaf_name f =
     Effect_erasure.effect_to_public (Effect_core.make ?leaf_name f)
+  let sync1 value run =
+    Effect_erasure.effect_to_public (Effect_core.sync1 value run)
+  let sync1_result value run =
+    Effect_erasure.effect_to_public
+      (Effect_core.Sync1_result { value; run })
+  let sync1_result_bind_value value run k =
+    Effect_erasure.effect_to_public
+      (Effect_core.Sync1_result_bind_value
+         {
+           value;
+           run;
+           k = Runtime_erasure.effect_continuation_of_public k;
+         })
+  let sync1_result_bind_value_direct value run is_direct direct_run k =
+    Effect_erasure.effect_to_public
+      (Effect_core.Sync1_result_bind_value_direct
+         {
+           value;
+           run;
+           is_direct;
+           direct_run;
+           k = Runtime_erasure.effect_continuation_of_public k;
+         })
+  let sync1_result_map_error value run map_error =
+    Effect_erasure.effect_to_public
+      (Effect_core.Sync1_result_map_error { value; run; map_error })
+  let map_error_seq next map_error inner =
+    Effect_erasure.effect_to_public
+      (Effect_core.map_error_seq
+         (Runtime_erasure.effect_of_public next) map_error
+         (Runtime_erasure.effect_of_public inner))
+  let sync_contract2_result_map_error_sync1 next_value next_run map_error inner =
+    match Runtime_erasure.effect_of_public inner with
+    | Effect_core.Sync_contract2_result { value1; value2; run; _ } ->
+        Effect_erasure.effect_to_public
+          (Effect_core.Sync_contract2_result_map_error_sync1
+             { value1; value2; run; map_error; next_value; next_run })
+    | _ ->
+        invalid_arg
+          "Eta.Spi.Expert.sync_contract2_result_map_error_sync1: expected \
+           Sync_contract2_result"
+  let then_ next inner =
+    Effect_erasure.effect_to_public
+      (Effect_core.then_
+         (Runtime_erasure.effect_of_public next)
+         (Runtime_erasure.effect_of_public inner))
+  let to_exit_bind_ok4_sync value1 value2 value3 value4 k inner =
+    Effect_erasure.effect_to_public
+      (Effect_core.to_exit_bind_ok4_sync value1 value2 value3 value4 k
+         (Runtime_erasure.effect_of_public inner))
+  let seq3 first second third =
+    Effect_erasure.effect_to_public
+      (Effect_core.seq3
+         (Runtime_erasure.effect_of_public first)
+         (Runtime_erasure.effect_of_public second)
+         (Runtime_erasure.effect_of_public third))
+  let sync4 value1 value2 value3 value4 run =
+    Effect_erasure.effect_to_public
+      (Effect_core.Sync4 { value1; value2; value3; value4; run })
   let effect_of_public eff = Runtime_erasure.effect_of_public eff
   let contract context = context.runtime.Runtime_core.contract
   let current_scope context = context.sw

@@ -88,6 +88,14 @@ let public_sync2 ~leaf_name value1 value2 sync_fn =
   effect_to_public
     (Effect_core.sync_contract2 ~leaf_name value1 value2 sync_fn)
 
+let public_sync2_result ~leaf_name value1 value2 sync_fn =
+  effect_to_public
+    (Effect_core.sync_contract2_result ~leaf_name value1 value2 sync_fn)
+
+let plain_sync2_result value1 value2 sync_fn =
+  effect_to_public
+    (Effect_core.sync_contract2_result value1 value2 sync_fn)
+
 let plain_sync1 value run =
   effect_to_public (Effect_core.sync1 value run)
 

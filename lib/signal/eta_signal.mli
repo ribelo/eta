@@ -174,7 +174,7 @@ module type Package_graph = sig
       'acc.
       'map ->
       'map ->
-      on_compare:(unit -> unit) ->
+      comparisons:int ref ->
       init:'acc ->
       f:('acc -> 'key -> 'data change -> 'acc) ->
       'acc;
@@ -189,6 +189,16 @@ module type Package_graph = sig
   val stable_family :
     ?data_cutoff:'data Cutoff.t ->
     input:'data_map signal ->
+    input_ops:('key, 'data, 'data_map) input_ops ->
+    output_ops:('key, 'output, 'output_map) output_ops ->
+    build:(key:'key -> data:'data signal -> 'output signal) ->
+    unit ->
+    'output_map plan
+
+  val stable_family_project :
+    ?data_cutoff:'data Cutoff.t ->
+    input:'input signal ->
+    project:('input -> 'data_map) ->
     input_ops:('key, 'data, 'data_map) input_ops ->
     output_ops:('key, 'output, 'output_map) output_ops ->
     build:(key:'key -> data:'data signal -> 'output signal) ->

@@ -73,27 +73,38 @@ module Keyed_adapter (Package : PACKAGE) (Order : Map.Ordered_type) = struct
   module M = Map.Make (Order)
   module Kernel_map = Eta_signal_map_kernel.Make (Order)
 
-  let mapi ?data_cutoff input ~f =
-    let input_ops : (_, _, _) Package.input_ops =
-      {
-        Package.empty = M.empty;
-        compare_key = Order.compare;
-        fold_symmetric_diff =
-          (fun left right ~on_compare ~init ~f:emit ->
-          Kernel_map.fold_symmetric_diff_counted left right ~on_compare ~init
-            ~f:(fun acc key -> function
-              | Map.Left value -> emit acc key (Package.Left value)
-              | Map.Right value -> emit acc key (Package.Right value)
-              | Map.Changed (old_value, new_value) ->
-                  emit acc key (Package.Changed (old_value, new_value))));
-      }
-    in
+  let input_ops : (_, _, _) Package.input_ops =
+    {
+      Package.empty = M.empty;
+      compare_key = Order.compare;
+      fold_symmetric_diff =
+        (fun left right ~comparisons ~init ~f:emit ->
+        Kernel_map.fold_symmetric_diff_counted left right ~comparisons ~init
+          ~f:(fun acc key -> function
+            | Map.Left value -> emit acc key (Package.Left value)
+            | Map.Right value -> emit acc key (Package.Right value)
+            | Map.Changed (old_value, new_value) ->
+                emit acc key (Package.Changed (old_value, new_value))));
+    }
+
+  let mapi_fold ?data_cutoff input ~f ~empty ~add ~remove =
     let output_ops : (_, _, _) Package.output_ops =
-      { Package.empty = M.empty; set = M.set; remove = M.remove }
+      { Package.empty; set = add; remove }
     in
     Package.install
       (Package.stable_family ?data_cutoff ~input ~input_ops ~output_ops
          ~build:f ())
+
+  let mapi_fold_project ?data_cutoff input ~project ~f ~empty ~add ~remove =
+    let output_ops : (_, _, _) Package.output_ops =
+      { Package.empty; set = add; remove }
+    in
+    Package.install
+      (Package.stable_family_project ?data_cutoff ~input ~project ~input_ops
+         ~output_ops ~build:f ())
+
+  let mapi ?data_cutoff input ~f =
+    mapi_fold ?data_cutoff input ~f ~empty:M.empty ~add:M.set ~remove:M.remove
 end
 
 module Make_package (Package : PACKAGE) = struct

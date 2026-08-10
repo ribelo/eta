@@ -529,17 +529,20 @@ let offer_sync contract t value =
 let try_offer t value = Effect_erasure.plain_sync2 t value try_offer_sync
 let try_offer_now t value = try_offer_sync t value
 
+let offer_result_sync contract t value =
+  match offer_sync contract t value with
+  | `Sent -> Ok true
+  | `Dropped -> Ok false
+  | `Full -> invariant_failed "blocking offer returned Full"
+  | `Closed -> Error `Closed
+  | `Closed_with_error error -> Error (`Closed_with_error error)
+
 let sent_token t = with_lock t @@ fun () -> t.sent_token
 let same_sent_token left right = left == right
 
 let offer t value =
-  Effect_erasure.public_sync2 ~leaf_name:"Queue.offer" t value offer_sync
-  |> Effect.bind (function
-       | `Sent -> Effect.pure true
-       | `Dropped -> Effect.pure false
-       | `Full -> invariant_failed "blocking offer returned Full"
-       | `Closed -> Effect.fail `Closed
-       | `Closed_with_error error -> Effect.fail (`Closed_with_error error))
+  Effect_erasure.public_sync2_result ~leaf_name:"Queue.offer" t value
+    offer_result_sync
 
 let fail_if_closed t =
   Effect.sync (fun () -> with_lock t @@ fun () -> (t.shutdown, t.closed))
@@ -560,11 +563,14 @@ let offer_all t values =
   in
   fail_if_closed t |> Effect.bind (fun () -> loop [] values)
 
+let send_result_sync contract t value =
+  match offer_result_sync contract t value with
+  | Ok true -> Ok ()
+  | Ok false -> Error `Dropped
+  | Error error -> Error error
+
 let send t value =
-  offer t value
-  |> Effect.bind (function
-       | true -> Effect.unit
-       | false -> Effect.fail `Dropped)
+  Effect_erasure.plain_sync2_result t value send_result_sync
 
 let take_value_raw wakeups t =
   let value = Stdlib.Queue.take t.values in

@@ -248,6 +248,7 @@ scope validity, dependency attachment, structural events, and pending-plan state
 | SK32 | A successful transaction publishes only its final output. | `lib/signal_map/eta_signal_map.mli:167-169` | `keyed_mapi_simultaneous_input_and_child_change_publishes_final_output` |
 | SK33 | A changed keyed root emits one final observer event. | `lib/signal_map/eta_signal_map.mli:167-169` | `keyed_mapi_output_observer_publishes_once_after_commit` |
 | SK34 | Completion leaves no pending keyed transaction work. | `lib/signal_map/eta_signal_map.mli:167-169` | `keyed_mapi_model_trace_matches_runtime`; every generated transition checks a completed stabilization, and failure-specific properties inspect pending state |
+| SK35 | `mapi_fold_project` runs its projection once for the initial input and once per input publication before reconciliation. | `lib/signal_map/eta_signal_map.mli:235-237` | `keyed_mapi_fold_project_runs_once_per_input_publication` |
 
 ### Eta Signal Map private transaction requirements
 

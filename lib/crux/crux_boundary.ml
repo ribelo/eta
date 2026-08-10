@@ -182,8 +182,12 @@ module Exported_endpoint = struct
            ( export_record,
              {
                contribution with
-               commit_hooks = activate :: contribution.commit_hooks;
-               added_revokers = revoker :: contribution.added_revokers;
+               commit_hooks =
+                 contribution_items_prepend activate
+                   contribution.commit_hooks;
+               added_revokers =
+                 contribution_items_prepend revoker
+                   contribution.added_revokers;
              } ))
          target_signal)
 
@@ -507,9 +511,9 @@ module Requester = struct
              Eta.Effect.sync (fun () ->
                  let reason =
                    Eta.Sync_lock.use root.lock @@ fun () ->
-                   match root.failure with
+                   match Atomic.get root.failure with
                    | Some _ -> Request.Root_crashed
-                   | None when root.stop_requested ->
+                   | None when Atomic.get root.stop_requested ->
                        Request.Root_stopped
                    | None -> (
                        match owner with
@@ -821,8 +825,12 @@ module Request_export = struct
            ( export_record,
              {
                contribution with
-               commit_hooks = activate :: contribution.commit_hooks;
-               added_revokers = revoker :: contribution.added_revokers;
+               commit_hooks =
+                 contribution_items_prepend activate
+                   contribution.commit_hooks;
+               added_revokers =
+                 contribution_items_prepend revoker
+                   contribution.added_revokers;
              } ))
          target_signal)
 

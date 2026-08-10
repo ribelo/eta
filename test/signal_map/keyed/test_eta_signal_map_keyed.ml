@@ -154,6 +154,113 @@ let test_keyed_mapi_cutoff_defect_rolls_back_and_retries () =
     (run_ok (S.Observer.read observer) |> M.to_list);
   run_ok (S.Observer.dispose observer)
 
+(* mapi_fold publishes a caller-defined accumulator. The recorded event log
+   proves that [add] sees every child output publication including the first,
+   that [remove] sees each departing key, and that both run in the keyed
+   engine's own order. *)
+let test_keyed_mapi_fold_accumulates_add_and_remove_events () =
+  let events = ref [] in
+  let input = S.Var.create (M.set 1 10 M.empty) in
+  let output =
+    K.mapi_fold (S.Var.watch input)
+      ~f:(fun ~key ~data -> S.map (fun value -> key + value) data)
+      ~empty:[]
+      ~add:(fun key value log ->
+        events := ("add", key, value) :: !events;
+        (key, value) :: List.filter (fun (existing, _) -> existing <> key) log)
+      ~remove:(fun key log ->
+        events := ("remove", key, 0) :: !events;
+        List.filter (fun (existing, _) -> existing <> key) log)
+  in
+  let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> Ok ())) in
+  run_ok (S.stabilize ());
+  Alcotest.(check (list (pair int int)))
+    "first publication reaches add" [ (1, 11) ]
+    (run_ok (S.Observer.read observer));
+  run_ok (S.Var.set input (M.set 1 20 (M.set 2 5 M.empty)));
+  run_ok (S.stabilize ());
+  Alcotest.(check (list (pair int int)))
+    "value change and addition accumulate"
+    [ (2, 7); (1, 21) ]
+    (List.sort (fun (a, _) (b, _) -> Int.compare b a)
+       (run_ok (S.Observer.read observer)));
+  run_ok (S.Var.set input (M.set 2 5 M.empty));
+  run_ok (S.stabilize ());
+  Alcotest.(check (list (pair int int))) "removal drops the key" [ (2, 7) ]
+    (run_ok (S.Observer.read observer));
+  let recorded = List.rev !events in
+  Alcotest.(check (list (triple string int int)))
+    "add and remove events in engine order"
+    [ ("add", 1, 11); ("add", 1, 21); ("add", 2, 7); ("remove", 1, 0) ]
+    recorded;
+  run_ok (S.Observer.dispose observer)
+
+(* A rolled-back stabilization must restore the accumulator with the rest of
+   the keyed state: the retry observes the pre-pass accumulator, so the failed
+   pass leaves no duplicated or missing entry behind. *)
+let test_keyed_mapi_fold_rolls_back_accumulator () =
+  let fail = ref false in
+  let input = S.Var.create (M.set 1 10 M.empty) in
+  let output =
+    K.mapi_fold (S.Var.watch input)
+      ~f:(fun ~key ~data ->
+        S.map
+          (fun value ->
+            if !fail && key = 2 then failwith "builder defect";
+            key + value)
+          data)
+      ~empty:[]
+      ~add:(fun key value log ->
+        (key, value) :: List.filter (fun (existing, _) -> existing <> key) log)
+      ~remove:(fun key log ->
+        List.filter (fun (existing, _) -> existing <> key) log)
+  in
+  let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> Ok ())) in
+  run_ok (S.stabilize ());
+  fail := true;
+  run_ok (S.Var.set input (M.set 1 10 (M.set 2 5 M.empty)));
+  expect_defect "defective pass" (fun () -> S.stabilize ());
+  Alcotest.(check (list (pair int int)))
+    "accumulator restored after rollback" [ (1, 11) ]
+    (run_ok (S.Observer.read observer));
+  fail := false;
+  run_ok (S.stabilize ());
+  Alcotest.(check (list (pair int int)))
+    "retry accumulates exactly once"
+    [ (1, 11); (2, 7) ]
+    (List.sort (fun (a, _) (b, _) -> Int.compare a b)
+       (run_ok (S.Observer.read observer)));
+  run_ok (S.Observer.dispose observer)
+
+let test_keyed_mapi_fold_project_runs_once_per_input_publication () =
+  let projections = ref 0 in
+  let input = S.Var.create (M.empty, 0) in
+  let output =
+    K.mapi_fold_project (S.Var.watch input)
+      ~project:(fun (map, _stamp) ->
+        incr projections;
+        map)
+      ~f:(fun ~key:_ ~data -> data)
+      ~empty:M.empty ~add:M.set ~remove:M.remove
+  in
+  let observer = run_ok (S.Observer.observe output ~on_update:(fun _ -> Ok ())) in
+  run_ok (S.stabilize ());
+  Alcotest.(check int) "initial projection count" 1 !projections;
+  projections := 0;
+  let map = M.set 1 10 M.empty in
+  run_ok (S.Var.set input (map, 1));
+  run_ok (S.stabilize ());
+  Alcotest.(check int) "changed projection count" 1 !projections;
+  Alcotest.(check (list (pair int int))) "projected output" [ (1, 10) ]
+    (run_ok (S.Observer.read observer) |> M.to_list);
+  projections := 0;
+  run_ok (S.Var.set input (map, 2));
+  run_ok (S.stabilize ());
+  Alcotest.(check int) "equal-map projection count" 1 !projections;
+  Alcotest.(check (list (pair int int))) "stable projected output" [ (1, 10) ]
+    (run_ok (S.Observer.read observer) |> M.to_list);
+  run_ok (S.Observer.dispose observer)
+
 let () =
   Alcotest.run "eta_signal_map_keyed"
     [
@@ -161,6 +268,14 @@ let () =
         [
           Alcotest.test_case "keyed_mapi_adds_child" `Quick
             test_keyed_mapi_adds_child;
+          Alcotest.test_case
+            "keyed_mapi_fold_accumulates_add_and_remove_events" `Quick
+            test_keyed_mapi_fold_accumulates_add_and_remove_events;
+          Alcotest.test_case "keyed_mapi_fold_rolls_back_accumulator" `Quick
+            test_keyed_mapi_fold_rolls_back_accumulator;
+          Alcotest.test_case
+            "keyed_mapi_fold_project_runs_once_per_input_publication" `Quick
+            test_keyed_mapi_fold_project_runs_once_per_input_publication;
           Alcotest.test_case "keyed_mapi_retains_updates_and_removes_child"
             `Quick test_keyed_mapi_retains_updates_and_removes_child;
           Alcotest.test_case

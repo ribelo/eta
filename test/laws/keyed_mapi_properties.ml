@@ -54,6 +54,7 @@ let property_names =
     "keyed_mapi_simultaneous_input_and_child_change_publishes_final_output";
     "keyed_mapi_output_observer_publishes_once_after_commit";
     "keyed_mapi_model_trace_matches_runtime";
+    "keyed_mapi_fold_project_runs_once_per_input_publication";
   |]
 
 let require name condition detail =
@@ -652,6 +653,42 @@ let run_case matrix sample =
       stabilize ();
       let expected = M.map (fun data -> data.value) !model in
       require name (M.equal Int.equal expected (read observer)) "final trace mismatch";
+      dispose observer
+  | 39 ->
+      let projections = ref 0 in
+      let input = S.Var.create (M.empty, 0) in
+      let output =
+        K.mapi_fold_project (S.Var.watch input)
+          ~project:(fun (map, _stamp) ->
+            incr projections;
+            map)
+          ~f:(fun ~key:_ ~data -> S.map (fun data -> data.value) data)
+          ~empty:M.empty ~add:M.set ~remove:M.remove
+      in
+      let observer =
+        run_ok (S.Observer.observe output ~on_update:(fun _ -> Ok ()))
+      in
+      stabilize ();
+      require name (!projections = 1)
+        (Printf.sprintf "initial projection count %d" !projections);
+      projections := 0;
+      let model = ref M.empty in
+      for step = 1 to sample.generated_transition_count do
+        let selected = key + (step mod sample.generated_command_count) in
+        if (generated_key + step) mod 3 = 0 then
+          model := M.remove selected !model
+        else
+          model := M.set selected (box step (generated_key + step)) !model;
+        set input (!model, step);
+        stabilize ()
+      done;
+      require name
+        (!projections = sample.generated_transition_count)
+        (Printf.sprintf "projection count %d, expected %d" !projections
+           sample.generated_transition_count);
+      let expected = M.map (fun data -> data.value) !model in
+      require name (M.equal Int.equal expected (read observer))
+        "projected trace mismatch";
       dispose observer
   | _ -> invalid_arg "keyed property matrix"
 

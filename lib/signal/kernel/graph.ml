@@ -34,7 +34,7 @@ module type Package_graph = sig
     empty : 'map;
     compare_key : 'key -> 'key -> int;
     fold_symmetric_diff :
-      'acc. 'map -> 'map -> on_compare:(unit -> unit) -> init:'acc ->
+      'acc. 'map -> 'map -> comparisons:int ref -> init:'acc ->
       f:('acc -> 'key -> 'data change -> 'acc) -> 'acc;
   }
   type ('key, 'output, 'map) output_ops = {
@@ -45,6 +45,14 @@ module type Package_graph = sig
   val stable_family :
     ?data_cutoff:'data Cutoff.t ->
     input:'data_map signal ->
+    input_ops:('key, 'data, 'data_map) input_ops ->
+    output_ops:('key, 'output, 'output_map) output_ops ->
+    build:(key:'key -> data:'data signal -> 'output signal) ->
+    unit -> 'output_map plan
+  val stable_family_project :
+    ?data_cutoff:'data Cutoff.t ->
+    input:'input signal ->
+    project:('input -> 'data_map) ->
     input_ops:('key, 'data, 'data_map) input_ops ->
     output_ops:('key, 'output, 'output_map) output_ops ->
     build:(key:'key -> data:'data signal -> 'output signal) ->
@@ -417,20 +425,24 @@ module Make_impl (Observer_error : Observer_error) () = struct
   let dead_nodes = ref 0
   let stabilization_attempts = ref 0
 
+  (* Mutable accumulator for keyed-owner statistics: the per-comparison and
+     per-event bumps used to copy a ten-field immutable record on every key
+     comparison. The public snapshot still exposes an immutable record; it
+     reads these fields once when stats are requested. *)
+  type keyed_accumulator = {
+    acc_input_key_comparisons : int ref;
+    mutable acc_input_diff_events : int;
+    mutable acc_child_visits : int;
+    mutable acc_nodes : int;
+  }
+
   let keyed =
-    ref
-      {
-        node_count = 0;
-        committed_child_count = 0;
-        reconciliation_count = 0;
-        input_key_comparison_count = 0;
-        input_diff_event_count = 0;
-        child_visit_count = 0;
-        provisional_addition_count = 0;
-        committed_addition_count = 0;
-        committed_removal_count = 0;
-        reconciliation_rollback_count = 0;
-      }
+    {
+      acc_input_key_comparisons = ref 0;
+      acc_input_diff_events = 0;
+      acc_child_visits = 0;
+      acc_nodes = 0;
+    }
 
   let ensure_context () = Execution.ensure_context execution
   let account_recomputations () =
@@ -544,7 +556,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
       done
     done;
     if !duplicate then (
-      Core.enable_change_listeners graph;
       Hashtbl.replace duplicate_dependency_nodes raw.handle.slot raw.handle);
     if cutoff != Cutoff.phys_equal then
       Hashtbl.replace custom_cutoff_nodes raw.handle.slot raw.handle;
@@ -810,7 +821,6 @@ module Make_impl (Observer_error : Observer_error) () = struct
         }
       else source
     in
-    Core.enable_change_listeners graph;
     let selected = ref Null in
     (* These hold pointers, so or_null keeps them nullable without a block per
        switch and without a second load per read. *)
@@ -1662,7 +1672,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
   end
 
   type 'a family_plan = Plan : {
-    input : 'data_map signal;
+    input : 'input signal;
+    project : 'input -> 'data_map;
     input_ops : ('key, 'data, 'data_map) package_input_ops;
     output_ops : ('key, 'output, 'output_map) package_output_ops;
     data_cutoff : 'data Cutoff.t;
@@ -1673,7 +1684,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
     p_empty : 'map;
     p_compare_key : 'key -> 'key -> int;
     p_fold :
-      'acc. 'map -> 'map -> on_compare:(unit -> unit) -> init:'acc ->
+      'acc. 'map -> 'map -> comparisons:int ref -> init:'acc ->
       f:('acc -> 'key -> 'data package_change -> 'acc) -> 'acc;
   }
   and 'a package_change = PLeft of 'a | PRight of 'a | PChanged of 'a * 'a
@@ -1691,7 +1702,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
       empty : 'map;
       compare_key : 'key -> 'key -> int;
       fold_symmetric_diff :
-        'acc. 'map -> 'map -> on_compare:(unit -> unit) -> init:'acc ->
+        'acc. 'map -> 'map -> comparisons:int ref -> init:'acc ->
         f:('acc -> 'key -> 'data change -> 'acc) -> 'acc;
     }
     type ('key, 'output, 'map) output_ops = {
@@ -1700,9 +1711,10 @@ module Make_impl (Observer_error : Observer_error) () = struct
       remove : 'key -> 'map -> 'map;
     }
 
-    let stable_family ?data_cutoff ~input ~input_ops ~output_ops ~build () =
-      let p_fold left right ~on_compare ~init ~f =
-        input_ops.fold_symmetric_diff left right ~on_compare ~init
+    let stable_family_with_project ?data_cutoff ~input ~project ~input_ops
+        ~output_ops ~build () =
+      let p_fold left right ~comparisons ~init ~f =
+        input_ops.fold_symmetric_diff left right ~comparisons ~init
           ~f:(fun acc key change ->
             f acc key
               (match change with
@@ -1713,6 +1725,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
       Plan
         {
           input;
+          project;
           input_ops =
             {
               p_empty = input_ops.empty;
@@ -1729,8 +1742,31 @@ module Make_impl (Observer_error : Observer_error) () = struct
           build;
         }
 
+    let stable_family ?data_cutoff ~input ~input_ops ~output_ops ~build () =
+      stable_family_with_project ?data_cutoff ~input ~project:Fun.id ~input_ops
+        ~output_ops ~build ()
+
+    let stable_family_project ?data_cutoff ~input ~project ~input_ops ~output_ops
+        ~build () =
+      stable_family_with_project ?data_cutoff ~input ~project ~input_ops
+        ~output_ops ~build ()
+
     let install (type output_map) (Plan plan : output_map plan) =
       Execution.sync execution @@ fun () ->
+      (* The steady-state reconcile diff increments the stable comparison ref
+         directly and emits through a stable callback, so neither path allocates
+         a per-reconcile closure. *)
+      let current_emit = ref (fun _ _ -> ()) in
+      let ignored_comparisons = ref max_int in
+      let diff_f = fun () key change ->
+        if keyed.acc_input_diff_events <> max_int then
+          keyed.acc_input_diff_events <- keyed.acc_input_diff_events + 1;
+        match change with
+        | PLeft value -> !current_emit key (Core.Left (This value))
+        | PRight value -> !current_emit key (Core.Right (This value))
+        | PChanged (left, right) ->
+            !current_emit key (Core.Changed (This left, This right))
+      in
       let input_ops : (_, _, _ or_null) Core.input_ops =
         {
           empty_input = Null;
@@ -1740,31 +1776,15 @@ module Make_impl (Observer_error : Observer_error) () = struct
               match old, next with
               | Null, Null -> ()
               | This old, This next ->
+                  current_emit := emit;
                   ignore
                     (plan.input_ops.p_fold old next
-                       ~on_compare:(fun () ->
-                         let s = !keyed in
-                         if s.input_key_comparison_count <> max_int then
-                           keyed :=
-                             { s with input_key_comparison_count =
-                                        s.input_key_comparison_count + 1 })
-                       ~init:()
-                       ~f:(fun () key change ->
-                         let s = !keyed in
-                         if s.input_diff_event_count <> max_int then
-                           keyed :=
-                             { s with input_diff_event_count =
-                                        s.input_diff_event_count + 1 };
-                         match change with
-                         | PLeft value -> emit key (Core.Left (This value))
-                         | PRight value -> emit key (Core.Right (This value))
-                         | PChanged (left, right) ->
-                             emit key
-                               (Core.Changed (This left, This right))))
+                       ~comparisons:keyed.acc_input_key_comparisons ~init:()
+                       ~f:diff_f)
               | Null, This next ->
                   ignore
                     (plan.input_ops.p_fold plan.input_ops.p_empty next
-                       ~on_compare:(fun () -> ())
+                       ~comparisons:ignored_comparisons
                        ~init:()
                        ~f:(fun () key change ->
                          match change with
@@ -1773,7 +1793,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
               | This old, Null ->
                   ignore
                     (plan.input_ops.p_fold old plan.input_ops.p_empty
-                       ~on_compare:(fun () -> ())
+                       ~comparisons:ignored_comparisons
                        ~init:()
                        ~f:(fun () key change ->
                          match change with
@@ -1813,17 +1833,20 @@ module Make_impl (Observer_error : Observer_error) () = struct
       let owner =
         Core.keyed_owner
           ~data_cutoff:(or_null_cutoff plan.data_cutoff)
-          ~input:plan.input.raw ~input_ops ~output_ops
+          ~input:plan.input.raw
+          ~project:(fun input ->
+            match input with
+            | Null -> Null
+            | This input -> This (plan.project input))
+          ~input_ops ~output_ops
           ~build:(fun ~key ~data ->
             let previous_initializers = !initializers in
             let signal = { raw = data; timer = None } in
             let output = plan.build ~key ~data:signal in
             let wrapped =
               map (fun value ->
-                let s = !keyed in
-                if s.child_visit_count <> max_int then
-                  keyed :=
-                    { s with child_visit_count = s.child_visit_count + 1 };
+                if keyed.acc_child_visits <> max_int then
+                  keyed.acc_child_visits <- keyed.acc_child_visits + 1;
                 Option.iter
                   (fun owner ->
                     Core.clear_queue_mark (Core.P owner.Core.keyed_signal))
@@ -1838,8 +1861,8 @@ module Make_impl (Observer_error : Observer_error) () = struct
       in
       owner_ref := Some owner;
       initializers := (Core.P owner.Core.keyed_signal) :: !initializers;
-      let s = !keyed in
-      if s.node_count <> max_int then keyed := { s with node_count = s.node_count + 1 };
+      if keyed.acc_nodes <> max_int then
+        keyed.acc_nodes <- keyed.acc_nodes + 1;
       { raw = owner.Core.keyed_signal; timer = plan.input.timer }
   end
 
@@ -2044,7 +2067,7 @@ module Make_impl (Observer_error : Observer_error) () = struct
         | Invalid -> incr invalid
         | Disposed -> ())
       !pending_observers;
-    let s = !keyed in
+    let s = keyed in
     let g = Core.keyed_stats_for graph in
     let keyed_node_count = ref 0 in
     let committed_child_count = ref 0 in
@@ -2064,9 +2087,9 @@ module Make_impl (Observer_error : Observer_error) () = struct
     in
     let ( let* ) = Result.bind in
     let* () = check_overflow "stats keyed.reconciliation_count" g.keyed_reconciliation_count in
-    let* () = check_overflow_sum "stats keyed.input_key_comparison_count" s.input_key_comparison_count g.keyed_input_key_comparison_count in
-    let* () = check_overflow_sum "stats keyed.input_diff_event_count" s.input_diff_event_count g.keyed_input_diff_event_count in
-    let* () = check_overflow_sum "stats keyed.child_visit_count" s.child_visit_count g.keyed_child_visit_count in
+    let* () = check_overflow_sum "stats keyed.input_key_comparison_count" !(s.acc_input_key_comparisons) g.keyed_input_key_comparison_count in
+    let* () = check_overflow_sum "stats keyed.input_diff_event_count" s.acc_input_diff_events g.keyed_input_diff_event_count in
+    let* () = check_overflow_sum "stats keyed.child_visit_count" s.acc_child_visits g.keyed_child_visit_count in
     let* () = check_overflow "stats keyed.provisional_addition_count" g.keyed_provisional_addition_count in
     let* () = check_overflow "stats keyed.committed_addition_count" g.keyed_committed_addition_count in
     let* () = check_overflow "stats keyed.committed_removal_count" g.keyed_committed_removal_count in
@@ -2095,10 +2118,10 @@ module Make_impl (Observer_error : Observer_error) () = struct
             committed_child_count = !committed_child_count;
             reconciliation_count = g.keyed_reconciliation_count;
             input_key_comparison_count =
-              s.input_key_comparison_count + g.keyed_input_key_comparison_count;
+              !(s.acc_input_key_comparisons) + g.keyed_input_key_comparison_count;
             input_diff_event_count =
-              s.input_diff_event_count + g.keyed_input_diff_event_count;
-            child_visit_count = s.child_visit_count + g.keyed_child_visit_count;
+              s.acc_input_diff_events + g.keyed_input_diff_event_count;
+            child_visit_count = s.acc_child_visits + g.keyed_child_visit_count;
             provisional_addition_count = g.keyed_provisional_addition_count;
             committed_addition_count = g.keyed_committed_addition_count;
             committed_removal_count = g.keyed_committed_removal_count;

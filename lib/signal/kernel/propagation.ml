@@ -138,7 +138,6 @@ and graph = {
   mutable pending_reclaims : handle array;
   mutable pending_reclaim_length : int;
   mutable suppress_reclaim : bool;
-  mutable change_listeners_enabled : bool;
   mutable tombstones : handle array;
   mutable tombstone_length : int;
   mutable dynamic_scope_count : int;
@@ -350,7 +349,6 @@ let create () =
     pending_reclaims = Array.make 16 { slot = -1; generation = -1 };
     pending_reclaim_length = 0;
     suppress_reclaim = false;
-    change_listeners_enabled = false;
     tombstones = Array.make 16 { slot = -1; generation = -1 };
     tombstone_length = 0;
     dynamic_scope_count = 0;
@@ -372,8 +370,6 @@ let create () =
   }
 
 let work graph = graph.work
-let enable_change_listeners graph = graph.change_listeners_enabled <- true
-
 let reset_work graph =
   let zero = empty_work () in
   graph.work.admissions <- zero.admissions;
@@ -971,16 +967,19 @@ let rec evaluate_from (pending @ local) changed_before (P node) =
       else (
         record_first_write node;
         node.current <- next;
-        if graph.change_listeners_enabled then
-          List.iter (fun notify -> notify next) node.change_listeners;
+        List.iter (fun notify -> notify next) node.change_listeners;
         true))
   in
   if changed then
     match node.dependents with
     | [ (P parent_node as parent) ]
       when node_necessary parent_node
-           && Array.length parent_node.dependencies = 1
-           && parent_node.height = node.height + 1 ->
+           && Array.length parent_node.dependencies = 1 ->
+        (* A single-dependency parent is ready the moment this node
+           publishes: its compute reads only this node's [current], change
+           listeners have already fired, and the recursive call is in tail
+           position, so any height gap only forces a redundant queue
+           round-trip. *)
         pending.pending_propagation_edges <-
           pending.pending_propagation_edges + 1;
         evaluate_from pending true parent
@@ -1051,12 +1050,18 @@ let drain graph =
     }
   in
   let rec loop changed =
-    match pop graph priority_queue with
-    | This node -> loop (evaluate_from pending false node || changed)
-    | Null -> (
-        match pop graph queue with
-        | This node -> loop (evaluate_from pending false node || changed)
-        | Null -> changed)
+    (* The priority queue is empty on most iterations; checking [lowest]
+       inline avoids a call into [pop]'s scan just to discover [Null].
+       Strict priority is preserved: a non-empty priority queue is always
+       drained before the next main-queue node. *)
+    if priority_queue.lowest <> -1 then
+      match pop graph priority_queue with
+      | This node -> loop (evaluate_from pending false node || changed)
+      | Null -> loop changed
+    else
+      match pop graph queue with
+      | This node -> loop (evaluate_from pending false node || changed)
+      | Null -> changed
   in
   match loop false with
   | changed ->
@@ -1627,7 +1632,6 @@ type ('a, 'b) bind_owner = {
 
 let bind_owner ?(cutoff = Physical_cutoff) (source : 'a signal) ~f =
   let graph = source.graph in
-  enable_change_listeners graph;
   let scope = create_detached_scope () in
   let inner : 'b signal =
     with_scope graph scope (fun () -> f source.current)
@@ -1845,7 +1849,8 @@ let rec child_iter f = function
 type ('key, 'data : value_or_null, 'input : value_or_null,
       'output : value_or_null, 'output_map : value_or_null) keyed_owner = {
   keyed_signal : 'output_map signal;
-  keyed_input : 'input signal;
+  mutable keyed_projected_input : 'input;
+  mutable keyed_projected_revision : int;
   input_ops : ('key, 'data, 'input) input_ops;
   output_ops : ('key, 'output, 'output_map) output_ops;
   data_cutoff : 'data -> 'data -> bool;
@@ -1861,6 +1866,23 @@ type ('key, 'data : value_or_null, 'input : value_or_null,
   mutable candidate_output : 'output_map;
   mutable output_undo : 'output_map;
   mutable output_written_in : int;
+  mutable stage_capsule : capsule;
+  mutable reconcile_removed : ('key, 'data, 'output) keyed_child list;
+  mutable reconcile_added : ('key, 'data, 'output) keyed_child list;
+  mutable reconcile_old_children :
+    ('key, ('key, 'data, 'output) keyed_child) child_tree;
+  mutable reconcile_old_output : 'output_map;
+  mutable reconcile_old_input : 'input;
+  mutable reconcile_structure_changed : bool;
+  mutable reconcile_diff_callback : 'key -> 'data change -> unit;
+  mutable reconcile_detach_iter : ('key, 'data, 'output) keyed_child -> unit;
+  mutable reconcile_attach_iter : ('key, 'data, 'output) keyed_child -> unit;
+  mutable reconcile_rollback_detach : ('key, 'data, 'output) keyed_child -> unit;
+  mutable reconcile_rollback_attach : ('key, 'data, 'output) keyed_child -> unit;
+  mutable reconcile_cleanup_added : ('key, 'data, 'output) keyed_child -> unit;
+  mutable reconcile_cleanup_removed : ('key, 'data, 'output) keyed_child -> unit;
+  mutable reconcile_cleanup_invalidate : ('key, 'data, 'output) keyed_child -> unit;
+  mutable reconcile_capsule : capsule;
 }
 
 let rec count_children acc = function
@@ -1979,22 +2001,16 @@ let keyed_find owner key =
   child_find owner.input_ops.compare_key key owner.children
 
 let keyed_owner ?(cutoff = Physical_cutoff) ?(data_cutoff = ( == ))
-    ~(input : 'input signal) ~input_ops ~output_ops ~build () =
+    ~(input : 'raw_input signal) ~project ~input_ops ~output_ops ~build () =
   let graph = input.graph in
-  enable_change_listeners graph;
+  let initial_input = project input.current in
+  let input_revision = ref 0 in
   let owner_ref = ref None in
   let stage_child_output owner key value =
     if owner.output_written_in <> graph.pass then (
       owner.output_undo <- owner.output_root;
       owner.output_written_in <- graph.pass;
-      push_capsule graph
-        {
-          rollback_capsule =
-            (fun () ->
-              owner.output_root <- owner.output_undo;
-              owner.output_written_in <- -1);
-          cleanup_capsule = This (fun () -> owner.output_written_in <- -1);
-        });
+      push_capsule graph owner.stage_capsule);
     owner.output_root <-
       output_ops.set_output key value owner.output_root
   in
@@ -2002,6 +2018,14 @@ let keyed_owner ?(cutoff = Physical_cutoff) ?(data_cutoff = ( == ))
     child.output.change_listeners <-
       (fun value -> stage_child_output owner child.key value)
       :: child.output.change_listeners
+  in
+  let prepare_structural_reconcile owner =
+    if not owner.reconcile_structure_changed then (
+      owner.reconcile_structure_changed <- true;
+      owner.reconcile_old_children <- owner.children;
+      owner.reconcile_old_output <- owner.output_root;
+      owner.candidate_children <- owner.children;
+      owner.candidate_output <- owner.output_root)
   in
   let attach_child owner child =
     add_dependent (P child.output) (P owner.keyed_signal);
@@ -2020,101 +2044,42 @@ let keyed_owner ?(cutoff = Physical_cutoff) ?(data_cutoff = ( == ))
     bump_keyed_for owner.keyed_signal.graph `Reconciliation;
     graph.keyed_reconciliations_in_pass <-
       graph.keyed_reconciliations_in_pass + 1;
-    let old_children = owner.children in
-    let old_output = owner.output_root in
-    owner.candidate_children <- owner.children;
-    owner.candidate_output <- owner.output_root;
-    let removed = ref [] in
-    let added = ref [] in
+    owner.reconcile_structure_changed <- false;
+    owner.reconcile_removed <- [];
+    owner.reconcile_added <- [];
     input_ops.iter_diff owner.committed_input next_input
-      (fun key change ->
-        match change with
-        | Changed (_, data) -> (
-            match keyed_find owner key with
-            | None -> raise Stale_handle
-            | Some child ->
-                let published = child.data.signal.current in
-                if not (owner.data_cutoff published data) then
-                  set graph child.data data)
-        | Left _ -> (
-            match keyed_find owner key with
-            | None -> ()
-            | Some child ->
-                removed := child :: !removed;
-                owner.candidate_children <-
-                  child_remove input_ops.compare_key key
-                    owner.candidate_children;
-                owner.candidate_output <-
-                  output_ops.remove_output key owner.candidate_output)
-        | Right data ->
-            let scope = create_detached_scope () in
-            bump_keyed_for owner.keyed_signal.graph `Provisional_addition;
-            let source = with_scope graph scope (fun () -> var graph data) in
-            let output = with_scope graph scope (fun () -> build ~key ~data:(watch source)) in
-            let child = { key; data = source; output; scope } in
-            added := child :: !added;
-            install_child_listener owner child;
-            owner.candidate_children <-
-              child_add input_ops.compare_key key child
-                owner.candidate_children;
-            owner.candidate_output <-
-              output_ops.set_output key output.current
-                owner.candidate_output);
+      owner.reconcile_diff_callback;
     (match owner.precommit with
     | Some f ->
         owner.precommit <- None;
         f ()
     | None -> ());
-    List.iter
-      (fun (child : (_, _, _) keyed_child) ->
-        detach_child owner child;
-        owner.event_recorder (Keyed_detached child.scope);
-        retire_scope graph child.scope;
-        owner.event_recorder (Keyed_invalidated child.scope))
-      !removed;
-    List.iter
-      (fun child ->
-        attach_child owner child;
-        owner.event_recorder (Keyed_attached child.scope))
-      !added;
-    owner.children <- owner.candidate_children;
-    owner.output_root <- owner.candidate_output;
-    let old_input = owner.committed_input in
+    if owner.reconcile_structure_changed then (
+      List.iter owner.reconcile_detach_iter owner.reconcile_removed;
+      List.iter owner.reconcile_attach_iter owner.reconcile_added;
+      owner.children <- owner.candidate_children;
+      owner.output_root <- owner.candidate_output);
+    owner.reconcile_old_input <- owner.committed_input;
     owner.committed_input <- next_input;
-    push_capsule graph
-      {
-        rollback_capsule =
-          (fun () ->
-            enqueue (P owner.keyed_signal);
-            List.iter
-              (fun child -> detach_child owner child)
-              !added;
-            List.iter
-              (fun child -> attach_child owner child)
-              !removed;
-            owner.committed_input <- old_input;
-            owner.children <- old_children;
-            owner.output_root <- old_output);
-        cleanup_capsule =
-          This (fun () ->
-            List.iter
-              (fun _ ->
-                bump_keyed_for owner.keyed_signal.graph `Committed_addition)
-              !added;
-            List.iter
-              (fun _ ->
-                bump_keyed_for owner.keyed_signal.graph `Committed_removal)
-              !removed;
-            List.iter
-              (fun (child : (_, _, _) keyed_child) ->
-                child.scope.valid <- false)
-              !removed);
-      }
+    push_capsule graph owner.reconcile_capsule
   in
   let compute () =
     let owner = Option.get !owner_ref in
-    let next = input.current in
-    if owner.committed_input != next then reconcile owner next;
+    let next =
+      if owner.keyed_projected_revision = !input_revision then
+        owner.keyed_projected_input
+      else
+        let next = project input.current in
+        owner.keyed_projected_input <- next;
+        owner.keyed_projected_revision <- !input_revision;
+        next
+    in
+    if owner.committed_input != next then
+      (try reconcile owner next
+       with exn ->
+         owner.keyed_projected_input <- owner.committed_input;
+         owner.keyed_projected_revision <- -1;
+         raise exn);
     owner.output_root
   in
   let keyed_signal =
@@ -2125,7 +2090,8 @@ let keyed_owner ?(cutoff = Physical_cutoff) ?(data_cutoff = ( == ))
   let owner =
     {
       keyed_signal;
-      keyed_input = input;
+      keyed_projected_input = initial_input;
+      keyed_projected_revision = 0;
       input_ops;
       output_ops;
       data_cutoff;
@@ -2139,9 +2105,125 @@ let keyed_owner ?(cutoff = Physical_cutoff) ?(data_cutoff = ( == ))
       candidate_output = output_ops.empty_output;
       output_undo = output_ops.empty_output;
       output_written_in = -1;
+      stage_capsule =
+        {
+          rollback_capsule =
+            (fun () ->
+              let owner = Option.get !owner_ref in
+              owner.output_root <- owner.output_undo;
+              owner.output_written_in <- -1);
+          cleanup_capsule =
+            This (fun () ->
+              let owner = Option.get !owner_ref in
+              owner.output_written_in <- -1);
+        };
+      reconcile_removed = [];
+      reconcile_added = [];
+      reconcile_old_children = Child_empty;
+      reconcile_old_output = output_ops.empty_output;
+      reconcile_old_input = input_ops.empty_input;
+      reconcile_structure_changed = false;
+      reconcile_diff_callback =
+        (fun key change ->
+          let owner = Option.get !owner_ref in
+          match change with
+          | Changed (_, data) -> (
+              match keyed_find owner key with
+              | None -> raise Stale_handle
+              | Some child ->
+                  let published = child.data.signal.current in
+                  if not (owner.data_cutoff published data) then
+                    set graph child.data data)
+          | Left _ -> (
+              prepare_structural_reconcile owner;
+              match keyed_find owner key with
+              | None -> ()
+              | Some child ->
+                  owner.reconcile_removed <-
+                    child :: owner.reconcile_removed;
+                  owner.candidate_children <-
+                    child_remove input_ops.compare_key key
+                      owner.candidate_children;
+                  owner.candidate_output <-
+                    output_ops.remove_output key owner.candidate_output)
+          | Right data ->
+              prepare_structural_reconcile owner;
+              let scope = create_detached_scope () in
+              bump_keyed_for owner.keyed_signal.graph `Provisional_addition;
+              let source = with_scope graph scope (fun () -> var graph data) in
+              let output =
+                with_scope graph scope (fun () ->
+                    build ~key ~data:(watch source))
+              in
+              let child = { key; data = source; output; scope } in
+              owner.reconcile_added <- child :: owner.reconcile_added;
+              install_child_listener owner child;
+              owner.candidate_children <-
+                child_add input_ops.compare_key key child
+                  owner.candidate_children;
+              owner.candidate_output <-
+                output_ops.set_output key output.current
+                  owner.candidate_output);
+      reconcile_detach_iter =
+        (fun (child : (_, _, _) keyed_child) ->
+          let owner = Option.get !owner_ref in
+          detach_child owner child;
+          owner.event_recorder (Keyed_detached child.scope);
+          retire_scope graph child.scope;
+          owner.event_recorder (Keyed_invalidated child.scope));
+      reconcile_attach_iter =
+        (fun child ->
+          let owner = Option.get !owner_ref in
+          attach_child owner child;
+          owner.event_recorder (Keyed_attached child.scope));
+      reconcile_rollback_detach =
+        (fun child ->
+          let owner = Option.get !owner_ref in
+          detach_child owner child);
+      reconcile_rollback_attach =
+        (fun child ->
+          let owner = Option.get !owner_ref in
+          attach_child owner child);
+      reconcile_cleanup_added =
+        (fun _ ->
+          let owner = Option.get !owner_ref in
+          bump_keyed_for owner.keyed_signal.graph `Committed_addition);
+      reconcile_cleanup_removed =
+        (fun _ ->
+          let owner = Option.get !owner_ref in
+          bump_keyed_for owner.keyed_signal.graph `Committed_removal);
+      reconcile_cleanup_invalidate =
+        (fun (child : (_, _, _) keyed_child) -> child.scope.valid <- false);
+      reconcile_capsule =
+        {
+          rollback_capsule =
+            (fun () ->
+              let owner = Option.get !owner_ref in
+              enqueue (P owner.keyed_signal);
+              List.iter owner.reconcile_rollback_detach owner.reconcile_added;
+              List.iter owner.reconcile_rollback_attach owner.reconcile_removed;
+              owner.committed_input <- owner.reconcile_old_input;
+              owner.keyed_projected_input <- owner.reconcile_old_input;
+              owner.keyed_projected_revision <- -1;
+              if owner.reconcile_structure_changed then (
+                owner.children <- owner.reconcile_old_children;
+                owner.output_root <- owner.reconcile_old_output));
+          cleanup_capsule =
+            This (fun () ->
+              let owner = Option.get !owner_ref in
+              List.iter owner.reconcile_cleanup_added owner.reconcile_added;
+              List.iter owner.reconcile_cleanup_removed owner.reconcile_removed;
+              List.iter owner.reconcile_cleanup_invalidate owner.reconcile_removed);
+        };
     }
   in
   owner_ref := Some owner;
+  input.change_listeners <-
+    (fun _ ->
+      if !input_revision = max_int then
+        invalid_arg "Eta_signal: keyed input revision exhausted";
+      incr input_revision)
+    :: input.change_listeners;
   owner.keyed_signal.keyed_owner <- Some (Obj.repr owner);
   keyed_signal.demand_listeners <-
     [
@@ -2153,7 +2235,7 @@ let keyed_owner ?(cutoff = Physical_cutoff) ?(data_cutoff = ( == ))
           owner.children);
     ];
   (* Initial reconciliation is construction, not a transaction. *)
-  input_ops.iter_diff input_ops.empty_input input.current
+  input_ops.iter_diff input_ops.empty_input initial_input
     (fun key -> function
       | Right data ->
           let scope = create_detached_scope () in
@@ -2170,13 +2252,14 @@ let keyed_owner ?(cutoff = Physical_cutoff) ?(data_cutoff = ( == ))
             output_ops.set_output key output.current owner.output_root;
           add_dependent (P output) (P keyed_signal)
       | Left _ | Changed _ -> ());
-  owner.committed_input <- input.current;
+  owner.committed_input <- initial_input;
   keyed_signal.current <- owner.output_root;
   keyed_signal.undo <- owner.output_root;
   owner
 
 let keyed ?cutoff ?data_cutoff ~input ~input_ops ~output_ops ~build () =
-  (keyed_owner ?cutoff ?data_cutoff ~input ~input_ops ~output_ops ~build ())
+  (keyed_owner ?cutoff ?data_cutoff ~input ~project:Fun.id ~input_ops
+     ~output_ops ~build ())
     .keyed_signal
 
 let keyed_child owner key = keyed_find owner key

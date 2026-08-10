@@ -111,8 +111,8 @@ let create ~spec_cutoff ~spec ~producer ~target ~on_item ~on_terminal =
         ( (spec_value, mapping),
           {
             contribution_empty with
-            works = [ work ];
-            added_scopes = [ scope ];
+            works = Items_cons (work, Items_empty);
+            added_scopes = Items_cons (scope, Items_empty);
           } ))
       inputs
   in
@@ -135,6 +135,8 @@ let create ~spec_cutoff ~spec ~producer ~target ~on_item ~on_terminal =
          ( (),
            {
              contribution with
-             commit_hooks = refresh :: contribution.commit_hooks;
+             commit_hooks =
+               contribution_items_prepend refresh
+                 contribution.commit_hooks;
            } ))
        openings inputs)

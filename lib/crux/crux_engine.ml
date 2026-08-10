@@ -110,23 +110,36 @@ type root_core = {
   lock : Eta.Sync_lock.t;
   ingress : (message, never) Eta.Queue.t;
   wake : (unit, never) Eta.Queue.t;
+  (* Coalesced-wakeup hint for the endpoint send path: [true] means a wakeup
+     is pending in [wake] or was just consumed and the driver is about to
+     poll. Reading it happens only after the ingress offer, and the driver
+     clears it before polling, so a skipped offer always leaves the new
+     message visible to an in-progress or imminent poll cycle. The dropping
+     queue already legalizes coalesced wakeups; the flag only avoids taking
+     the queue lock to learn that one is pending. *)
+  wake_signaled : bool Atomic.t;
   terminal_wake : (unit, never) Eta.Queue.t;
   request_slots : Eta.Semaphore.t;
   ingress_capacity : int;
   request_capacity : int;
-  mutable phase : root_phase;
-  mutable start_pending : bool;
-  mutable stop_requested : bool;
+  phase : root_phase Atomic.t;
+  start_pending : bool Atomic.t;
+  stop_requested : bool Atomic.t;
   mutable scopes : scope_state Int_map.t;
   mutable endpoints : endpoint_core Int_map.t;
   mutable boundary_exports : boundary_export Int_map.t;
-  mutable failure : Failure.t option;
-  mutable failure_reported : bool;
+  failure : Failure.t option Atomic.t;
+  failure_reported : bool Atomic.t;
   mutable next_scope : int;
   mutable next_endpoint : int;
   mutable next_position : int64;
   mutable dispose_signal : (unit -> (unit, staging_error) Eta.Effect.t) option;
   memo : (int * int, Obj.t) Hashtbl.t;
+  (* Reused per advance: the phase gate serializes advances, and every
+     staging is fully consumed (model sets run, undos fold, works move into
+     the batch) before the advance returns, so one record per root replaces
+     a fresh record per advancement. *)
+  mutable staging : staging;
 }
 
 and endpoint_core = {
@@ -172,12 +185,17 @@ and staging = {
    contributions; the root diffs consecutive frames: fresh records (works,
    endpoints, hooks, revokers) are detected by physical identity, scopes by
    scope id. *)
+and 'a contribution_items =
+  | Items_empty
+  | Items_cons of 'a * 'a contribution_items
+  | Items_append of 'a contribution_items * 'a contribution_items
+
 and contribution = {
-  endpoints : endpoint_core list;
-  works : work list;
-  added_scopes : scope_state list;
-  commit_hooks : (unit -> unit) list;
-  added_revokers : (int * (unit -> unit)) list;
+  endpoints : endpoint_core contribution_items;
+  works : work contribution_items;
+  added_scopes : scope_state contribution_items;
+  commit_hooks : (unit -> unit) contribution_items;
+  added_revokers : (int * (unit -> unit)) contribution_items;
 }
 
 and 'output frame = {
@@ -236,36 +254,97 @@ let create_staging () =
 
 let contribution_empty =
   {
-    endpoints = [];
-    works = [];
-    added_scopes = [];
-    commit_hooks = [];
-    added_revokers = [];
+    endpoints = Items_empty;
+    works = Items_empty;
+    added_scopes = Items_empty;
+    commit_hooks = Items_empty;
+    added_revokers = Items_empty;
   }
+
+let contribution_items_prepend item items =
+  Items_cons (item, items)
+
+let contribution_items_append left right =
+  match left, right with
+  | Items_empty, items | items, Items_empty -> items
+  | _ -> Items_append (left, right)
+
+let contribution_items_to_list items =
+  let rec loop pending reversed =
+    match pending with
+    | [] -> List.rev reversed
+    | Items_empty :: tail -> loop tail reversed
+    | Items_cons (item, items) :: tail ->
+        loop (items :: tail) (item :: reversed)
+    | Items_append (left, right) :: tail ->
+        loop (left :: right :: tail) reversed
+  in
+  loop [ items ] []
 
 let contribution_append (left : contribution) (right : contribution) :
     contribution =
   {
-    endpoints = left.endpoints @ right.endpoints;
-    works = left.works @ right.works;
-    added_scopes = left.added_scopes @ right.added_scopes;
-    commit_hooks = left.commit_hooks @ right.commit_hooks;
-    added_revokers = left.added_revokers @ right.added_revokers;
+    endpoints = contribution_items_append left.endpoints right.endpoints;
+    works = contribution_items_append left.works right.works;
+    added_scopes =
+      contribution_items_append left.added_scopes right.added_scopes;
+    commit_hooks =
+      contribution_items_append left.commit_hooks right.commit_hooks;
+    added_revokers =
+      contribution_items_append left.added_revokers right.added_revokers;
   }
+
+(* Pure combining nodes rebuild a fresh contribution record on every publish
+   even when nothing changed, which forces the root's semantic manifest
+   comparison to walk the whole append tree instead of short-circuiting on
+   physical equality. Each combining node memoizes its result on the physical
+   identity of its inputs: same inputs, same pure result. *)
 
 (* Semantic manifest equality: two contributions publish the same lifecycle
    state when their scopes, endpoints, works, hooks, and revokers match by
    identity (ids for registered records, physical for staged ones). Gated
    nodes use it to suppress value-stable frames without freezing the
    manifest channel. *)
+let scope_state_id_equal (left : scope_state) (right : scope_state) =
+  left.id = right.id
+
+let endpoint_core_id_equal (left : endpoint_core) (right : endpoint_core) =
+  left.id = right.id
+
 let contribution_equal (left : contribution) (right : contribution) =
-  let same_by same xs ys =
-    List.length xs = List.length ys && List.for_all2 same xs ys
+  (* Check physical equality before touching the per-call comparators, so the
+     steady state short-circuits without allocating the same_by closures. *)
+  left == right
+  ||
+  let same_by same left right =
+    (* Cons chains are the common manifest shape and compare with no pending
+       stack at all; only append trees need the general zipper. *)
+    let rec chain_equal left right =
+      match left, right with
+      | Items_empty, Items_empty -> true
+      | Items_cons (left_item, left_tail), Items_cons (right_item, right_tail) ->
+          same left_item right_item && chain_equal left_tail right_tail
+      | _ -> false
+    in
+    let rec next = function
+      | [] -> None
+      | Items_empty :: tail -> next tail
+      | Items_cons (item, items) :: tail -> Some (item, items :: tail)
+      | Items_append (left, right) :: tail -> next (left :: right :: tail)
+    in
+    let rec loop left right =
+      match next left, next right with
+      | None, None -> true
+      | Some (left_item, left), Some (right_item, right) ->
+          same left_item right_item && loop left right
+      | None, Some _ | Some _, None -> false
+    in
+    chain_equal left right || loop [ left ] [ right ]
   in
-  same_by (fun (left : scope_state) (right : scope_state) -> left.id = right.id)
-    (left : contribution).added_scopes right.added_scopes
-  && same_by (fun (left : endpoint_core) (right : endpoint_core) -> left.id = right.id)
-       (left : contribution).endpoints right.endpoints
+  same_by scope_state_id_equal (left : contribution).added_scopes
+    right.added_scopes
+  && same_by endpoint_core_id_equal (left : contribution).endpoints
+       right.endpoints
   && same_by ( == ) (left : contribution).works right.works
   && same_by ( == )
        (left : contribution).commit_hooks right.commit_hooks
@@ -296,18 +375,19 @@ let latch_failure_record (root : root_core) (record : Failure.record) =
       { record with Failure.position = root.next_position }
     in
     root.next_position <- Int64.succ root.next_position;
-    match root.failure with
+    match Atomic.get root.failure with
     | None ->
-        root.failure <- Some { Failure.primary = record; secondary = [] };
-        root.stop_requested <- false;
+        Atomic.set root.failure
+          (Some { Failure.primary = record; secondary = [] });
+        Atomic.set root.stop_requested false;
         true
     | Some failure ->
-        root.failure <-
-          Some
-            {
-              failure with
-              secondary = failure.secondary @ [ record ];
-            };
+        Atomic.set root.failure
+          (Some
+             {
+               failure with
+               secondary = failure.secondary @ [ record ];
+             });
         false
   in
   if first then (
@@ -360,21 +440,24 @@ module Endpoint = struct
 
   let send_with_owner endpoint ~owner_scope message =
     let root = endpoint.core.root in
-    Eta.Queue.send root.ingress
-      (Message
-         {
-           endpoint = endpoint.core;
-           action = endpoint.encode message;
-           owner_scope;
-         })
-    |> Eta.Effect.map_error (function
-         | `Closed -> Ingress_closed
-         | `Dropped ->
-             invalid_arg "Eta_crux.Endpoint.send: bounded ingress dropped a value"
-         | `Closed_with_error (_ : never) -> .)
-    |> Eta.Effect.bind (fun () ->
-           Eta.Effect.sync (fun () ->
-               ignore (Eta.Queue.try_offer_now root.wake () : _)))
+    Eta.Spi.Expert.sync_contract2_result_map_error_sync1 root.wake
+      (fun wake ->
+        if not (Atomic.get root.wake_signaled) then (
+          ignore (Eta.Queue.try_offer_now wake () : _);
+          Atomic.set root.wake_signaled true))
+      (function
+        | `Closed -> Ingress_closed
+        | `Dropped ->
+            invalid_arg
+              "Eta_crux.Endpoint.send: bounded ingress dropped a value"
+        | `Closed_with_error (_ : never) -> .)
+      (Eta.Queue.send root.ingress
+         (Message
+            {
+              endpoint = endpoint.core;
+              action = endpoint.encode message;
+              owner_scope;
+            }))
 
   let send endpoint message =
     send_with_owner endpoint ~owner_scope:None message
@@ -413,13 +496,42 @@ type compile_ctx = {
 
 type 'a t = {
   id : int;
+  mutable uses : int;
   compile : compile_ctx -> ('a * contribution) packed;
+  fused : 'a fused option;
 }
 
-let make compile =
+(* A fusible description publishes a value derived purely from one upstream
+   signal, so a single consumer can derive that value inside its own closure
+   instead of depending on a dedicated node. *)
+and 'a fused =
+  | Fused_leaf : (compile_ctx -> Obj.t) -> 'a fused
+      (* The raw signal publishes exactly this description's value; the
+         contribution is empty. *)
+  | Fused_map : 'b t * ('b -> 'a) -> 'a fused
+      (* This description maps a pure function over another description. *)
+
+type 'a reader = {
+  read_signal : Obj.t;
+  read_value : Obj.t -> 'a;
+  read_contribution : Obj.t -> contribution;
+}
+(* [read_signal] is the signal a consumer depends on. [read_value] and
+   [read_contribution] derive the consumed description's two channels from that
+   signal's published value. They are separate so an absorbed level allocates
+   nothing: a pure map rewrites the value channel and forwards the
+   contribution channel unchanged. *)
+
+let use description =
+  description.uses <- description.uses + 1;
+  description
+
+let make ?fused compile =
   let id = next_global "description identity" in
   {
     id;
+    uses = 0;
+    fused;
     compile =
       (fun ctx ->
         let key = (ctx.ctx_scope, id) in
@@ -438,6 +550,51 @@ let unpack_package ctx =
 let pack_signal signal = Packed (Obj.repr signal)
 let unpack_signal (Packed packed) = Obj.obj packed
 
+let compiled_reader (Packed packed) =
+  {
+    read_signal = packed;
+    read_value = (fun published -> fst (Obj.obj published));
+    read_contribution = (fun published -> snd (Obj.obj published));
+  }
+
+(* Absorb a description into its consumer's closure. Two conditions keep the
+   observable behaviour identical. The description must have exactly one
+   consumer, so its mapped function still runs once per publication. The
+   consumer must depend on one signal only: a combining node recomputes when
+   any of its inputs publishes, so absorbing into it would run the absorbed
+   function on publications that never reached it before. *)
+let rec absorb : 'a. compile_ctx -> 'a t -> 'a reader option =
+ fun ctx description ->
+  if description.uses <> 1 then None
+  else
+    match description.fused with
+    | None -> None
+    | Some (Fused_leaf raw) ->
+        Some
+          {
+            read_signal = raw ctx;
+            read_value = (fun published -> Obj.obj published);
+            read_contribution = (fun _published -> contribution_empty);
+          }
+    | Some (Fused_map (inner, f)) ->
+        let inner_reader =
+          match absorb ctx inner with
+          | Some reader -> reader
+          | None -> compiled_reader (inner.compile ctx)
+        in
+        Some
+          {
+            read_signal = inner_reader.read_signal;
+            read_value =
+              (fun published -> f (inner_reader.read_value published));
+            read_contribution = inner_reader.read_contribution;
+          }
+
+let read ctx description =
+  match absorb ctx description with
+  | Some reader -> reader
+  | None -> compiled_reader (description.compile ctx)
+
 let const_contribution value = (value, contribution_empty)
 
 let return value =
@@ -446,17 +603,31 @@ let return value =
   pack_signal (S.const (const_contribution value))
 
 let map input ~f =
-  make @@ fun ctx ->
+  let input = use input in
+  make ~fused:(Fused_map (input, f)) @@ fun ctx ->
   let (module S) = unpack_package ctx in
-  let signal : ('a * contribution) S.signal =
-    unpack_signal (input.compile ctx)
-  in
-  pack_signal
-    (S.map
-       (fun (value, (contribution : contribution)) -> (f value, contribution))
-       signal)
+  match absorb ctx input with
+  | Some reader ->
+      let signal : Obj.t S.signal = Obj.obj reader.read_signal in
+      pack_signal
+        (S.map
+           (fun published ->
+             ( f (reader.read_value published),
+               reader.read_contribution published ))
+           signal)
+  | None ->
+      let signal : ('a * contribution) S.signal =
+        unpack_signal (input.compile ctx)
+      in
+      pack_signal
+        (S.map
+           (fun (value, (contribution : contribution)) ->
+             (f value, contribution))
+           signal)
 
 let both left right =
+  let left = use left in
+  let right = use right in
   make @@ fun ctx ->
   let (module S) = unpack_package ctx in
   let left_signal : ('a * contribution) S.signal =
@@ -465,14 +636,28 @@ let both left right =
   let right_signal : ('b * contribution) S.signal =
     unpack_signal (right.compile ctx)
   in
+  let contribution_cache = ref None in
   pack_signal
     (S.map2
        (fun (left_value, left_contribution) (right_value, (right_contribution : contribution)) ->
-         ( (left_value, right_value),
-           contribution_append left_contribution right_contribution ))
+         let contribution =
+           match !contribution_cache with
+           | Some (l, r, cached)
+             when l == left_contribution && r == right_contribution ->
+               cached
+           | _ ->
+               let combined =
+                 contribution_append left_contribution right_contribution
+               in
+               contribution_cache :=
+                 Some (left_contribution, right_contribution, combined);
+               combined
+         in
+         ((left_value, right_value), contribution))
        left_signal right_signal)
 
 let cutoff input ~cutoff =
+  let input = use input in
   make @@ fun ctx ->
   let (module S) = unpack_package ctx in
   let signal : ('a * contribution) S.signal =
@@ -497,6 +682,7 @@ let cutoff input ~cutoff =
    rebuilds the branch when the selector publishes, which closes the previous
    branch's scope through the frame diff. *)
 let bind selector ~f =
+  let selector = use selector in
   make @@ fun ctx ->
   let (module S) = unpack_package ctx in
   let selector_signal : ('a * contribution) S.signal =
@@ -509,7 +695,7 @@ let bind selector ~f =
          let scope = fresh_scope ctx.ctx_root ~parent:ctx.ctx_scope in
          let child_ctx = { ctx with ctx_scope = scope.id } in
          let child : ('b * contribution) S.signal =
-           unpack_signal ((f selected).compile child_ctx)
+           unpack_signal ((use (f selected)).compile child_ctx)
          in
          S.map2
            (fun (_, selector_contribution)
@@ -520,7 +706,8 @@ let bind selector ~f =
              ( value,
                {
                  contribution with
-                 added_scopes = scope :: contribution.added_scopes;
+                 added_scopes =
+                   contribution_items_prepend scope contribution.added_scopes;
                } ))
            selector_signal child))
 
@@ -534,6 +721,7 @@ module State_machine = struct
   let create (type model input action)
       ?(model_cutoff = Cutoff.phys_equal) ?diagnostics
       (input_description : input t) ~(default_model : model) ~apply_action =
+    let input_description = use input_description in
     let node = next_global "state-machine node" in
     make @@ fun ctx ->
     let (module S) = unpack_package ctx in
@@ -565,8 +753,17 @@ module State_machine = struct
             (fun action -> diagnostics.action (Obj.obj action)) ))
         diagnostics
     in
+    (* The model variable carries the model cutoff itself. A separate gate node
+       would publish every set and then suppress equal models one node later,
+       which leaves downstream nodes with exactly the same value it leaves them
+       with here: a suppressed publication keeps the previously published
+       model. *)
     let model_var =
-      S.Var.create ~cutoff:Eta_signal.Cutoff.never default_model
+      S.Var.create
+        ~cutoff:
+          (Eta_signal.Cutoff.of_equal (fun left right ->
+               equal_model (Obj.repr left) (Obj.repr right)))
+        default_model
     in
     let cell =
       {
@@ -640,41 +837,30 @@ module State_machine = struct
               :: staging.model_sets;
             staging.undos <- (fun () -> cell.current_model <- previous)
               :: staging.undos;
-            staging.works <-
-              {
-                scope =
-                  (match staging.message_owner with
-                  | Some owner -> owner
-                  | None -> endpoint.scope);
-                origin = Failure.Owned_work;
-                trigger = Failure.Transition_effect;
-                payload = Program eff;
-              }
-              :: staging.works);
+            if eff != Eta.Effect.unit then
+              staging.works <-
+                {
+                  scope =
+                    (match staging.message_owner with
+                    | Some owner -> owner
+                    | None -> endpoint.scope);
+                  origin = Failure.Owned_work;
+                  trigger = Failure.Transition_effect;
+                  payload = Program eff;
+                }
+                :: staging.works);
       }
     in
     let public_endpoint =
       ({ Endpoint.core = endpoint; encode = Obj.repr } : action Endpoint.t)
     in
-    (* The watcher refreshes the cell's input on every input publication;
-       the gated model republishes only when the model changes. The output
-       republishes when the gated model moves or when the input subtree's
-       contribution churns, which mirrors the old model_version gate while
-       keeping scope and endpoint manifests current. *)
-    let watcher =
-      S.map
-        (fun (input, (contribution : contribution)) ->
-          cell.current_input <- Obj.repr input;
-          ((), contribution))
-        input_signal
-    in
-    let gated_model =
-      S.map
-        ~cutoff:
-          (Eta_signal.Cutoff.of_equal (fun left right ->
-               equal_model (Obj.repr left) (Obj.repr right)))
-        Fun.id (S.Var.watch model_var)
-    in
+    let endpoint_contribution_cache = ref None in
+    (* The output republishes when the model moves or when the input subtree's
+       contribution churns, which keeps scope and endpoint manifests current.
+       Refreshing the cell's input happens here rather than in a separate
+       watcher node: the write caches the input signal's current value, so
+       repeating it on a model-only recomputation stores the same value, and
+       only endpoint dispatch reads it, always between passes. *)
     pack_signal
       (S.map2
          ~cutoff:
@@ -683,14 +869,30 @@ module State_machine = struct
                   (Obj.repr (fst (fst left)))
                   (Obj.repr (fst (fst right)))
                 && contribution_equal (snd left) (snd right)))
-         (fun gated ((), (contribution : contribution)) ->
-           ( (gated, public_endpoint),
-             { contribution with endpoints = endpoint :: contribution.endpoints }
-           ))
-         gated_model watcher)
+         (fun gated (input, (contribution : contribution)) ->
+           cell.current_input <- Obj.repr input;
+           let contribution =
+             match !endpoint_contribution_cache with
+             | Some (source, cached) when source == contribution -> cached
+             | _ ->
+                 let scoped =
+                   {
+                     contribution with
+                     endpoints =
+                       contribution_items_prepend endpoint
+                         contribution.endpoints;
+                   }
+                 in
+                 endpoint_contribution_cache :=
+                   Some (contribution, scoped);
+                 scoped
+           in
+           ((gated, public_endpoint), contribution))
+         (S.Var.watch model_var) input_signal)
 end
 
 let lifecycle effect_description =
+  let effect_description = use effect_description in
   make @@ fun ctx ->
   let (module S) = unpack_package ctx in
   let signal : ((unit, never) Eta.Effect.t * contribution) S.signal =
@@ -717,7 +919,11 @@ let lifecycle effect_description =
                staged := Some work;
                work
          in
-         ( (), { contribution with works = work :: contribution.works } ))
+         ( (),
+           {
+             contribution with
+             works = contribution_items_prepend work contribution.works;
+           } ))
        signal)
 
 module Assoc = struct
@@ -725,56 +931,121 @@ module Assoc = struct
     module M = Eta_signal_map.Map.Make (Order)
 
     let assoc ?(data_cutoff = Cutoff.phys_equal) input_description ~f =
+      let input_description = use input_description in
       make @@ fun ctx ->
       let (module S) = unpack_package ctx in
       let module Signal_map = Eta_signal_map.Make (S.Package) in
       let module Keyed = Signal_map.Keyed (Order) in
-      let input_signal : ('data M.t * contribution) S.signal =
-        unpack_signal (input_description.compile ctx)
-      in
+      let input_reader = read ctx input_description in
+      let input_signal : Obj.t S.signal = Obj.obj input_reader.read_signal in
       let data_description (data : 'data S.signal) : 'data t =
         {
           id = next_global "assoc data description";
+          uses = 0;
+          fused = Some (Fused_leaf (fun _ctx -> Obj.repr data));
           compile =
             (fun _ctx ->
               pack_signal
                 (S.map (fun value -> (value, contribution_empty)) data));
         }
       in
+      (* The keyed engine accumulates both channels directly: the value map is
+         published as the assoc output with no second traversal, and the
+         contribution map is only rewritten when a child's scoped contribution
+         actually changes. The engine restores this accumulator when a
+         stabilization rolls back, which is why the contribution channel does
+         not need to be re-derived from a stale baseline diff. *)
       let children =
-        Keyed.mapi
+        Keyed.mapi_fold_project
           ~data_cutoff:(Cutoff.to_signal data_cutoff)
-          (S.map fst input_signal)
+          input_signal
+          ~project:input_reader.read_value
           ~f:(fun ~key ~data ->
             let scope = fresh_scope ctx.ctx_root ~parent:ctx.ctx_scope in
             let child_ctx = { ctx with ctx_scope = scope.id } in
-            let child : ('result * contribution) S.signal =
-              unpack_signal
-                ((f ~key ~data:(data_description data)).compile child_ctx)
+            let child_reader =
+              read child_ctx (use (f ~key ~data:(data_description data)))
             in
+            let child : Obj.t S.signal = Obj.obj child_reader.read_signal in
+            let previous_contribution = ref None in
             S.map
-              (fun (value, (contribution : contribution)) ->
-                ( value,
-                  {
-                    contribution with
-                    added_scopes = scope :: contribution.added_scopes;
-                  } ))
+              (fun published ->
+                let value = child_reader.read_value published in
+                let contribution : contribution =
+                  child_reader.read_contribution published
+                in
+                let scoped_contribution =
+                  match !previous_contribution with
+                  | Some (previous, scoped)
+                    when contribution_equal previous contribution ->
+                      scoped
+                  | Some _ | None ->
+                      let scoped =
+                        {
+                          contribution with
+                          added_scopes =
+                            contribution_items_prepend scope
+                              contribution.added_scopes;
+                        }
+                      in
+                      previous_contribution := Some (contribution, scoped);
+                      scoped
+                in
+                (value, scoped_contribution))
               child)
+          ~empty:(M.empty, M.empty)
+          ~add:(fun key (value, contribution) (output, contributions) ->
+            ( M.set key value output,
+              match M.find_opt key contributions with
+              | Some current when current == contribution ->
+                  (* A value-only child change reuses the scoped contribution
+                     physically, so the slot already holds it. *)
+                  contributions
+              | Some _ | None -> M.set key contribution contributions ))
+          ~remove:(fun key (output, contributions) ->
+            (M.remove key output, M.remove key contributions))
+      in
+      let previous_contributions = ref M.empty in
+      let previous_aggregate = ref contribution_empty in
+      let aggregate contributions =
+        if contributions == !previous_contributions then !previous_aggregate
+        else begin
+          let aggregate =
+            M.fold
+              (fun _key contribution acc -> contribution_append acc contribution)
+              contributions contribution_empty
+          in
+          previous_contributions := contributions;
+          previous_aggregate := aggregate;
+          aggregate
+        end
+      in
+      (* The output contribution is a pure function of the input contribution
+         and the aggregate; in the steady state both are physically stable, so
+         reuse the previous record and let the root's semantic manifest
+         comparison short-circuit on physical equality. *)
+      let previous_output_contribution = ref None in
+      let output_contribution input_contribution aggregate =
+        match !previous_output_contribution with
+        | Some (input, agg, cached)
+          when input == input_contribution && agg == aggregate ->
+            cached
+        | _ ->
+            let combined =
+              contribution_append input_contribution aggregate
+            in
+            previous_output_contribution :=
+              Some (input_contribution, aggregate, combined);
+            combined
       in
       pack_signal
         (S.map2
-           (fun (_, (input_contribution : contribution)) children_map ->
-             let output =
-               M.map (fun (value, _) -> value) children_map
+           (fun published (output, contributions) ->
+             let input_contribution : contribution =
+               input_reader.read_contribution published
              in
-             let contribution =
-               M.fold
-                 (fun _key (_, child) acc ->
-                   contribution_append acc child)
-                 children_map
-                 contribution_empty
-             in
-             (output, contribution_append input_contribution contribution))
+             ( output,
+               output_contribution input_contribution (aggregate contributions) ))
            input_signal children)
   end
 end
@@ -802,7 +1073,7 @@ let pp_staging_error fmt (error : staging_error) =
 type 'output signal_root = {
   sig_ensure_observer : (unit, staging_error) Eta.Effect.t;
   sig_stabilize : (unit, staging_error) Eta.Effect.t;
-  sig_read_frame : unit -> ('output frame, staging_error) Eta.Effect.t;
+  sig_read_frame : ('output frame, staging_error) Eta.Effect.t;
   sig_dispose_observer : unit -> (unit, staging_error) Eta.Effect.t;
 }
 
@@ -813,7 +1084,7 @@ let create_signal_root (root : root_core) (description : 'output t) :
     { ctx_root = root; ctx_scope = 0; ctx_package = Pkg (module S) }
   in
   let compiled : ('output * contribution) S.signal =
-    unpack_signal (description.compile ctx)
+    unpack_signal ((use description).compile ctx)
   in
   let frame_signal =
     S.map ~cutoff:Eta_signal.Cutoff.never
@@ -837,12 +1108,14 @@ let create_signal_root (root : root_core) (description : 'output t) :
           |> Eta.Effect.map (fun observer -> observer_ref := Some observer))
       (Eta.Effect.sync (fun () -> Option.is_some !observer_ref))
   in
-  let sig_read_frame () =
-    match !observer_ref with
-    | None -> Eta.Effect.fail `Invalid_scope
-    | Some observer ->
-        sync_result (fun () -> S.Observer.read observer)
-        |> Eta.Effect.map_error (fun err -> (err :> staging_error))
+  let sig_read_frame =
+    Eta.Spi.Expert.sync1_result observer_ref (fun observer_ref ->
+        match !observer_ref with
+        | None -> Error `Invalid_scope
+        | Some observer -> (
+            match S.Observer.read observer with
+            | Ok frame -> Ok frame
+            | Error err -> Error (err :> staging_error)))
   in
   {
     sig_ensure_observer = ensure_observer;
@@ -855,6 +1128,6 @@ let create_signal_root (root : root_core) (description : 'output t) :
         match !observer_ref with
         | None -> Eta.Effect.unit
         | Some observer ->
-            sync_result (fun () -> S.Observer.dispose observer)
-            |> Eta.Effect.map_error (fun err -> (err :> staging_error)));
+            Eta.Spi.Expert.sync1_result_map_error observer S.Observer.dispose
+              (fun err -> (err :> staging_error)));
   }

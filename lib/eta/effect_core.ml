@@ -99,6 +99,54 @@ type ('a, +'err) t =
         run : 'value1 -> 'value2 -> 'value3 -> 'a;
       }
       -> ('a, 'err) t
+  | Sync4 :
+      {
+        value1 : 'value1;
+        value2 : 'value2;
+        value3 : 'value3;
+        value4 : 'value4;
+        run : 'value1 -> 'value2 -> 'value3 -> 'value4 -> 'a;
+      }
+      -> ('a, 'err) t
+  | Sync_result :
+      (unit -> ('a, 'err) result)
+      -> ('a, 'err) t
+  | Sync1_result :
+      {
+        value : 'value;
+        run : 'value -> ('a, 'err) result;
+      }
+      -> ('a, 'err) t
+  | Sync1_result_map_error :
+      {
+        value : 'value;
+        run : 'value -> ('a, 'err1) result;
+        map_error : 'err1 -> 'err2;
+      }
+      -> ('a, 'err2) t
+  | Sync1_result_bind :
+      {
+        value : 'value;
+        run : 'value -> ('a, 'err) result;
+        k : 'a -> ('b, 'err) t;
+      }
+      -> ('b, 'err) t
+  | Sync1_result_bind_value :
+      {
+        value : 'value;
+        run : 'value -> ('a, 'err) result;
+        k : 'value -> 'a -> ('b, 'err) t;
+      }
+      -> ('b, 'err) t
+  | Sync1_result_bind_value_direct :
+      {
+        value : 'value;
+        run : 'value -> ('a, 'err) result;
+        is_direct : 'a -> bool;
+        direct_run : 'value -> 'a -> 'b;
+        k : 'value -> 'a -> ('b, 'err) t;
+      }
+      -> ('b, 'err) t
   | Sync_frame :
       {
         run : frame -> 'a;
@@ -117,6 +165,18 @@ type ('a, +'err) t =
         value1 : 'value1;
         value2 : 'value2;
         run : Runtime_contract.t -> 'value1 -> 'value2 -> 'a;
+        leaf_name : string option;
+      }
+      -> ('a, 'err) t
+  | Sync_contract2_result :
+      {
+        value1 : 'value1;
+        value2 : 'value2;
+        run :
+          Runtime_contract.t ->
+          'value1 ->
+          'value2 ->
+          ('a, 'err) result;
         leaf_name : string option;
       }
       -> ('a, 'err) t
@@ -139,12 +199,144 @@ type ('a, +'err) t =
         f : 'a -> 'b;
       }
       -> ('b, 'err) t
+  | Map_error :
+      {
+        inner : ('a, 'err1) t;
+        f : 'err1 -> 'err2;
+      }
+      -> ('a, 'err2) t
+  | To_exit :
+      {
+        inner : ('a, 'err1) t;
+      }
+      -> (('a, 'err1) Exit.t, 'err2) t
+  | To_exit_bind_ok4_sync :
+      {
+        inner : ('a, 'err1) t;
+        value1 : 'value1;
+        value2 : 'value2;
+        value3 : 'value3;
+        value4 : 'value4;
+        k :
+          ('a, 'err1) Exit.t ->
+          'value1 ->
+          'value2 ->
+          'value3 ->
+          'value4 ->
+          ('b, 'err3) result;
+      }
+      -> (('b, 'err3) result, 'err2) t
+  | To_exit_bind_ok4_sync_seq_then :
+      {
+        first : (unit, 'err1) t;
+        second : (unit, 'err1) t;
+        next : ('a, 'err1) t;
+        value1 : 'value1;
+        value2 : 'value2;
+        value3 : 'value3;
+        value4 : 'value4;
+        k :
+          ('a, 'err1) Exit.t ->
+          'value1 ->
+          'value2 ->
+          'value3 ->
+          'value4 ->
+          ('b, 'err3) result;
+      }
+      -> (('b, 'err3) result, 'err2) t
+  | To_exit_bind_ok4_sync_seq3_then :
+      {
+        first : (unit, 'err1) t;
+        second : (unit, 'err1) t;
+        third : (unit, 'err1) t;
+        next : ('a, 'err1) t;
+        value1 : 'value1;
+        value2 : 'value2;
+        value3 : 'value3;
+        value4 : 'value4;
+        k :
+          ('a, 'err1) Exit.t ->
+          'value1 ->
+          'value2 ->
+          'value3 ->
+          'value4 ->
+          ('b, 'err3) result;
+      }
+      -> (('b, 'err3) result, 'err2) t
   | Bind :
       {
         inner : ('a, 'err) t;
         k : 'a -> ('b, 'err) t;
       }
       -> ('b, 'err) t
+  | Seq :
+      {
+        inner : (unit, 'err) t;
+        next : (unit, 'err) t;
+      }
+      -> (unit, 'err) t
+  | Seq3 :
+      {
+        first : (unit, 'err) t;
+        second : (unit, 'err) t;
+        third : (unit, 'err) t;
+      }
+      -> (unit, 'err) t
+  | Then :
+      {
+        inner : (unit, 'err) t;
+        next : ('a, 'err) t;
+      }
+      -> ('a, 'err) t
+  | Seq_then :
+      {
+        first : (unit, 'err) t;
+        second : (unit, 'err) t;
+        next : ('a, 'err) t;
+      }
+      -> ('a, 'err) t
+  | Seq3_then :
+      {
+        first : (unit, 'err) t;
+        second : (unit, 'err) t;
+        third : (unit, 'err) t;
+        next : ('a, 'err) t;
+      }
+      -> ('a, 'err) t
+  | Map_error_seq :
+      {
+        inner : (unit, 'err1) t;
+        map_error : 'err1 -> 'err2;
+        next : (unit, 'err2) t;
+      }
+      -> (unit, 'err2) t
+  | Sync_contract2_result_map_error_seq :
+      {
+        value1 : 'value1;
+        value2 : 'value2;
+        run :
+          Runtime_contract.t ->
+          'value1 ->
+          'value2 ->
+          (unit, 'err1) result;
+        map_error : 'err1 -> 'err2;
+        next : (unit, 'err2) t;
+      }
+      -> (unit, 'err2) t
+  | Sync_contract2_result_map_error_sync1 :
+      {
+        value1 : 'value1;
+        value2 : 'value2;
+        run :
+          Runtime_contract.t ->
+          'value1 ->
+          'value2 ->
+          (unit, 'err1) result;
+        map_error : 'err1 -> 'err2;
+        next_value : 'next_value;
+        next_run : 'next_value -> unit;
+      }
+      -> (unit, 'err2) t
   (* Like [Sync], this exists to avoid paying a closure plus a [Custom] block per
      construction. [preserve] would allocate a closure capturing both [inner] and
      [handler] and then a [Custom] block to hold it; one node holds the same two
@@ -155,21 +347,47 @@ type ('a, +'err) t =
         handler : 'err1 -> ('a, 'err2) t;
       }
       -> ('a, 'err2) t
+  | Or_die :
+      {
+        inner : ('a, 'err) t;
+        to_exn : 'err -> exn;
+      }
+      -> ('a, 'outer) t
 
 let bind_error_leaf_name = "Effect.bind_error"
+let map_error_leaf_name = "Effect.map_error"
+let to_exit_leaf_name = "Effect.to_exit"
+let or_die_leaf_name = "Effect.or_die"
 let async_leaf_name = "Effect.async"
+
+exception Sync1_result_direct_run_exn of exn
 
 let leaf_name : type a err. (a, err) t -> string option = function
   | Custom { leaf_name; _ } -> leaf_name
   (* [bind_error] was a named [Custom], and the name is observable through
      [Effect.name] and [describe], so it is reported unchanged. *)
   | Bind_error _ -> Some bind_error_leaf_name
+  | Map_error _ -> Some map_error_leaf_name
+  | To_exit _ -> Some to_exit_leaf_name
+  | Or_die _ -> Some or_die_leaf_name
   | Async _ -> Some async_leaf_name
   | Sync_frame { leaf_name; _ } -> leaf_name
   | Sync_contract { leaf_name; _ } -> leaf_name
   | Sync_contract2 { leaf_name; _ } -> leaf_name
+  | Sync_contract2_result { leaf_name; _ } -> leaf_name
   | Eval_contract { leaf_name; _ } -> leaf_name
-  | Pure _ | Fail _ | Map _ | Bind _ | Sync _ | Sync1 _ | Sync2 _ | Sync3 _ ->
+  | Pure _ | Fail _ | Map _ | Bind _ | Seq _ | Seq3 _ | Then _
+  | To_exit_bind_ok4_sync _ | To_exit_bind_ok4_sync_seq_then _
+  | To_exit_bind_ok4_sync_seq3_then _ | Seq_then _
+  | Seq3_then _
+  | Map_error_seq _
+  | Sync_contract2_result_map_error_seq _
+  | Sync_contract2_result_map_error_sync1 _ | Sync _ | Sync1 _ | Sync2 _
+  | Sync3 _
+  | Sync4 _ | Sync_result _ | Sync1_result _ | Sync1_result_map_error _ ->
+      None
+  | Sync1_result_bind _ | Sync1_result_bind_value _
+  | Sync1_result_bind_value_direct _ ->
       None
 
 let make ?leaf_name eval =
@@ -291,6 +509,30 @@ let run_async_canceler eval frame canceler =
   | None, None ->
       invalid_arg "Effect.async: canceler protection returned no outcome"
 
+let rec or_die_cause :
+    type err outer. frame -> (err -> exn) -> err Cause.t -> outer Cause.t =
+ fun frame to_exn -> function
+  | Cause.Fail err -> Runtime_core.die_of_exn_runtime frame.runtime (to_exn err)
+  | Cause.Die die -> Cause.Die die
+  | Cause.Interrupt id -> Cause.Interrupt id
+  | Cause.Sequential causes ->
+      Cause.Sequential (List.map (or_die_cause frame to_exn) causes)
+  | Cause.Concurrent causes ->
+      Cause.Concurrent (List.map (or_die_cause frame to_exn) causes)
+  | Cause.Finalizer cause -> Cause.Finalizer cause
+  | Cause.Suppressed { primary; finalizer } ->
+      Cause.Suppressed { primary = or_die_cause frame to_exn primary; finalizer }
+
+let to_exit_bind_ok4_sync value1 value2 value3 value4 k inner =
+  match inner with
+  | Seq_then { first; second; next } ->
+      To_exit_bind_ok4_sync_seq_then
+        { first; second; next; value1; value2; value3; value4; k }
+  | Seq3_then { first; second; third; next } ->
+      To_exit_bind_ok4_sync_seq3_then
+        { first; second; third; next; value1; value2; value3; value4; k }
+  | _ -> To_exit_bind_ok4_sync { inner; value1; value2; value3; value4; k }
+
 let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
  fun frame -> function
   | Pure value -> ok value
@@ -316,6 +558,88 @@ let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
       | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
           raise exn
       | exn -> exit_of_exn frame exn)
+  | Sync4 { value1; value2; value3; value4; run } -> (
+      try ok (run value1 value2 value3 value4) with
+      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+          raise exn
+      | exn -> exit_of_exn frame exn)
+  | Sync_result run -> (
+      try
+        match run () with
+        | Ok value -> ok value
+        | Error err -> error (Cause.Fail err)
+      with
+      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+          raise exn
+      | exn -> exit_of_exn frame exn)
+  | Sync1_result { value; run } -> (
+      try
+        match run value with
+        | Ok value -> ok value
+        | Error err -> error (Cause.Fail err)
+      with
+      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+          raise exn
+      | exn -> exit_of_exn frame exn)
+  | Sync1_result_map_error { value; run; map_error } -> (
+      try
+        match run value with
+        | Ok value -> ok value
+        | Error err -> error (Cause.Fail (map_error err))
+      with
+      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+          raise exn
+      | exn -> exit_of_exn frame exn)
+  | Sync1_result_bind { value; run; k } ->
+      let outcome =
+        try
+          match run value with
+          | Ok value -> `Ok value
+          | Error err -> `Error err
+        with
+        | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+            raise exn
+        | exn -> `Exit (exit_of_exn frame exn)
+      in
+      (match outcome with
+      | `Ok value -> eval frame (k value)
+      | `Error err -> error (Cause.Fail err)
+      | `Exit exit -> exit)
+  | Sync1_result_bind_value { value; run; k } ->
+      let outcome =
+        try
+          match run value with
+          | Ok result -> `Ok result
+          | Error err -> `Error err
+        with
+        | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+            raise exn
+        | exn -> `Exit (exit_of_exn frame exn)
+      in
+      (match outcome with
+      | `Ok result -> eval frame (k value result)
+      | `Error err -> error (Cause.Fail err)
+      | `Exit exit -> exit)
+  | Sync1_result_bind_value_direct
+      { value; run; is_direct; direct_run; k } ->
+      (try
+         let result =
+           try run value with
+           | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+               raise exn
+           | exn -> raise (Sync1_result_direct_run_exn exn)
+         in
+         match result with
+         | Error err -> error (Cause.Fail err)
+         | Ok result when is_direct result -> (
+             try ok (direct_run value result) with
+             | exn
+               when Runtime_core.is_cancellation frame.runtime.contract exn ->
+                 raise exn
+             | exn -> exit_of_exn frame exn)
+         | Ok result -> eval frame (k value result)
+       with
+       | Sync1_result_direct_run_exn exn -> exit_of_exn frame exn)
   | Sync_frame { run; _ } -> (
       try ok (run frame) with
       | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
@@ -331,6 +655,15 @@ let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
       | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
           raise exn
       | exn -> exit_of_exn frame exn)
+  | Sync_contract2_result { value1; value2; run; _ } -> (
+      try
+        match run frame.runtime.contract value1 value2 with
+        | Ok value -> ok value
+        | Error err -> error (Cause.Fail err)
+      with
+      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+          raise exn
+      | exn -> exit_of_exn frame exn)
   | Eval_contract { value; run; _ } ->
       run frame.runtime.contract value
   | Async { register } -> eval_async frame register
@@ -342,6 +675,123 @@ let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
       match eval frame inner with
       | Exit.Ok value -> eval frame (k value)
       | Exit.Error _ as err -> err)
+  | Seq { inner; next } -> (
+      match eval frame inner with
+      | Exit.Ok () -> eval frame next
+      | Exit.Error _ as err -> err)
+  | Seq3 { first; second; third } -> (
+      match eval frame first with
+      | Exit.Error _ as err -> err
+      | Exit.Ok () -> (
+          match eval frame second with
+          | Exit.Error _ as err -> err
+          | Exit.Ok () -> eval frame third))
+  | Then { inner; next } -> (
+      match eval frame inner with
+      | Exit.Ok () -> eval frame next
+      | Exit.Error _ as err -> err)
+  | Seq_then { first; second; next } -> (
+      match eval frame first with
+      | Exit.Error _ as err -> err
+      | Exit.Ok () -> (
+          match eval frame second with
+          | Exit.Error _ as err -> err
+          | Exit.Ok () -> eval frame next))
+  | Seq3_then { first; second; third; next } -> (
+      match eval frame first with
+      | Exit.Error _ as err -> err
+      | Exit.Ok () -> (
+          match eval frame second with
+          | Exit.Error _ as err -> err
+          | Exit.Ok () -> (
+              match eval frame third with
+              | Exit.Error _ as err -> err
+              | Exit.Ok () -> eval frame next)))
+  | Map_error_seq { inner; map_error; next } -> (
+      match eval frame inner with
+      | Exit.Ok () -> eval frame next
+      | Exit.Error cause -> error (Cause.map map_error cause))
+  | Sync_contract2_result_map_error_seq
+      { value1; value2; run; map_error; next } -> (
+      try
+        match run frame.runtime.contract value1 value2 with
+        | Ok () -> eval frame next
+        | Error err -> error (Cause.Fail (map_error err))
+      with
+      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+          raise exn
+      | exn -> exit_of_exn frame exn)
+  | Sync_contract2_result_map_error_sync1
+      { value1; value2; run; map_error; next_value; next_run } -> (
+      try
+        match run frame.runtime.contract value1 value2 with
+        | Ok () -> ok (next_run next_value)
+        | Error err -> error (Cause.Fail (map_error err))
+      with
+      | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+          raise exn
+      | exn -> exit_of_exn frame exn)
+  | Map_error { inner; f } -> (
+      match eval frame inner with
+      | Exit.Ok _ as ok -> ok
+      | Exit.Error cause -> error (Cause.map f cause))
+  | To_exit { inner } ->
+      ok
+        (try eval frame inner with
+        | exn -> exit_of_exn frame exn)
+  | To_exit_bind_ok4_sync
+      { inner; value1; value2; value3; value4; k } ->
+      let exit =
+        try eval frame inner with
+        | exn -> exit_of_exn frame exn
+      in
+      (try
+         ok (k exit value1 value2 value3 value4)
+       with
+       | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+           raise exn
+       | exn -> exit_of_exn frame exn)
+  | To_exit_bind_ok4_sync_seq_then
+      { first; second; next; value1; value2; value3; value4; k } ->
+      let exit =
+        try
+          match eval frame first with
+          | Exit.Error _ as err -> err
+          | Exit.Ok () -> (
+              match eval frame second with
+              | Exit.Error _ as err -> err
+              | Exit.Ok () -> eval frame next)
+        with
+        | exn -> exit_of_exn frame exn
+      in
+      (try
+         ok (k exit value1 value2 value3 value4)
+       with
+       | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+           raise exn
+       | exn -> exit_of_exn frame exn)
+  | To_exit_bind_ok4_sync_seq3_then
+      { first; second; third; next; value1; value2; value3; value4; k } ->
+      let exit =
+        try
+          match eval frame first with
+          | Exit.Error _ as err -> err
+          | Exit.Ok () -> (
+              match eval frame second with
+              | Exit.Error _ as err -> err
+              | Exit.Ok () -> (
+                  match eval frame third with
+                  | Exit.Error _ as err -> err
+                  | Exit.Ok () -> eval frame next))
+        with
+        | exn -> exit_of_exn frame exn
+      in
+      (try
+         ok (k exit value1 value2 value3 value4)
+       with
+       | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+           raise exn
+       | exn -> exit_of_exn frame exn)
   | Bind_error { inner; handler } -> (
       match eval frame inner with
       | Exit.Ok value -> ok value
@@ -352,6 +802,10 @@ let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
               match first_typed_failure cause with
               | Some err -> eval frame (handler err)
               | None -> invalid_arg "Effect.bind_error: empty composite cause")))
+  | Or_die { inner; to_exn } -> (
+      match eval frame inner with
+      | Exit.Ok value -> ok value
+      | Exit.Error cause -> error (or_die_cause frame to_exn cause))
 and eval_async : type a err.
     frame ->
     (((a, err) Exit.t -> unit) -> (unit, err) t option) ->
@@ -482,6 +936,9 @@ let sync_contract ?leaf_name value run =
 let sync_contract2 ?leaf_name value1 value2 run =
   Sync_contract2 { value1; value2; run; leaf_name }
 
+let sync_contract2_result ?leaf_name value1 value2 run =
+  Sync_contract2_result { value1; value2; run; leaf_name }
+
 let eval_contract ?leaf_name value run =
   Eval_contract { value; run; leaf_name }
 
@@ -522,14 +979,35 @@ let map (f) eff =
   Map { inner = eff; f }
 
 let bind (k) eff =
-  Bind { inner = eff; k }
+  match eff with
+  | Sync1_result { value; run } -> Sync1_result_bind { value; run; k }
+  | _ -> Bind { inner = eff; k }
 
 let ( >>= ) eff (k) = bind k eff
 let flatten_result eff = bind from_result eff
-let sync_result f = flatten_result (sync f)
+let sync_result f = Sync_result f
 let sync_option ~if_none f = bind (from_option ~if_none) (sync f)
 let tap (k) eff = bind (fun value -> map (fun _ -> value) (k value)) eff
-let seq next self = bind (fun () -> next) self
+let seq next self = Seq { inner = self; next }
+let seq3 first second third = Seq3 { first; second; third }
+let then_ next inner =
+  match inner with
+  | Seq { inner = first; next = second } ->
+      Seq_then { first; second; next }
+  | Seq3 { first; second; third } ->
+      Seq3_then { first; second; third; next }
+  | _ -> Then { inner; next }
+let map_error_seq next map_error inner =
+  match inner with
+  | Sync_contract2_result { value1; value2; run; _ } ->
+      (match next with
+      | Sync1 { value = next_value; run = next_run } ->
+          Sync_contract2_result_map_error_sync1
+            { value1; value2; run; map_error; next_value; next_run }
+      | _ ->
+          Sync_contract2_result_map_error_seq
+            { value1; value2; run; map_error; next })
+  | _ -> Map_error_seq { inner; map_error; next }
 
 let concat effects =
   let sequenced = List.fold_left (fun acc eff -> seq eff acc) unit effects in
@@ -582,41 +1060,15 @@ let to_result eff =
 let to_option eff = bind_error (fun _ -> pure None) (map (fun value -> Some value) eff)
 
 let to_exit eff =
-  preserve ~leaf_name:"Effect.to_exit" eff @@ fun frame ->
-  ok
-    (try eval frame eff with
-    | exn -> exit_of_exn frame exn)
-
-let map_cause_error = Cause.map
+  To_exit { inner = eff }
 
 let map_error (f) eff =
-  preserve ~leaf_name:"Effect.map_error" eff @@ fun frame ->
-  match eval frame eff with
-  | Exit.Ok _ as ok -> ok
-  | Exit.Error cause -> error (map_cause_error f cause)
-
-let rec or_die_cause :
-    type err outer. frame -> (err -> exn) -> err Cause.t -> outer Cause.t =
- fun frame to_exn -> function
-  | Cause.Fail err -> Runtime_core.die_of_exn_runtime frame.runtime (to_exn err)
-  | Cause.Die die -> Cause.Die die
-  | Cause.Interrupt id -> Cause.Interrupt id
-  | Cause.Sequential causes ->
-      Cause.Sequential (List.map (or_die_cause frame to_exn) causes)
-  | Cause.Concurrent causes ->
-      Cause.Concurrent (List.map (or_die_cause frame to_exn) causes)
-  | Cause.Finalizer cause -> Cause.Finalizer cause
-  | Cause.Suppressed { primary; finalizer } ->
-      Cause.Suppressed { primary = or_die_cause frame to_exn primary; finalizer }
+  Map_error { inner = eff; f }
 
 let or_die (to_exn) eff =
   match eff with
   | Pure value -> Pure value
-  | _ ->
-      preserve ~leaf_name:"Effect.or_die" eff @@ fun frame ->
-      match eval frame eff with
-      | Exit.Ok _ as ok -> ok
-      | Exit.Error cause -> error (or_die_cause frame to_exn cause)
+  | _ -> Or_die { inner = eff; to_exn }
 
 let run_observer frame original observer =
   match eval frame observer with
@@ -773,7 +1225,21 @@ let describe eff =
     (* A [sync] leaf was a [Custom] with no [leaf_name] before it got its own
        constructor, and [describe] is public output, so it keeps rendering the
        same. Renaming it to "Sync" would be a user-visible change. *)
-    | Sync _ | Sync1 _ | Sync2 _ | Sync3 _ -> line depth "Custom"
+    | Sync _ | Sync1 _ | Sync2 _ | Sync3 _ | Sync4 _ | Sync_result _
+    | Sync1_result _ | Sync1_result_map_error _ ->
+        line depth "Custom"
+    | Sync1_result_bind _ ->
+        line depth "Bind";
+        line (depth + 1) "Custom";
+        line (depth + 1) "<bind …>"
+    | Sync1_result_bind_value _ ->
+        line depth "Bind";
+        line (depth + 1) "Custom";
+        line (depth + 1) "<bind …>"
+    | Sync1_result_bind_value_direct _ ->
+        line depth "Bind";
+        line (depth + 1) "Custom";
+        line (depth + 1) "<bind …>"
     | Sync_frame { leaf_name = None; _ } -> line depth "Custom"
     | Sync_frame { leaf_name = Some name; _ } ->
         line depth (Printf.sprintf "Custom(%S)" name)
@@ -783,13 +1249,66 @@ let describe eff =
     | Sync_contract2 { leaf_name = None; _ } -> line depth "Custom"
     | Sync_contract2 { leaf_name = Some name; _ } ->
         line depth (Printf.sprintf "Custom(%S)" name)
+    (* [Queue.send] is a fused result leaf, but its public blueprint was a
+       bind over the named [Queue.offer] leaf. *)
+    | Sync_contract2_result { leaf_name = None; _ } ->
+        line depth "Bind";
+        line (depth + 1) "Custom(\"Queue.offer\")";
+        line (depth + 1) "<bind …>"
+    | Sync_contract2_result { leaf_name = Some name; _ } ->
+        line depth (Printf.sprintf "Custom(%S)" name)
     | Eval_contract { leaf_name = None; _ } -> line depth "Custom"
     | Eval_contract { leaf_name = Some name; _ } ->
         line depth (Printf.sprintf "Custom(%S)" name)
     | Async _ -> line depth (Printf.sprintf "Custom(%S)" async_leaf_name)
     (* Was a named [Custom]; render identically, and as before do not walk the
        inner effect, which a [Custom] never exposed. *)
+    | Map_error _ ->
+        line depth (Printf.sprintf "Custom(%S)" map_error_leaf_name)
+    | To_exit _ -> line depth (Printf.sprintf "Custom(%S)" to_exit_leaf_name)
+    | To_exit_bind_ok4_sync _ | To_exit_bind_ok4_sync_seq_then _
+    | To_exit_bind_ok4_sync_seq3_then _ ->
+        line depth "Map";
+        line (depth + 1) "Bind";
+        line (depth + 2) (Printf.sprintf "Custom(%S)" to_exit_leaf_name);
+        line (depth + 2) "<bind …>"
+    | Seq { inner; _ } ->
+        line depth "Bind";
+        walk (depth + 1) inner;
+        line (depth + 1) "<bind …>"
+    | Seq3 { first; _ } ->
+        line depth "Bind";
+        line (depth + 1) "Bind";
+        walk (depth + 2) first;
+        line (depth + 2) "<bind …>";
+        line (depth + 1) "<bind …>"
+    | Then { inner; _ } ->
+        line depth "Bind";
+        walk (depth + 1) inner;
+        line (depth + 1) "<bind …>"
+    | Seq_then { first; _ } ->
+        line depth "Bind";
+        line (depth + 1) "Bind";
+        walk (depth + 2) first;
+        line (depth + 2) "<bind …>";
+        line (depth + 1) "<bind …>"
+    | Seq3_then { first; _ } ->
+        line depth "Bind";
+        line (depth + 1) "Bind";
+        walk (depth + 2) first;
+        line (depth + 2) "<bind …>";
+        line (depth + 1) "<bind …>"
+    | Map_error_seq _ ->
+        line depth "Bind";
+        line (depth + 1) (Printf.sprintf "Custom(%S)" map_error_leaf_name)
+    | Sync_contract2_result_map_error_seq _ ->
+        line depth "Bind";
+        line (depth + 1) (Printf.sprintf "Custom(%S)" map_error_leaf_name)
+    | Sync_contract2_result_map_error_sync1 _ ->
+        line depth "Bind";
+        line (depth + 1) (Printf.sprintf "Custom(%S)" map_error_leaf_name)
     | Bind_error _ -> line depth (Printf.sprintf "Custom(%S)" bind_error_leaf_name)
+    | Or_die _ -> line depth (Printf.sprintf "Custom(%S)" or_die_leaf_name)
     | Custom { leaf_name = Some name; _ } ->
         line depth (Printf.sprintf "Custom(%S)" name)
     | Map { inner; _ } ->

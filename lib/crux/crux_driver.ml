@@ -173,7 +173,7 @@ module Driver = struct
                        ~trigger:Failure.Output_delivery cause);
                   let failure =
                     Eta.Sync_lock.use driver.root.core.lock @@ fun () ->
-                    Option.get driver.root.core.failure
+                    Option.get (Atomic.get driver.root.core.failure)
                   in
                   set_state driver
                     (Crash_detected_pending (failure, post_commit));
@@ -629,6 +629,11 @@ module Driver = struct
                | `Closed_with_error (_ : never) -> .)
           |> Eta.Effect.ignore_errors
         in
+        (* The wakeup was consumed; allow the next endpoint send to offer
+           again. Clearing happens before the following poll, so a send that
+           observed the flag as set already has its ingress message visible
+           to that poll. *)
+        Atomic.set driver.root.core.wake_signaled false;
         await driver
 
   let request_stop driver =
