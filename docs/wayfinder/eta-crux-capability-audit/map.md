@@ -88,6 +88,9 @@ ticket, and research prose with `$simple-english`.
   to 11 decision tickets, including two new structural candidates.
 - [Graph time and deterministic clock control](issues/09-graph-time-and-deterministic-clock-control.md)
   — Adopt graph time and deterministic test-time control.
+- [External graph input](issues/10-external-graph-input.md)
+  — Reject a separate external graph input because ordered endpoint actions
+  already own live host changes.
 
 ## Not yet specified
 
