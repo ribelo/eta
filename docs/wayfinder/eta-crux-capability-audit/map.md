@@ -75,6 +75,10 @@ ticket, and research prose with `$simple-english`.
 - [Elm public capability census](issues/05-elm-public-capability-census.md)
   — The census finds 28 families: 16 plausible generic roles, seven
   design-evidence families, and five Elm-specific families.
+- [Eta substrate capability support](issues/06-eta-substrate-capability-support.md)
+  — Eta supplies core time, observation, handoff, cancellation, and test
+  mechanics. Several Crux-level protocols and bounded diagnostic surfaces are
+  absent.
 
 ## Not yet specified
 
