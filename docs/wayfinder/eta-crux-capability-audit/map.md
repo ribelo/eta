@@ -94,6 +94,9 @@ ticket, and research prose with `$simple-english`.
 - [Startup facts and flags](issues/11-startup-facts-and-flags.md)
   — Reject a distinct startup-input capability because typed construction
   dependencies already carry validated startup data.
+- [Staged-effect observability](issues/12-staged-effect-observability.md)
+  — Adopt opaque per-commit transition-effect lifecycle observations and make
+  effect absence explicit.
 
 ## Not yet specified
 
