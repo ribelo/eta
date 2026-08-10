@@ -72,6 +72,9 @@ ticket, and research prose with `$simple-english`.
 - [Rust Crux public capability census](issues/04-rust-crux-public-capability-census.md)
   — The census finds 22 families: 16 plausible generic roles, three
   design-evidence families, and three Rust Crux-specific families.
+- [Elm public capability census](issues/05-elm-public-capability-census.md)
+  — The census finds 28 families: 16 plausible generic roles, seven
+  design-evidence families, and five Elm-specific families.
 
 ## Not yet specified
 

@@ -1,7 +1,7 @@
 # Elm public capability census
 
 Type: research
-Status: open
+Status: resolved
 
 ## Question
 
@@ -29,3 +29,21 @@ Record every excluded family with a reason.
 
 Write one cited report under
 `.scratch/research/eta-crux-capability-audit/` and link it from the answer.
+
+## Answer
+
+The [Elm census report](../../../../.scratch/research/eta-crux-capability-audit/elm-public-capability-census.md)
+records 28 public capability families.
+
+Sixteen families have a plausible generic Eta Crux role.
+Seven families supply design evidence only.
+Five families are Elm-specific.
+
+The census covers 16 first-party package repositories, the compiler, Elm test
+support, and `elm-program-test`.
+It records each semantic contract, test control, ownership boundary, research
+classification, and exclusion reason.
+
+The report makes no final capability decision.
+It also records test-control gaps and the absence of a general resource
+bracket or finalizer law.
