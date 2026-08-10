@@ -79,6 +79,10 @@ ticket, and research prose with `$simple-english`.
   — Eta supplies core time, observation, handoff, cancellation, and test
   mechanics. Several Crux-level protocols and bounded diagnostic surfaces are
   absent.
+- [Representative consumer friction](issues/07-representative-consumer-friction.md)
+  — No external Eta Crux consumer exists. Repository evidence shows repeated
+  time, assertion, cache, and dispatch work. Other evidence is limited or
+  absent.
 
 ## Not yet specified
 
