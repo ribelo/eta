@@ -64,6 +64,9 @@ ticket, and research prose with `$simple-english`.
 - [Current Eta Crux capability baseline](issues/01-current-eta-crux-capability-baseline.md)
   — The baseline records one missing, three partial, three
   application-composable, and two deliberately excluded capabilities.
+- [Prior decision and requirement provenance](issues/02-prior-decision-and-requirement-provenance.md)
+  — The history records two superseded promises, two unresolved questions, two
+  explicit decisions, and three exclusions. No gap is an accidental omission.
 
 ## Not yet specified
 
