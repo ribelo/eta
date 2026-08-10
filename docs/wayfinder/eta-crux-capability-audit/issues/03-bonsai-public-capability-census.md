@@ -1,7 +1,7 @@
 # Bonsai public capability census
 
 Type: research
-Status: open
+Status: resolved
 
 ## Question
 
@@ -29,3 +29,20 @@ Record every excluded family with a reason.
 
 Write one cited report under
 `.scratch/research/eta-crux-capability-audit/` and link it from the answer.
+
+## Answer
+
+The [Bonsai census report](../../../../.scratch/research/eta-crux-capability-audit/bonsai-public-capability-census.md)
+records 21 public capability families.
+
+Sixteen families have a plausible generic Eta Crux role.
+Four families supply design evidence only.
+Graph paths and stable identity are Bonsai-specific.
+
+The census covers graph values, inputs, state, time, lifecycle, dynamic
+structure, effects, resources, host integration, observation, and test tools.
+It records each semantic contract, test control, ownership boundary, and
+research classification.
+
+The report makes no final capability decision.
+It also records that Bonsai has lifecycle evidence, but no general scoped-resource contract.

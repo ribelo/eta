@@ -67,6 +67,8 @@ ticket, and research prose with `$simple-english`.
 - [Prior decision and requirement provenance](issues/02-prior-decision-and-requirement-provenance.md)
   — The history records two superseded promises, two unresolved questions, two
   explicit decisions, and three exclusions. No gap is an accidental omission.
+- [Bonsai public capability census](issues/03-bonsai-public-capability-census.md)
+  — The census finds 21 families: 16 plausible generic roles, four design-evidence families, and one Bonsai-specific family.
 
 ## Not yet specified
 
