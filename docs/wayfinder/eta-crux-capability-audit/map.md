@@ -69,6 +69,9 @@ ticket, and research prose with `$simple-english`.
   explicit decisions, and three exclusions. No gap is an accidental omission.
 - [Bonsai public capability census](issues/03-bonsai-public-capability-census.md)
   — The census finds 21 families: 16 plausible generic roles, four design-evidence families, and one Bonsai-specific family.
+- [Rust Crux public capability census](issues/04-rust-crux-public-capability-census.md)
+  — The census finds 22 families: 16 plausible generic roles, three
+  design-evidence families, and three Rust Crux-specific families.
 
 ## Not yet specified
 
