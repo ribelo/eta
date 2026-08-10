@@ -86,6 +86,8 @@ ticket, and research prose with `$simple-english`.
 - [Complete capability relevance census](issues/08-complete-capability-relevance-census.md)
   — The complete census maps every reference family and local evidence source
   to 11 decision tickets, including two new structural candidates.
+- [Graph time and deterministic clock control](issues/09-graph-time-and-deterministic-clock-control.md)
+  — Adopt graph time and deterministic test-time control.
 
 ## Not yet specified
 
