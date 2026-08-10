@@ -100,6 +100,9 @@ ticket, and research prose with `$simple-english`.
 - [Host-owned streaming operations](issues/13-host-owned-streaming-operations.md)
   — Reject many-response host operations because `Source` already owns the
   repeated-event lifecycle. Providers own host binding and buffering.
+- [Ingress admission classes](issues/14-ingress-admission-classes.md)
+  — Adopt root-wide bounded FIFO ingress and reject per-endpoint, reserved,
+  lossy, and coalescing admission policies.
 
 ## Not yet specified
 
