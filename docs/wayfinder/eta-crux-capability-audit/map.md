@@ -103,6 +103,9 @@ ticket, and research prose with `$simple-english`.
 - [Ingress admission classes](issues/14-ingress-admission-classes.md)
   — Adopt root-wide bounded FIFO ingress and reject per-endpoint, reserved,
   lossy, and coalescing admission policies.
+- [Pull observation of root output](issues/15-pull-observation-of-root-output.md)
+  — Adopt linearizable `Driver` pull access to the latest committed output while
+  adapters retain delivery state.
 
 ## Not yet specified
 
