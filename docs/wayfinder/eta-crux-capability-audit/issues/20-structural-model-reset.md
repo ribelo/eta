@@ -9,7 +9,7 @@ Blocked by: 08
 Does Eta Crux need one graph-owned operation that resets every stateful
 computation in a structural subtree?
 
-Compare explicit reset actions, keyed-incarnation replacement, and a structural
+Compare explicit reset Actions, keyed-incarnation replacement, and a structural
 reset capability. Keep prior-value storage as application-owned state.
 
 Decide whether to adopt, defer with a precise condition, or reject structural
@@ -39,7 +39,7 @@ The three mechanisms keep separate roles:
 | Mechanism | Decision | Role |
 |---|---|---|
 | Structural reset | Adopt | Reset all active state-machine descendants of one explicit scope. |
-| Explicit reset actions | Retain | Reset one application-owned state machine or apply domain policy. |
+| Explicit reset Actions | Retain | Reset one application-owned state machine or apply domain policy. |
 | Keyed-incarnation replacement | Retain | End one keyed lifetime and create another lifetime with fresh identity. |
 
 Prior-value storage remains application-owned state.
@@ -114,8 +114,8 @@ One successful trigger appends exactly one reset item. Admission does not run
 the reset or promise later processing. Repeated triggers append separate items
 and never coalesce.
 
-Reset items keep FIFO order with endpoint actions. They do not use the control
-path and receive no priority.
+Reset triggers keep FIFO order with endpoint Actions. They do not use the
+control path and receive no priority.
 
 Scope validity is checked during advancement. A queued item for a disposed reset
 scope is consumed and returns `Rejected Stale_reset` without a transition.
@@ -172,7 +172,7 @@ or graph change commits, and no reset effect starts. The root records a
 transition crash.
 
 `Failure.trigger_kind` gains `Structural_reset`. The failure record contains the
-failing cell and its model diagnostic. It contains no endpoint, action, or reset
+failing cell and its model diagnostic. It contains no endpoint, Action, or reset
 identity.
 
 Each present reset effect belongs to the structural scope of its state-machine
@@ -189,10 +189,9 @@ owned-work failure rules.
 ### Post-commit effect observation
 
 A structural reset can stage zero or many effects.
-[Latest-request-wins effect
-coordination](21-latest-request-wins-effect-coordination.md) renames the accepted
-observer to `Post_commit_effect_observer`. The observer covers transition,
-structural-reset, and Poll effects.
+[Poll run result coordination](21-poll-run-result-coordination.md) renames the
+accepted observer to `Post_commit_effect_observer`. The observer covers
+transition, structural-reset, and Poll-run effects.
 
 [Staged-effect observability](12-staged-effect-observability.md) uses this
 `Staged` event:
@@ -227,7 +226,7 @@ The implementation effort adds these laws and named gates:
 | Every reset callback observes the same pre-reset committed frame. One advancement publishes all reset models and graph changes or none. The generated class includes dependent models and equal outputs. | `qcheck_reset_snapshot_atomicity` |
 | Default reset restores `default_model`. Custom reset can return default, preserved, or non-idempotent models. Generated repeated triggers run once each and never coalesce. | `qcheck_reset_default_custom` |
 | Continuous keyed children preserve identity. Removed children dispose, and new children start with defaults. The generated class covers retained, removed, and added keys in one reset. | `qcheck_reset_dynamic_children` |
-| Reset items and endpoint actions preserve accepted FIFO order. Every active no-change or empty reset still commits one complete output. | `qcheck_reset_ingress_order` |
+| Reset triggers and endpoint Actions preserve accepted FIFO order. Every active no-change or empty reset still commits one complete output. | `qcheck_reset_ingress_order` |
 | Reset-scope disposal and reset advancement have both legal winners. A reset winner commits before disposal. A disposal winner returns `Stale_reset` with no reset transition. | `race_reset_vs_disposal_both_winners` |
 | A callback exception preserves the prior frame, starts no reset effect, and records `Structural_reset` with only the failing cell and model diagnostic. | `test_reset_callback_rollback` |
 | Generated commits stage zero, one, and many reset effects. Exact observer inventory, owner disposal, concurrent sibling start, and every settlement class are covered. | `qcheck_reset_effect_lifecycle` |

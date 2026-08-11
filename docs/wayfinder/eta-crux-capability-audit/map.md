@@ -112,12 +112,15 @@ ticket, and research prose with `$simple-english`.
 - [Action history and diagnostics](issues/17-action-history-and-diagnostics.md)
   — Defer action observation and history until a direct consumer demonstrates
   the diagnostic gap. Reject replay, time travel, and graph inspection.
+- [Coherent accepted capability surface](issues/18-coherent-accepted-capability-surface.md)
+  — The accepted capabilities share one ingress, commit, driver, observer, law,
+  and test contract. The current V1 design receives one direct replacement.
 - [Structural model reset](issues/20-structural-model-reset.md)
   — Adopt scoped atomic reset for active descendant models while preserving
   continuous structural identities and cell-owned staged effects.
-- [Latest-request-wins effect coordination](issues/21-latest-request-wins-effect-coordination.md)
-  — Adopt Bonsai-style Poll with hidden request order and stale-result
-  suppression.
+- [Poll run result coordination](issues/21-poll-run-result-coordination.md)
+  — Adopt Poll with hidden run order. The greatest committed run order selects
+  the current result.
 
 ## Not yet specified
 

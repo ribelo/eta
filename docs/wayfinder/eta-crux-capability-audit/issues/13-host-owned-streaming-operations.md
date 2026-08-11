@@ -67,11 +67,11 @@ The representative scenarios use this composition:
 | Host registration | The provider installs and removes callbacks, watchers, process readers, or network subscriptions. |
 | Item admission | `Source.emit` uses ordinary endpoint admission. The bounded root ingress queue applies FIFO admission and backpressure. |
 | Provider buffering | The provider owns its upstream buffer, capacity, and overflow policy. Eta Crux adds no per-source queue. |
-| Completion | Normal producer completion creates one `Completed` terminal action. Eta Crux does not restart the source. |
-| Typed failure | An opening or producer failure creates one `Failed` terminal action. The provider defines transport errors and reconnect policy. |
+| Completion | Normal producer completion creates one `Completed` terminal Action. Eta Crux does not restart the source. |
+| Typed failure | An opening or producer failure creates one `Failed` terminal Action. The provider defines transport errors and reconnect policy. |
 | Defects | An escaping defect follows the existing root crash boundary. |
-| Cancellation | Structural disposal interrupts the producer. Eta finalizers perform provider cleanup. Disposal creates no terminal action. |
-| Stale emissions | An old queued action is consumed and reported as `Rejected Stale_endpoint`. It performs no transition. |
+| Cancellation | Structural disposal interrupts the producer. Eta finalizers perform provider cleanup. Disposal creates no terminal Action. |
+| Stale emissions | An old queued Action is consumed and reported as `Rejected Stale_endpoint`. It performs no transition. |
 | Transport | Providers use the existing local or serialized surfaces. Eta Crux adds no many-item request frames. |
 
 ### Alternatives

@@ -78,9 +78,8 @@ This option is not a command wrapper or command algebra.
 ### Observation scope
 
 The observer covers application transition effects, structural-reset effects,
-and Poll request effects. [Latest-request-wins effect
-coordination](21-latest-request-wins-effect-coordination.md) adds Poll to this
-scope.
+and Poll-run effects. [Poll run result
+coordination](21-poll-run-result-coordination.md) adds Poll to this scope.
 
 The observer does not cover lifecycle programs, source openings, source
 producers, requests, or adapter work.
@@ -242,7 +241,7 @@ The implementation effort adds these laws and named gates:
 | Each effect obeys its lifecycle order, with no order between different effects. | Generated commits overlap two or more observed sources and force one out-of-order settlement. The boundary is event position and effect identity in the observer trace. | `qcheck_post_commit_effect_observer_order` |
 | `poll` and `drain` preserve event-position order and remove each returned event once. | Generated observer traces interleave staging, start, and settlement events. The boundary is the concatenation of all controller results and the final empty queue. | `qcheck_post_commit_effect_observer_fifo` |
 | Attaching the canonical observer changes no production result. | Generated roots run identical workloads with and without the observer. The boundary includes root output, failure, terminal result, admission result, and fiber settlement. | `qcheck_post_commit_effect_observer_transparency` |
-| With no observer, committed actions allocate no observation value or queue entry. | The disabled-path benchmark covers empty, transition, reset, and Poll commits. The boundary is exact allocation counters and the existing latency threshold. | `post_commit_effect_observer_disabled_allocation` |
+| With no observer, successful commits allocate no observation value or queue entry. | The disabled-path benchmark covers empty, transition, reset, and Poll commits. The boundary is exact allocation counters and the existing latency threshold. | `post_commit_effect_observer_disabled_allocation` |
 
 The generated laws execute both sides of each comparison. Each failure prints
 the graph, commit sources, effect sources, controlled settlements, and observed

@@ -74,10 +74,15 @@ Its specification defines producer continuity.
 The complete typed application value that one successful advancement commits.
 It is the only application observation boundary.
 
+## Ingress item
+
+One value accepted by the root ingress queue. Actions, reset triggers, Poll
+refreshes, and Poll completions are ingress-item classes.
+
 ## Ingress queue
 
-The bounded root queue that accepts application actions from internal endpoints
-and exported endpoints. Internal control events do not use this queue.
+The bounded root queue that accepts ingress items. Internal control events do
+not use this queue.
 
 ## Exported endpoint
 
@@ -113,6 +118,11 @@ startup and shutdown can occur outside OCaml and outside Eta Crux.
 
 One live connection between an Eta Crux root and a host runtime. It owns the
 private reconciliation state and host event registrations for that root.
+
+## Driver attachment
+
+The exclusive connection between one unstarted root and its production driver.
+The attachment gives that driver sole authority to advance the root.
 
 ## Transport
 
@@ -223,8 +233,8 @@ queued its handoff. It does not mean that the peer consumed the response.
 
 ## Advancement
 
-One atomic attempt to process a single queued action and produce a committed
-application output.
+One atomic attempt to process one selected ingress item or internal control
+event and produce a committed application output.
 
 ## Post-commit batch
 
@@ -261,15 +271,29 @@ One atomic graph-owned model transition for every active state-machine
 descendant of an explicit reset scope. Normal reconciliation applies after the
 model changes.
 
+## Graph time
+
+Eta Crux monotonic time that can change graph output through a driver
+advancement. Eta Crux owns its computations, deadline schedule, and driver
+wakes.
+
+Graph time does not use `Eta_signal.Time`. Eta supplies the monotonic clock and
+sleep operation.
+
+## Poll run
+
+One effect execution that a Poll starts after activation, a significant input
+change, or manual refresh. A Poll run does not use the shell request protocol.
+
 ## Poll
 
-A graph-owned computation that starts effectful requests when it activates, its
-input changes significantly, or a caller requests a refresh. The input cutoff
-defines a significant change.
+A graph-owned computation that starts Poll runs when it activates, its input
+changes significantly, or a caller requests a refresh. The input cutoff defines
+a significant change.
 
-Each active interval has one request order. A result never replaces a result
-from a newer completed request. A new request does not cancel an earlier request
-in the same active interval.
+Each active interval has one hidden run order. The result with the greatest
+committed run order is current. A new run does not cancel an earlier run in the
+same active interval.
 
 Disposal requests cancellation and fences later completions. A later
-incarnation starts with a fresh request order and starting state.
+incarnation starts with a fresh run order and starting state.

@@ -35,7 +35,7 @@ The reported claim is correct:
 
 The current application-owned solution was deliberate. Applications can still
 use Eta effects for operation-specific deadlines. That solution does not cover a
-time value that changes graph output without an application action.
+time value that changes graph output without an application Action.
 
 Eta supplies the monotonic clock, sleep operation, and test clock. Eta Crux owns
 graph sampling, active deadlines, driver wake eligibility, and the test-handle
@@ -156,10 +156,10 @@ After initial start, event priority is:
 
 1. crash or stop.
 2. `Clock_due`.
-3. the next FIFO ingress action.
+3. the next FIFO ingress item.
 
 All deadlines due at the shared clock sample coalesce into one `Clock_due`
-advancement. The event does not consume an ingress action.
+advancement. The event does not consume an ingress item.
 
 A committed one-shot timer retires its deadline. A committed periodic timer
 replaces its due deadline with its next future, activation-aligned deadline.
@@ -170,8 +170,8 @@ It contains the complete root output and one mandatory post-commit token.
 `Driver.event` remains unchanged. The driver reports the result through its
 ordinary `Deliver` event.
 
-If that commit changes a `Poll` input, the Poll stages one request from the
-latest committed input. The normal post-commit delivery fence applies.
+If that commit changes a `Poll` input, the Poll stages one run from the latest
+committed input. The normal post-commit delivery fence applies.
 
 ### Timer behavior
 
@@ -181,7 +181,7 @@ registered for an inactive branch.
 
 `now ~every` returns the actual shared clock sample during every advancement.
 `every` schedules activation-aligned clock wakes while the node is necessary. An
-unrelated action does not reset that cadence.
+unrelated Action does not reset that cadence.
 
 `deadline timestamp` is initially false and changes to true once. The timestamp
 must be in the future and must belong to the root clock when the node becomes
@@ -205,9 +205,9 @@ saturates at `max_int`. It does not replay missed ticks.
 | GTC-05 Deadline wake | `Driver.poll` processes an already-due deadline. A due deadline also makes `Driver.await` continue without ingress. | `qcheck_graph_time_deadline_wake` |
 | GTC-06 Await race | `Driver.await` cancels the losing wait. An ingress wake causes a new deadline calculation before the next wait. | `qcheck_graph_time_await_race` |
 | GTC-07 Event priority | Crash and stop precede `Clock_due`. `Clock_due` precedes FIFO ingress. | `qcheck_graph_time_event_priority` |
-| GTC-08 Due coalescing | One clock sample produces at most one `Clock_due` advancement. The event preserves every queued ingress action. | `qcheck_graph_time_due_coalescing` |
+| GTC-08 Due coalescing | One clock sample produces at most one `Clock_due` advancement. The event preserves every queued ingress item. | `qcheck_graph_time_due_coalescing` |
 | GTC-09 Timer progress | A committed one-shot timer retires its deadline. A committed periodic timer installs its next future deadline. | `qcheck_graph_time_timer_progress` |
-| GTC-10 Current time | Each committed advancement gives `now` the shared clock sample. The activation-aligned `every` cadence does not reset after an action. | `qcheck_graph_time_now_cadence` |
+| GTC-10 Current time | Each committed advancement gives `now` the shared clock sample. The activation-aligned `every` cadence does not reset after an Action. | `qcheck_graph_time_now_cadence` |
 | GTC-11 One-shot deadline | `deadline` changes from false to true once in one active interval. Its timestamp is future and belongs to the root clock at activation. | `qcheck_graph_time_deadline` |
 | GTC-12 Relative deadline | `after` measures from successful activation. A failed activation installs no deadline. | `qcheck_graph_time_after_activation` |
 | GTC-13 Interval catch-up | `interval` starts at zero. It catches up arithmetically, saturates at `max_int`, and does not replay missed ticks. | `qcheck_graph_time_interval_catch_up` |

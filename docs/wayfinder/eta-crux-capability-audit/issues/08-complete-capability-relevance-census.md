@@ -64,7 +64,7 @@ The complete census adds two candidates:
 - [Structural model reset](20-structural-model-reset.md) covers reset traversal
   across framework-owned nested state. Prior-value storage remains
   application-composable.
-- [Latest-request-wins effect coordination](21-latest-request-wins-effect-coordination.md)
+- [Poll run result coordination](21-poll-run-result-coordination.md)
   covers stale results across overlapping work and child incarnations. Basic
   change-triggered effects remain application-composable.
 
@@ -80,7 +80,7 @@ The complete census adds two candidates:
 | 6. Dynamic context | Evidence | Eta Crux keeps dependencies explicit. No consumer shows harmful dependency threading. |
 | 7. Time | Candidate | [Graph time and deterministic clock control](09-graph-time-and-deterministic-clock-control.md) covers graph deadlines and test time. |
 | 8. Lifecycle hooks | Evidence | Eta Crux already owns active intervals, lifecycle effects, sources, and disposal. |
-| 9. Edge-triggered operations and polling | Candidate | [Latest-request-wins effect coordination](21-latest-request-wins-effect-coordination.md) covers stale results. Applications can compare changed values. |
+| 9. Edge-triggered operations and polling | Candidate | [Poll run result coordination](21-poll-run-result-coordination.md) covers stale results. Applications can compare changed values. |
 | 10. Effects, graph sampling, and scheduling | Evidence | Opaque staged effects exist. [Staged-effect observability](12-staged-effect-observability.md) covers the test gap. |
 | 11. Effect concurrency and coordination | Evidence | Eta already supplies bounded parallelism, semaphores, and supervision. Admission policy informs [Ingress admission classes](14-ingress-admission-classes.md). |
 | 12. Shared keyed computations | Evidence | The reference-count law informs keyed lifetimes, but the product depends on Bonsai activation internals. |
