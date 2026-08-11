@@ -80,6 +80,10 @@ This option is not a command wrapper or command algebra.
 The observer covers transition effects only. It does not cover lifecycle
 programs, source openings, source producers, requests, or adapter work.
 
+[Structural model reset](20-structural-model-reset.md) can stage zero or many
+transition effects in one commit. An ordinary endpoint transition still stages
+zero or one effect.
+
 The observer is local to one root and one test. It is not operational
 telemetry. No event crosses a local or serialized adapter boundary.
 
@@ -118,7 +122,7 @@ module Transition_effect_observer : sig
     | Staged of {
         position : Event_position.t;
         commit : Commit_index.t;
-        effect : Effect_id.t option;
+        effects : Effect_id.t list;
       }
     | Started of {
         position : Event_position.t;
@@ -163,12 +167,17 @@ root.
 Commit indices start at zero. Each successful commit consumes the next index.
 Idle, rejected, stopped, and failed advancements do not consume an index.
 
-Every successful commit records one `Staged` event. `effect = None` proves that
-the commit staged no transition effect. `effect = Some id` introduces one new
-effect identity.
+Every successful commit records one `Staged` event. An empty `effects` list
+proves that the commit staged no transition effect. Each list item introduces
+one new effect identity.
 
 Effect identities are opaque and root-local. They exist only when an attached
-observer records `Some effect`. They expose no structural identity.
+observer records them in `effects`. They expose no structural identity.
+
+An ordinary endpoint transition contributes zero or one effect. A structural
+reset contributes one effect for each reset callback that returns `Some effect`.
+List order introduces observer identities only. It has no structural, callback,
+start, or settlement meaning.
 
 Event positions start at zero. Each recorded event consumes the next position.
 Positions define the FIFO observation order.
@@ -223,7 +232,7 @@ The implementation effort adds these laws and named gates:
 
 | Law | Gate |
 |---|---|
-| Every successful commit records exactly one `Staged` event with the next commit index. `None` and `Some` match the transition result exactly. | `qcheck_transition_effect_observer_inventory` |
+| Every successful commit records exactly one `Staged` event with the next commit index. Its list exactly matches all optional transition effects from that commit. Generated commits cover empty, singleton, and multi-effect inventories. | `qcheck_transition_effect_observer_inventory` |
 | Each present effect records exactly one terminal path. Generated cases cover success, interruption, failure, and discard before start. | `qcheck_transition_effect_observer_lifecycle` |
 | Per-effect lifecycle order follows the two accepted paths. Generated overlapping effects include an observed out-of-order settlement. | `qcheck_transition_effect_observer_order` |
 | `poll` and `drain` preserve event-position order and remove each returned event exactly once. | `qcheck_transition_effect_observer_fifo` |
@@ -258,8 +267,9 @@ settlement uses the same observer-local queue.
 
 ### Migration
 
-All `State_machine.create` callers move to `Some effect` or `None`. There is no
-compatibility form and no silent conversion from `Eta.Effect.unit`.
+All `State_machine.create` callers move to `Some effect` or `None`. Observer
+consumers move from one optional identity to the complete `effects` list. There
+is no compatibility form and no silent conversion from `Eta.Effect.unit`.
 
 Tests replace counters, promises, and polling only when they assert Eta
 Crux-owned staging or lifecycle. Controlled dependencies remain for typed

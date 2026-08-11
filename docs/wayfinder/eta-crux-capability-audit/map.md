@@ -112,6 +112,9 @@ ticket, and research prose with `$simple-english`.
 - [Action history and diagnostics](issues/17-action-history-and-diagnostics.md)
   — Defer action observation and history until a direct consumer demonstrates
   the diagnostic gap. Reject replay, time travel, and graph inspection.
+- [Structural model reset](issues/20-structural-model-reset.md)
+  — Adopt scoped atomic reset for active descendant models while preserving
+  continuous structural identities and cell-owned staged effects.
 
 ## Not yet specified
 

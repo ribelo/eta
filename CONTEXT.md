@@ -254,3 +254,9 @@ structure.
 
 A former child whose active interval ended. A later appearance creates a new
 child incarnation.
+
+## Structural reset
+
+One atomic graph-owned model transition for every active state-machine
+descendant of an explicit reset scope. Normal reconciliation applies after the
+model changes.
