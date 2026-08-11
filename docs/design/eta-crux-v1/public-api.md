@@ -38,6 +38,25 @@ end
 ```
 
 ```ocaml
+module Time : sig
+  type monotonic_time
+  type arithmetic_error = [ `Deadline_overflow | `Past_deadline ]
+
+  val to_ms : monotonic_time -> int
+
+  val add :
+    monotonic_time ->
+    Eta.Duration.t ->
+    (monotonic_time, arithmetic_error) result
+
+  val now : every:Eta.Duration.t -> monotonic_time t
+  val deadline : monotonic_time -> bool t
+  val after : Eta.Duration.t -> bool t
+  val interval : Eta.Duration.t -> int t
+end
+```
+
+```ocaml
 module Endpoint : sig
   type 'message t
   type admission_error = Ingress_closed
@@ -73,6 +92,11 @@ module State_machine : sig
   val create :
     ?model_cutoff:'model Cutoff.t ->
     ?diagnostics:('model, 'action) Diagnostic.state_machine ->
+    ?reset:
+      (self:'action Endpoint.t ->
+       input:'input ->
+       model:'model ->
+       'model * (unit, never) Eta.Effect.t option) ->
     'input t ->
     default_model:'model ->
     apply_action:
@@ -80,7 +104,7 @@ module State_machine : sig
        input:'input ->
        model:'model ->
        action:'action ->
-       'model * (unit, never) Eta.Effect.t) ->
+       'model * (unit, never) Eta.Effect.t option) ->
     ('model * 'action Endpoint.t) t
 end
 
@@ -118,6 +142,59 @@ module Source : sig
     on_item:('item -> 'action) t ->
     on_terminal:('error terminal -> 'action) t ->
     unit t
+end
+```
+
+`Reset` and `Poll` are computation modules for structural reset and
+graph-owned effect runs.
+
+```ocaml
+module Reset : sig
+  type 'a computation := 'a t
+  type t
+
+  val scope :
+    'input computation ->
+    f:
+      (reset:t computation ->
+       input:'input computation ->
+       'output computation) ->
+    'output computation
+
+  val trigger :
+    t ->
+    (unit, Endpoint.admission_error) Eta.Effect.t
+end
+```
+
+```ocaml
+module Poll : sig
+  type 'a computation := 'a t
+
+  module Starting : sig
+    type ('result, 'output) t
+
+    val empty : ('result, 'result option) t
+    val initial : 'result -> ('result, 'result) t
+  end
+
+  val effect_on_change :
+    input_cutoff:'input Cutoff.t ->
+    ?result_cutoff:'result Cutoff.t ->
+    starting:('result, 'output) Starting.t ->
+    input:'input computation ->
+    effect:
+      ('input -> ('result, never) Eta.Effect.t) computation ->
+    unit ->
+    'output computation
+
+  val manual_refresh :
+    ?result_cutoff:'result Cutoff.t ->
+    starting:('result, 'output) Starting.t ->
+    effect:(('result, never) Eta.Effect.t) computation ->
+    unit ->
+    'output computation
+    * (unit, Endpoint.admission_error) Eta.Effect.t computation
 end
 ```
 
@@ -197,9 +274,21 @@ module Request : sig
         (unit, 'error) Eta.Effect.t;
     }
 
-    type handle_result = Handled | Different_operation
+    type dispatch_result =
+      | Dispatched
+      | Already_handled
+      | Closed of closure_reason
 
-    val dispatch : t -> 'error handler -> (unit, 'error) Eta.Effect.t
+    type handle_result =
+      | Handled
+      | Different_operation
+      | Already_handled
+      | Closed of closure_reason
+
+    val dispatch :
+      t ->
+      'error handler ->
+      (dispatch_result, 'error) Eta.Effect.t
 
     val handle :
       t ->
@@ -248,6 +337,10 @@ module Responder : sig
     (unit, error) Eta.Effect.t
 end
 ```
+
+Executing the first matching `handle` or total `dispatch` claims the event before
+user work starts. Constructing the returned effect does not claim the event.
+Descriptor mismatch does not claim it. A typed handler failure retains the claim.
 
 ```ocaml
 module Request_export : sig
@@ -334,6 +427,7 @@ module Failure : sig
   type origin =
     | Transition
     | Owned_work
+    | Graph_clock
     | Adapter_delivery
     | Request_dispatch
     | Export_dispatch
@@ -342,7 +436,9 @@ module Failure : sig
 
   type trigger_kind =
     | Initial_start
-    | Endpoint_message
+    | Endpoint_action
+    | Clock_sample
+    | Clock_due
     | Transition_effect
     | Lifecycle_program
     | Source_opening
@@ -356,6 +452,8 @@ module Failure : sig
     | Stop_teardown
     | Crash_teardown
     | Application_crash_handler
+    | Structural_reset
+    | Poll_effect
 
   type record = {
     cause : Packed_cause.t;
@@ -395,6 +493,54 @@ module Failure : sig
 end
 ```
 
+`Testing` is the post-commit effect observation SPI. It exposes shared
+observation types and one opaque observer attachment for `Root.create`. The
+test-owned controller lives in `eta_crux_test`. The identity modules are
+opaque and root-local.
+
+```ocaml
+module Testing : sig
+  module Effect_id : sig
+    type t
+  end
+
+  module Commit_index : sig
+    type t
+  end
+
+  module Event_position : sig
+    type t
+  end
+
+  type settlement =
+    | Succeeded
+    | Interrupted
+    | Failed
+
+  type event =
+    | Staged of {
+        position : Event_position.t;
+        commit : Commit_index.t;
+        effects : Effect_id.t list;
+      }
+    | Started of {
+        position : Event_position.t;
+        effect : Effect_id.t;
+      }
+    | Settled of {
+        position : Event_position.t;
+        effect : Effect_id.t;
+        settlement : settlement;
+      }
+    | Discarded_before_start of {
+        position : Event_position.t;
+        effect : Effect_id.t;
+      }
+
+  type post_commit_effect_observer
+end
+```
+
 ```ocaml
 module Post_commit : sig
   type t
@@ -412,12 +558,15 @@ module Root : sig
   type 'output description := 'output t
   type 'output t
 
-  type delivery_error = Stale_endpoint
+  type delivery_error =
+    | Stale_endpoint
+    | Stale_reset
 
   type advance_error =
     | Already_advancing
     | Awaiting_post_commit
     | Closed
+    | Driver_attached
 
   type 'output outcome =
     | Idle
@@ -435,6 +584,7 @@ module Root : sig
       }
 
   val create :
+    ?post_commit_effect_observer:Testing.post_commit_effect_observer ->
     ingress_capacity:int ->
     request_capacity:int ->
     'output description ->
@@ -508,9 +658,17 @@ module Driver : sig
 
   val poll : 'output t -> ('output event option, never) Eta.Effect.t
   val await : 'output t -> ('output event, never) Eta.Effect.t
+  val latest_committed_output : 'output t -> 'output option
   val request_stop : 'output t -> unit
 end
 ```
+
+`Driver.create` attaches one unstarted root exclusively. A started or attached
+root, or a reused binding, raises `Invalid_argument`. A rejected attachment
+claim leaves each otherwise-unused argument available for a later attachment.
+Direct `Root.advance` on a driver-owned root returns `Error Driver_attached`.
+`latest_committed_output` is a synchronous pull that returns `'output option`.
+It retains no commit identity, delivery state, or terminal state.
 
 ```ocaml
 module Adapter : sig
@@ -649,7 +807,57 @@ two codec packages.
 
 - `Incoming`, `Test_shell`, and `Handle`
 - `Controlled_source`
+- `Post_commit_effect_observer`
 - a recording `Adapter.resource`
+
+`Handle.create` and `Handle.use` require an explicit `clock:Eta_test.Test_clock.t`.
+`Handle` exposes `advance_time_by` and `advance_time_to` for deterministic test
+time movement and the two output boundaries `latest_committed_output` and
+`latest_delivered_output`. The former `last_output` is gone.
+`latest_committed_output` reads the production driver query, and
+`latest_delivered_output` reads the successful-delivery boundary. Test
+injection uses the latest delivered output.
+
+```ocaml
+module Post_commit_effect_observer : sig
+  module Effect_id = Eta_crux.Testing.Effect_id
+  module Commit_index = Eta_crux.Testing.Commit_index
+  module Event_position = Eta_crux.Testing.Event_position
+
+  type settlement = Eta_crux.Testing.settlement =
+    | Succeeded
+    | Interrupted
+    | Failed
+
+  type event = Eta_crux.Testing.event =
+    | Staged of {
+        position : Event_position.t;
+        commit : Commit_index.t;
+        effects : Effect_id.t list;
+      }
+    | Started of {
+        position : Event_position.t;
+        effect : Effect_id.t;
+      }
+    | Settled of {
+        position : Event_position.t;
+        effect : Effect_id.t;
+        settlement : settlement;
+      }
+    | Discarded_before_start of {
+        position : Event_position.t;
+        effect : Effect_id.t;
+      }
+
+  type t
+
+  val create : unit -> t
+  val attachment : t -> Eta_crux.Testing.post_commit_effect_observer
+  val poll : t -> event option
+  val drain : t -> event list
+  val expect_empty : t -> unit
+end
+```
 
 The exact test signatures and ownership rules are in
 [Verification](verification.md).

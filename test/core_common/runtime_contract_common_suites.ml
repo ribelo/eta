@@ -157,10 +157,9 @@ let test_expert_custom_effect_uses_runtime_contract () =
 let test_expert_clock_observes_scoped_override () =
   Direct_runtime.now := 10;
   let rt = Direct.create () in
-  let expert_now =
-    Spi.Expert.make ~leaf_name:"test.expert-now" @@ fun context ->
-    let contract = Spi.Expert.contract context in
-    Exit.Ok (contract.Runtime_contract.now_ms ())
+  let capture_clock =
+    Spi.Expert.make ~leaf_name:"test.expert-clock" @@ fun context ->
+    Exit.Ok (Spi.Expert.Clock.current context)
   in
   let override : Capabilities.clock =
     object
@@ -169,14 +168,23 @@ let test_expert_clock_observes_scoped_override () =
     end
   in
   let program =
-    Effect.with_clock override expert_now
-    |> Effect.bind (fun inside ->
-           Effect.map (fun outside -> (inside, outside)) expert_now)
+    Effect.bind
+      (fun base ->
+        Effect.with_clock override capture_clock
+        |> Effect.bind (fun scoped ->
+               Effect.map
+                 (fun base_again ->
+                   ( ( Spi.Expert.Clock.same base base_again,
+                       Spi.Expert.Clock.same base scoped ),
+                     ( Spi.Expert.Clock.now_ms scoped,
+                       Spi.Expert.Clock.now_ms base ) ))
+                 capture_clock))
+      capture_clock
   in
   Direct.run rt program
   |> check_exit_ok
-       Alcotest.(pair int int)
-       "expert scoped/base clock" (99, 10)
+       Alcotest.(pair (pair bool bool) (pair int int))
+       "expert scoped/base clock" ((true, false), (99, 10))
 
 let check_foreign_token_rejected name f =
   match f () with

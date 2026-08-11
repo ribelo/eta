@@ -1,6 +1,5 @@
 ---
 kind: issue
-status: ready-for-agent
 requirements:
   - gtc-8dib
   - gtc-lmpw

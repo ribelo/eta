@@ -16,7 +16,7 @@ When a test is inserted mid-file, every registry pointer into the shifted file
 must be refreshed in the same change, not only the row for the new test.
 
 Direct qcheck census: **126 mli-stated claims**, **2 prose-pending model claims**,
-**243 registered external claim clusters**, and **82 unique named qcheck properties** in
+**245 registered external claim clusters**, and **82 unique named qcheck properties** in
 `test/laws/`. Verified external named suites are registered
 separately below and are not silently counted as qcheck coverage.
 
@@ -383,6 +383,8 @@ qcheck optics.
 | ID | Claim | Exact normative span | Named executable test and source pointer |
 | --- | --- | --- | --- |
 | R01 | `async` accepts only the first resolution. | `lib/eta/effect.mli:89-92` | `async one-shot first resolution wins` — `test/core_common/effect_async_shared.ml:322` |
+| RSPI01 | A captured expert clock token keeps the base clock or dynamic override that was active during capture. Later overrides do not change that token. | `lib/eta/spi.mli:45-49` | `expert clock observes scoped override` — `test/core_common/runtime_contract_common_suites.ml:157-187,383` |
+| RTEST01 | `Test_clock.advance_to` moves to its target and rejects a target before current virtual time. | `lib/test/eta_test.mli:27-29` | `test clock advance_to is monotonic` — `test/eta/test_eta_effect_core.ml:351-363`; registered at `test/eta/run.ml:38` |
 | RBLOCK01 | `max_threads` bounds reserved blocking-worker slots. | `lib/blocking/eta_blocking.mli:18-20` | Blocking `wait caps active and queue` — `test/eta/test_eta_blocking.ml` |
 | RBLOCK02 | `max_queued` bounds callbacks admitted by `run` while all worker slots are occupied. | `lib/blocking/eta_blocking.mli:18-20` | Blocking `wait caps active and queue` — `test/eta/test_eta_blocking.ml` |
 | RBLOCK03 | Further `run` callers wait outside the bounded queue. | `lib/blocking/eta_blocking.mli:18-20` | Blocking `stats separate waiting from queue` — `test/blocking_common/blocking_common_suites.ml:130` |

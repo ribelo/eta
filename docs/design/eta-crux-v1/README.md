@@ -25,11 +25,17 @@ It is generic application-computation infrastructure. It is not a UI framework.
 
 An application builds an immutable `'a Eta_crux.t` description. A root
 instantiates that description in a private Eta Signal graph. The root advances
-one action at a time and produces one complete typed output.
+one action at a time and produces one complete typed output. Graph time can
+change that output through the driver: `Time` provides graph monotonic time,
+deadlines, and timers whose deadlines wake the blocking driver. `Reset` scopes
+atomic structural resets, and `Poll` runs graph-owned change-driven and manual
+effect runs.
 
-Eta owns effects, scopes, cancellation, resources, supervision, and causes.
-Eta Crux owns computation structure, identity, advancement, typed output, and
-the shell protocol.
+Eta owns effects, scopes, cancellation, resources, supervision, causes,
+clocks, and sleeps. Eta Crux owns computation structure, identity,
+advancement, graph time, deadlines, driver wakes, actions, ingress, reset,
+Poll run order, commit publication, typed output, shell requests, and handler
+claims. The driver retains the latest committed output for pull observation.
 
 ## Architecture
 
@@ -38,12 +44,14 @@ The design has four layers:
 1. The computation layer describes values, state machines, dynamic structure,
    keyed children, lifecycle programs, sources, exports, and request exports.
 2. The root layer instantiates one description and performs atomic advancement.
-3. The driver layer delivers output and shell requests through one-shot tokens.
+3. The driver layer delivers output and shell requests through one-shot tokens
+   and retains the latest committed output for pull observation.
 4. A host adapter reconciles output and performs host-owned work.
 
-The application cannot observe whether the shell uses local typed delivery or
-serialized delivery. The serialized binding adds wire validation and session
-administration before the shared typed boundary.
+One unstarted root accepts one exclusive driver attachment, and graph deadlines
+can wake the blocking driver. The application cannot observe whether the shell
+uses local typed delivery or serialized delivery. The serialized binding adds
+wire validation and session administration before the shared typed boundary.
 
 ## Package graph
 
@@ -76,12 +84,20 @@ cross-package hook.
 `Eta_crux` exports these modules:
 
 - `Syntax`, `Endpoint`, `Diagnostic`, `State_machine`, `Assoc`, and `Source`
+- `Time`, `Reset`, and `Poll` — graph time, structural reset, and graph-owned
+  effect runs
+- `Testing` — the post-commit effect observation SPI types
 - `Exported_endpoint`, `Request_export`, `Request`, `Requester`, and `Responder`
 - `Host_operation`, `Root`, `Post_commit`, `Failure`, and `Driver`
 - `Adapter`, `Hosted`, `Wire`, and `Serialized_session`
 
 `Eta_crux.lifecycle` is a top-level constructor. Internal graph, scope,
 registry, transaction, and binding modules remain private.
+
+`Driver.latest_committed_output` provides pull observation of the root output.
+One unstarted root accepts one exclusive driver attachment. The post-commit
+effect observer is a test-only surface: `Eta_crux.Testing` carries the SPI
+types, and the `eta_crux_test` controller owns queue access.
 
 ## Deliberate exclusions
 
@@ -90,8 +106,8 @@ fragment tree, typed observation plan, middleware chain, graph inspection,
 action history, replay, or compatibility protocol.
 
 V1 also has no detached work, retained inactive child, unbounded capacity,
-default timeout, streaming request, protocol negotiation, or transport selected
-by application code.
+default timeout, default clock, streaming request, protocol negotiation, or
+transport selected by application code.
 
 ## Provenance
 

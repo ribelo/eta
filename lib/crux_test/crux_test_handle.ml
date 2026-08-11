@@ -66,6 +66,8 @@ module Handle = struct
 
   type ('output, 'incoming) t = {
     driver : 'output Crux.Driver.t;
+    clock : Eta_test.Test_clock.t;
+    clock_capability : Eta.Capabilities.clock;
     incoming : ('output, 'incoming) Incoming.t;
     shell : 'output shell;
     lock : Eta.Sync_lock.t;
@@ -74,10 +76,12 @@ module Handle = struct
     mutable terminal : Crux.Driver.terminal option;
   }
 
-  let create ~incoming ~shell root =
+  let create ~clock ~incoming ~shell root =
     let binding = Crux.Driver.Binding.identity [] in
     {
       driver = Crux.Driver.create binding root;
+      clock;
+      clock_capability = Eta_test.Test_clock.as_capability clock;
       incoming;
       shell = Shell shell;
       lock = Eta.Sync_lock.create ();
@@ -86,8 +90,21 @@ module Handle = struct
       terminal = None;
     }
 
-  let last_output handle =
+  let latest_delivered_output handle =
     Eta.Sync_lock.use handle.lock @@ fun () -> handle.output
+
+  let latest_committed_output handle =
+    Crux.Driver.latest_committed_output handle.driver
+
+  let advance_time_by handle duration =
+    if Eta.Duration.is_zero duration then ()
+    else Eta_test.Test_clock.adjust handle.clock duration
+
+  let advance_time_to handle target =
+    Eta_test.Test_clock.advance_to handle.clock target
+
+  let under_clock handle effect =
+    Eta.Effect.with_clock handle.clock_capability effect
 
   let claim handle =
     Eta.Sync_lock.use handle.lock @@ fun () ->
@@ -104,16 +121,17 @@ module Handle = struct
     else
       Eta.Effect.finally
         (Eta.Effect.sync (fun () -> release handle))
-        (Eta.Effect.unit
-        |> Eta.Effect.bind (fun () -> operation ())
-        |> Eta.Effect.map (fun result -> Ok result))
+        (under_clock handle
+           (Eta.Effect.unit
+           |> Eta.Effect.bind (fun () -> operation ())
+           |> Eta.Effect.map (fun result -> Ok result)))
 
   let note_terminal handle terminal =
     Eta.Sync_lock.use handle.lock @@ fun () ->
     handle.terminal <- Some terminal
 
   let inject handle incoming =
-    match last_output handle with
+    match latest_delivered_output handle with
     | None -> Eta.Effect.fail No_output
     | Some output ->
         handle.incoming.send output incoming
@@ -292,7 +310,8 @@ module Handle = struct
                    | Crash_detected _ ->
                        ())
                  event;
-               Ok event))
+               Ok event)
+        |> under_clock handle)
 
   let await handle =
     if not (claim handle) then Eta.Effect.pure (Error Busy)
@@ -308,25 +327,28 @@ module Handle = struct
                | Deliver _ | Request _ | Rejected _
                | Crash_detected _ ->
                    ());
-               Ok event))
+               Ok event)
+        |> under_clock handle)
 
   let delivery_delivered handle delivery =
     let open Eta.Syntax in
-    let+ result =
-      Crux.Driver.Delivery.delivered delivery
-      |> Eta.Effect.map_error absurd
-    in
-    (match result with
-    | Ok () ->
-        Eta.Sync_lock.use handle.lock @@ fun () ->
-        handle.output <-
-          Some (Crux.Driver.Delivery.output delivery)
-    | Error Crux.Driver.Delivery.Already_completed -> ());
-    result
+    (let+ result =
+       Crux.Driver.Delivery.delivered delivery
+       |> Eta.Effect.map_error absurd
+     in
+     (match result with
+     | Ok () ->
+         Eta.Sync_lock.use handle.lock @@ fun () ->
+         handle.output <-
+           Some (Crux.Driver.Delivery.output delivery)
+     | Error Crux.Driver.Delivery.Already_completed -> ());
+     result)
+    |> under_clock handle
 
-  let delivery_failed _handle delivery cause =
+  let delivery_failed handle delivery cause =
     Crux.Driver.Delivery.failed delivery cause
     |> Eta.Effect.map_error absurd
+    |> under_clock handle
 
   let request_stop handle =
     Crux.Driver.request_stop handle.driver
@@ -353,7 +375,9 @@ module Handle = struct
                 Alcotest.fail
                   "Eta_crux_test.Handle.use: unobserved root crash"))
 
-  let use ~incoming ~shell root ~f =
-    let handle = create ~incoming ~shell root in
-    Eta.Effect.finally (cleanup handle) (f handle)
+  let use ~clock ~incoming ~shell root ~f =
+    let handle = create ~clock ~incoming ~shell root in
+    Eta.Effect.finally
+      (under_clock handle (cleanup handle))
+      (f handle)
 end

@@ -83,7 +83,7 @@ let make_action_workload runtime =
     Crux.State_machine.create (Crux.return ())
       ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let driver, (_, endpoint) = setup_identity runtime machine in
   fun () ->
@@ -97,7 +97,7 @@ let make_unchanged_workload runtime =
     Crux.State_machine.create (Crux.return ())
       ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action:_ ->
-        (model, Eta.Effect.unit))
+        (model, None))
   in
   let projected =
     Crux.cutoff (Crux.map machine ~f:fst)
@@ -161,7 +161,7 @@ let setup_assoc runtime size =
     Crux.State_machine.create (Crux.return ())
       ~default_model:input
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-        (action, Eta.Effect.unit))
+        (action, None))
   in
   let children =
     Assoc.assoc
@@ -226,7 +226,7 @@ let make_lifecycle_overlap_workload runtime =
     Crux.State_machine.create (Crux.return ())
       ~default_model:(Int_map.singleton 0 ())
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-        (action, Eta.Effect.unit))
+        (action, None))
   in
   let children =
     Assoc.assoc (Crux.map config ~f:fst)
@@ -320,7 +320,7 @@ let make_serialized_workload runtime payload_size =
     Crux.State_machine.create (Crux.return ())
       ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action:() ->
-        (model + 1, Eta.Effect.unit))
+        (model + 1, None))
   in
   let description =
     Crux.map machine ~f:(fun (_, endpoint) ->
@@ -373,7 +373,7 @@ let make_capacity_workload runtime capacity =
     Crux.State_machine.create (Crux.return ())
       ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let codec =
     Crux.Codec.make
@@ -473,6 +473,8 @@ let make_request_capacity_workload runtime capacity =
     | Crux.Request.Driver_event.Handled, Ok () ->
         Eta.Effect.unit
     | Crux.Request.Driver_event.Different_operation, _
+    | Crux.Request.Driver_event.Already_handled, _
+    | Crux.Request.Driver_event.Closed _, _
     | _, Error Crux.Request.Driver_event.Already_completed ->
         Eta.Effect.die_message
           "request-capacity benchmark completed an event incorrectly"
@@ -537,12 +539,12 @@ let make_serialized_handle_retention_workload runtime =
     Crux.State_machine.create (Crux.return ())
       ~default_model:true
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-        (action, Eta.Effect.unit))
+        (action, None))
   in
   let child =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let export =
     Crux.Exported_endpoint.create (Crux.map child ~f:snd)
@@ -780,7 +782,7 @@ let make_telemetry_workload runtime ~suppressed =
     Crux.State_machine.create (Crux.return ())
       ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let driver, (_, endpoint) = setup_identity runtime machine in
   let open Eta.Syntax in
@@ -1033,6 +1035,15 @@ let () =
         "telemetry.absent_control"
         (fun () ->
           make_telemetry_workload runtime ~suppressed:false)
+    @ selected ~counters:[ ("commits", 1.) ]
+        "observer.disabled"
+        (fun () -> make_action_workload runtime)
+    @ selected ~counters:[ ("commits", 1.) ]
+        "reset.disabled"
+        (fun () -> make_action_workload runtime)
+    @ selected ~counters:[ ("commits", 1.) ]
+        "poll.disabled"
+        (fun () -> make_action_workload runtime)
     @ selected
         ~counters:
           [ ("max_pending", 1.); ("admissions", 1.) ]

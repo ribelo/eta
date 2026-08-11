@@ -65,6 +65,53 @@ type request_resolve_result =
 `Failure.portable` is the portable crash payload. Application codecs supply the
 root-output, request, response, and endpoint payload bytes.
 
+## Portable failure encoding
+
+`Failure.encode_portable` produces the `ECF1` magic, one primary record, and
+the length-prefixed secondary record list. Each record contains the portable
+cause, one origin byte, one trigger byte, and the position as a signed 64-bit
+big-endian integer.
+
+| Origin | Tag |
+|---|---|
+| `Transition` | 0 |
+| `Owned_work` | 1 |
+| `Adapter_delivery` | 2 |
+| `Request_dispatch` | 3 |
+| `Export_dispatch` | 4 |
+| `Cleanup` | 5 |
+| `Crash_handler` | 6 |
+| `Graph_clock` | 7 |
+
+| Trigger | Tag |
+|---|---|
+| `Initial_start` | 0 |
+| `Endpoint_action` | 1 |
+| `Transition_effect` | 2 |
+| `Lifecycle_program` | 3 |
+| `Source_opening` | 4 |
+| `Source_producer` | 5 |
+| `Local_export_invocation` | 6 |
+| `Serialized_export_invocation` | 7 |
+| `Outbound_request` | 8 |
+| `Inbound_response` | 9 |
+| `Request_cancellation` | 10 |
+| `Output_delivery` | 11 |
+| `Stop_teardown` | 12 |
+| `Crash_teardown` | 13 |
+| `Application_crash_handler` | 14 |
+| `Clock_sample` | 15 |
+| `Clock_due` | 16 |
+| `Structural_reset` | 17 |
+| `Poll_effect` | 18 |
+
+`Endpoint_action` occupies the tag that the previous contract named
+`Endpoint_message`. The wire fixtures exercise the new tags in the
+`Crash_notify` payload (`test/crux/wire/test_eta_crux_wire.ml`): the primary
+record uses origin `Graph_clock` (7) with trigger `Clock_sample` (15), and the
+secondary records cover `Clock_due` (16), `Structural_reset` (17),
+`Poll_effect` (18), and `Endpoint_action` (1) at fixture positions 19L-22L.
+
 ## Frames
 
 ```ocaml
@@ -152,6 +199,11 @@ type frame =
 
 `Request_resolved` and `Request_closed` are terminal notifications for an
 inbound request. They have no result frame.
+
+Graph time, `Reset`, `Poll`, and the post-commit effect observer add no
+wire-frame family. `Wire.Frame` and its tag table are unchanged by the
+capability surface. The portable failure payload above is the only encoding
+that gained variants.
 
 The operation name grammar is `[a-z][a-z0-9._-]*`. Its maximum UTF-8 length is
 128 bytes. Names are unique in one adapter binding.

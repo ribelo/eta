@@ -7,12 +7,18 @@ let int_map_find key map =
   | None -> invalid_arg "Eta Crux law: missing map key"
 
 let shared_runtime : Crux.never Eta.Runtime.t option ref = ref None
+let shared_clock : Eta_test.Test_clock.t option ref = ref None
 
 let run_ok eff =
   match !shared_runtime with
   | None -> failwith "law runtime is not installed"
   | Some runtime ->
       Eta.Runtime.run runtime eff |> Eta_test.Expect.expect_ok
+
+let law_clock () =
+  match !shared_clock with
+  | Some clock -> clock
+  | None -> failwith "law clock is not installed"
 
 let committed = function
   | Ok (Crux.Root.Committed { output; post_commit }) ->
@@ -136,7 +142,7 @@ let qcheck_description_identity =
         Crux.State_machine.create (Crux.return ()) ~default_model:0
           ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
             incr transitions;
-            (model + action, Eta.Effect.unit))
+            (model + action, None))
       in
       let root =
         Crux.Root.create ~ingress_capacity:32 ~request_capacity:1
@@ -179,7 +185,7 @@ let qcheck_cutoff_boundary =
           ~model_cutoff:Crux.Cutoff.never
           (Crux.return ()) ~default_model:0
           ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-            (model + action, Eta.Effect.unit))
+            (model + action, None))
       in
       let model = Crux.map machine ~f:fst in
       let project cutoff projections =
@@ -303,7 +309,7 @@ let qcheck_cutoff_boundary =
           ~model_cutoff:Crux.Cutoff.never
           (Crux.return ()) ~default_model:(ref 0)
           ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-            ((if action = 0 then model else ref !model), Eta.Effect.unit))
+            ((if action = 0 then model else ref !model), None))
       in
       let ref_model = Crux.map ref_machine ~f:fst in
       let count cutoff counter =
@@ -355,7 +361,7 @@ let assoc_description
   let parent =
     Crux.State_machine.create (Crux.return ()) ~default_model:initial
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-        (action, Eta.Effect.unit))
+        (action, None))
   in
   let children =
     let module Assoc = Crux.Assoc (Int) in
@@ -366,7 +372,7 @@ let assoc_description
         let machine =
           Crux.State_machine.create data ~default_model:0
             ~apply_action:(fun ~self:_ ~input:_ ~model ~action ->
-              (model + action, Eta.Effect.unit))
+              (model + action, None))
         in
         Crux.map (Crux.both data machine)
           ~f:(fun (current_data, (model, endpoint)) ->
@@ -582,12 +588,12 @@ let make_source_harness
     Crux.State_machine.create (Crux.return ())
       ~default_model:(spec, mapper)
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-        (action, Eta.Effect.unit))
+        (action, None))
   in
   let sink =
     Crux.State_machine.create (Crux.return ()) ~default_model:[]
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model @ [ action ], Eta.Effect.unit))
+        (model @ [ action ], None))
   in
   let source =
     Crux.Source.create
@@ -787,7 +793,7 @@ let qcheck_transition_snapshot =
         Crux.State_machine.create (Crux.return ())
           ~default_model:initial_input
           ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-            (action, Eta.Effect.unit))
+            (action, None))
       in
       let machine =
         Crux.State_machine.create (Crux.map input ~f:fst)
@@ -795,7 +801,7 @@ let qcheck_transition_snapshot =
           ~apply_action:(fun ~self:_ ~input ~model ~action ->
             calls := (input, model, action) :: !calls;
             ( model + (input * action),
-              Eta.Effect.sync (fun () -> effect_started := true) ))
+              Some (Eta.Effect.sync (fun () -> effect_started := true)) ))
       in
       let root =
         Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
@@ -839,7 +845,7 @@ let qcheck_one_event_advancement =
         Crux.State_machine.create (Crux.return ()) ~default_model:0
           ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
             incr calls;
-            ((model * 31) + action, Eta.Effect.unit))
+            ((model * 31) + action, None))
       in
       let root =
         Crux.Root.create ~ingress_capacity:12 ~request_capacity:1 machine
@@ -889,7 +895,7 @@ let qcheck_complete_output_per_commit =
         Crux.State_machine.create (Crux.return ()) ~default_model:0
           ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
             incr calls;
-            (model + action, Eta.Effect.unit))
+            (model + action, None))
       in
       let root =
         Crux.Root.create ~ingress_capacity:12 ~request_capacity:1 machine
@@ -932,7 +938,7 @@ let qcheck_lifecycle_once_per_interval =
       let selector =
         Crux.State_machine.create (Crux.return ()) ~default_model:true
           ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-            (action, Eta.Effect.unit))
+            (action, None))
       in
       let lifecycle =
         Crux.lifecycle
@@ -990,7 +996,7 @@ let exported_counter ~capacity =
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let export =
     Crux.Exported_endpoint.create (Crux.map machine ~f:snd)
@@ -1116,7 +1122,7 @@ let qcheck_endpoint_contramap =
       let machine =
         Crux.State_machine.create (Crux.return ()) ~default_model:0
           ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-            (model + action, Eta.Effect.unit))
+            (model + action, None))
       in
       let root =
         Crux.Root.create ~ingress_capacity:32 ~request_capacity:1 machine
@@ -1147,12 +1153,12 @@ let bind_description () =
   let selector =
     Crux.State_machine.create (Crux.return ()) ~default_model:true
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-        (action, Eta.Effect.unit))
+        (action, None))
   in
   let child default_model =
     Crux.State_machine.create (Crux.return ()) ~default_model
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let present = child 10 in
   let absent = child 20 in
@@ -1286,7 +1292,7 @@ let qcheck_committed_dependencies_only =
           Crux.State_machine.create (Crux.return ())
             ~default_model:initial
             ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-              (action, Eta.Effect.unit))
+              (action, None))
         in
         let mapped = Crux.map input ~f:fst in
         let bound =
@@ -1378,7 +1384,7 @@ let qcheck_post_commit_fence =
       let machine =
         Crux.State_machine.create (Crux.return ()) ~default_model:0
           ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-            (model + action, Eta.Effect.unit))
+            (model + action, None))
       in
       let root =
         Crux.Root.create ~ingress_capacity:32 ~request_capacity:1 machine
@@ -1423,7 +1429,7 @@ let qcheck_assoc_rollback =
         Crux.State_machine.create (Crux.return ())
           ~default_model:(Int_map.singleton retained_key data)
           ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-            (action, Eta.Effect.unit))
+            (action, None))
       in
       let module Assoc = Crux.Assoc (Int) in
       let children =
@@ -1432,7 +1438,7 @@ let qcheck_assoc_rollback =
             let child =
               Crux.State_machine.create (Crux.return ()) ~default_model:0
                 ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-                  (model + action, Eta.Effect.unit))
+                  (model + action, None))
             in
             Crux.Exported_endpoint.create (Crux.map child ~f:snd)
               ~codec:int_codec
@@ -1501,7 +1507,7 @@ let qcheck_assoc_lifecycle_order =
         Crux.State_machine.create (Crux.return ())
           ~default_model:initial_map
           ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-            (action, Eta.Effect.unit))
+            (action, None))
       in
       let module Assoc = Crux.Assoc (Int) in
       let children =
@@ -1510,7 +1516,7 @@ let qcheck_assoc_lifecycle_order =
             let child =
               Crux.State_machine.create (Crux.return ()) ~default_model:0
                 ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-                  (model + action, Eta.Effect.unit))
+                  (model + action, None))
             in
             Crux.Exported_endpoint.create (Crux.map child ~f:snd)
               ~codec:int_codec)
@@ -1605,12 +1611,12 @@ let qcheck_export_generation =
       let selector =
         Crux.State_machine.create (Crux.return ()) ~default_model:true
           ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-            (action, Eta.Effect.unit))
+            (action, None))
       in
       let child =
         Crux.State_machine.create (Crux.return ()) ~default_model:0
           ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-            (model + action, Eta.Effect.unit))
+            (model + action, None))
       in
       let exported =
         Crux.Exported_endpoint.create (Crux.map child ~f:snd)
@@ -1701,12 +1707,12 @@ let qcheck_export_rebinding =
       let selector =
         Crux.State_machine.create (Crux.return ()) ~default_model:true
           ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-            (action, Eta.Effect.unit))
+            (action, None))
       in
       let counter () =
         Crux.State_machine.create (Crux.return ()) ~default_model:0
           ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-            (model + action, Eta.Effect.unit))
+            (model + action, None))
       in
       let left = counter () in
       let right = counter () in
@@ -1866,6 +1872,8 @@ let resolve_request_event event =
   match handled, completion with
   | Crux.Request.Driver_event.Handled, Ok () -> Eta.Effect.unit
   | Crux.Request.Driver_event.Different_operation, _
+  | Crux.Request.Driver_event.Already_handled, _
+  | Crux.Request.Driver_event.Closed _, _
   | _, Error Crux.Request.Driver_event.Already_completed ->
       Eta.Effect.die_message "request event did not complete once"
 
@@ -1940,12 +1948,12 @@ let qcheck_driver_one_advancement =
       let selector =
         Crux.State_machine.create (Crux.return ()) ~default_model:true
           ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-            (action, Eta.Effect.unit))
+            (action, None))
       in
       let child =
         Crux.State_machine.create (Crux.return ()) ~default_model:0
           ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-            (model + action, Eta.Effect.unit))
+            (model + action, None))
       in
       let selected =
         Crux.bind (Crux.map selector ~f:fst) ~f:(fun enabled ->
@@ -2087,7 +2095,7 @@ let qcheck_request_closure_reasons =
       let selector =
         Crux.State_machine.create (Crux.return ()) ~default_model:true
           ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-            (action, Eta.Effect.unit))
+            (action, None))
       in
       let selected =
         Crux.bind (Crux.map selector ~f:fst) ~f:(fun enabled ->
@@ -2585,7 +2593,7 @@ let qcheck_malformed_frame_isolation =
       in
       let no_application_change =
         run_ok (Crux.Root.advance root)
-        = Error Crux.Root.Awaiting_post_commit
+        = Error Crux.Root.Driver_attached
       in
       Option.is_some command && rejected && no_reply
       && no_application_change)
@@ -2887,7 +2895,7 @@ let qcheck_wire_redaction =
           ~default_model:model
           ~apply_action:(fun ~self:_ ~input:() ~model:_
                             ~action ->
-            (action, Eta.Effect.unit))
+            (action, None))
       in
       let payload_codec =
         Crux.Codec.make ~encode:Bytes.of_string
@@ -3020,8 +3028,9 @@ let qcheck_bounded_drain =
           ~default_model:0
           ~apply_action:(fun ~self ~input:() ~model ~action ->
             ( model + action,
-              Crux.Endpoint.send self action
-              |> Eta.Effect.ignore_errors ))
+              Some
+                (Crux.Endpoint.send self action
+                |> Eta.Effect.ignore_errors) ))
       in
       let seed =
         Crux.lifecycle
@@ -3034,8 +3043,10 @@ let qcheck_bounded_drain =
           ~request_capacity:1
           (Crux.map (Crux.both machine seed) ~f:fst)
       in
+      let clock = Eta_test.Test_clock.create () in
       let handle =
         Eta_crux_test.Handle.create
+          ~clock
           ~incoming:Eta_crux_test.Incoming.none
           ~shell:crux_test_shell root
       in
@@ -3079,8 +3090,8 @@ let controlled_source_root controlled =
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
         match action with
         | Controlled_item item ->
-            (model @ [ item ], Eta.Effect.unit)
-        | Controlled_terminal -> (model, Eta.Effect.unit))
+            (model @ [ item ], None)
+        | Controlled_terminal -> (model, None))
   in
   let source =
     Crux.Source.create
@@ -3298,9 +3309,2735 @@ let qcheck_controlled_dependencies =
       observe_controlled_effects inputs
       && observe_controlled_source inputs)
 
+let qcheck_latest_committed_output =
+  let actions =
+    let open QCheck.Gen in
+    list_size (0 -- 20) (-3 -- 3)
+  in
+  (* Generated class: bounded integer action traces, including output-equal
+     zero actions. Observation boundary: the synchronous pull query, driver
+     delivery events, and delivery-token completion. *)
+  QCheck.Test.make ~name:"qcheck_latest_committed_output"
+    ~count:100
+    (QCheck.make ~print:QCheck.Print.(list int) actions)
+    (fun actions ->
+      let machine =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:0
+          ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
+            (model + action, None))
+      in
+      let root =
+        Crux.Root.create ~ingress_capacity:2
+          ~request_capacity:1 machine
+      in
+      let driver =
+        Crux.Driver.create
+          (Crux.Driver.Binding.identity []) root
+      in
+      let observe expected =
+        match run_ok (Crux.Driver.poll driver) with
+        | Some (Crux.Driver.Deliver delivery) ->
+            let pulled =
+              Crux.Driver.latest_committed_output driver
+            in
+            let still_delivering =
+              run_ok (Crux.Driver.poll driver) = None
+            in
+            let delivered =
+              run_ok
+                (Crux.Driver.Delivery.delivered delivery)
+              = Ok ()
+            in
+            (match pulled with
+            | Some (model, _) -> model = expected
+            | None -> false)
+            && fst (Crux.Driver.Delivery.output delivery) = expected
+            && still_delivering && delivered
+        | Some _ | None -> false
+      in
+      let before =
+        Crux.Driver.latest_committed_output driver = None
+      in
+      let initial = observe 0 in
+      let _, endpoint =
+        Option.get
+          (Crux.Driver.latest_committed_output driver)
+      in
+      let _, all_observed =
+        List.fold_left
+          (fun (expected, valid) action ->
+            let admitted =
+              run_ok
+                (Crux.Endpoint.send endpoint action
+                |> Eta.Effect.or_die (fun _ ->
+                       Invalid_argument "ingress closed"))
+              = ()
+            in
+            let expected = expected + action in
+            (expected, valid && admitted && observe expected))
+          (0, true) actions
+      in
+      before && initial && all_observed)
+
+module Post_commit_observer =
+  Eta_crux_test.Post_commit_effect_observer
+
+let observer_driver ?observer apply_action =
+  let machine =
+    Crux.State_machine.create (Crux.return ())
+      ~default_model:0 ~apply_action
+  in
+  let root =
+    Crux.Root.create ?post_commit_effect_observer:observer
+      ~ingress_capacity:2 ~request_capacity:1 machine
+  in
+  let driver =
+    Crux.Driver.create (Crux.Driver.Binding.identity []) root
+  in
+  (root, driver)
+
+let observer_delivery = function
+  | Some (Crux.Driver.Deliver delivery) -> delivery
+  | Some _ | None -> failwith "expected observer-law delivery"
+
+let complete_observer_delivery delivery =
+  ignore (run_ok (Crux.Driver.Delivery.delivered delivery))
+
+let qcheck_post_commit_effect_observer_inventory =
+  let inventory =
+    let open QCheck.Gen in
+    list_size (0 -- 15) bool
+  in
+  (* Generated class: commits with empty or one-effect transition
+     inventories, including [Some Effect.unit]. Observation boundary:
+     per-commit Staged inventories, commit indices, unique effect identities,
+     and complete lifecycle events after admission. *)
+  QCheck.Test.make
+    ~name:"qcheck_post_commit_effect_observer_inventory"
+    ~count:100
+    (QCheck.make ~print:QCheck.Print.(list bool) inventory)
+    (fun inventory ->
+      let observer = Post_commit_observer.create () in
+      let _root, driver =
+        observer_driver
+          ~observer:(Post_commit_observer.attachment observer)
+          (fun ~self:_ ~input:() ~model ~action ->
+            (model + 1, if action then Some Eta.Effect.unit else None))
+      in
+      let initial =
+        observer_delivery (run_ok (Crux.Driver.poll driver))
+      in
+      let _, endpoint = Crux.Driver.Delivery.output initial in
+      let initial_valid =
+        match Post_commit_observer.poll observer with
+        | Some
+            (Post_commit_observer.Staged
+              { commit; effects = []; _ }) ->
+            Post_commit_observer.Commit_index.to_int64 commit = 0L
+        | Some _ | None -> false
+      in
+      complete_observer_delivery initial;
+      let _, valid, identities =
+        List.fold_left
+          (fun (index, valid, identities) present ->
+            ignore
+              (run_ok
+                 (Crux.Endpoint.send endpoint present
+                 |> Eta.Effect.or_die (fun _ ->
+                        Invalid_argument "ingress closed")));
+            let delivery =
+              observer_delivery (run_ok (Crux.Driver.poll driver))
+            in
+            let stage =
+              Post_commit_observer.poll observer
+            in
+            let stage_valid, identities =
+              match stage, present with
+              | Some
+                  (Post_commit_observer.Staged
+                    { commit; effects = [ effect ]; _ }),
+                true ->
+                  ( Post_commit_observer.Commit_index.to_int64 commit
+                    = Int64.of_int index,
+                    effect :: identities )
+              | Some
+                  (Post_commit_observer.Staged
+                    { commit; effects = []; _ }),
+                false ->
+                  ( Post_commit_observer.Commit_index.to_int64 commit
+                    = Int64.of_int index,
+                    identities )
+              | (Some _ | None), _ -> (false, identities)
+            in
+            complete_observer_delivery delivery;
+            for _ = 1 to 3 do
+              Eio.Fiber.yield ()
+            done;
+            let lifecycle =
+              Post_commit_observer.drain observer
+            in
+            let lifecycle_valid =
+              if present then
+                match lifecycle with
+                | [
+                 Post_commit_observer.Started _;
+                 Post_commit_observer.Settled
+                   { settlement = Succeeded; _ };
+                ] ->
+                    true
+                | _ -> false
+              else lifecycle = []
+            in
+            ( index + 1,
+              valid && stage_valid && lifecycle_valid,
+              identities ))
+          (1, initial_valid, []) inventory
+      in
+      let unique =
+        List.sort_uniq Post_commit_observer.Effect_id.compare
+          identities
+        |> List.length
+        = List.length identities
+      in
+      Crux.Driver.request_stop driver;
+      ignore (run_ok (Crux.Driver.poll driver));
+      valid && unique)
+
+let qcheck_post_commit_effect_observer_fifo =
+  let sample =
+    let open QCheck.Gen in
+    bind (2 -- 20) (fun count ->
+        map (fun polled -> (count, polled)) (1 -- (count - 1)))
+  in
+  (* Generated class: queues of at least two empty-inventory commits with a
+     non-empty poll prefix and drain suffix. Observation boundary: removed
+     event positions, exact once-only removal, and final queue emptiness. *)
+  QCheck.Test.make ~name:"qcheck_post_commit_effect_observer_fifo"
+    ~count:100
+    (QCheck.make
+       ~print:(fun (count, polled) ->
+         Printf.sprintf "{count=%d; polled=%d}" count polled)
+       sample)
+    (fun (count, polled) ->
+      let observer = Post_commit_observer.create () in
+      let machine =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:0
+          ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
+            (model + action, None))
+      in
+      let root =
+        Crux.Root.create
+          ~post_commit_effect_observer:
+            (Post_commit_observer.attachment observer)
+          ~ingress_capacity:2 ~request_capacity:1 machine
+      in
+      let output, post = committed (run_ok (Crux.Root.advance root)) in
+      let _, endpoint = output in
+      start post;
+      for _ = 2 to count do
+        ignore
+          (run_ok
+             (Crux.Endpoint.send endpoint 1
+             |> Eta.Effect.or_die (fun _ ->
+                    Invalid_argument "ingress closed")));
+        let _, post = committed (run_ok (Crux.Root.advance root)) in
+        start post
+      done;
+      let rec take remaining events =
+        if remaining = 0 then List.rev events
+        else
+          match Post_commit_observer.poll observer with
+          | Some event -> take (remaining - 1) (event :: events)
+          | None -> []
+      in
+      let events =
+        take polled []
+        @ Post_commit_observer.drain observer
+      in
+      let positions =
+        List.map
+          (function
+            | Post_commit_observer.Staged { position; _ }
+            | Post_commit_observer.Started { position; _ }
+            | Post_commit_observer.Settled { position; _ }
+            | Post_commit_observer.Discarded_before_start { position; _ } ->
+                Post_commit_observer.Event_position.to_int64 position)
+          events
+      in
+      let expected =
+        List.init count Int64.of_int
+      in
+      let empty =
+        Post_commit_observer.poll observer = None
+      in
+      Post_commit_observer.expect_empty observer;
+      positions = expected && empty)
+
+let qcheck_post_commit_effect_observer_lifecycle =
+  (* Generated class: success, failure, interruption, and discard-before-start
+     transition effects. Observation boundary: the exact accepted lifecycle
+     trace for the one staged effect and its controlled production outcome. *)
+  QCheck.Test.make
+    ~name:"qcheck_post_commit_effect_observer_lifecycle"
+    ~count:40 (QCheck.int_range 0 3)
+    (fun outcome ->
+      let observer = Post_commit_observer.create () in
+      let root, driver =
+        observer_driver
+          ~observer:(Post_commit_observer.attachment observer)
+          (fun ~self:_ ~input:() ~model ~action:_ ->
+            let effect =
+              match outcome with
+              | 0 -> Eta.Effect.unit
+              | 1 -> Eta.Effect.die_message "observed qcheck failure"
+              | 2 -> Eta.Effect.never
+              | _ -> Eta.Effect.unit
+            in
+            (model + 1, Some effect))
+      in
+      let initial =
+        observer_delivery (run_ok (Crux.Driver.poll driver))
+      in
+      let _, endpoint = Crux.Driver.Delivery.output initial in
+      complete_observer_delivery initial;
+      ignore (Post_commit_observer.drain observer);
+      ignore
+        (run_ok
+           (Crux.Endpoint.send endpoint ()
+           |> Eta.Effect.or_die (fun _ ->
+                  Invalid_argument "ingress closed")));
+      let delivery =
+        observer_delivery (run_ok (Crux.Driver.poll driver))
+      in
+      let effect =
+        match Post_commit_observer.drain observer with
+        | [
+         Post_commit_observer.Staged
+           { effects = [ effect ]; _ };
+        ] ->
+            effect
+        | _ -> failwith "missing lifecycle stage"
+      in
+      if outcome = 3 then (
+        let cause =
+          Crux.Failure.Packed_cause.make
+            ~pp_error:Format.pp_print_string
+            (Eta.Cause.fail "discard")
+        in
+        ignore
+          (run_ok
+             (Crux.Driver.Delivery.failed delivery cause));
+        ignore (run_ok (Crux.Driver.poll driver));
+        ignore (run_ok (Crux.Driver.poll driver)))
+      else (
+        complete_observer_delivery delivery;
+        for _ = 1 to 5 do
+          Eio.Fiber.yield ()
+        done;
+        if outcome = 2 then (
+          Crux.Driver.request_stop driver;
+          ignore (run_ok (Crux.Driver.poll driver)))
+        else if outcome = 1 then
+          ignore (run_ok (Crux.Driver.poll driver)));
+      for _ = 1 to 5 do
+        Eio.Fiber.yield ()
+      done;
+      match outcome, Post_commit_observer.drain observer with
+      | 0,
+        [
+         Post_commit_observer.Started { effect = started; _ };
+         Post_commit_observer.Settled
+           { effect = settled; settlement = Succeeded; _ };
+        ] ->
+          Post_commit_observer.Effect_id.compare effect started = 0
+          && Post_commit_observer.Effect_id.compare effect settled = 0
+      | 1,
+        [
+         Post_commit_observer.Started { effect = started; _ };
+         Post_commit_observer.Settled
+           { effect = settled; settlement = Failed; _ };
+        ] ->
+          Post_commit_observer.Effect_id.compare effect started = 0
+          && Post_commit_observer.Effect_id.compare effect settled = 0
+      | 2,
+        [
+         Post_commit_observer.Started { effect = started; _ };
+         Post_commit_observer.Settled
+           { effect = settled; settlement = Interrupted; _ };
+        ] ->
+          Post_commit_observer.Effect_id.compare effect started = 0
+          && Post_commit_observer.Effect_id.compare effect settled = 0
+      | 3,
+        [
+         Post_commit_observer.Discarded_before_start
+           { effect = discarded; _ };
+        ] ->
+          Post_commit_observer.Effect_id.compare effect discarded = 0
+      | _ -> false)
+
+let qcheck_post_commit_effect_observer_order =
+  (* Generated class: two overlapping controlled transition effects settled in
+     either start order or the distinguishing reverse order. Observation
+     boundary: event positions and effect identities in the complete trace. *)
+  QCheck.Test.make
+    ~name:"qcheck_post_commit_effect_observer_order"
+    ~count:40 QCheck.bool
+    (fun reverse ->
+      let first = Eta.Promise.create () in
+      let second = Eta.Promise.create () in
+      let observer = Post_commit_observer.create () in
+      let _root, driver =
+        observer_driver
+          ~observer:(Post_commit_observer.attachment observer)
+          (fun ~self:_ ~input:() ~model ~action ->
+            let promise = if action then second else first in
+            (model + 1, Some (Eta.Promise.await promise)))
+      in
+      let initial =
+        observer_delivery (run_ok (Crux.Driver.poll driver))
+      in
+      let _, endpoint = Crux.Driver.Delivery.output initial in
+      complete_observer_delivery initial;
+      ignore (Post_commit_observer.drain observer);
+      let admit action =
+        ignore
+          (run_ok
+             (Crux.Endpoint.send endpoint action
+             |> Eta.Effect.or_die (fun _ ->
+                    Invalid_argument "ingress closed")));
+        let delivery =
+          observer_delivery (run_ok (Crux.Driver.poll driver))
+        in
+        complete_observer_delivery delivery
+      in
+      admit false;
+      admit true;
+      let resolve promise =
+        ignore (run_ok (Eta.Promise.resolve promise (Eta.Exit.Ok ())));
+        for _ = 1 to 5 do
+          Eio.Fiber.yield ()
+        done
+      in
+      if reverse then (
+        resolve second;
+        resolve first)
+      else (
+        resolve first;
+        resolve second);
+      Crux.Driver.request_stop driver;
+      ignore (run_ok (Crux.Driver.poll driver));
+      let events = Post_commit_observer.drain observer in
+      let staged =
+        List.filter_map
+          (function
+            | Post_commit_observer.Staged
+                { effects = [ effect ]; _ } ->
+                Some effect
+            | _ -> None)
+          events
+      in
+      let settled =
+        List.filter_map
+          (function
+            | Post_commit_observer.Settled
+                { effect; settlement = Succeeded; _ } ->
+                Some effect
+            | _ -> None)
+          events
+      in
+      match staged, settled with
+      | [ first_effect; second_effect ],
+        [ settled_first; settled_second ] ->
+          let expected_first =
+            if reverse then second_effect else first_effect
+          in
+          let expected_second =
+            if reverse then first_effect else second_effect
+          in
+          Post_commit_observer.Effect_id.compare
+            expected_first settled_first
+          = 0
+          && Post_commit_observer.Effect_id.compare
+               expected_second settled_second
+             = 0
+      | _ -> false)
+
+let qcheck_post_commit_effect_observer_transparency =
+  let actions =
+    let open QCheck.Gen in
+    list_size (0 -- 15) (-10 -- 10)
+  in
+  (* Generated class: bounded integer action traces. Observation boundary:
+     admission results, complete delivered root outputs, normal terminal
+     outcomes, and the attached observer's fully drained local trace. *)
+  QCheck.Test.make
+    ~name:"qcheck_post_commit_effect_observer_transparency"
+    ~count:100
+    (QCheck.make ~print:QCheck.Print.(list int) actions)
+    (fun actions ->
+      let run observer =
+        let root, driver =
+          observer_driver ?observer
+            (fun ~self:_ ~input:() ~model ~action ->
+              (model + action, None))
+        in
+        let initial =
+          observer_delivery (run_ok (Crux.Driver.poll driver))
+        in
+        let model, endpoint = Crux.Driver.Delivery.output initial in
+        complete_observer_delivery initial;
+        let outputs, admitted =
+          List.fold_left
+            (fun (outputs, admitted) action ->
+              let sent =
+                run_ok
+                  (Eta.Effect.to_result
+                     (Crux.Endpoint.send endpoint action))
+              in
+              let delivery =
+                observer_delivery (run_ok (Crux.Driver.poll driver))
+              in
+              let output, _ = Crux.Driver.Delivery.output delivery in
+              complete_observer_delivery delivery;
+              (output :: outputs, admitted && sent = Ok ()))
+            ([ model ], true) actions
+        in
+        Crux.Driver.request_stop driver;
+        let terminal =
+          match run_ok (Crux.Driver.poll driver) with
+          | Some (Crux.Driver.Closed Crux.Driver.Stopped) -> `Stopped
+          | _ -> `Unexpected
+        in
+        (List.rev outputs, admitted, terminal)
+      in
+      let observer = Post_commit_observer.create () in
+      let without = run None in
+      let with_observer =
+        run
+          (Some
+             (Post_commit_observer.attachment observer))
+      in
+      ignore (Post_commit_observer.drain observer);
+      Post_commit_observer.expect_empty observer;
+      without = with_observer)
+
+let reset_trigger reset =
+  run_ok
+    (Crux.Reset.trigger reset
+    |> Eta.Effect.or_die (fun _ ->
+           Invalid_argument "reset ingress closed"))
+
+let reset_advance root =
+  let output, post_commit =
+    committed (run_ok (Crux.Root.advance root))
+  in
+  start post_commit;
+  output
+
+let qcheck_reset_default_custom =
+  let sample =
+    let open QCheck.Gen in
+    pair (0 -- 2) (list_size (0 -- 20) bool)
+  in
+  (* Generated class: traces of ordinary increments and repeated reset
+     triggers under default, preserving, and non-idempotent custom callbacks.
+     Observation boundary: every complete committed model and callback count. *)
+  QCheck.Test.make ~name:"qcheck_reset_default_custom"
+    ~count:100
+    (QCheck.make
+       ~print:(fun (mode, operations) ->
+         Printf.sprintf "{mode=%d; operations=%s}" mode
+           (QCheck.Print.(list bool) operations))
+       sample)
+    (fun (mode, operations) ->
+      let callbacks = ref 0 in
+      let description =
+        Crux.Reset.scope (Crux.return ())
+          ~f:(fun ~reset ~input ->
+            let create ?reset () =
+              Crux.State_machine.create ?reset input
+                ~default_model:0
+                ~apply_action:(fun ~self:_ ~input:()
+                                  ~model ~action ->
+                  (model + action, None))
+            in
+            let machine =
+              match mode with
+              | 0 -> create ()
+              | 1 ->
+                  create
+                    ~reset:(fun ~self:_ ~input:() ~model ->
+                      incr callbacks;
+                      (model, None))
+                    ()
+              | _ ->
+                  create
+                    ~reset:(fun ~self:_ ~input:() ~model ->
+                      incr callbacks;
+                      (model + 1, None))
+                    ()
+            in
+            Crux.both reset machine)
+      in
+      let root =
+        Crux.Root.create
+          ~ingress_capacity:(max 1 (List.length operations))
+          ~request_capacity:1 description
+      in
+      let reset, (model, endpoint) = reset_advance root in
+      let _, expected, valid, _ =
+        List.fold_left
+          (fun (resets, expected, valid, endpoint) operation ->
+            if operation then reset_trigger reset
+            else
+              ignore
+                (run_ok
+                   (Crux.Endpoint.send endpoint 1
+                   |> Eta.Effect.or_die (fun _ ->
+                          Invalid_argument "ingress closed")));
+            let _, (model, next_endpoint) =
+              reset_advance root
+            in
+            let expected =
+              if operation then
+                match mode with
+                | 0 -> 0
+                | 1 -> expected
+                | _ -> expected + 1
+              else expected + 1
+            in
+            ( resets + (if operation then 1 else 0),
+              expected,
+              valid && model = expected,
+              next_endpoint ))
+          (0, model, model = 0, endpoint) operations
+      in
+      let resets =
+        List.length (List.filter Fun.id operations)
+      in
+      valid
+      && !callbacks = if mode = 0 then 0 else resets)
+
+let qcheck_reset_snapshot_atomicity =
+  let sample =
+    let open QCheck.Gen in
+    pair (-100 -- 100) (-100 -- 100)
+  in
+  (* Generated class: two-cell reset snapshots with independently generated
+     pre-reset models. Observation boundary: callback witnesses and the one
+     complete post-reset root output. *)
+  QCheck.Test.make ~name:"qcheck_reset_snapshot_atomicity"
+    ~count:100
+    (QCheck.make
+       ~print:(fun (left, right) ->
+         Printf.sprintf "(%d,%d)" left right)
+       sample)
+    (fun (left_value, right_value) ->
+      let left_seen = ref None in
+      let right_seen = ref None in
+      let description =
+        Crux.Reset.scope (Crux.return ())
+          ~f:(fun ~reset ~input ->
+            let machine seen delta =
+              Crux.State_machine.create input ~default_model:0
+                ~reset:(fun ~self:_ ~input:() ~model ->
+                  seen := Some model;
+                  (model + delta, None))
+                ~apply_action:(fun ~self:_ ~input:()
+                                  ~model:_ ~action ->
+                  (action, None))
+            in
+            Crux.both reset
+              (Crux.both
+                 (machine left_seen 1_000)
+                 (machine right_seen 10_000)))
+      in
+      let root =
+        Crux.Root.create ~ingress_capacity:3
+          ~request_capacity:1 description
+      in
+      let reset, ((_, left_endpoint), (_, right_endpoint)) =
+        reset_advance root
+      in
+      ignore
+        (run_ok
+           (Crux.Endpoint.send left_endpoint left_value
+           |> Eta.Effect.or_die (fun _ ->
+                  Invalid_argument "ingress closed")));
+      ignore (reset_advance root);
+      ignore
+        (run_ok
+           (Crux.Endpoint.send right_endpoint right_value
+           |> Eta.Effect.or_die (fun _ ->
+                  Invalid_argument "ingress closed")));
+      ignore (reset_advance root);
+      reset_trigger reset;
+      let _, ((left_model, _), (right_model, _)) =
+        reset_advance root
+      in
+      !left_seen = Some left_value
+      && !right_seen = Some right_value
+      && left_model = left_value + 1_000
+      && right_model = right_value + 10_000)
+
+let qcheck_reset_ingress_order =
+  let operations =
+    let open QCheck.Gen in
+    list_size (1 -- 20) bool
+  in
+  (* Generated class: non-empty FIFO traces where [false] is Action (+1) and
+     [true] is reset (2*n+1). All items are admitted before advancement.
+     Observation boundary: every committed model in queue order. *)
+  QCheck.Test.make ~name:"qcheck_reset_ingress_order"
+    ~count:100
+    (QCheck.make ~print:QCheck.Print.(list bool) operations)
+    (fun operations ->
+      let description =
+        Crux.Reset.scope (Crux.return ())
+          ~f:(fun ~reset ~input ->
+            let machine =
+              Crux.State_machine.create input ~default_model:1
+                ~reset:(fun ~self:_ ~input:() ~model ->
+                  ((2 * model) + 1, None))
+                ~apply_action:(fun ~self:_ ~input:()
+                                  ~model ~action:() ->
+                  (model + 1, None))
+            in
+            Crux.both reset machine)
+      in
+      let root =
+        Crux.Root.create
+          ~ingress_capacity:(List.length operations)
+          ~request_capacity:1 description
+      in
+      let reset, (_, endpoint) = reset_advance root in
+      List.iter
+        (fun operation ->
+          if operation then reset_trigger reset
+          else
+            ignore
+              (run_ok
+                 (Crux.Endpoint.send endpoint ()
+                 |> Eta.Effect.or_die (fun _ ->
+                        Invalid_argument "ingress closed"))))
+        operations;
+      let _, valid =
+        List.fold_left
+          (fun (expected, valid) operation ->
+            let _, (model, _) = reset_advance root in
+            let expected =
+              if operation then (2 * expected) + 1
+              else expected + 1
+            in
+            (expected, valid && model = expected))
+          (1, true) operations
+      in
+      valid)
+
+let qcheck_reset_scope_boundary =
+  let sample =
+    let open QCheck.Gen in
+    triple bool (-100 -- 100) (-100 -- 100)
+  in
+  (* Generated class: nested outer/inner reset scopes with independently
+     generated active models and either selected authority. Observation
+     boundary: the complete two-model output after one reset. *)
+  QCheck.Test.make ~name:"qcheck_reset_scope_boundary"
+    ~count:100
+    (QCheck.make
+       ~print:(fun (outer, left, right) ->
+         Printf.sprintf "{outer=%b; left=%d; right=%d}"
+           outer left right)
+       sample)
+    (fun (use_outer, left_value, right_value) ->
+      let description =
+        Crux.Reset.scope (Crux.return ())
+          ~f:(fun ~reset:outer_reset ~input ->
+            let outer =
+              Crux.State_machine.create input ~default_model:0
+                ~apply_action:(fun ~self:_ ~input:()
+                                  ~model:_ ~action ->
+                  (action, None))
+            in
+            let inner =
+              Crux.Reset.scope input
+                ~f:(fun ~reset:inner_reset ~input ->
+                  let machine =
+                    Crux.State_machine.create input
+                      ~default_model:0
+                      ~apply_action:(fun ~self:_ ~input:()
+                                        ~model:_ ~action ->
+                        (action, None))
+                  in
+                  Crux.both inner_reset machine)
+            in
+            Crux.both outer_reset (Crux.both outer inner))
+      in
+      let root =
+        Crux.Root.create ~ingress_capacity:3
+          ~request_capacity:1 description
+      in
+      let outer_reset,
+          ((_, outer_endpoint),
+           (inner_reset, (_, inner_endpoint))) =
+        reset_advance root
+      in
+      ignore
+        (run_ok
+           (Crux.Endpoint.send outer_endpoint left_value
+           |> Eta.Effect.or_die (fun _ ->
+                  Invalid_argument "ingress closed")));
+      ignore (reset_advance root);
+      ignore
+        (run_ok
+           (Crux.Endpoint.send inner_endpoint right_value
+           |> Eta.Effect.or_die (fun _ ->
+                  Invalid_argument "ingress closed")));
+      ignore (reset_advance root);
+      reset_trigger (if use_outer then outer_reset else inner_reset);
+      let _, ((left, _), (_, (right, _))) =
+        reset_advance root
+      in
+      if use_outer then left = 0 && right = 0
+      else left = left_value && right = 0)
+
+let qcheck_reset_dynamic_children =
+  (* Generated class: either initial bind branch. Each outer reset flips the
+     selector and therefore removes one child and creates the other.
+     Observation boundary: authority stability, child endpoint incarnation,
+     and the new child's default model. *)
+  QCheck.Test.make ~name:"qcheck_reset_dynamic_children"
+    ~count:50 QCheck.bool
+    (fun initial ->
+      let description =
+        Crux.Reset.scope (Crux.return ())
+          ~f:(fun ~reset ~input ->
+            let selector =
+              Crux.State_machine.create input
+                ~default_model:initial
+                ~reset:(fun ~self:_ ~input:() ~model ->
+                  (not model, None))
+                ~apply_action:(fun ~self:_ ~input:()
+                                  ~model:_ ~action ->
+                  (action, None))
+            in
+            let child =
+              Crux.bind selector
+                ~f:(fun (selected, _) ->
+                  Crux.State_machine.create input
+                    ~default_model:(if selected then 10 else 20)
+                    ~apply_action:(fun ~self:_ ~input:()
+                                      ~model ~action:_ ->
+                      (model, None)))
+            in
+            Crux.both reset (Crux.both selector child))
+      in
+      let root =
+        Crux.Root.create ~ingress_capacity:1
+          ~request_capacity:1 description
+      in
+      let authority,
+          ((selected, _), (child_model, child_endpoint)) =
+        reset_advance root
+      in
+      let initial_valid =
+        selected = initial
+        && child_model = (if initial then 10 else 20)
+      in
+      reset_trigger authority;
+      let next_authority,
+          ((selected, _), (child_model, next_endpoint)) =
+        reset_advance root
+      in
+      let bind_valid =
+        initial_valid
+        && authority == next_authority
+        && selected = not initial
+        && child_model = (if initial then 20 else 10)
+        && child_endpoint != next_endpoint
+      in
+      let initial_map =
+        Int_map.empty
+        |> Int_map.set 0 0
+        |> Int_map.set 1 1
+      in
+      let target_map =
+        Int_map.empty
+        |> Int_map.set 1 1
+        |> Int_map.set 2 2
+      in
+      let assoc_description =
+        Crux.Reset.scope (Crux.return ())
+          ~f:(fun ~reset ~input ->
+            let parent =
+              Crux.State_machine.create input
+                ~default_model:initial_map
+                ~reset:(fun ~self:_ ~input:() ~model:_ ->
+                  (target_map, None))
+                ~apply_action:(fun ~self:_ ~input:()
+                                  ~model:_ ~action ->
+                  (action, None))
+            in
+            let module Assoc = Crux.Assoc (Int) in
+            let children =
+              Assoc.assoc (Crux.map parent ~f:fst)
+                ~f:(fun ~key ~data ->
+                  Crux.State_machine.create data
+                    ~default_model:(key * 10)
+                    ~reset:(fun ~self:_ ~input:_ ~model ->
+                      (model + 100, None))
+                    ~apply_action:(fun ~self:_ ~input:_
+                                      ~model ~action:_ ->
+                      (model, None)))
+            in
+            Crux.both reset (Crux.both parent children))
+      in
+      let assoc_root =
+        Crux.Root.create ~ingress_capacity:1
+          ~request_capacity:1 assoc_description
+      in
+      let assoc_reset, (_, children) =
+        reset_advance assoc_root
+      in
+      let _, retained_endpoint =
+        int_map_find 1 children
+      in
+      reset_trigger assoc_reset;
+      let _, (_, next_children) =
+        reset_advance assoc_root
+      in
+      let retained_model, next_retained_endpoint =
+        int_map_find 1 next_children
+      in
+      let added_model, _ = int_map_find 2 next_children in
+      bind_valid
+      && not (Int_map.mem 0 next_children)
+      && retained_model = 110
+      && retained_endpoint == next_retained_endpoint
+      && added_model = 20)
+
+let qcheck_reset_effect_lifecycle =
+  let inventories =
+    let open QCheck.Gen in
+    list_size (0 -- 8) bool
+  in
+  (* Generated class: reset scopes with zero through many callbacks, each
+     independently returning None or Some Effect.unit. Observation boundary:
+     exact Staged inventory and one successful lifecycle per present effect. *)
+  QCheck.Test.make ~name:"qcheck_reset_effect_lifecycle"
+    ~count:100
+    (QCheck.make ~print:QCheck.Print.(list bool) inventories)
+    (fun inventories ->
+      let observer = Post_commit_observer.create () in
+      let description =
+        Crux.Reset.scope (Crux.return ())
+          ~f:(fun ~reset ~input ->
+            let machines =
+              List.fold_left
+                (fun machines present ->
+                  let machine =
+                    Crux.State_machine.create input ~default_model:()
+                      ~reset:(fun ~self:_ ~input:() ~model:() ->
+                        ( (),
+                          if present then Some Eta.Effect.unit
+                          else None ))
+                      ~apply_action:(fun ~self:_ ~input:()
+                                        ~model:() ~action:() ->
+                        ((), None))
+                    |> Crux.map ~f:(fun _ -> ())
+                  in
+                  Crux.map (Crux.both machines machine)
+                    ~f:(fun _ -> ()))
+                (Crux.return ()) inventories
+            in
+            Crux.both reset machines)
+      in
+      let root =
+        Crux.Root.create
+          ~post_commit_effect_observer:
+            (Post_commit_observer.attachment observer)
+          ~ingress_capacity:1 ~request_capacity:1 description
+      in
+      let reset, _ = reset_advance root in
+      ignore (Post_commit_observer.drain observer);
+      reset_trigger reset;
+      let _, post_commit =
+        committed (run_ok (Crux.Root.advance root))
+      in
+      let effects =
+        match Post_commit_observer.drain observer with
+        | [
+         Post_commit_observer.Staged { effects; _ };
+        ] ->
+            effects
+        | _ -> []
+      in
+      start post_commit;
+      for _ = 1 to 5 do
+        Eio.Fiber.yield ()
+      done;
+      let events = Post_commit_observer.drain observer in
+      let started =
+        List.filter
+          (function Post_commit_observer.Started _ -> true | _ -> false)
+          events
+        |> List.length
+      in
+      let settled =
+        List.filter
+          (function
+            | Post_commit_observer.Settled
+                { settlement = Succeeded; _ } ->
+                true
+            | _ -> false)
+          events
+        |> List.length
+      in
+      let expected =
+        List.length (List.filter Fun.id inventories)
+      in
+      List.length effects = expected
+      && started = expected && settled = expected)
+
+let qcheck_reset_authority_incarnation =
+  (* Generated class: one through five disposal/re-entry cycles. Observation
+     boundary: stale rejection for every disposed authority and successful
+     commit through every fresh authority. *)
+  QCheck.Test.make ~name:"qcheck_reset_authority_incarnation"
+    ~count:50 (QCheck.int_range 1 5)
+    (fun cycles ->
+      let selector =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:true
+          ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+            (action, None))
+      in
+      let description =
+        Crux.bind selector
+          ~f:(fun (active, endpoint) ->
+            if active then
+              Crux.Reset.scope (Crux.return ())
+                ~f:(fun ~reset ~input:_ ->
+                  Crux.map reset ~f:(fun reset ->
+                    (endpoint, Some reset)))
+            else Crux.return (endpoint, None))
+      in
+      let root =
+        Crux.Root.create ~ingress_capacity:2
+          ~request_capacity:1 description
+      in
+      let endpoint, reset = reset_advance root in
+      let rec loop remaining previous =
+        if remaining = 0 then true
+        else (
+          ignore
+            (run_ok
+               (Crux.Endpoint.send endpoint false
+               |> Eta.Effect.or_die (fun _ ->
+                      Invalid_argument "ingress closed")));
+          ignore (reset_advance root);
+          reset_trigger previous;
+          let stale =
+            run_ok (Crux.Root.advance root)
+            = Ok (Crux.Root.Rejected Crux.Root.Stale_reset)
+          in
+          ignore
+            (run_ok
+               (Crux.Endpoint.send endpoint true
+               |> Eta.Effect.or_die (fun _ ->
+                      Invalid_argument "ingress closed")));
+          let _, next = reset_advance root in
+          let next = Option.get next in
+          stale && previous != next
+          && loop (remaining - 1) next)
+      in
+      loop cycles (Option.get reset))
+
+let invoke_poll_refresh refresh =
+  run_ok
+    (refresh
+    |> Eta.Effect.or_die (fun _ ->
+           Invalid_argument "Poll refresh ingress closed"))
+
+let qcheck_poll_committed_run_order =
+  let sample =
+    let open QCheck.Gen in
+    bind (2 -- 5) (fun count ->
+        map (fun priorities -> (count, priorities))
+          (list_size (return count) int))
+  in
+  (* Generated class: two through five concurrent manual runs and every
+     key-induced completion permutation. Observation boundary: committed Poll
+     outputs after each completion ingress advancement. *)
+  QCheck.Test.make ~name:"qcheck_poll_committed_run_order"
+    ~count:100
+    (QCheck.make
+       ~print:(fun (count, priorities) ->
+         Printf.sprintf "{count=%d; priorities=%s}" count
+           (QCheck.Print.(list int) priorities))
+       sample)
+    (fun (count, priorities) ->
+      let permutation =
+        priorities
+        |> List.mapi (fun index priority -> (priority, index))
+        |> List.sort compare
+        |> List.map snd
+      in
+      let controlled = Eta_test.Controlled.create () in
+      let result, refresh =
+        Crux.Poll.manual_refresh
+          ~starting:Crux.Poll.Starting.empty
+          ~effect:
+            (Crux.return (Eta_test.Controlled.eff controlled ()))
+          ()
+      in
+      let root =
+        Crux.Root.create ~ingress_capacity:(count + 1)
+          ~request_capacity:1 (Crux.both result refresh)
+      in
+      let _, refresh = reset_advance root in
+      let calls =
+        List.init count (fun _ ->
+            invoke_poll_refresh refresh;
+            ignore (reset_advance root);
+            run_ok (Eta_test.Controlled.await_call controlled))
+      in
+      List.iter
+        (fun index ->
+          ignore
+            (Eta_test.Controlled.succeed
+               (List.nth calls index) index);
+          for _ = 1 to 3 do
+            Eio.Fiber.yield ()
+          done)
+        permutation;
+      let _, valid =
+        List.fold_left
+          (fun (greatest, valid) completed ->
+            let result, _ = reset_advance root in
+            let greatest = max greatest completed in
+            (greatest, valid && result = Some greatest))
+          (-1, true) permutation
+      in
+      valid)
+
+let qcheck_poll_manual_refresh_admission =
+  (* Generated class: one through twelve refresh effects admitted into an
+     exactly-sized root FIFO before any refresh advancement. Observation
+     boundary: successful trigger commits, provider-call count, completion
+     commits, and final result. *)
+  QCheck.Test.make ~name:"qcheck_poll_manual_refresh_admission"
+    ~count:50 (QCheck.int_range 1 12)
+    (fun count ->
+      let calls = ref 0 in
+      let result, refresh =
+        Crux.Poll.manual_refresh
+          ~starting:Crux.Poll.Starting.empty
+          ~effect:
+            (Crux.return
+               (Eta.Effect.sync (fun () ->
+                    incr calls;
+                    !calls)))
+          ()
+      in
+      let root =
+        Crux.Root.create ~ingress_capacity:count
+          ~request_capacity:1 (Crux.both result refresh)
+      in
+      let _, refresh = reset_advance root in
+      for _ = 1 to count do
+        invoke_poll_refresh refresh
+      done;
+      for _ = 1 to count do
+        ignore (reset_advance root);
+        Eio.Fiber.yield ()
+      done;
+      for _ = 1 to count do
+        ignore (reset_advance root)
+      done;
+      !calls = count)
+
+let qcheck_poll_input_cutoff =
+  let sample =
+    let open QCheck.Gen in
+    pair (0 -- 2) (list_size (0 -- 15) (-3 -- 3))
+  in
+  (* Generated class: candidate input traces under never, value-equality, and
+     always-suppress cutoffs. The input state machine publishes equal values.
+     Observation boundary: provider call count after each committed candidate. *)
+  QCheck.Test.make ~name:"qcheck_poll_input_cutoff"
+    ~count:100
+    (QCheck.make
+       ~print:(fun (mode, inputs) ->
+         Printf.sprintf "{mode=%d; inputs=%s}" mode
+           (QCheck.Print.(list int) inputs))
+       sample)
+    (fun (mode, inputs) ->
+      let calls = ref 0 in
+      let input =
+        Crux.State_machine.create
+          ~model_cutoff:Crux.Cutoff.never
+          (Crux.return ()) ~default_model:0
+          ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+            (action, None))
+      in
+      let cutoff =
+        match mode with
+        | 0 -> Crux.Cutoff.never
+        | 1 -> Crux.Cutoff.of_equal Int.equal
+        | _ -> Crux.Cutoff.always
+      in
+      let polled =
+        Crux.Poll.effect_on_change ~input_cutoff:cutoff
+          ~starting:Crux.Poll.Starting.empty
+          ~input:(Crux.map input ~f:fst)
+          ~effect:
+            (Crux.return (fun value ->
+                 Eta.Effect.sync (fun () ->
+                     incr calls;
+                     value)))
+          ()
+      in
+      let root =
+        Crux.Root.create ~ingress_capacity:2
+          ~request_capacity:1 (Crux.both input polled)
+      in
+      let (_, endpoint), _ = reset_advance root in
+      for _ = 1 to 3 do
+        Eio.Fiber.yield ()
+      done;
+      ignore (reset_advance root);
+      let previous = ref 0 in
+      let expected = ref 1 in
+      List.iter
+        (fun candidate ->
+          ignore
+            (run_ok
+               (Crux.Endpoint.send endpoint candidate
+               |> Eta.Effect.or_die (fun _ ->
+                      Invalid_argument "ingress closed")));
+          ignore (reset_advance root);
+          let trigger =
+            match mode with
+            | 0 -> true
+            | 1 -> not (Int.equal !previous candidate)
+            | _ -> false
+          in
+          previous := candidate;
+          if trigger then (
+            incr expected;
+            for _ = 1 to 3 do
+              Eio.Fiber.yield ()
+            done;
+            ignore (reset_advance root)))
+        inputs;
+      !calls = !expected)
+
+let qcheck_poll_starting_incarnation =
+  (* Generated class: both Starting forms and bind disposal/re-entry.
+     Observation boundary: starting outputs and stale old refresh rejection. *)
+  QCheck.Test.make ~name:"qcheck_poll_starting_incarnation"
+    ~count:50 QCheck.(pair bool int)
+    (fun (empty, initial) ->
+      let selector =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:true
+          ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+            (action, None))
+      in
+      let description =
+        Crux.bind selector
+          ~f:(fun (active, endpoint) ->
+            if not active then Crux.return (endpoint, None)
+            else
+              let result, refresh =
+                if empty then
+                  Crux.Poll.manual_refresh
+                    ~starting:Crux.Poll.Starting.empty
+                    ~effect:(Crux.return (Eta.Effect.pure initial)) ()
+                else
+                  let result, refresh =
+                    Crux.Poll.manual_refresh
+                      ~starting:(Crux.Poll.Starting.initial initial)
+                      ~effect:(Crux.return (Eta.Effect.pure initial)) ()
+                  in
+                  (Crux.map result ~f:Option.some, refresh)
+              in
+              Crux.map (Crux.both result refresh)
+                ~f:(fun (result, refresh) ->
+                  (endpoint, Some (result, refresh))))
+      in
+      let root =
+        Crux.Root.create ~ingress_capacity:2
+          ~request_capacity:1 description
+      in
+      let endpoint, active = reset_advance root in
+      let starting, old_refresh = Option.get active in
+      let starting_valid =
+        if empty then starting = None
+        else starting = Some initial
+      in
+      ignore
+        (run_ok
+           (Crux.Endpoint.send endpoint false
+           |> Eta.Effect.or_die (fun _ ->
+                  Invalid_argument "ingress closed")));
+      ignore (reset_advance root);
+      ignore
+        (run_ok
+           (Crux.Endpoint.send endpoint true
+           |> Eta.Effect.or_die (fun _ ->
+                  Invalid_argument "ingress closed")));
+      let _, reentered = reset_advance root in
+      let next_starting, _ = Option.get reentered in
+      invoke_poll_refresh old_refresh;
+      let stale =
+        run_ok (Crux.Root.advance root)
+        = Ok (Crux.Root.Rejected Crux.Root.Stale_endpoint)
+      in
+      starting_valid && next_starting = starting && stale)
+
+let qcheck_poll_run_order_overflow =
+  (* White-box generated class: the private order claim is placed at
+     exhaustion immediately before one production manual-refresh transition.
+     Observation boundary: root failure attribution, prior output, provider
+     witness, and absence of a successful observer commit. *)
+  QCheck.Test.make ~name:"qcheck_poll_run_order_overflow"
+    ~count:10 QCheck.unit
+    (fun () ->
+      let observer = Post_commit_observer.create () in
+      let provider_calls = ref 0 in
+      let result, refresh =
+        Crux.Poll.manual_refresh
+          ~starting:(Crux.Poll.Starting.initial 7)
+          ~effect:
+            (Crux.return
+               (Eta.Effect.sync (fun () ->
+                    incr provider_calls;
+                    9)))
+          ()
+      in
+      let root =
+        Crux.Root.create
+          ~post_commit_effect_observer:
+            (Post_commit_observer.attachment observer)
+          ~ingress_capacity:1 ~request_capacity:1
+          (Crux.both result refresh)
+      in
+      let output, refresh = reset_advance root in
+      ignore output;
+      ignore (Post_commit_observer.drain observer);
+      invoke_poll_refresh refresh;
+      let previous =
+        Eta_crux__Crux_poll_barrier.set_before_order_claim
+          (fun order -> order := Int64.max_int)
+      in
+      let outcome = run_ok (Crux.Root.advance root) in
+      let (_ : int64 ref -> unit) =
+        Eta_crux__Crux_poll_barrier.set_before_order_claim
+          previous
+      in
+      match outcome with
+      | Ok (Crux.Root.Failed { failure; _ }) ->
+          failure.Crux.Failure.primary.origin = Crux.Failure.Transition
+          && failure.Crux.Failure.primary.trigger
+             = Crux.Failure.Endpoint_action
+          && !provider_calls = 0
+          && Post_commit_observer.drain observer = []
+      | _ -> false)
+
+let qcheck_poll_provider_sampling =
+  let multipliers =
+    let open QCheck.Gen in
+    list_size (0 -- 10) (1 -- 10)
+  in
+  (* Generated class: zero through ten provider-only replacements followed by
+     one input trigger. Observation boundary: provider-call labels and Poll
+     output; replacements alone must start no run. *)
+  QCheck.Test.make ~name:"qcheck_poll_provider_sampling"
+    ~count:100
+    (QCheck.make ~print:QCheck.Print.(list int) multipliers)
+    (fun multipliers ->
+      let calls = ref [] in
+      let input =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:1
+          ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+            (action, None))
+      in
+      let provider =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:1
+          ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+            (action, None))
+      in
+      let polled =
+        Crux.Poll.effect_on_change
+          ~input_cutoff:(Crux.Cutoff.of_equal Int.equal)
+          ~starting:Crux.Poll.Starting.empty
+          ~input:(Crux.map input ~f:fst)
+          ~effect:
+            (Crux.map provider ~f:(fun (multiplier, _) value ->
+                 Eta.Effect.sync (fun () ->
+                     calls := (value, multiplier) :: !calls;
+                     value * multiplier)))
+          ()
+      in
+      let root =
+        Crux.Root.create ~ingress_capacity:2
+          ~request_capacity:1
+          (Crux.both input (Crux.both provider polled))
+      in
+      let (input_output, (provider_output, _)) =
+        reset_advance root
+      in
+      let _, input_endpoint = input_output in
+      let _, provider_endpoint = provider_output in
+      for _ = 1 to 3 do
+        Eio.Fiber.yield ()
+      done;
+      ignore (reset_advance root);
+      List.iter
+        (fun multiplier ->
+          ignore
+            (run_ok
+               (Crux.Endpoint.send provider_endpoint multiplier
+               |> Eta.Effect.or_die (fun _ ->
+                      Invalid_argument "ingress closed")));
+          ignore (reset_advance root);
+          for _ = 1 to 2 do
+            Eio.Fiber.yield ()
+          done)
+        multipliers;
+      let before = List.length !calls in
+      ignore
+        (run_ok
+           (Crux.Endpoint.send input_endpoint 2
+           |> Eta.Effect.or_die (fun _ ->
+                  Invalid_argument "ingress closed")));
+      ignore (reset_advance root);
+      for _ = 1 to 3 do
+        Eio.Fiber.yield ()
+      done;
+      let expected_multiplier =
+        match List.rev multipliers with
+        | multiplier :: _ -> multiplier
+        | [] -> 1
+      in
+      before = 1
+      && List.hd !calls = (2, expected_multiplier))
+
+let qcheck_poll_activation_and_coalescing =
+  let sample =
+    let open QCheck.Gen in
+    triple (-20 -- 20) (-20 -- 20) (1 -- 10)
+  in
+  (* Generated class: one reset advancement changes two Poll input
+     dependencies. Observation boundary: exact one-effect inventory and one
+     provider call carrying the latest stabilized sum. *)
+  QCheck.Test.make
+    ~name:"qcheck_poll_activation_and_coalescing"
+    ~count:100
+    (QCheck.make
+       ~print:(fun (left, right, delta) ->
+         Printf.sprintf "{left=%d; right=%d; delta=%d}"
+           left right delta)
+       sample)
+    (fun (left, right, delta) ->
+      let observer = Post_commit_observer.create () in
+      let calls = ref [] in
+      let description =
+        Crux.Reset.scope (Crux.return ())
+          ~f:(fun ~reset ~input ->
+            let machine initial =
+              Crux.State_machine.create input
+                ~default_model:initial
+                ~reset:(fun ~self:_ ~input:() ~model ->
+                  (model + delta, None))
+                ~apply_action:(fun ~self:_ ~input:()
+                                  ~model ~action:_ ->
+                  (model, None))
+            in
+            let left = machine left in
+            let right = machine right in
+            let polled =
+              Crux.Poll.effect_on_change
+                ~input_cutoff:(Crux.Cutoff.of_equal Int.equal)
+                ~starting:Crux.Poll.Starting.empty
+                ~input:
+                  (Crux.map (Crux.both left right)
+                     ~f:(fun ((left, _), (right, _)) ->
+                       left + right))
+                ~effect:
+                  (Crux.return (fun value ->
+                       Eta.Effect.sync (fun () ->
+                           calls := value :: !calls;
+                           value)))
+                ()
+            in
+            Crux.both reset polled)
+      in
+      let root =
+        Crux.Root.create
+          ~post_commit_effect_observer:
+            (Post_commit_observer.attachment observer)
+          ~ingress_capacity:1 ~request_capacity:1 description
+      in
+      let reset, _ = reset_advance root in
+      for _ = 1 to 3 do
+        Eio.Fiber.yield ()
+      done;
+      ignore (reset_advance root);
+      ignore (Post_commit_observer.drain observer);
+      reset_trigger reset;
+      let _, post_commit =
+        committed (run_ok (Crux.Root.advance root))
+      in
+      let inventory =
+        match Post_commit_observer.drain observer with
+        | [
+         Post_commit_observer.Staged { effects; _ };
+        ] ->
+            List.length effects
+        | _ -> -1
+      in
+      start post_commit;
+      for _ = 1 to 3 do
+        Eio.Fiber.yield ()
+      done;
+      inventory = 1
+      && List.hd !calls = left + right + (2 * delta))
+
+let qcheck_poll_result_cutoff_order_fence =
+  let sample =
+    let open QCheck.Gen in
+    triple (-100 -- 100) (1 -- 20) (-100 -- 100)
+  in
+  (* Generated class: newer-equal, older-different, and later completions.
+     Observation boundary: result-cutoff calls and committed output after each
+     hidden completion. *)
+  QCheck.Test.make
+    ~name:"qcheck_poll_result_cutoff_order_fence"
+    ~count:100
+    (QCheck.make
+       ~print:(fun (initial, older_delta, later) ->
+         Printf.sprintf "{initial=%d; older_delta=%d; later=%d}"
+           initial older_delta later)
+       sample)
+    (fun (initial, older_delta, later) ->
+      let controlled = Eta_test.Controlled.create () in
+      let cutoff_calls = ref 0 in
+      let result, refresh =
+        Crux.Poll.manual_refresh
+          ~result_cutoff:
+            (Crux.Cutoff.of_equal (fun left right ->
+                 incr cutoff_calls;
+                 Int.equal left right))
+          ~starting:(Crux.Poll.Starting.initial initial)
+          ~effect:
+            (Crux.return (Eta_test.Controlled.eff controlled ()))
+          ()
+      in
+      let root =
+        Crux.Root.create ~ingress_capacity:4
+          ~request_capacity:1 (Crux.both result refresh)
+      in
+      let _, refresh = reset_advance root in
+      let start_run () =
+        invoke_poll_refresh refresh;
+        ignore (reset_advance root);
+        run_ok (Eta_test.Controlled.await_call controlled)
+      in
+      let older = start_run () in
+      let newer_equal = start_run () in
+      ignore (Eta_test.Controlled.succeed newer_equal initial);
+      for _ = 1 to 3 do
+        Eio.Fiber.yield ()
+      done;
+      ignore
+        (Eta_test.Controlled.succeed older
+           (initial + older_delta));
+      for _ = 1 to 3 do
+        Eio.Fiber.yield ()
+      done;
+      let equal, _ = reset_advance root in
+      let stale, _ = reset_advance root in
+      let calls_after_stale = !cutoff_calls in
+      let latest = start_run () in
+      ignore (Eta_test.Controlled.succeed latest later);
+      for _ = 1 to 3 do
+        Eio.Fiber.yield ()
+      done;
+      let latest, _ = reset_advance root in
+      equal = initial
+      && stale = initial
+      && calls_after_stale = 1
+      && !cutoff_calls = 2
+      && latest = later)
+
+let qcheck_poll_failure_attribution =
+  (* Generated class: provider-start exceptions and body defects.
+     Observation boundary: root failure attribution and observer settlement. *)
+  QCheck.Test.make ~name:"qcheck_poll_failure_attribution"
+    ~count:40 QCheck.bool
+    (fun provider_raises ->
+      let observer = Post_commit_observer.create () in
+      let provider =
+        if provider_raises then
+          fun () -> raise (Failure "provider start defect")
+        else fun () -> Eta.Effect.die_message "Poll body defect"
+      in
+      let polled =
+        Crux.Poll.effect_on_change
+          ~input_cutoff:Crux.Cutoff.never
+          ~starting:Crux.Poll.Starting.empty
+          ~input:(Crux.return ()) ~effect:(Crux.return provider) ()
+      in
+      let root =
+        Crux.Root.create
+          ~post_commit_effect_observer:
+            (Post_commit_observer.attachment observer)
+          ~ingress_capacity:1 ~request_capacity:1 polled
+      in
+      ignore (reset_advance root);
+      for _ = 1 to 5 do
+        Eio.Fiber.yield ()
+      done;
+      let failure =
+        match run_ok (Crux.Root.advance root) with
+        | Ok (Crux.Root.Failed { failure; _ }) -> Some failure
+        | _ -> None
+      in
+      let events = Post_commit_observer.drain observer in
+      let failed_settlement =
+        List.exists
+          (function
+            | Post_commit_observer.Settled
+                { settlement = Failed; _ } ->
+                true
+            | _ -> false)
+          events
+      in
+      match failure with
+      | Some failure ->
+          failure.Crux.Failure.primary.origin
+          = Crux.Failure.Owned_work
+          && failure.Crux.Failure.primary.trigger
+             = Crux.Failure.Poll_effect
+          && failed_settlement
+      | None -> false)
+
+let qcheck_poll_clock_priority =
+  (* Generated class: a queued integer Action and one simultaneously due clock
+     input. Observation boundary: first committed output, Poll inventory,
+     provider witness, and the still-queued Action's next output. *)
+  QCheck.Test.make ~name:"qcheck_poll_clock_priority"
+    ~count:40 (QCheck.int_range 1 100)
+    (fun action ->
+      let calls = ref [] in
+      let machine =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:0
+          ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+            (action, None))
+      in
+      let due = Crux.Time.after (Eta.Duration.ms 10) in
+      let polled =
+        Crux.Poll.effect_on_change
+          ~input_cutoff:(Crux.Cutoff.of_equal Bool.equal)
+          ~starting:Crux.Poll.Starting.empty
+          ~input:due
+          ~effect:
+            (Crux.return (fun due ->
+                 Eta.Effect.sync (fun () ->
+                     calls := due :: !calls;
+                     due)))
+          ()
+      in
+      let root =
+        Crux.Root.create ~ingress_capacity:2
+          ~request_capacity:1 (Crux.both machine polled)
+      in
+      let (_, endpoint), _ = reset_advance root in
+      for _ = 1 to 3 do
+        Eio.Fiber.yield ()
+      done;
+      ignore (reset_advance root);
+      ignore
+        (run_ok
+           (Crux.Endpoint.send endpoint action
+           |> Eta.Effect.or_die (fun _ ->
+                  Invalid_argument "ingress closed")));
+      Eta_test.Test_clock.adjust (law_clock ())
+        (Eta.Duration.ms 10);
+      let (model_at_due, _), _ = reset_advance root in
+      for _ = 1 to 3 do
+        Eio.Fiber.yield ()
+      done;
+      let (model_after_action, _), _ = reset_advance root in
+      model_at_due = 0
+      && model_after_action = action
+      && List.hd !calls = true)
+
+let qcheck_poll_completion_fifo =
+  (* Generated class: both FIFO orders between one application Action and one
+     Poll completion. Observation boundary: the next two committed complete
+     outputs. *)
+  QCheck.Test.make ~name:"qcheck_poll_completion_fifo"
+    ~count:50 QCheck.bool
+    (fun completion_first ->
+      let machine =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:0
+          ~apply_action:(fun ~self:_ ~input:() ~model ~action:() ->
+            (model + 1, None))
+      in
+      let result, refresh =
+        Crux.Poll.manual_refresh
+          ~starting:Crux.Poll.Starting.empty
+          ~effect:(Crux.return (Eta.Effect.pure 9)) ()
+      in
+      let root =
+        Crux.Root.create ~ingress_capacity:2
+          ~request_capacity:1
+          (Crux.both machine (Crux.both result refresh))
+      in
+      let (_, endpoint), (_, refresh) = reset_advance root in
+      if completion_first then (
+        invoke_poll_refresh refresh;
+        ignore (reset_advance root);
+        for _ = 1 to 3 do
+          Eio.Fiber.yield ()
+        done;
+        ignore
+          (run_ok
+             (Crux.Endpoint.send endpoint ()
+             |> Eta.Effect.or_die (fun _ ->
+                    Invalid_argument "ingress closed")));
+        let (first_model, _), (first_result, _) =
+          reset_advance root
+        in
+        let (second_model, _), (second_result, _) =
+          reset_advance root
+        in
+        first_model = 0 && first_result = Some 9
+        && second_model = 1 && second_result = Some 9)
+      else (
+        ignore
+          (run_ok
+             (Crux.Endpoint.send endpoint ()
+             |> Eta.Effect.or_die (fun _ ->
+                    Invalid_argument "ingress closed")));
+        invoke_poll_refresh refresh;
+        let (first_model, _), (first_result, _) =
+          reset_advance root
+        in
+        let (second_model, _), (second_result, _) =
+          reset_advance root
+        in
+        for _ = 1 to 3 do
+          Eio.Fiber.yield ()
+        done;
+        let (third_model, _), (third_result, _) =
+          reset_advance root
+        in
+        first_model = 1 && first_result = None
+        && second_model = 1 && second_result = None
+        && third_model = 1 && third_result = Some 9))
+
+let qcheck_poll_run_order =
+  (* Generated class: two through six runs completed in strict reverse order.
+     Observation boundary: every committed output and the final greatest run. *)
+  QCheck.Test.make ~name:"qcheck_poll_run_order"
+    ~count:50 (QCheck.int_range 2 6)
+    (fun count ->
+      let controlled = Eta_test.Controlled.create () in
+      let result, refresh =
+        Crux.Poll.manual_refresh
+          ~starting:Crux.Poll.Starting.empty
+          ~effect:
+            (Crux.return (Eta_test.Controlled.eff controlled ()))
+          ()
+      in
+      let root =
+        Crux.Root.create ~ingress_capacity:(count + 1)
+          ~request_capacity:1 (Crux.both result refresh)
+      in
+      let _, refresh = reset_advance root in
+      let calls =
+        List.init count (fun _ ->
+            invoke_poll_refresh refresh;
+            ignore (reset_advance root);
+            run_ok (Eta_test.Controlled.await_call controlled))
+      in
+      List.iter
+        (fun index ->
+          ignore
+            (Eta_test.Controlled.succeed
+               (List.nth calls index) index);
+          Eio.Fiber.yield ())
+        (List.init count (fun offset -> count - offset - 1));
+      let outputs =
+        List.init count (fun _ -> fst (reset_advance root))
+      in
+      match outputs with
+      | Some newest :: stale ->
+          newest = count - 1
+          && List.for_all (( = ) (Some newest)) stale
+      | None :: _ | [] -> false)
+
+let qcheck_post_commit_effect_observer_poll_lifecycle =
+  (* Generated class: admitted Poll work either starts and succeeds or is
+     terminally replaced before start. Observation boundary: exact Poll
+     identity path in the observer queue. *)
+  QCheck.Test.make
+    ~name:"qcheck_post_commit_effect_observer_poll_lifecycle"
+    ~count:40 QCheck.bool
+    (fun discard ->
+      let observer = Post_commit_observer.create () in
+      let result, refresh =
+        Crux.Poll.manual_refresh
+          ~starting:Crux.Poll.Starting.empty
+          ~effect:(Crux.return (Eta.Effect.pure 1)) ()
+      in
+      let root =
+        Crux.Root.create
+          ~post_commit_effect_observer:
+            (Post_commit_observer.attachment observer)
+          ~ingress_capacity:1 ~request_capacity:1
+          (Crux.both result refresh)
+      in
+      let _, refresh = reset_advance root in
+      ignore (Post_commit_observer.drain observer);
+      invoke_poll_refresh refresh;
+      let _, post_commit =
+        committed (run_ok (Crux.Root.advance root))
+      in
+      let effect =
+        match Post_commit_observer.drain observer with
+        | [
+         Post_commit_observer.Staged
+           { effects = [ effect ]; _ };
+        ] ->
+            effect
+        | _ -> failwith "missing Poll observer stage"
+      in
+      if discard then Crux.Root.request_stop root;
+      start post_commit;
+      for _ = 1 to 3 do
+        Eio.Fiber.yield ()
+      done;
+      match discard, Post_commit_observer.drain observer with
+      | true,
+        [
+         Post_commit_observer.Discarded_before_start
+           { effect = discarded; _ };
+        ] ->
+          Post_commit_observer.Effect_id.compare effect discarded = 0
+      | false,
+        [
+         Post_commit_observer.Started { effect = started; _ };
+         Post_commit_observer.Settled
+           { effect = settled; settlement = Succeeded; _ };
+        ] ->
+          Post_commit_observer.Effect_id.compare effect started = 0
+          && Post_commit_observer.Effect_id.compare effect settled = 0
+      | _ -> false)
+
+(* ---------- Graph time and deterministic clock (GTC) ---------- *)
+
+let shared_switch : Eio.Switch.t option ref = ref None
+
+let law_switch () =
+  match !shared_switch with
+  | Some switch -> switch
+  | None -> failwith "law switch is not installed"
+
+let driver_output driver =
+  match run_ok (Crux.Driver.poll driver) with
+  | Some (Crux.Driver.Deliver delivery) ->
+      let output = Crux.Driver.Delivery.output delivery in
+      (match run_ok (Crux.Driver.Delivery.delivered delivery) with
+      | Ok () -> ()
+      | Error Crux.Driver.Delivery.Already_completed ->
+          failwith "delivery completed twice");
+      output
+  | _ -> failwith "expected output delivery"
+
+let identity_driver root =
+  Crux.Driver.create (Crux.Driver.Binding.identity []) root
+
+let time_root description =
+  Crux.Root.create ~ingress_capacity:4 ~request_capacity:1 description
+
+let counting_clock clock =
+  let reads = ref 0 in
+  let capability : Eta.Capabilities.clock =
+    object
+      method now_ms () =
+        incr reads;
+        Eta_test.Test_clock.now_ms clock
+
+      method sleep duration = Eta_test.Test_clock.sleep clock duration
+    end
+  in
+  (capability, reads)
+
+let wait_for_sleeper clock =
+  let rec loop attempts =
+    if Eta_test.Test_clock.sleeper_count clock >= 1 then ()
+    else if attempts = 0 then
+      failwith "driver never registered a deadline sleeper"
+    else (
+      Eio.Fiber.yield ();
+      loop (attempts - 1))
+  in
+  loop 40
+
+let qcheck_graph_time_initial_binding =
+  (* Generated class: one interval timer per iteration. Observation
+     boundary: the initial commit, then one foreign-clock advancement. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_initial_binding"
+    ~count:50 (QCheck.map (fun x -> 1 + x) (QCheck.int_range 0 19))
+    (fun period ->
+      let root =
+        time_root (Crux.Time.interval (Eta.Duration.ms period))
+      in
+      let bound =
+        match run_ok (Crux.Root.advance root) with
+        | Ok (Crux.Root.Committed committed) ->
+            start committed.post_commit;
+            true
+        | _ -> false
+      in
+      let foreign = Eta_test.Test_clock.create () in
+      let mismatched =
+        Crux.Root.advance root
+        |> Eta.Effect.with_clock
+             (Eta_test.Test_clock.as_capability foreign)
+        |> run_ok
+      in
+      bound
+      &&
+      match mismatched with
+      | Ok (Crux.Root.Failed { failure; _ }) ->
+          failure.Crux.Failure.primary.origin
+          = Crux.Failure.Graph_clock
+      | _ -> false)
+
+let qcheck_graph_time_shared_sample =
+  let sample =
+    let open QCheck.Gen in
+    pair (map (( + ) 5) (0 -- 10)) (map (( + ) 5) (0 -- 10))
+  in
+  (* Generated class: one now node and one after node per iteration, with a
+     read-counting clock capability. Observation boundary: exact clock reads
+     per advancement and the two node outputs. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_shared_sample"
+    ~count:50
+    (QCheck.make
+       ~print:(fun (period, offset) ->
+         Printf.sprintf "{period=%d; offset=%d}" period offset)
+       sample)
+    (fun (period, offset) ->
+      let clock = law_clock () in
+      let capability, reads = counting_clock clock in
+      let under effect = Eta.Effect.with_clock capability effect in
+      let description =
+        let open Crux.Syntax in
+        let+ now = Crux.Time.now ~every:(Eta.Duration.ms period)
+        and+ due = Crux.Time.after (Eta.Duration.ms (period + offset)) in
+        (Crux.Time.to_ms now, due)
+      in
+      let root = time_root description in
+      let advance () = run_ok (under (Crux.Root.advance root)) in
+      let now0 = Eta_test.Test_clock.now_ms clock in
+      reads := 0;
+      let first_ms, first_due =
+        match advance () with
+        | Ok (Crux.Root.Committed committed) ->
+            start committed.post_commit;
+            committed.output
+        | _ -> failwith "initial time commit failed"
+      in
+      let reads_initial = !reads in
+      Eta_test.Test_clock.advance_to clock (now0 + period + offset);
+      reads := 0;
+      let second_ms, second_due =
+        match advance () with
+        | Ok (Crux.Root.Committed committed) ->
+            start committed.post_commit;
+            committed.output
+        | _ -> failwith "due time commit failed"
+      in
+      let reads_due = !reads in
+      reads := 0;
+      let idle = advance () in
+      let reads_idle = !reads in
+      reads_initial = 1
+      && reads_due = 1
+      && reads_idle <= 1
+      && first_ms = now0
+      && not first_due
+      && second_ms = now0 + period + offset
+      && second_due
+      && idle = Ok Crux.Root.Idle)
+
+let qcheck_graph_time_structural_ownership =
+  (* Generated class: one timer child deactivated before its deadline, plus
+     one always-active control timer. Observation boundary: advancement
+     results after disposal and clock movement past both deadlines. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_structural_ownership"
+    ~count:50 (QCheck.map (fun x -> 5 + x) (QCheck.int_range 0 15))
+    (fun d ->
+      let selector =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:true
+          ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action:_ ->
+            (false, None))
+      in
+      let description =
+        Crux.both selector
+          (Crux.bind (Crux.map selector ~f:fst) ~f:(fun active ->
+               if active then Crux.Time.after (Eta.Duration.ms d)
+               else Crux.return true))
+      in
+      let root = time_root description in
+      let control =
+        time_root (Crux.Time.after (Eta.Duration.ms d))
+      in
+      let (_, endpoint), _ = reset_advance root in
+      ignore (reset_advance control);
+      send endpoint ();
+      let _ = reset_advance root in
+      Eta_test.Test_clock.adjust (law_clock ())
+        (Eta.Duration.ms (d + 5));
+      let disposed_idle =
+        run_ok (Crux.Root.advance root) = Ok Crux.Root.Idle
+      in
+      let control_fired =
+        match run_ok (Crux.Root.advance control) with
+        | Ok (Crux.Root.Committed committed) ->
+            start committed.post_commit;
+            committed.output
+        | _ -> false
+      in
+      disposed_idle && control_fired)
+
+let qcheck_graph_time_deadline_wake =
+  (* Generated class: one after timer per leg. Observation boundary: a
+     nonblocking poll on an already-due deadline, and a blocked await that
+     continues without ingress once the deadline is due. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_deadline_wake"
+    ~count:40 (QCheck.map (fun x -> 5 + x) (QCheck.int_range 0 15))
+    (fun d ->
+      let clock = law_clock () in
+      let polled_root =
+        time_root (Crux.Time.after (Eta.Duration.ms d))
+      in
+      let polled_driver = identity_driver polled_root in
+      let initial_poll = driver_output polled_driver in
+      Eta_test.Test_clock.adjust clock (Eta.Duration.ms d);
+      let due_poll = driver_output polled_driver in
+      let awaited_root =
+        time_root (Crux.Time.after (Eta.Duration.ms d))
+      in
+      let awaited_driver = identity_driver awaited_root in
+      let initial_await = driver_output awaited_driver in
+      let waiting =
+        Eta_test.Async.fork_run (law_switch ())
+          (match !shared_runtime with
+          | Some runtime -> runtime
+          | None -> failwith "law runtime is not installed")
+          (Crux.Driver.await awaited_driver)
+      in
+      wait_for_sleeper clock;
+      Eta_test.Test_clock.adjust clock (Eta.Duration.ms d);
+      let event =
+        Eta_test.Async.await waiting |> Eta_test.Expect.expect_ok
+      in
+      let due_await =
+        match event with
+        | Crux.Driver.Deliver delivery ->
+            let output = Crux.Driver.Delivery.output delivery in
+            ignore
+              (run_ok (Crux.Driver.Delivery.delivered delivery));
+            output
+        | _ -> failwith "await did not deliver the due output"
+      in
+      (not initial_poll) && due_poll && not initial_await && due_await)
+
+let qcheck_graph_time_await_race =
+  let sample =
+    let open QCheck.Gen in
+    pair (map (( + ) 20) (0 -- 20)) (-50 -- 50)
+  in
+  (* Generated class: one machine Action racing one future deadline.
+     Observation boundary: the awaited delivery, the canceled sleeper, and
+     the recalculated deadline wait. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_await_race"
+    ~count:40
+    (QCheck.make
+       ~print:(fun (d, action) ->
+         Printf.sprintf "{d=%d; action=%d}" d action)
+       sample)
+    (fun (d, action) ->
+      let clock = law_clock () in
+      let machine =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:0
+          ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+            (action, None))
+      in
+      let root =
+        time_root
+          (Crux.both machine (Crux.Time.after (Eta.Duration.ms d)))
+      in
+      let driver = identity_driver root in
+      let (_, endpoint), _ = driver_output driver in
+      let runtime =
+        match !shared_runtime with
+        | Some runtime -> runtime
+        | None -> failwith "law runtime is not installed"
+      in
+      let waiting =
+        Eta_test.Async.fork_run (law_switch ()) runtime
+          (Crux.Driver.await driver)
+      in
+      wait_for_sleeper clock;
+      send endpoint action;
+      let event =
+        Eta_test.Async.await waiting |> Eta_test.Expect.expect_ok
+      in
+      let first =
+        match event with
+        | Crux.Driver.Deliver delivery ->
+            let output = Crux.Driver.Delivery.output delivery in
+            ignore
+              (run_ok (Crux.Driver.Delivery.delivered delivery));
+            output
+        | _ -> failwith "await did not deliver the action output"
+      in
+      let waiting =
+        Eta_test.Async.fork_run (law_switch ()) runtime
+          (Crux.Driver.await driver)
+      in
+      wait_for_sleeper clock;
+      Eta_test.Test_clock.adjust clock (Eta.Duration.ms d);
+      let event =
+        Eta_test.Async.await waiting |> Eta_test.Expect.expect_ok
+      in
+      let second =
+        match event with
+        | Crux.Driver.Deliver delivery ->
+            let output = Crux.Driver.Delivery.output delivery in
+            ignore
+              (run_ok (Crux.Driver.Delivery.delivered delivery));
+            output
+        | _ -> failwith "await did not deliver the due output"
+      in
+      let (first_model, _), first_due = first in
+      let (second_model, _), second_due = second in
+      first_model = action
+      && not first_due
+      && second_model = action
+      && second_due)
+
+let qcheck_graph_time_event_priority =
+  let sample =
+    let open QCheck.Gen in
+    pair (map (( + ) 5) (0 -- 10)) (1 -- 50)
+  in
+  (* Generated class: one queued Action and one due timer, then stop versus
+     due, then crash versus due. Observation boundary: the event kind each
+     following driver operation reports. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_event_priority"
+    ~count:40
+    (QCheck.make
+       ~print:(fun (d, action) ->
+         Printf.sprintf "{d=%d; action=%d}" d action)
+       sample)
+    (fun (d, action) ->
+      let clock = law_clock () in
+      let machine apply =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:0 ~apply_action:apply
+      in
+      let due_root apply =
+        time_root
+          (Crux.both (machine apply)
+             (Crux.Time.after (Eta.Duration.ms d)))
+      in
+      let ingress_root =
+        due_root (fun ~self:_ ~input:() ~model:_ ~action ->
+            (action, None))
+      in
+      let ingress_driver = identity_driver ingress_root in
+      let (_, endpoint), _ = driver_output ingress_driver in
+      send endpoint action;
+      Eta_test.Test_clock.adjust clock (Eta.Duration.ms d);
+      let due_first = driver_output ingress_driver in
+      let action_second = driver_output ingress_driver in
+      let stop_root = time_root (Crux.Time.after (Eta.Duration.ms d)) in
+      let stop_driver = identity_driver stop_root in
+      ignore (driver_output stop_driver);
+      Eta_test.Test_clock.adjust clock (Eta.Duration.ms d);
+      Crux.Driver.request_stop stop_driver;
+      let stop_won =
+        match run_ok (Crux.Driver.poll stop_driver) with
+        | Some (Crux.Driver.Closed _) -> true
+        | _ -> false
+      in
+      let crash_root =
+        due_root (fun ~self:_ ~input:() ~model:_ ~action ->
+            (action, Some (Eta.Effect.die_message "graph time crash")))
+      in
+      let crash_driver = identity_driver crash_root in
+      let (_, crash_endpoint), _ = driver_output crash_driver in
+      send crash_endpoint action;
+      ignore (driver_output crash_driver);
+      for _ = 1 to 3 do
+        Eio.Fiber.yield ()
+      done;
+      Eta_test.Test_clock.adjust clock (Eta.Duration.ms d);
+      let crash_won =
+        match run_ok (Crux.Driver.poll crash_driver) with
+        | Some (Crux.Driver.Crash_detected _) -> true
+        | _ -> false
+      in
+      fst (fst due_first) = 0
+      && snd due_first
+      && fst (fst action_second) = action
+      && snd action_second
+      && stop_won && crash_won)
+
+let qcheck_graph_time_due_coalescing =
+  let sample =
+    let open QCheck.Gen in
+    triple (map (( + ) 5) (0 -- 5)) (map (( + ) 1) (0 -- 4)) (1 -- 50)
+  in
+  (* Generated class: two timers due in one sample and one queued Action.
+     Observation boundary: one due delivery with both timers, then the
+     preserved Action delivery, then idleness. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_due_coalescing"
+    ~count:40
+    (QCheck.make
+       ~print:(fun (d, gap, action) ->
+         Printf.sprintf "{d=%d; gap=%d; action=%d}" d gap action)
+       sample)
+    (fun (d, gap, action) ->
+      let machine =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:0
+          ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+            (action, None))
+      in
+      let description =
+        let open Crux.Syntax in
+        let+ timers =
+          Crux.both
+            (Crux.Time.after (Eta.Duration.ms d))
+            (Crux.Time.after (Eta.Duration.ms (d + gap)))
+        and+ model = Crux.map machine ~f:fst in
+        (timers, model)
+      in
+      let root = time_root (Crux.both machine description) in
+      let driver = identity_driver root in
+      let (_, endpoint), _ = driver_output driver in
+      send endpoint action;
+      Eta_test.Test_clock.adjust (law_clock ())
+        (Eta.Duration.ms (d + gap));
+      let _, ((first, second), model) = driver_output driver in
+      let _, ((_, _), action_model) = driver_output driver in
+      let idle = run_ok (Crux.Driver.poll driver) = None in
+      first && second && model = 0 && action_model = action && idle)
+
+let qcheck_graph_time_timer_progress =
+  let sample =
+    let open QCheck.Gen in
+    pair (map (( + ) 5) (0 -- 10)) (map (( + ) 2) (0 -- 4))
+  in
+  (* Generated class: one one-shot timer and one periodic timer.
+     Observation boundary: deliveries before and after each deadline and
+     idleness between them. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_timer_progress"
+    ~count:40
+    (QCheck.make
+       ~print:(fun (d, p) -> Printf.sprintf "{d=%d; p=%d}" d p)
+       sample)
+    (fun (d, p) ->
+      let clock = law_clock () in
+      let one_shot_root =
+        time_root (Crux.Time.after (Eta.Duration.ms d))
+      in
+      let one_shot = identity_driver one_shot_root in
+      let initial_shot = driver_output one_shot in
+      Eta_test.Test_clock.adjust clock (Eta.Duration.ms d);
+      let fired = driver_output one_shot in
+      Eta_test.Test_clock.adjust clock (Eta.Duration.ms d);
+      let retired = run_ok (Crux.Driver.poll one_shot) = None in
+      let periodic_root =
+        time_root (Crux.Time.interval (Eta.Duration.ms p))
+      in
+      let periodic = identity_driver periodic_root in
+      let tick0 = driver_output periodic in
+      Eta_test.Test_clock.adjust clock (Eta.Duration.ms p);
+      let tick1 = driver_output periodic in
+      let quiet = run_ok (Crux.Driver.poll periodic) = None in
+      Eta_test.Test_clock.adjust clock (Eta.Duration.ms p);
+      let tick2 = driver_output periodic in
+      (not initial_shot) && fired && retired
+      && tick0 = 0 && tick1 = 1 && quiet && tick2 = 2)
+
+let qcheck_graph_time_now_cadence =
+  let sample =
+    let open QCheck.Gen in
+    pair (map (( + ) 5) (0 -- 7)) (1 -- 50)
+  in
+  (* Generated class: one Action inside the first cadence interval.
+     Observation boundary: the shared sample at each committed advancement
+     and the activation-aligned due schedule, which the Action does not
+     shift. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_now_cadence"
+    ~count:40
+    (QCheck.make
+       ~print:(fun (p, action) ->
+         Printf.sprintf "{p=%d; action=%d}" p action)
+       sample)
+    (fun (p, action) ->
+      let clock = law_clock () in
+      let machine =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:0
+          ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+            (action, None))
+      in
+      let description =
+        let open Crux.Syntax in
+        let+ now = Crux.Time.now ~every:(Eta.Duration.ms p)
+        and+ model = Crux.map machine ~f:fst in
+        (Crux.Time.to_ms now, model)
+      in
+      let root = time_root (Crux.both machine description) in
+      let driver = identity_driver root in
+      let t0 = Eta_test.Test_clock.now_ms clock in
+      let (_, endpoint), (emitted0, _) = driver_output driver in
+      Eta_test.Test_clock.adjust clock Eta.Duration.(ms 1);
+      send endpoint action;
+      let _, (action_sample, action_model) = driver_output driver in
+      Eta_test.Test_clock.advance_to clock (t0 + p);
+      let _, (aligned, _) = driver_output driver in
+      Eta_test.Test_clock.advance_to clock (t0 + (2 * p));
+      let _, (next, _) = driver_output driver in
+      emitted0 = t0
+      && action_sample = t0 + 1
+      && action_model = action
+      && aligned = t0 + p
+      && next = t0 + (2 * p))
+
+let qcheck_graph_time_deadline =
+  (* Generated class: one dynamic deadline with a generated future offset.
+     Observation boundary: outputs before, at, and after the deadline. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_deadline" ~count:40
+    (QCheck.map (fun x -> 5 + x) (QCheck.int_range 0 25))
+    (fun offset ->
+      let clock = law_clock () in
+      let source = time_root (Crux.Time.now ~every:(Eta.Duration.ms 1)) in
+      let source_driver = identity_driver source in
+      let token = driver_output source_driver in
+      let target =
+        match Crux.Time.add token (Eta.Duration.ms offset) with
+        | Ok target -> target
+        | Error _ -> failwith "valid time addition failed"
+      in
+      let root = time_root (Crux.Time.deadline target) in
+      let driver = identity_driver root in
+      let before = driver_output driver in
+      Eta_test.Test_clock.adjust clock (Eta.Duration.ms offset);
+      let at = driver_output driver in
+      Eta_test.Test_clock.adjust clock (Eta.Duration.ms offset);
+      let after = run_ok (Crux.Driver.poll driver) = None in
+      (not before) && at && after)
+
+let qcheck_graph_time_after_activation =
+  let sample =
+    let open QCheck.Gen in
+    pair (map (( + ) 8) (0 -- 7)) (map (( + ) 3) (0 -- 3))
+  in
+  (* Generated class: one timer child disposed and re-entered before its
+     original deadline. Observation boundary: advancement results at the
+     original and the re-activation deadlines. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_after_activation"
+    ~count:40
+    (QCheck.make
+       ~print:(fun (d, r) -> Printf.sprintf "{d=%d; r=%d}" d r)
+       sample)
+    (fun (d, r) ->
+      let clock = law_clock () in
+      let selector =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:0
+          ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+            (action, None))
+      in
+      let description =
+        Crux.both selector
+          (Crux.bind (Crux.map selector ~f:fst) ~f:(fun stage ->
+               if stage = 1 then Crux.Time.after (Eta.Duration.ms d)
+               else Crux.return true))
+      in
+      let root = time_root description in
+      let (_, endpoint), _ = reset_advance root in
+      let t0 = Eta_test.Test_clock.now_ms clock in
+      send endpoint 1;
+      let _ = reset_advance root in
+      Eta_test.Test_clock.advance_to clock (t0 + r);
+      send endpoint 2;
+      let _ = reset_advance root in
+      send endpoint 1;
+      let _ = reset_advance root in
+      Eta_test.Test_clock.advance_to clock (t0 + d);
+      let original_deadline_idle =
+        run_ok (Crux.Root.advance root) = Ok Crux.Root.Idle
+      in
+      Eta_test.Test_clock.advance_to clock (t0 + r + d);
+      let reactivation_fired =
+        match run_ok (Crux.Root.advance root) with
+        | Ok (Crux.Root.Committed committed) ->
+            start committed.post_commit;
+            snd committed.output
+        | _ -> false
+      in
+      original_deadline_idle && reactivation_fired)
+
+let qcheck_graph_time_interval_catch_up =
+  let sample =
+    let open QCheck.Gen in
+    pair (map (( + ) 2) (0 -- 8)) (map (( + ) 2) (0 -- 3))
+  in
+  (* Generated class: missed tick counts, then a saturation leg on an
+     isolated clock. Observation boundary: one catch-up delivery, idleness
+     after it, the saturated delivery, and idleness after saturation. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_interval_catch_up"
+    ~count:40
+    (QCheck.make
+       ~print:(fun (p, missed) ->
+         Printf.sprintf "{p=%d; missed=%d}" p missed)
+       sample)
+    (fun (p, missed) ->
+      let clock = law_clock () in
+      let root = time_root (Crux.Time.interval (Eta.Duration.ms p)) in
+      let driver = identity_driver root in
+      let tick0 = driver_output driver in
+      Eta_test.Test_clock.adjust clock
+        (Eta.Duration.ms ((missed * p) + (p - 1)));
+      let caught_up = driver_output driver in
+      let no_replay = run_ok (Crux.Driver.poll driver) = None in
+      let isolated = Eta_test.Test_clock.create () in
+      let isolated_capability =
+        Eta_test.Test_clock.as_capability isolated
+      in
+      let under effect =
+        Eta.Effect.with_clock isolated_capability effect
+      in
+      let saturated_root =
+        time_root (Crux.Time.interval (Eta.Duration.ms 1))
+      in
+      let saturated_driver = identity_driver saturated_root in
+      let initial =
+        match run_ok (under (Crux.Driver.poll saturated_driver)) with
+        | Some (Crux.Driver.Deliver delivery) ->
+            let output = Crux.Driver.Delivery.output delivery in
+            ignore
+              (run_ok
+                 (under (Crux.Driver.Delivery.delivered delivery)));
+            output
+        | _ -> failwith "isolated initial delivery failed"
+      in
+      Eta_test.Test_clock.advance_to isolated max_int;
+      let saturated =
+        match run_ok (under (Crux.Driver.poll saturated_driver)) with
+        | Some (Crux.Driver.Deliver delivery) ->
+            let output = Crux.Driver.Delivery.output delivery in
+            ignore
+              (run_ok
+                 (under (Crux.Driver.Delivery.delivered delivery)));
+            output
+        | _ -> failwith "isolated saturation delivery failed"
+      in
+      let quiet =
+        run_ok (under (Crux.Driver.poll saturated_driver)) = None
+      in
+      tick0 = 0
+      && caught_up = missed
+      && no_replay
+      && initial = 0
+      && saturated = max_int
+      && quiet)
+
+let qcheck_graph_time_commit_fence =
+  (* Generated class: one due timer per iteration. Observation boundary:
+     the due commit's output, the advancement fence before the token
+     starts, and idleness after it. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_commit_fence"
+    ~count:40 (QCheck.map (fun x -> 5 + x) (QCheck.int_range 0 10))
+    (fun d ->
+      let root = time_root (Crux.Time.after (Eta.Duration.ms d)) in
+      ignore (reset_advance root);
+      Eta_test.Test_clock.adjust (law_clock ()) (Eta.Duration.ms d);
+      let output, post_commit =
+        committed (run_ok (Crux.Root.advance root))
+      in
+      let fenced =
+        run_ok (Crux.Root.advance root)
+        = Error Crux.Root.Awaiting_post_commit
+      in
+      start post_commit;
+      let idle = run_ok (Crux.Root.advance root) = Ok Crux.Root.Idle in
+      output && fenced && idle)
+
+let qcheck_graph_time_driver_bound =
+  let sample =
+    let open QCheck.Gen in
+    triple (map (( + ) 5) (0 -- 5)) (map (( + ) 1) (0 -- 4)) (1 -- 50)
+  in
+  (* Generated class: two due timers and one queued Action. Observation
+     boundary: the exact delivery sequence of consecutive polls. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_driver_bound"
+    ~count:40
+    (QCheck.make
+       ~print:(fun (d, gap, action) ->
+         Printf.sprintf "{d=%d; gap=%d; action=%d}" d gap action)
+       sample)
+    (fun (d, gap, action) ->
+      let machine =
+        Crux.State_machine.create (Crux.return ())
+          ~default_model:0
+          ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+            (action, None))
+      in
+      let description =
+        let open Crux.Syntax in
+        let+ timers =
+          Crux.both
+            (Crux.Time.after (Eta.Duration.ms d))
+            (Crux.Time.after (Eta.Duration.ms (d + gap)))
+        and+ model = Crux.map machine ~f:fst in
+        (timers, model)
+      in
+      let root = time_root (Crux.both machine description) in
+      let driver = identity_driver root in
+      let (_, endpoint), _ = driver_output driver in
+      send endpoint action;
+      Eta_test.Test_clock.adjust (law_clock ())
+        (Eta.Duration.ms (d + gap));
+      let first = driver_output driver in
+      let second = driver_output driver in
+      let quiet = run_ok (Crux.Driver.poll driver) = None in
+      snd first = ((true, true), 0)
+      && snd second = ((true, true), action)
+      && quiet)
+
+let qcheck_graph_time_transport_equivalence =
+  (* Generated class: one interval timer observed through both binding
+     kinds. Observation boundary: the delivered tick sequences. *)
+  QCheck.Test.make ~name:"qcheck_graph_time_transport_equivalence"
+    ~count:20 (QCheck.map (fun x -> 5 + x) (QCheck.int_range 0 10))
+    (fun p ->
+      let clock = law_clock () in
+      let identity_root =
+        time_root (Crux.Time.interval (Eta.Duration.ms p))
+      in
+      let identity = identity_driver identity_root in
+      let candidate, peer =
+        Crux.Serialized_session.candidate ~max_frame_bytes:1024
+          ~format:(module Eta_crux_json.Format)
+      in
+      let binding, _admin =
+        Crux.Driver.Binding.serialized ~output:int_codec
+          ~operations:[] ~session:candidate
+      in
+      let serialized_root =
+        time_root (Crux.Time.interval (Eta.Duration.ms p))
+      in
+      let serialized = Crux.Driver.create binding serialized_root in
+      let ack_sequence = ref 0l in
+      let serialized_output () =
+        let rec drain attempts =
+          match
+            run_ok (Crux.Serialized_session.poll_outgoing peer)
+          with
+          | Some bytes -> Eta_crux_json.Format.decode bytes
+          | None ->
+              if attempts = 0 then
+                failwith "serialized binding emitted no frame"
+              else (
+                if run_ok (Crux.Driver.poll serialized) <> None then
+                  failwith
+                    "serialized delivery is not transport-owned";
+                drain (attempts - 1))
+        in
+        let frame = drain 8 in
+        let sequence, output =
+          match frame with
+          | Ok (Crux.Wire.Frame.Output_deliver { seq; output; _ }) -> (
+              seq,
+              match Crux.Codec.decode int_codec output with
+              | Ok value -> value
+              | Error _ -> failwith "serialized tick did not decode")
+          | _ -> failwith "serialized binding emitted the wrong frame"
+        in
+        let response =
+          Crux.Wire.Frame.Output_result
+            {
+              seq = !ack_sequence;
+              reply_to = sequence;
+              result = `Accepted;
+            }
+          |> Eta_crux_json.Format.encode
+        in
+        ack_sequence := Int32.add !ack_sequence 1l;
+        (match
+           run_ok (Crux.Serialized_session.receive peer response)
+         with
+        | Ok () -> ()
+        | Error _ -> failwith "serialized acknowledgment rejected");
+        output
+      in
+      let identity_tick0 = driver_output identity in
+      let serialized_tick0 = serialized_output () in
+      Eta_test.Test_clock.adjust clock (Eta.Duration.ms p);
+      let identity_tick1 = driver_output identity in
+      let serialized_tick1 = serialized_output () in
+      Eta_test.Test_clock.adjust clock (Eta.Duration.ms p);
+      let identity_tick2 = driver_output identity in
+      let serialized_tick2 = serialized_output () in
+      [ identity_tick0; identity_tick1; identity_tick2 ]
+      = [ serialized_tick0; serialized_tick1; serialized_tick2 ]
+      && identity_tick2 = 2)
+
+let qcheck_poll_transport_equivalence =
+  (* Generated class: one manual Poll result observed through both binding
+     kinds. Observation boundary: the delivered output sequences and the
+     refresh admissions. *)
+  QCheck.Test.make ~name:"qcheck_poll_transport_equivalence"
+    ~count:10 (QCheck.int_range 1 100)
+    (fun value ->
+      let description () =
+        let result, refresh =
+          Crux.Poll.manual_refresh
+            ~starting:Crux.Poll.Starting.empty
+            ~effect:(Crux.return (Eta.Effect.pure value)) ()
+        in
+        Crux.both
+          (Crux.map result ~f:(function
+            | Some result -> result
+            | None -> -1))
+          refresh
+      in
+      let identity_root = time_root (description ()) in
+      let identity = identity_driver identity_root in
+      let pair_codec =
+        Crux.Codec.make
+          ~encode:(fun (result, _) ->
+            Crux.Codec.encode int_codec result)
+          ~decode:(fun _ ->
+            Error
+              {
+                Crux.Codec.message =
+                  "poll transport codec is encode-only";
+              })
+      in
+      let candidate, peer =
+        Crux.Serialized_session.candidate ~max_frame_bytes:1024
+          ~format:(module Eta_crux_json.Format)
+      in
+      let binding, _admin =
+        Crux.Driver.Binding.serialized ~output:pair_codec
+          ~operations:[] ~session:candidate
+      in
+      let serialized_root = time_root (description ()) in
+      let serialized = Crux.Driver.create binding serialized_root in
+      let ack_sequence = ref 0l in
+      let serialized_output () =
+        let rec drain attempts =
+          match
+            run_ok (Crux.Serialized_session.poll_outgoing peer)
+          with
+          | Some bytes -> Eta_crux_json.Format.decode bytes
+          | None ->
+              if attempts = 0 then
+                failwith "serialized binding emitted no frame"
+              else (
+                if run_ok (Crux.Driver.poll serialized) <> None then
+                  failwith
+                    "serialized delivery is not transport-owned";
+                drain (attempts - 1))
+        in
+        let frame = drain 8 in
+        let sequence, output =
+          match frame with
+          | Ok (Crux.Wire.Frame.Output_deliver { seq; output; _ }) -> (
+              seq,
+              match Crux.Codec.decode int_codec output with
+              | Ok decoded -> decoded
+              | Error _ -> failwith "serialized poll did not decode")
+          | _ -> failwith "serialized binding emitted the wrong frame"
+        in
+        let response =
+          Crux.Wire.Frame.Output_result
+            {
+              seq = !ack_sequence;
+              reply_to = sequence;
+              result = `Accepted;
+            }
+          |> Eta_crux_json.Format.encode
+        in
+        ack_sequence := Int32.add !ack_sequence 1l;
+        (match
+           run_ok (Crux.Serialized_session.receive peer response)
+         with
+        | Ok () -> ()
+        | Error _ -> failwith "serialized acknowledgment rejected");
+        output
+      in
+      let committed_int driver =
+        match Crux.Driver.latest_committed_output driver with
+        | Some (result, _) -> result
+        | None -> failwith "poll commit was not retained"
+      in
+      let refresh_of driver =
+        match Crux.Driver.latest_committed_output driver with
+        | Some (_, refresh) -> refresh
+        | None -> failwith "poll refresh was not retained"
+      in
+      let initial_identity, _ = driver_output identity in
+      let initial_serialized = serialized_output () in
+      invoke_poll_refresh (refresh_of identity);
+      invoke_poll_refresh (refresh_of serialized);
+      let refresh_identity, _ = driver_output identity in
+      let refresh_serialized = serialized_output () in
+      for _ = 1 to 3 do
+        Eio.Fiber.yield ()
+      done;
+      let completion_identity, _ = driver_output identity in
+      let completion_serialized = serialized_output () in
+      initial_identity = -1
+      && initial_serialized = -1
+      && refresh_identity = -1
+      && refresh_serialized = -1
+      && completion_identity = value
+      && completion_serialized = value
+      && committed_int identity = value
+      && committed_int serialized = value)
+
 let () =
-  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  Eta_test.with_test_clock @@ fun switch clock runtime ->
   shared_runtime := Some runtime;
+  shared_clock := Some clock;
+  shared_switch := Some switch;
   let seed = Random.State.make [| 0xE7A; 0xC2_0C |] in
   let code =
     QCheck_base_runner.run_tests ~colors:false ~verbose:true ~rand:seed
@@ -3344,6 +6081,48 @@ let () =
         qcheck_wire_redaction;
         qcheck_bounded_drain;
         qcheck_controlled_dependencies;
+        qcheck_latest_committed_output;
+        qcheck_post_commit_effect_observer_inventory;
+        qcheck_post_commit_effect_observer_lifecycle;
+        qcheck_post_commit_effect_observer_order;
+        qcheck_post_commit_effect_observer_fifo;
+        qcheck_post_commit_effect_observer_transparency;
+        qcheck_reset_default_custom;
+        qcheck_reset_snapshot_atomicity;
+        qcheck_reset_ingress_order;
+        qcheck_reset_scope_boundary;
+        qcheck_reset_dynamic_children;
+        qcheck_reset_effect_lifecycle;
+        qcheck_reset_authority_incarnation;
+        qcheck_poll_committed_run_order;
+        qcheck_poll_manual_refresh_admission;
+        qcheck_poll_input_cutoff;
+        qcheck_poll_starting_incarnation;
+        qcheck_poll_run_order_overflow;
+        qcheck_poll_provider_sampling;
+        qcheck_poll_activation_and_coalescing;
+        qcheck_poll_result_cutoff_order_fence;
+        qcheck_poll_failure_attribution;
+        qcheck_poll_clock_priority;
+        qcheck_poll_completion_fifo;
+        qcheck_poll_run_order;
+        qcheck_post_commit_effect_observer_poll_lifecycle;
+        qcheck_graph_time_initial_binding;
+        qcheck_graph_time_shared_sample;
+        qcheck_graph_time_structural_ownership;
+        qcheck_graph_time_deadline_wake;
+        qcheck_graph_time_await_race;
+        qcheck_graph_time_event_priority;
+        qcheck_graph_time_due_coalescing;
+        qcheck_graph_time_timer_progress;
+        qcheck_graph_time_now_cadence;
+        qcheck_graph_time_deadline;
+        qcheck_graph_time_after_activation;
+        qcheck_graph_time_interval_catch_up;
+        qcheck_graph_time_commit_fence;
+        qcheck_graph_time_driver_bound;
+        qcheck_graph_time_transport_equivalence;
+        qcheck_poll_transport_equivalence;
       ]
   in
   if code <> 0 then exit code

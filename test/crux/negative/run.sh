@@ -11,6 +11,8 @@ trap 'rm -rf "$tmp_dir"' EXIT
 
 status=0
 
+# Registry gate: poll_effect_rejects_typed_error.
+
 compile_fixture() {
   local src="$1"
   local obj="$2"
@@ -43,6 +45,12 @@ for src in "$fixture_dir"/*_negative.ml; do
       expected=('Root.t' 'Eta_crux.t')
       ;;
     staged_effect_rejects_typed_error_negative.ml)
+      expected=('Application_error' 'Eta_crux.never')
+      ;;
+    poll_effect_on_change_rejects_typed_error_negative.ml)
+      expected=('Application_error' 'Eta_crux.never')
+      ;;
+    poll_manual_refresh_rejects_typed_error_negative.ml)
       expected=('Application_error' 'Eta_crux.never')
       ;;
     admission_must_be_handled_negative.ml)

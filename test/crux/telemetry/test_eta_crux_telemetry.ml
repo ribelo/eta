@@ -115,7 +115,11 @@ let request_program () =
   (match handled with
   | Crux.Request.Driver_event.Handled -> ()
   | Crux.Request.Driver_event.Different_operation ->
-      failwith "request operation mismatch");
+      failwith "request operation mismatch"
+  | Crux.Request.Driver_event.Already_handled ->
+      failwith "request operation already handled"
+  | Crux.Request.Driver_event.Closed _ ->
+      failwith "request operation closed");
   let* _ = Crux.Request.Driver_event.accepted event in
   let rec await_response () =
     match !response with

@@ -231,6 +231,7 @@ let write_origin writer = function
   | Export_dispatch -> Writer.byte writer 4
   | Cleanup -> Writer.byte writer 5
   | Crash_handler -> Writer.byte writer 6
+  | Graph_clock -> Writer.byte writer 7
 
 let read_origin reader =
   match Reader.byte reader with
@@ -241,11 +242,12 @@ let read_origin reader =
   | 4 -> Export_dispatch
   | 5 -> Cleanup
   | 6 -> Crash_handler
+  | 7 -> Graph_clock
   | _ -> raise (Reader.Invalid "invalid failure origin")
 
 let write_trigger writer = function
   | Failure.Initial_start -> Writer.byte writer 0
-  | Endpoint_message -> Writer.byte writer 1
+  | Endpoint_action -> Writer.byte writer 1
   | Transition_effect -> Writer.byte writer 2
   | Lifecycle_program -> Writer.byte writer 3
   | Source_opening -> Writer.byte writer 4
@@ -259,11 +261,15 @@ let write_trigger writer = function
   | Stop_teardown -> Writer.byte writer 12
   | Crash_teardown -> Writer.byte writer 13
   | Application_crash_handler -> Writer.byte writer 14
+  | Clock_sample -> Writer.byte writer 15
+  | Clock_due -> Writer.byte writer 16
+  | Structural_reset -> Writer.byte writer 17
+  | Poll_effect -> Writer.byte writer 18
 
 let read_trigger reader =
   match Reader.byte reader with
   | 0 -> Failure.Initial_start
-  | 1 -> Endpoint_message
+  | 1 -> Endpoint_action
   | 2 -> Transition_effect
   | 3 -> Lifecycle_program
   | 4 -> Source_opening
@@ -277,6 +283,10 @@ let read_trigger reader =
   | 12 -> Stop_teardown
   | 13 -> Crash_teardown
   | 14 -> Application_crash_handler
+  | 15 -> Clock_sample
+  | 16 -> Clock_due
+  | 17 -> Structural_reset
+  | 18 -> Poll_effect
   | _ -> raise (Reader.Invalid "invalid failure trigger")
 
 let write_record writer (record : Failure.portable_record) =

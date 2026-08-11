@@ -29,12 +29,31 @@ type root_phase =
   | Awaiting_post_commit
   | Closed
 
+type root_authority =
+  | Unstarted
+  | Direct_started
+  | Driver_owned
+
+type monotonic_time = {
+  clock : Eta.Spi.Expert.Clock.t option;
+  milliseconds : int;
+}
+
+exception Runtime_mismatch
+exception Clock_regression
+exception Deadline_overflow
+exception Past_dynamic_deadline
+
 type boundary_endpoint_result =
   | Boundary_endpoint_accepted
   | Boundary_endpoint_full
   | Boundary_endpoint_ingress_closed
   | Boundary_endpoint_revoked
   | Boundary_endpoint_malformed_payload
+
+type poll_action =
+  | Poll_refresh
+  | Poll_completion of int64 * Obj.t
 
 type boundary_request_closure =
   | Boundary_initiator_cancelled
@@ -123,6 +142,7 @@ type root_core = {
   ingress_capacity : int;
   request_capacity : int;
   phase : root_phase Atomic.t;
+  mutable authority : root_authority;
   start_pending : bool Atomic.t;
   stop_requested : bool Atomic.t;
   mutable scopes : scope_state Int_map.t;
@@ -133,6 +153,11 @@ type root_core = {
   mutable next_scope : int;
   mutable next_endpoint : int;
   mutable next_position : int64;
+  mutable bound_clock : Eta.Spi.Expert.Clock.t option;
+  mutable last_clock_sample : int option;
+  mutable current_clock_sample : clock_sample option;
+  mutable clock_nodes : clock_node list;
+  post_commit_effect_observer : Crux_testing.observer option;
   mutable dispose_signal : (unit -> (unit, staging_error) Eta.Effect.t) option;
   memo : (int * int, Obj.t) Hashtbl.t;
   (* Reused per advance: the phase gate serializes advances, and every
@@ -142,6 +167,11 @@ type root_core = {
   mutable staging : staging;
 }
 
+and reset_authority = {
+  reset_root : root_core;
+  reset_scope : int;
+}
+
 and endpoint_core = {
   id : int;
   root : root_core;
@@ -149,6 +179,18 @@ and endpoint_core = {
   generation : int;
   mutable active : bool;
   dispatch : staging -> Obj.t -> unit;
+  reset : (staging -> unit) option;
+}
+
+and clock_sample = {
+  sample_clock : Eta.Spi.Expert.Clock.t;
+  sample_ms : int;
+}
+
+and clock_node = {
+  clock_scope : int;
+  clock_sample : clock_sample -> (unit, staging_error) result;
+  clock_deadline : unit -> int option;
 }
 
 and message =
@@ -157,12 +199,14 @@ and message =
       action : Obj.t;
       owner_scope : int option;
     }
+  | Reset_message of reset_authority
 
 and work = {
   scope : int;
   origin : Failure.origin;
   trigger : Failure.trigger_kind;
   payload : work_payload;
+  mutable observation : Crux_testing.observed_effect option;
 }
 
 and work_payload =
@@ -221,7 +265,12 @@ and machine_cell = {
     input:Obj.t ->
     model:Obj.t ->
     action:Obj.t ->
-    Obj.t * (unit, never) Eta.Effect.t;
+    Obj.t * (unit, never) Eta.Effect.t option;
+  reset :
+    endpoint_core ->
+    input:Obj.t ->
+    model:Obj.t ->
+    Obj.t * (unit, never) Eta.Effect.t option;
 }
 
 type owned_context = {
@@ -717,9 +766,614 @@ module Syntax = struct
   let ( let* ) value f = bind value ~f
 end
 
+module Time = struct
+  type nonrec monotonic_time = monotonic_time
+  type arithmetic_error = [ `Deadline_overflow | `Past_deadline ]
+
+  let to_ms time = time.milliseconds
+
+  let add time duration =
+    let delta = Eta.Duration.to_ms duration in
+    if delta <= 0 then Error `Past_deadline
+    else if time.milliseconds > max_int - delta then
+      Error `Deadline_overflow
+    else
+      Ok
+        {
+          time with
+          milliseconds = time.milliseconds + delta;
+        }
+
+  let positive_duration name duration =
+    let milliseconds = Eta.Duration.to_ms duration in
+    if milliseconds <= 0 then
+      invalid_arg ("Eta_crux.Time." ^ name ^ ": duration must be positive");
+    milliseconds
+
+  let checked_deadline now delta =
+    if now > max_int - delta then raise Deadline_overflow;
+    now + delta
+
+  let register_node ctx node =
+    ctx.ctx_root.clock_nodes <- node :: ctx.ctx_root.clock_nodes;
+    (match ctx.ctx_root.current_clock_sample with
+    | None -> ()
+    | Some current ->
+        (try
+           match node.clock_sample current with
+           | Ok () -> ()
+           | Error error ->
+               ignore error;
+               invalid_arg
+                 "Eta_crux.Time: activation graph update failed"
+         with Runtime_mismatch ->
+           latch_exception ctx.ctx_root
+             ~origin:Failure.Graph_clock
+             ~trigger:Failure.Clock_sample Runtime_mismatch;
+           raise Failure_already_latched))
+
+  let now ~every =
+    let period = positive_duration "now" every in
+    make @@ fun ctx ->
+    let (module S) = unpack_package ctx in
+    let activation = ref None in
+    let next_deadline = ref None in
+    let var =
+      S.Var.create { clock = None; milliseconds = 0 }
+    in
+    let sample current =
+      let base =
+        match !activation with
+        | Some base -> base
+        | None ->
+            activation := Some current.sample_ms;
+            current.sample_ms
+      in
+      if
+        match !next_deadline with
+        | Some deadline -> current.sample_ms >= deadline
+        | None -> true
+      then (
+        let elapsed =
+          Int64.sub
+            (Int64.of_int current.sample_ms)
+            (Int64.of_int base)
+        in
+        let periods =
+          Int64.add
+            (Int64.div elapsed (Int64.of_int period))
+            1L
+        in
+        let candidate =
+          Int64.add (Int64.of_int base)
+            (Int64.mul periods (Int64.of_int period))
+        in
+        if Int64.compare candidate (Int64.of_int max_int) > 0 then
+          raise Deadline_overflow
+        else next_deadline := Some (Int64.to_int candidate));
+      match
+        S.Var.set var
+          {
+            clock = Some current.sample_clock;
+            milliseconds = current.sample_ms;
+          }
+      with
+      | Ok () -> Ok ()
+      | Error error -> Error (error :> staging_error)
+    in
+    register_node ctx
+      {
+        clock_scope = ctx.ctx_scope;
+        clock_sample = sample;
+        clock_deadline = (fun () -> !next_deadline);
+      };
+    pack_signal
+      (S.map
+         (fun value -> (value, contribution_empty))
+         (S.Var.watch var))
+
+  let deadline time =
+    make @@ fun ctx ->
+    let (module S) = unpack_package ctx in
+    let active = ref false in
+    let next_deadline = ref None in
+    let var = S.Var.create false in
+    let sample current =
+      if not !active then (
+        (match time.clock with
+        | Some clock
+          when Eta.Spi.Expert.Clock.same clock current.sample_clock ->
+            ()
+        | Some _ | None -> raise Runtime_mismatch);
+        if time.milliseconds <= current.sample_ms then
+          raise Past_dynamic_deadline;
+        active := true;
+        next_deadline := Some time.milliseconds);
+      let due = current.sample_ms >= time.milliseconds in
+      if due then next_deadline := None;
+      match S.Var.set var due with
+      | Ok () -> Ok ()
+      | Error error -> Error (error :> staging_error)
+    in
+    register_node ctx
+      {
+        clock_scope = ctx.ctx_scope;
+        clock_sample = sample;
+        clock_deadline = (fun () -> !next_deadline);
+      };
+    pack_signal
+      (S.map
+         (fun value -> (value, contribution_empty))
+         (S.Var.watch var))
+
+  let after duration =
+    let delta = positive_duration "after" duration in
+    make @@ fun ctx ->
+    let (module S) = unpack_package ctx in
+    let target = ref None in
+    let completed = ref false in
+    let var = S.Var.create false in
+    let sample current =
+      let target_ms =
+        match !target with
+        | Some target -> target
+        | None ->
+            let target_ms =
+              checked_deadline current.sample_ms delta
+            in
+            target := Some target_ms;
+            target_ms
+      in
+      let due = current.sample_ms >= target_ms in
+      if due then completed := true;
+      match S.Var.set var due with
+      | Ok () -> Ok ()
+      | Error error -> Error (error :> staging_error)
+    in
+    register_node ctx
+      {
+        clock_scope = ctx.ctx_scope;
+        clock_sample = sample;
+        clock_deadline =
+          (fun () -> if !completed then None else !target);
+      };
+    pack_signal
+      (S.map
+         (fun value -> (value, contribution_empty))
+         (S.Var.watch var))
+
+  let interval duration =
+    let period = positive_duration "interval" duration in
+    make @@ fun ctx ->
+    let (module S) = unpack_package ctx in
+    let activation = ref None in
+    let next_deadline = ref None in
+    let var = S.Var.create 0 in
+    let sample current =
+      let base =
+        match !activation with
+        | Some base -> base
+        | None ->
+            activation := Some current.sample_ms;
+            current.sample_ms
+      in
+      let elapsed =
+        Int64.sub
+          (Int64.of_int current.sample_ms)
+          (Int64.of_int base)
+      in
+      let ticks64 =
+        if Int64.compare elapsed 0L <= 0 then 0L
+        else Int64.div elapsed (Int64.of_int period)
+      in
+      let ticks =
+        if Int64.compare ticks64 (Int64.of_int max_int) >= 0 then
+          max_int
+        else Int64.to_int ticks64
+      in
+      if ticks = max_int then next_deadline := None
+      else (
+        let candidate =
+          Int64.add (Int64.of_int base)
+            (Int64.mul
+               (Int64.add ticks64 1L)
+               (Int64.of_int period))
+        in
+        if Int64.compare candidate (Int64.of_int max_int) > 0 then
+          raise Deadline_overflow
+        else next_deadline := Some (Int64.to_int candidate));
+      match S.Var.set var ticks with
+      | Ok () -> Ok ()
+      | Error error -> Error (error :> staging_error)
+    in
+    register_node ctx
+      {
+        clock_scope = ctx.ctx_scope;
+        clock_sample = sample;
+        clock_deadline = (fun () -> !next_deadline);
+      };
+    pack_signal
+      (S.map
+         (fun value -> (value, contribution_empty))
+         (S.Var.watch var))
+end
+
+module Reset = struct
+  type nonrec t = reset_authority
+
+  let trigger reset =
+    let root = reset.reset_root in
+    Eta.Effect.bind
+      (fun () ->
+        Eta.Spi.Expert.sync_contract2_result_map_error_sync1 root.wake
+          (fun wake ->
+            if not (Atomic.get root.wake_signaled) then (
+              ignore (Eta.Queue.try_offer_now wake () : _);
+              Atomic.set root.wake_signaled true))
+          (function
+            | `Closed -> Endpoint.Ingress_closed
+            | `Dropped ->
+                invalid_arg
+                  "Eta_crux.Reset.trigger: bounded ingress dropped a value"
+            | `Closed_with_error (_ : never) -> .)
+          (Eta.Queue.send root.ingress (Reset_message reset))
+        |> Eta.Effect.map (fun result ->
+               Crux_reset_barrier.run_after_admission ();
+               result))
+      (Eta.Effect.sync Crux_reset_barrier.run_before_admission)
+
+  let scope input ~f =
+    let input = use input in
+    make @@ fun ctx ->
+    let (module S) = unpack_package ctx in
+    let input_signal : ('input * contribution) S.signal =
+      unpack_signal (input.compile ctx)
+    in
+    let scope = fresh_scope ctx.ctx_root ~parent:ctx.ctx_scope in
+    let reset = { reset_root = ctx.ctx_root; reset_scope = scope.id } in
+    let reset_proxy = return reset in
+    let input_proxy =
+      make @@ fun _child_ctx ->
+      pack_signal
+        (S.map
+           (fun (input, _) -> (input, contribution_empty))
+           input_signal)
+    in
+    let child_ctx = { ctx with ctx_scope = scope.id } in
+    let child : ('output * contribution) S.signal =
+      unpack_signal
+        ((use (f ~reset:reset_proxy ~input:input_proxy)).compile child_ctx)
+    in
+    pack_signal
+      (S.map2
+         (fun (_, input_contribution)
+              (output, child_contribution) ->
+           let contribution =
+             contribution_append input_contribution child_contribution
+           in
+           ( output,
+             {
+               contribution with
+               added_scopes =
+                 contribution_items_prepend scope
+                   contribution.added_scopes;
+             } ))
+         input_signal child)
+end
+
+module Poll = struct
+  type ('result, 'output) starting = {
+    initial : 'output;
+    publish : 'result -> 'output;
+    suppress :
+      'result Cutoff.t -> 'output -> 'output -> bool;
+  }
+
+  module Starting = struct
+    type ('result, 'output) t =
+      ('result, 'output) starting
+
+    let empty =
+      {
+        initial = None;
+        publish = (fun result -> Some result);
+        suppress =
+          (fun cutoff published candidate ->
+            match published, candidate with
+            | Some published, Some candidate ->
+                cutoff published candidate
+            | None, None -> true
+            | None, Some _ | Some _, None -> false);
+      }
+
+    let initial initial =
+      {
+        initial;
+        publish = Fun.id;
+        suppress = (fun cutoff -> cutoff);
+      }
+  end
+
+  let next_endpoint root =
+    if root.next_endpoint = max_int then
+      invalid_arg "Eta_crux: endpoint identity overflow";
+    let endpoint = root.next_endpoint in
+    root.next_endpoint <- endpoint + 1;
+    endpoint
+
+  let contribution upstream endpoint hook =
+    let poll =
+      {
+        contribution_empty with
+        endpoints = Items_cons (endpoint, Items_empty);
+        commit_hooks = Items_cons (hook, Items_empty);
+      }
+    in
+    contribution_append upstream poll
+
+  let effect_on_change ~input_cutoff
+      ?(result_cutoff = Cutoff.phys_equal) ~starting ~input
+      ~effect () =
+    let input = use input in
+    let effect = use effect in
+    make @@ fun ctx ->
+    let (module S) = unpack_package ctx in
+    let root = ctx.ctx_root in
+    let input_signal : ('input * contribution) S.signal =
+      unpack_signal (input.compile ctx)
+    in
+    let provider_signal :
+        (('input -> ('result, never) Eta.Effect.t) * contribution)
+        S.signal =
+      unpack_signal (effect.compile ctx)
+    in
+    let result_var =
+      S.Var.create
+        ~cutoff:
+          (Eta_signal.Cutoff.of_equal
+             (starting.suppress result_cutoff))
+        starting.initial
+    in
+    let committed_input = ref None in
+    let committed_input_token = ref None in
+    let next_run_order = ref 0L in
+    let greatest_completion = ref None in
+    let endpoint_id = next_endpoint root in
+    let rec endpoint =
+      {
+        id = endpoint_id;
+        root;
+        scope = ctx.ctx_scope;
+        generation = endpoint_id;
+        active = false;
+        reset = None;
+        dispatch =
+          (fun staging action ->
+            match (Obj.obj action : poll_action) with
+            | Poll_refresh ->
+                ignore staging;
+                invalid_arg
+                  "Eta_crux.Poll: automatic poll has no refresh endpoint"
+            | Poll_completion (order, result) ->
+                let newer =
+                  match !greatest_completion with
+                  | None -> true
+                  | Some greatest -> Int64.compare order greatest > 0
+                in
+                if newer then (
+                  let previous = !greatest_completion in
+                  greatest_completion := Some order;
+                  staging.undos <-
+                    (fun () -> greatest_completion := previous)
+                    :: staging.undos;
+                  let output =
+                    starting.publish (Obj.obj result)
+                  in
+                  staging.model_sets <-
+                    (fun () -> S.Var.set result_var output)
+                    :: staging.model_sets));
+      }
+    and public_endpoint =
+      ({ Endpoint.core = endpoint; encode = Obj.repr } :
+        poll_action Endpoint.t)
+    and stage_run staging order body =
+      let program =
+        Eta.Effect.bind
+          (fun result ->
+            Eta.Effect.bind
+              (fun () ->
+                Endpoint.send public_endpoint
+                  (Poll_completion (order, Obj.repr result))
+                |> Eta.Effect.ignore_errors
+                |> Eta.Effect.map (fun () ->
+                       Crux_poll_barrier
+                       .run_after_completion_admission ()))
+              (Eta.Effect.sync
+                 Crux_poll_barrier.run_before_completion_admission))
+          body
+      in
+      staging.works <-
+        {
+          scope = endpoint.scope;
+          origin = Failure.Owned_work;
+          trigger = Failure.Poll_effect;
+          payload = Program program;
+          observation = None;
+        }
+        :: staging.works
+    in
+    let tagged_input =
+      S.map
+        (fun (input, contribution) ->
+          (ref (), input, contribution))
+        input_signal
+    in
+    let candidates =
+      S.map2
+        (fun (token, input, input_contribution)
+             (provider, provider_contribution) ->
+          let input_published =
+            match !committed_input_token with
+            | None -> true
+            | Some committed -> committed != token
+          in
+          let trigger =
+            match !committed_input with
+            | None -> true
+            | Some published when input_published ->
+                not (input_cutoff published input)
+            | Some _ -> false
+          in
+          if trigger then
+            Crux_poll_barrier.run_before_order_claim next_run_order;
+          if trigger && !next_run_order = Int64.max_int then
+            invalid_arg "Eta_crux: poll run order overflow";
+          let hook () =
+            committed_input := Some input;
+            committed_input_token := Some token;
+            if trigger then (
+              let order = !next_run_order in
+              next_run_order := Int64.succ order;
+              stage_run root.staging order
+                (Eta.Effect.bind Fun.id
+                   (Eta.Effect.sync (fun () -> provider input))))
+          in
+          let upstream =
+            contribution_append input_contribution
+              provider_contribution
+          in
+          ((), contribution upstream endpoint hook))
+        tagged_input provider_signal
+    in
+    pack_signal
+      (S.map2
+         (fun output (_, contribution) -> (output, contribution))
+         (S.Var.watch result_var) candidates)
+
+  let manual_refresh ?(result_cutoff = Cutoff.phys_equal)
+      ~starting ~effect () =
+    let effect = use effect in
+    let description =
+      make @@ fun ctx ->
+      let (module S) = unpack_package ctx in
+      let root = ctx.ctx_root in
+      let provider_signal :
+          (('result, never) Eta.Effect.t * contribution) S.signal =
+        unpack_signal (effect.compile ctx)
+      in
+      let result_var =
+        S.Var.create
+          ~cutoff:
+            (Eta_signal.Cutoff.of_equal
+               (starting.suppress result_cutoff))
+          starting.initial
+      in
+      let current_provider = ref None in
+      let next_run_order = ref 0L in
+      let greatest_completion = ref None in
+      let endpoint_id = next_endpoint root in
+      let claim_order staging =
+        Crux_poll_barrier.run_before_order_claim next_run_order;
+        if !next_run_order = Int64.max_int then
+          invalid_arg "Eta_crux: poll run order overflow";
+        let previous = !next_run_order in
+        next_run_order := Int64.succ previous;
+        staging.undos <-
+          (fun () -> next_run_order := previous)
+          :: staging.undos;
+        previous
+      in
+      let rec endpoint =
+        {
+          id = endpoint_id;
+          root;
+          scope = ctx.ctx_scope;
+          generation = endpoint_id;
+          active = false;
+          reset = None;
+          dispatch =
+            (fun staging action ->
+              match (Obj.obj action : poll_action) with
+              | Poll_refresh ->
+                  let provider =
+                    match !current_provider with
+                    | Some provider -> provider
+                    | None ->
+                        invalid_arg
+                          "Eta_crux.Poll: refresh before activation"
+                  in
+                  let order = claim_order staging in
+                  stage_run staging order provider
+              | Poll_completion (order, result) ->
+                  let newer =
+                    match !greatest_completion with
+                    | None -> true
+                    | Some greatest -> Int64.compare order greatest > 0
+                  in
+                  if newer then (
+                    let previous = !greatest_completion in
+                    greatest_completion := Some order;
+                    staging.undos <-
+                      (fun () -> greatest_completion := previous)
+                      :: staging.undos;
+                    let output =
+                      starting.publish (Obj.obj result)
+                    in
+                    staging.model_sets <-
+                      (fun () -> S.Var.set result_var output)
+                      :: staging.model_sets));
+        }
+      and public_endpoint =
+        ({ Endpoint.core = endpoint; encode = Obj.repr } :
+          poll_action Endpoint.t)
+      and stage_run staging order body =
+        let program =
+          Eta.Effect.bind
+            (fun result ->
+              Eta.Effect.bind
+                (fun () ->
+                  Endpoint.send public_endpoint
+                    (Poll_completion (order, Obj.repr result))
+                  |> Eta.Effect.ignore_errors
+                  |> Eta.Effect.map (fun () ->
+                         Crux_poll_barrier
+                         .run_after_completion_admission ()))
+                (Eta.Effect.sync
+                   Crux_poll_barrier.run_before_completion_admission))
+            body
+        in
+        staging.works <-
+          {
+            scope = endpoint.scope;
+            origin = Failure.Owned_work;
+            trigger = Failure.Poll_effect;
+            payload = Program program;
+            observation = None;
+          }
+          :: staging.works
+      in
+      let candidates =
+        S.map
+          (fun (provider, upstream) ->
+            let hook () = current_provider := Some provider in
+            ((), contribution upstream endpoint hook))
+          provider_signal
+      in
+      let refresh = Endpoint.send public_endpoint Poll_refresh in
+      pack_signal
+        (S.map2
+           (fun output (_, contribution) ->
+             ((output, refresh), contribution))
+           (S.Var.watch result_var) candidates)
+    in
+    let output = map description ~f:fst in
+    let refresh = map description ~f:snd in
+    (output, refresh)
+end
+
 module State_machine = struct
   let create (type model input action)
-      ?(model_cutoff = Cutoff.phys_equal) ?diagnostics
+      ?(model_cutoff = Cutoff.phys_equal) ?diagnostics ?reset
       (input_description : input t) ~(default_model : model) ~apply_action =
     let input_description = use input_description in
     let node = next_global "state-machine node" in
@@ -745,6 +1399,19 @@ module State_machine = struct
           ~action:(Obj.obj action)
       in
       (Obj.repr model, eff)
+    in
+    let reset_model endpoint ~input ~model =
+      match reset with
+      | None -> (Obj.repr default_model, None)
+      | Some reset ->
+          let self =
+            ({ Endpoint.core = endpoint; encode = Obj.repr } : action Endpoint.t)
+          in
+          let model, eff =
+            reset ~self ~input:(Obj.obj input)
+              ~model:(Obj.obj model)
+          in
+          (Obj.repr model, eff)
     in
     let diagnostics =
       Option.map
@@ -772,6 +1439,7 @@ module State_machine = struct
         equal_model;
         diagnostics;
         apply;
+        reset = reset_model;
       }
     in
     let rec endpoint =
@@ -817,7 +1485,7 @@ module State_machine = struct
                     origin = Failure.Transition;
                     cell = Some node;
                     endpoint = Some endpoint.id;
-                    trigger = Failure.Endpoint_message;
+                    trigger = Failure.Endpoint_action;
                     position = 0L;
                     action_snapshot;
                     model_snapshot;
@@ -837,7 +1505,9 @@ module State_machine = struct
               :: staging.model_sets;
             staging.undos <- (fun () -> cell.current_model <- previous)
               :: staging.undos;
-            if eff != Eta.Effect.unit then
+            match eff with
+            | None -> ()
+            | Some eff ->
               staging.works <-
                 {
                   scope =
@@ -847,8 +1517,69 @@ module State_machine = struct
                   origin = Failure.Owned_work;
                   trigger = Failure.Transition_effect;
                   payload = Program eff;
+                  observation = None;
                 }
                 :: staging.works);
+        reset =
+          Some
+          (fun staging ->
+            let model, eff =
+              try
+                cell.reset endpoint ~input:cell.current_input
+                  ~model:cell.current_model
+              with exn ->
+                let model_snapshot, hook_failures =
+                  match cell.diagnostics with
+                  | None -> (None, [])
+                  | Some (model_diagnostic, _) ->
+                      (try
+                         (Some (model_diagnostic cell.current_model), [])
+                       with hook_exn -> (None, [ hook_exn ]))
+                in
+                let cause =
+                  Failure.Packed_cause.make
+                    ~pp_error:(fun _ (value : never) -> absurd value)
+                    (Eta.Cause.die exn)
+                in
+                latch_failure_record root
+                  {
+                    Failure.cause;
+                    origin = Failure.Transition;
+                    cell = Some node;
+                    endpoint = None;
+                    trigger = Failure.Structural_reset;
+                    position = 0L;
+                    action_snapshot = None;
+                    model_snapshot;
+                  };
+                List.iter
+                  (fun hook_exn ->
+                    latch_exception root ~cell:node
+                      ~origin:Failure.Crash_handler
+                      ~trigger:Failure.Application_crash_handler hook_exn)
+                  hook_failures;
+                raise Failure_already_latched
+            in
+            let previous = cell.current_model in
+            cell.current_model <- model;
+            staging.model_sets <-
+              (fun () -> S.Var.set model_var (Obj.obj model))
+              :: staging.model_sets;
+            staging.undos <-
+              (fun () -> cell.current_model <- previous)
+              :: staging.undos;
+            match eff with
+            | None -> ()
+            | Some eff ->
+                staging.works <-
+                  {
+                    scope = endpoint.scope;
+                    origin = Failure.Owned_work;
+                    trigger = Failure.Structural_reset;
+                    payload = Program eff;
+                    observation = None;
+                  }
+                  :: staging.works);
       }
     in
     let public_endpoint =
@@ -914,6 +1645,7 @@ let lifecycle effect_description =
                    origin = Failure.Owned_work;
                    trigger = Failure.Lifecycle_program;
                    payload = Program eff;
+                   observation = None;
                  }
                in
                staged := Some work;

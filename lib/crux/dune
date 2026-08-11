@@ -1,6 +1,6 @@
 (library
  (name eta_crux)
  (public_name eta_crux)
- (modules eta_crux crux_engine crux_failure crux_portable_failure crux_source crux_boundary crux_wire crux_root crux_sha256 crux_remote_registry crux_telemetry crux_driver_base crux_driver_serialized crux_driver crux_host)
+ (modules eta_crux crux_testing crux_engine crux_failure crux_portable_failure crux_source crux_boundary crux_wire crux_root crux_sha256 crux_remote_registry crux_telemetry crux_attachment_barrier crux_pull_barrier crux_poll_barrier crux_reset_barrier crux_driver_base crux_driver_serialized crux_driver crux_host)
  (private_modules crux_engine crux_failure crux_portable_failure crux_source crux_boundary crux_wire crux_root crux_sha256 crux_remote_registry crux_telemetry crux_driver_base crux_driver_serialized crux_driver crux_host)
  (libraries eta eta_observability eta_signal eta_signal_map))

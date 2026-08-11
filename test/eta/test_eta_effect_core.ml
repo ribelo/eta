@@ -348,6 +348,19 @@ let test_effect_catch_preserves_concurrent_interrupt () =
         (Cause.pp Format.pp_print_string) cause
   | Exit.Ok _ -> Alcotest.fail "catch swallowed concurrent interrupt"
 
+let test_clock_advance_to_is_monotonic () =
+  let clock = Eta_test.Test_clock.create () in
+  Eta_test.Test_clock.advance_to clock 10;
+  Alcotest.(check int) "advanced to target" 10
+    (Eta_test.Test_clock.now_ms clock);
+  Eta_test.Test_clock.advance_to clock 10;
+  Alcotest.(check int) "equal target is a no-op" 10
+    (Eta_test.Test_clock.now_ms clock);
+  Alcotest.check_raises "backward target is rejected"
+    (Invalid_argument
+       "Eta_test.Test_clock.advance_to: target is before current time")
+    (fun () -> Eta_test.Test_clock.advance_to clock 9)
+
 (* ---------------------------------------------------------------- *)
 (* Stack-safety regression corpus (DX-E35)                           *)
 (* ---------------------------------------------------------------- *)

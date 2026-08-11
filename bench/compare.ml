@@ -164,6 +164,9 @@ let required_crux_rows =
     "eta_crux.driver.serialized.4096b";
     "eta_crux.telemetry.disabled";
     "eta_crux.telemetry.absent_control";
+    "eta_crux.observer.disabled";
+    "eta_crux.reset.disabled";
+    "eta_crux.poll.disabled";
     "eta_crux.capacity.ingress.1";
     "eta_crux.capacity.ingress.64";
     "eta_crux.capacity.ingress.1024";
@@ -201,6 +204,9 @@ let required_crux_keys =
       "eta_crux.driver.serialized.4096b|counter.payload_bytes";
       "eta_crux.telemetry.disabled|counter.commits";
       "eta_crux.telemetry.absent_control|counter.commits";
+      "eta_crux.observer.disabled|counter.commits";
+      "eta_crux.reset.disabled|counter.commits";
+      "eta_crux.poll.disabled|counter.commits";
       "eta_crux.capacity.ingress.1|counter.max_pending";
       "eta_crux.capacity.ingress.1|counter.admissions";
       "eta_crux.capacity.ingress.64|counter.max_pending";
@@ -241,6 +247,9 @@ let expected_crux_counters =
     "eta_crux.driver.serialized.4096b|counter.payload_bytes", 4_096.;
     "eta_crux.telemetry.disabled|counter.commits", 1.;
     "eta_crux.telemetry.absent_control|counter.commits", 1.;
+    "eta_crux.observer.disabled|counter.commits", 1.;
+    "eta_crux.reset.disabled|counter.commits", 1.;
+    "eta_crux.poll.disabled|counter.commits", 1.;
     "eta_crux.capacity.ingress.1|counter.max_pending", 1.;
     "eta_crux.capacity.ingress.1|counter.admissions", 1.;
     "eta_crux.capacity.ingress.64|counter.max_pending", 64.;
@@ -312,42 +321,55 @@ let gate pairs =
              "%s regressed in %d of 3 comparisons"
              measurement_key regressions))
     keys;
-  let telemetry_regressions =
-    List.fold_left
-      (fun failures (_, right_path, _, right) ->
-        let get name metric =
-          Hashtbl.find_opt right (name ^ "|" ^ metric)
-        in
-        match
-          get "eta_crux.telemetry.disabled" "wall_ns",
-          get "eta_crux.telemetry.absent_control" "wall_ns",
-          get "eta_crux.telemetry.disabled"
-            "allocated_words",
-          get "eta_crux.telemetry.absent_control"
-            "allocated_words"
-        with
-        | Some disabled_wall, Some control_wall,
-          Some disabled_words, Some control_words ->
-            let failed =
-              disabled_words.median <> control_words.median
-              || percent_increase
-                   ~before:control_wall.median
-                   ~after:disabled_wall.median
-                 > 5.
-            in
-            failures + Bool.to_int failed
-        | _ ->
-            add_failure
-              (right_path
-              ^ " has no complete Eta Crux telemetry control");
-            failures)
-      0 comparisons
+  let disabled_path_specs =
+    [
+      ( "post_commit_effect_observer_disabled_allocation",
+        "eta_crux.observer.disabled" );
+      ( "structural_reset_disabled_allocation",
+        "eta_crux.reset.disabled" );
+      ("poll_disabled_allocation", "eta_crux.poll.disabled");
+    ]
   in
-  if telemetry_regressions >= 2 then
-    add_failure
-      (Printf.sprintf
-         "Eta Crux telemetry parity failed in %d of 3 comparisons"
-         telemetry_regressions);
+  List.iter
+    (fun (gate_name, row_name) ->
+      let regressions =
+        List.fold_left
+          (fun failures
+               (left_path, right_path, left, right) ->
+            let get table metric =
+              Hashtbl.find_opt table (row_name ^ "|" ^ metric)
+            in
+            match
+              get left "wall_ns",
+              get right "wall_ns",
+              get left "allocated_words",
+              get right "allocated_words"
+            with
+            | Some before_wall, Some after_wall,
+              Some before_words, Some after_words ->
+                let failed =
+                  before_words.median
+                  <> after_words.median
+                  || percent_increase
+                       ~before:before_wall.median
+                       ~after:after_wall.median
+                     > 5.
+                in
+                failures + Bool.to_int failed
+            | _ ->
+                add_failure
+                  (Printf.sprintf
+                     "%s or %s has no complete %s row"
+                     left_path right_path gate_name);
+                failures)
+          0 comparisons
+      in
+      if regressions >= 2 then
+        add_failure
+          (Printf.sprintf
+             "%s failed in %d of 3 comparisons"
+             gate_name regressions))
+    disabled_path_specs;
   List.iter
     (fun (_, right_path, _, right) ->
       List.iter

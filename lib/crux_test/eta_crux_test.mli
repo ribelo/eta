@@ -54,12 +54,14 @@ module Handle : sig
   }
 
   val create :
+    clock:Eta_test.Test_clock.t ->
     incoming:('output, 'incoming) Incoming.t ->
     shell:('output, 'shell_error) Test_shell.t ->
     'output Eta_crux.Root.t ->
     ('output, 'incoming) t
 
   val use :
+    clock:Eta_test.Test_clock.t ->
     incoming:('output, 'incoming) Incoming.t ->
     shell:('output, 'shell_error) Test_shell.t ->
     'output Eta_crux.Root.t ->
@@ -68,7 +70,16 @@ module Handle : sig
        ('result, 'body_error) Eta.Effect.t) ->
     ('result, 'body_error) Eta.Effect.t
 
-  val last_output : ('output, 'incoming) t -> 'output option
+  val latest_committed_output :
+    ('output, 'incoming) t -> 'output option
+
+  val latest_delivered_output :
+    ('output, 'incoming) t -> 'output option
+
+  val advance_time_by :
+    ('output, 'incoming) t -> Eta.Duration.t -> unit
+
+  val advance_time_to : ('output, 'incoming) t -> int -> unit
 
   val inject :
     ('output, 'incoming) t ->
@@ -120,6 +131,45 @@ module Handle : sig
     Eta.Effect.t
 
   val request_stop : ('output, 'incoming) t -> unit
+end
+
+module Post_commit_effect_observer : sig
+  module Effect_id = Eta_crux.Testing.Effect_id
+  module Commit_index = Eta_crux.Testing.Commit_index
+  module Event_position = Eta_crux.Testing.Event_position
+
+  type settlement = Eta_crux.Testing.settlement =
+    | Succeeded
+    | Interrupted
+    | Failed
+
+  type event = Eta_crux.Testing.event =
+    | Staged of {
+        position : Event_position.t;
+        commit : Commit_index.t;
+        effects : Effect_id.t list;
+      }
+    | Started of {
+        position : Event_position.t;
+        effect : Effect_id.t;
+      }
+    | Settled of {
+        position : Event_position.t;
+        effect : Effect_id.t;
+        settlement : settlement;
+      }
+    | Discarded_before_start of {
+        position : Event_position.t;
+        effect : Effect_id.t;
+      }
+
+  type t
+
+  val create : unit -> t
+  val attachment : t -> Eta_crux.Testing.post_commit_effect_observer
+  val poll : t -> event option
+  val drain : t -> event list
+  val expect_empty : t -> unit
 end
 
 module Controlled_source : sig

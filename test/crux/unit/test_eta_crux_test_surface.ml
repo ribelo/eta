@@ -24,13 +24,14 @@ let quiet_shell =
   }
 
 let test_frame_boundary () =
-  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  Eta_test.with_test_clock @@ fun _switch clock runtime ->
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self ~input:() ~model ~action ->
         ( model + action,
-          Crux.Endpoint.send self action
-          |> Eta.Effect.ignore_errors ))
+          Some
+            (Crux.Endpoint.send self action
+            |> Eta.Effect.ignore_errors) ))
   in
   let root =
     Crux.Root.create ~ingress_capacity:4 ~request_capacity:1
@@ -38,6 +39,7 @@ let test_frame_boundary () =
   in
   let handle =
     Crux_test.Handle.create
+      ~clock
       ~incoming:
         (Crux_test.Incoming.create
            ~send:(fun (_model, endpoint) action ->
@@ -70,12 +72,12 @@ let test_frame_boundary () =
   ignore (run_ok runtime (Crux_test.Handle.stop handle))
 
 let test_incoming_uses_endpoint () =
-  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  Eta_test.with_test_clock @@ fun _switch clock runtime ->
   let observed_outputs = ref [] in
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let incoming =
     Crux_test.Incoming.create
@@ -88,7 +90,7 @@ let test_incoming_uses_endpoint () =
       machine
   in
   let handle =
-    Crux_test.Handle.create ~incoming ~shell:quiet_shell root
+    Crux_test.Handle.create ~clock ~incoming ~shell:quiet_shell root
   in
   Alcotest.(check bool) "injection requires delivered output" true
     (run_ok runtime (Eta.Effect.to_result
@@ -103,7 +105,7 @@ let test_incoming_uses_endpoint () =
   ignore (run_ok runtime (Crux_test.Handle.stop handle))
 
 let test_handle_exclusive_ownership () =
-  Eta_test.with_test_clock @@ fun switch _clock runtime ->
+  Eta_test.with_test_clock @@ fun switch clock runtime ->
   let deliveries = Eta_test.Controlled.create () in
   let shell =
     {
@@ -120,7 +122,7 @@ let test_handle_exclusive_ownership () =
       (Crux.return 1)
   in
   let handle =
-    Crux_test.Handle.create ~incoming:Crux_test.Incoming.none
+    Crux_test.Handle.create ~clock ~incoming:Crux_test.Incoming.none
       ~shell root
   in
   let first =
@@ -143,7 +145,7 @@ let test_handle_exclusive_ownership () =
   ignore (run_ok runtime (Crux_test.Handle.stop handle))
 
 let test_handle_bracket_cleanup () =
-  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  Eta_test.with_test_clock @@ fun _switch clock runtime ->
   let normal_root =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
       (Crux.return ())
@@ -151,12 +153,13 @@ let test_handle_bracket_cleanup () =
   ignore
     (run_ok runtime
        (Crux_test.Handle.use
+          ~clock
           ~incoming:Crux_test.Incoming.none
           ~shell:quiet_shell normal_root
           ~f:(fun _ -> Eta.Effect.unit)));
-  Alcotest.(check bool) "normal bracket settled root" true
+  Alcotest.(check bool) "driver fence remains after bracket" true
     (match run_ok runtime (Crux.Root.advance normal_root) with
-    | Error Crux.Root.Closed -> true
+    | Error Crux.Root.Driver_attached -> true
     | _ -> false);
 
   let crashing_root =
@@ -167,6 +170,7 @@ let test_handle_bracket_cleanup () =
   let unobserved =
     Eta.Runtime.run runtime
       (Crux_test.Handle.use
+         ~clock
          ~incoming:Crux_test.Incoming.none
          ~shell:quiet_shell crashing_root
          ~f:(fun handle ->
@@ -186,8 +190,9 @@ let test_handle_bracket_cleanup () =
            raise (Failure "observed-crash")))
   in
   let observed =
-    Eta_test.Run.run
+    Eta_test.Run.run ~clock
       (Crux_test.Handle.use
+         ~clock
          ~incoming:Crux_test.Incoming.none
          ~shell:quiet_shell observed_root
          ~f:(fun handle ->
@@ -207,7 +212,7 @@ let test_handle_bracket_cleanup () =
   ignore (Eta_test.Expect.expect_ok observed.exit)
 
 let test_snapshot_only_observation () =
-  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  Eta_test.with_test_clock @@ fun _switch clock runtime ->
   let delivered = ref [] in
   let shell =
     {
@@ -228,13 +233,13 @@ let test_snapshot_only_observation () =
     Crux.State_machine.create (Crux.return ())
       ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-        (action, Eta.Effect.unit))
+        (action, None))
   in
   let right =
     Crux.State_machine.create (Crux.return ())
       ~default_model:10
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-        (action, Eta.Effect.unit))
+        (action, None))
   in
   let description =
     Crux.map (Crux.both left right)
@@ -247,6 +252,7 @@ let test_snapshot_only_observation () =
   in
   let handle =
     Crux_test.Handle.create
+      ~clock
       ~incoming:
         (Crux_test.Incoming.create
            ~send:(fun (_, endpoint) action ->
@@ -268,7 +274,7 @@ type commit_boundary_event =
   | Post_commit
 
 let test_adapter_commit_boundary () =
-  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  Eta_test.with_test_clock @@ fun _switch clock runtime ->
   let events = ref [] in
   let shell =
     {
@@ -292,8 +298,9 @@ let test_adapter_commit_boundary () =
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
         events := Stabilizing :: !events;
         ( action,
-          Eta.Effect.sync (fun () ->
-              events := Post_commit :: !events) ))
+          Some
+            (Eta.Effect.sync (fun () ->
+                 events := Post_commit :: !events)) ))
   in
   let root =
     Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
@@ -301,6 +308,7 @@ let test_adapter_commit_boundary () =
   in
   let handle =
     Crux_test.Handle.create
+      ~clock
       ~incoming:
         (Crux_test.Incoming.create
            ~send:(fun (_, endpoint) action ->
@@ -320,6 +328,117 @@ let test_adapter_commit_boundary () =
         "adapter delivery did not remain between commit and post-commit work");
   ignore (run_ok runtime (Crux_test.Handle.stop handle))
 
+let test_handle_output_boundaries () =
+  Eta_test.with_test_clock @@ fun _switch clock runtime ->
+  let root =
+    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+      (Crux.Time.after (Eta.Duration.ms 10))
+  in
+  let handle =
+    Crux_test.Handle.create ~clock
+      ~incoming:Crux_test.Incoming.none
+      ~shell:quiet_shell root
+  in
+  Alcotest.(check (option bool)) "no committed output" None
+    (Crux_test.Handle.latest_committed_output handle);
+  Alcotest.(check (option bool)) "no delivered output" None
+    (Crux_test.Handle.latest_delivered_output handle);
+  ignore (run_ok runtime (Crux_test.Handle.frame handle));
+  Alcotest.(check (option bool)) "initial commit visible" (Some false)
+    (Crux_test.Handle.latest_committed_output handle);
+  Alcotest.(check (option bool)) "initial delivery visible" (Some false)
+    (Crux_test.Handle.latest_delivered_output handle);
+  Crux_test.Handle.advance_time_by handle (Eta.Duration.ms 5);
+  Crux_test.Handle.advance_time_to handle 10;
+  Alcotest.(check int) "handle moved only its clock" 10
+    (Eta_test.Test_clock.now_ms clock);
+  Alcotest.(check (option bool)) "movement did not run driver" (Some false)
+    (Crux_test.Handle.latest_committed_output handle);
+  ignore (run_ok runtime (Crux_test.Handle.frame handle));
+  Alcotest.(check (option bool)) "due commit visible" (Some true)
+    (Crux_test.Handle.latest_committed_output handle);
+  Alcotest.(check (option bool)) "due delivery visible" (Some true)
+    (Crux_test.Handle.latest_delivered_output handle);
+  ignore (run_ok runtime (Crux_test.Handle.stop handle))
+
+let test_graph_time_handle_separation () =
+  (* GTC-16: moving test time neither advances Eta Crux nor triggers Poll.
+     A later frame observes the due work through the production driver. *)
+  Eta_test.with_test_clock @@ fun _switch clock runtime ->
+  let provider_calls = ref 0 in
+  let due = Crux.Time.after (Eta.Duration.ms 10) in
+  let polled =
+    Crux.Poll.effect_on_change
+      ~input_cutoff:(Crux.Cutoff.of_equal Bool.equal)
+      ~starting:Crux.Poll.Starting.empty ~input:due
+      ~effect:
+        (Crux.return (fun due ->
+             Eta.Effect.sync (fun () ->
+                 incr provider_calls;
+                 due)))
+      ()
+  in
+  let root =
+    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+      (Crux.both due polled)
+  in
+  let handle =
+    Crux_test.Handle.create ~clock
+      ~incoming:Crux_test.Incoming.none ~shell:quiet_shell root
+  in
+  ignore (run_ok runtime (Crux_test.Handle.frame handle));
+  Alcotest.(check (option (pair bool (option bool))))
+    "initial commit" (Some (false, None))
+    (Crux_test.Handle.latest_committed_output handle);
+  Alcotest.(check int) "activation ran the Poll provider" 1
+    !provider_calls;
+  Crux_test.Handle.advance_time_to handle 10;
+  Alcotest.(check (option (pair bool (option bool))))
+    "movement did not advance" (Some (false, None))
+    (Crux_test.Handle.latest_committed_output handle);
+  Alcotest.(check int) "movement did not trigger Poll" 1
+    !provider_calls;
+  ignore (run_ok runtime (Crux_test.Handle.frame handle));
+  Alcotest.(check (option (pair bool (option bool))))
+    "frame observed the due commit" (Some (true, None))
+    (Crux_test.Handle.latest_committed_output handle);
+  Alcotest.(check int) "due commit triggered Poll" 2
+    !provider_calls;
+  ignore
+    (run_ok runtime (Crux_test.Handle.drain handle ~max_steps:8));
+  Alcotest.(check (option (pair bool (option bool))))
+    "drain published the Poll result" (Some (true, Some true))
+    (Crux_test.Handle.latest_committed_output handle);
+  ignore (run_ok runtime (Crux_test.Handle.stop handle))
+
+let test_graph_time_handle_validation () =
+  (* GTC-17: test movement never moves time backward. Negative deltas are
+     unrepresentable: Eta.Duration clamps them to zero, which is a no-op.
+     Backward targets raise Invalid_argument. Zero movement is a no-op. *)
+  Eta_test.with_test_clock @@ fun _switch clock runtime ->
+  let root =
+    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+      (Crux.return 0)
+  in
+  let handle =
+    Crux_test.Handle.create ~clock
+      ~incoming:Crux_test.Incoming.none ~shell:quiet_shell root
+  in
+  Crux_test.Handle.advance_time_by handle Eta.Duration.zero;
+  Crux_test.Handle.advance_time_by handle (Eta.Duration.ms (-1));
+  Crux_test.Handle.advance_time_to handle 0;
+  Alcotest.(check int) "zero and clamped movement is a no-op" 0
+    (Eta_test.Test_clock.now_ms clock);
+  Crux_test.Handle.advance_time_to handle 10;
+  (match Crux_test.Handle.advance_time_to handle 5 with
+  | () -> Alcotest.fail "backward target was accepted"
+  | exception Invalid_argument _ -> ());
+  Alcotest.(check int) "failed movement preserved time" 10
+    (Eta_test.Test_clock.now_ms clock);
+  Alcotest.(check (option int)) "no movement ran the driver" None
+    (Crux_test.Handle.latest_committed_output handle);
+  ignore (run_ok runtime (Crux_test.Handle.stop handle))
+
 let () =
   Alcotest.run "eta_crux test surface"
     [
@@ -337,5 +456,11 @@ let () =
             test_snapshot_only_observation;
           Alcotest.test_case "adapter commit boundary" `Quick
             test_adapter_commit_boundary;
+          Alcotest.test_case "clock and output boundaries" `Quick
+            test_handle_output_boundaries;
+          Alcotest.test_case "graph time handle separation" `Quick
+            test_graph_time_handle_separation;
+          Alcotest.test_case "graph time handle validation" `Quick
+            test_graph_time_handle_validation;
         ] );
     ]

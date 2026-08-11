@@ -9,9 +9,16 @@ module Test_clock = struct
     mutable now_ms : int;
     mutable next_sequence : int;
     mutable sleepers : sleeper list;
+    moving : bool Atomic.t;
   }
 
-  let create () = { now_ms = 0; next_sequence = 0; sleepers = [] }
+  let create () =
+    {
+      now_ms = 0;
+      next_sequence = 0;
+      sleepers = [];
+      moving = Atomic.make false;
+    }
 
   let sleeper_compare a b =
     match Int.compare a.deadline_ms b.deadline_ms with
@@ -41,6 +48,15 @@ module Test_clock = struct
         Eio.Fiber.yield ();
         wake_until t target_ms
 
+  let with_movement t f =
+    if not (Atomic.compare_and_set t.moving false true) then
+      invalid_arg "Eta_test.Test_clock: concurrent movement";
+    Fun.protect
+      ~finally:(fun () -> Atomic.set t.moving false)
+      (fun () ->
+        Eta_test_clock_barrier.run_after_movement_claim ();
+        f ())
+
   let sleep t duration =
     let deadline_ms = t.now_ms + Eta.Duration.to_ms duration in
     if deadline_ms <= t.now_ms then ()
@@ -57,10 +73,18 @@ module Test_clock = struct
         raise exn
 
   let adjust t duration =
-    wake_until t (t.now_ms + Eta.Duration.to_ms duration)
+    with_movement t (fun () ->
+        wake_until t (t.now_ms + Eta.Duration.to_ms duration))
 
   let set_time t time_ms =
-    wake_until t (max 0 time_ms)
+    with_movement t (fun () -> wake_until t (max 0 time_ms))
+
+  let advance_to t target_ms =
+    with_movement t (fun () ->
+        if target_ms < t.now_ms then
+          invalid_arg
+            "Eta_test.Test_clock.advance_to: target is before current time";
+        wake_until t target_ms)
 
   let now_ms t = t.now_ms
 

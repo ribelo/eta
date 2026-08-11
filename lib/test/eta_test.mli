@@ -24,6 +24,10 @@ module Test_clock : sig
   val set_time : t -> int -> unit
   (** [set_time clock 100] moves virtual time to millisecond 100. *)
 
+  val advance_to : t -> int -> unit
+  (** [advance_to clock 100] moves virtual time to millisecond 100 and rejects a
+      target before the current time. *)
+
   val now_ms : t -> int
   (** [now_ms clock] returns the current monotonic virtual millisecond
       timestamp. *)

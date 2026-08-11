@@ -52,6 +52,7 @@ module Failure = struct
   type origin =
     | Transition
     | Owned_work
+    | Graph_clock
     | Adapter_delivery
     | Request_dispatch
     | Export_dispatch
@@ -60,7 +61,9 @@ module Failure = struct
 
   type trigger_kind =
     | Initial_start
-    | Endpoint_message
+    | Endpoint_action
+    | Clock_sample
+    | Clock_due
     | Transition_effect
     | Lifecycle_program
     | Source_opening
@@ -74,6 +77,8 @@ module Failure = struct
     | Stop_teardown
     | Crash_teardown
     | Application_crash_handler
+    | Structural_reset
+    | Poll_effect
 
   type record = {
     cause : Packed_cause.t;

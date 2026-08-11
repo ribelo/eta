@@ -81,12 +81,14 @@ module Eta_crux_test : sig
     }
 
     val create :
+      clock:Eta_test.Test_clock.t ->
       incoming:('output, 'incoming) Incoming.t ->
       shell:('output, 'shell_error) Test_shell.t ->
       'output Eta_crux.Root.t ->
       ('output, 'incoming) t
 
     val use :
+      clock:Eta_test.Test_clock.t ->
       incoming:('output, 'incoming) Incoming.t ->
       shell:('output, 'shell_error) Test_shell.t ->
       'output Eta_crux.Root.t ->
@@ -95,7 +97,17 @@ module Eta_crux_test : sig
          ('result, 'body_error) Eta.Effect.t) ->
       ('result, 'body_error) Eta.Effect.t
 
-    val last_output : ('output, 'incoming) t -> 'output option
+    val latest_committed_output :
+      ('output, 'incoming) t -> 'output option
+
+    val latest_delivered_output :
+      ('output, 'incoming) t -> 'output option
+
+    val advance_time_by :
+      ('output, 'incoming) t -> Eta.Duration.t -> unit
+
+    val advance_time_to :
+      ('output, 'incoming) t -> int -> unit
 
     val inject :
       ('output, 'incoming) t ->
@@ -140,6 +152,45 @@ module Eta_crux_test : sig
        Eta_crux.never) Eta.Effect.t
 
     val request_stop : ('output, 'incoming) t -> unit
+  end
+
+  module Post_commit_effect_observer : sig
+    module Effect_id = Eta_crux.Testing.Effect_id
+    module Commit_index = Eta_crux.Testing.Commit_index
+    module Event_position = Eta_crux.Testing.Event_position
+
+    type settlement = Eta_crux.Testing.settlement =
+      | Succeeded
+      | Interrupted
+      | Failed
+
+    type event = Eta_crux.Testing.event =
+      | Staged of {
+          position : Event_position.t;
+          commit : Commit_index.t;
+          effects : Effect_id.t list;
+        }
+      | Started of {
+          position : Event_position.t;
+          effect : Effect_id.t;
+        }
+      | Settled of {
+          position : Event_position.t;
+          effect : Effect_id.t;
+          settlement : settlement;
+        }
+      | Discarded_before_start of {
+          position : Event_position.t;
+          effect : Effect_id.t;
+        }
+
+    type t
+
+    val create : unit -> t
+    val attachment : t -> Eta_crux.Testing.post_commit_effect_observer
+    val poll : t -> event option
+    val drain : t -> event list
+    val expect_empty : t -> unit
   end
 
   module Controlled_source : sig
@@ -211,6 +262,17 @@ end
 
 The package also exports a recording `Adapter.resource`. General controlled
 effects belong to `Eta_test.Controlled`, not `eta_crux_test`.
+
+The handle stores one capability from the supplied test clock. Driver operations
+run under that capability. Time movement changes only the clock. A later driver
+operation observes due work.
+
+`Eta.Duration.t` is nonnegative. Its constructors clamp a negative source value
+to zero before `advance_time_by` receives it. The handle treats that value as
+zero. `advance_time_to` rejects a target before the current test time.
+
+The observer controller has one consumer-operation claim. Concurrent `poll`,
+`drain`, or `expect_empty` calls have one winner.
 
 ## Operational telemetry
 
@@ -289,12 +351,20 @@ The suite contains these rows:
 6. One common identity-binding scenario.
 7. The same serialized scenario with 0 B, 64 B, and 4 KiB payloads.
 8. One disabled-telemetry advancement and its absent-telemetry control.
-9. Ingress and request-capacity saturation at 1, 64, and 1,024 entries.
-10. Serialized-handle replacement, stale lookup, and collection.
+9. One feature-absent observer advancement.
+10. One graph without reset.
+11. One graph without Poll.
+12. Ingress and request-capacity saturation at 1, 64, and 1,024 entries.
+13. Serialized-handle replacement, stale lookup, and collection.
 
 Setup is outside each measured operation. Deterministic counters fail on their
 first violation. The identity row requires zero wire operations. Disabled
 telemetry requires equal allocation and at most 5% extra median time.
+
+The observer, reset, and Poll disabled-path rows compare baseline and candidate
+revisions with the same threshold. These rows implement
+`post_commit_effect_observer_disabled_allocation`,
+`structural_reset_disabled_allocation`, and `poll_disabled_allocation`.
 
 Ingress entries never exceed ingress capacity. Pending requests never exceed
 request capacity. Serialized handles never exceed live serialized exports.

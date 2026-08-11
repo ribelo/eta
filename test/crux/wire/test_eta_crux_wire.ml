@@ -11,8 +11,8 @@ let portable_failure : Eta_crux.Failure.portable =
               Interrupt
                 (Some (Eta.Cause.fresh_interrupt_id ()));
             ];
-        origin = Eta_crux.Failure.Transition;
-        trigger = Eta_crux.Failure.Endpoint_message;
+        origin = Eta_crux.Failure.Graph_clock;
+        trigger = Eta_crux.Failure.Clock_sample;
         position = 17L;
       };
     secondary =
@@ -30,6 +30,30 @@ let portable_failure : Eta_crux.Failure.portable =
           origin = Eta_crux.Failure.Cleanup;
           trigger = Eta_crux.Failure.Crash_teardown;
           position = 18L;
+        };
+        {
+          cause = Eta.Cause.Portable.Fail "clock due";
+          origin = Eta_crux.Failure.Transition;
+          trigger = Eta_crux.Failure.Clock_due;
+          position = 19L;
+        };
+        {
+          cause = Eta.Cause.Portable.Fail "reset";
+          origin = Eta_crux.Failure.Transition;
+          trigger = Eta_crux.Failure.Structural_reset;
+          position = 20L;
+        };
+        {
+          cause = Eta.Cause.Portable.Fail "poll";
+          origin = Eta_crux.Failure.Owned_work;
+          trigger = Eta_crux.Failure.Poll_effect;
+          position = 21L;
+        };
+        {
+          cause = Eta.Cause.Portable.Fail "action";
+          origin = Eta_crux.Failure.Transition;
+          trigger = Eta_crux.Failure.Endpoint_action;
+          position = 22L;
         };
       ];
   }

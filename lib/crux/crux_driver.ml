@@ -97,6 +97,8 @@ module Driver = struct
     | Crash_detected of Failure.t
     | Closed of terminal
 
+  let attachment_lock = Eta.Sync_lock.create ()
+
   let prepare_remote_handles driver serialized registry =
     let exports =
       Eta.Sync_lock.use driver.root.core.lock @@ fun () ->
@@ -191,8 +193,19 @@ module Driver = struct
     }
 
   let create binding root =
-    if Option.is_some binding.core.root then
-      invalid_arg "Eta_crux.Driver.create: binding is already attached";
+    Eta.Sync_lock.use attachment_lock (fun () ->
+        if Option.is_some binding.core.root then
+          invalid_arg
+            "Eta_crux.Driver.create: binding is already attached";
+        (match Root.attach_driver root with
+        | Ok () -> ()
+        | Error `Root_already_started ->
+            invalid_arg "Eta_crux.Driver.create: root is already started"
+        | Error `Already_attached ->
+            invalid_arg
+              "Eta_crux.Driver.create: root already has a driver");
+        binding.core.root <- Some root.core);
+    Crux_attachment_barrier.run_after_lock ();
     let requests = Eta.Queue.unbounded () in
     let driver =
       {
@@ -208,7 +221,6 @@ module Driver = struct
         inbound_requests = String_map.empty;
       }
     in
-    binding.core.root <- Some root.core;
     binding.core.push_request <-
       Some
         (fun event ->
@@ -465,7 +477,7 @@ module Driver = struct
             let open Eta.Syntax in
             let* result, duration_ms =
               Crux_telemetry.timed_if_metrics (fun () ->
-                  Root.advance driver.root)
+                  Root.advance_driver driver.root)
               |> Crux_telemetry.advance
             in
             let trigger_and_outcome =
@@ -486,7 +498,7 @@ module Driver = struct
                       match
                         failed.failure.Failure.primary.trigger
                       with
-                      | Failure.Endpoint_message -> "action"
+                      | Failure.Endpoint_action -> "action"
                       | _ -> "control"
                   in
                   Some (trigger, "failed")
@@ -504,6 +516,9 @@ module Driver = struct
             | Error Root.Already_advancing
             | Error Root.Awaiting_post_commit ->
                 Eta.Effect.pure None
+            | Error Root.Driver_attached ->
+                invalid_arg
+                  "Eta_crux.Driver: attached driver lost advancement authority"
             | Error Root.Closed ->
                 set_state driver Closed_done;
                 Eta.Effect.pure None
@@ -511,8 +526,14 @@ module Driver = struct
             | Ok (Root.Rejected error) ->
                 Eta.Effect.pure (Some (Rejected error))
             | Ok (Root.Committed committed) ->
-                let initial = Option.is_none driver.last_output in
-                driver.last_output <- Some committed.output;
+                Crux_pull_barrier.run_before_publication ();
+                let initial =
+                  Eta.Sync_lock.use driver.lock @@ fun () ->
+                  let initial = Option.is_none driver.last_output in
+                  driver.last_output <- Some committed.output;
+                  initial
+                in
+                Crux_pull_barrier.run_after_publication ();
                 let delivery =
                   create_delivery driver ~initial
                     ~reason:Advancement committed.output
@@ -622,21 +643,39 @@ module Driver = struct
     match event with
     | Some event -> Eta.Effect.pure event
     | None ->
-        let* () =
+        let wake =
           Eta.Queue.take driver.root.core.wake
           |> Eta.Effect.map_error (function
                | `Closed -> ()
                | `Closed_with_error (_ : never) -> .)
           |> Eta.Effect.ignore_errors
+          |> Eta.Effect.map (fun () -> `Wake)
         in
-        (* The wakeup was consumed; allow the next endpoint send to offer
-           again. Clearing happens before the following poll, so a send that
-           observed the flag as set already has its ingress message visible
-           to that poll. *)
-        Atomic.set driver.root.core.wake_signaled false;
+        let* winner =
+          match Root.earliest_deadline driver.root with
+          | None -> wake
+          | Some deadline ->
+              Eta.Effect.race
+                [
+                  wake;
+                  Root.sleep_until_deadline driver.root deadline
+                  |> Eta.Effect.map (fun () -> `Deadline);
+                ]
+        in
+        (match winner with
+        | `Wake ->
+            (* The wakeup was consumed; allow the next endpoint send to offer
+               again. Clearing happens before the following poll, so a send
+               that observed the flag as set already has its ingress message
+               visible to that poll. *)
+            Atomic.set driver.root.core.wake_signaled false
+        | `Deadline -> ());
         await driver
 
   let request_stop driver =
     Root.request_stop driver.root;
     wake driver
+
+  let latest_committed_output (driver : 'output t) =
+    Eta.Sync_lock.use driver.lock @@ fun () -> driver.last_output
 end

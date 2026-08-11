@@ -27,6 +27,18 @@ let work_failure_effect (root : root_core) (work : work) =
         invalid_arg "Eta_crux: source opening admitted as a running program"
   in
   let* exit = Eta.Effect.to_exit program in
+  (match work.observation with
+  | None -> ()
+  | Some observation ->
+      let settlement =
+        match exit with
+        | Eta.Exit.Ok () -> Crux_testing.Testing.Succeeded
+        | Eta.Exit.Error cause
+          when Eta.Cause.is_interrupt_only cause ->
+            Crux_testing.Testing.Interrupted
+        | Eta.Exit.Error _ -> Crux_testing.Testing.Failed
+      in
+      Crux_testing.settled observation settlement);
   match exit with
   | Eta.Exit.Ok () -> Eta.Effect.unit
   | Eta.Exit.Error cause when Eta.Cause.is_interrupt_only cause ->
@@ -121,10 +133,19 @@ let start_owned_job (root : root_core) (work : work) =
   in
   match job with
   | Some job ->
+      Option.iter Crux_testing.started work.observation;
       Eta.Spi.daemon
         (with_owned_context root work.scope
            (run_owned_job root work job))
-  | None -> Eta.Effect.unit
+  | None ->
+      Option.iter Crux_testing.discarded work.observation;
+      Eta.Effect.unit
+
+let discard_observed_works works =
+  List.iter
+    (fun work ->
+      Option.iter Crux_testing.discarded work.observation)
+    works
 
 let request_job_cancellations (jobs : owned_job list) =
   jobs
@@ -337,7 +358,13 @@ module Post_commit = struct
       in
       let lifecycle, transitions =
         List.partition
-          (fun work -> work.trigger <> Failure.Transition_effect)
+          (fun work ->
+            match work.trigger with
+            | Failure.Transition_effect
+            | Failure.Structural_reset
+            | Failure.Poll_effect ->
+                false
+            | _ -> true)
           programs
       in
       let* () = request_job_cancellations batch.cancellations in
@@ -356,8 +383,12 @@ module Post_commit = struct
         | None, false -> `Continue
       in
       match terminal with
-      | `Crash _ -> settle_crash root
-      | `Stop -> settle_stop root
+      | `Crash _ ->
+          discard_observed_works batch.works;
+          settle_crash root
+      | `Stop ->
+          discard_observed_works batch.works;
+          settle_stop root
       | `Continue ->
           let* () =
             lifecycle @ source_programs
@@ -377,8 +408,12 @@ module Post_commit = struct
     let fallback batch terminal =
       match terminal with
       | `Normal -> start_normal batch.root batch
-      | `Stop -> settle_stop batch.root
-      | `Crash _ -> settle_crash batch.root
+      | `Stop ->
+          discard_observed_works batch.works;
+          settle_stop batch.root
+      | `Crash _ ->
+          discard_observed_works batch.works;
+          settle_crash batch.root
     in
     if batch.works = [] && batch.cancellations = [] then
       Eta.Spi.Expert.sync1_result_bind_value_direct batch claim_terminal_admit
@@ -399,12 +434,15 @@ module Root = struct
     mutable committed_frame : 'output frame option;
   }
 
-  type delivery_error = Stale_endpoint
+  type delivery_error =
+    | Stale_endpoint
+    | Stale_reset
 
   type advance_error =
     | Already_advancing
     | Awaiting_post_commit
     | Closed
+    | Driver_attached
 
   type 'output outcome =
     | Idle
@@ -421,11 +459,13 @@ module Root = struct
         post_commit : Post_commit.t;
       }
 
-  let create ~ingress_capacity ~request_capacity description =
+  let create ?post_commit_effect_observer ~ingress_capacity
+      ~request_capacity description =
     if ingress_capacity <= 0 then
       invalid_arg "Eta_crux.Root.create: ingress_capacity must be positive";
     if request_capacity <= 0 then
       invalid_arg "Eta_crux.Root.create: request_capacity must be positive";
+    Option.iter Crux_testing.claim post_commit_effect_observer;
     let id = next_global "root identity" in
     let root_scope =
       {
@@ -448,6 +488,7 @@ module Root = struct
         ingress_capacity;
         request_capacity;
         phase = Atomic.make Ready;
+        authority = Unstarted;
         start_pending = Atomic.make true;
         stop_requested = Atomic.make false;
         scopes = Int_map.singleton 0 root_scope;
@@ -458,6 +499,11 @@ module Root = struct
         next_scope = 1;
         next_endpoint = 0;
         next_position = 0L;
+        bound_clock = None;
+        last_clock_sample = None;
+        current_clock_sample = None;
+        clock_nodes = [];
+        post_commit_effect_observer;
         dispose_signal = None;
         memo = Hashtbl.create 16;
         staging = create_staging ();
@@ -484,8 +530,8 @@ module Root = struct
   let make_batch (core : root_core) kind works cancellations =
     { root = core; kind; works; cancellations; started = Atomic.make false }
 
-  let fail_from_exception (core : root_core) trigger exn =
-    latch_exception core ~origin:Failure.Transition ~trigger exn;
+  let fail_from_exception_at (core : root_core) ~origin ~trigger exn =
+    latch_exception core ~origin ~trigger exn;
     let failure =
       match Atomic.get core.failure with
       | Some failure -> failure
@@ -499,6 +545,9 @@ module Root = struct
         failure;
         post_commit = make_batch core Crash [] [];
       }
+
+  let fail_from_exception (core : root_core) trigger exn =
+    fail_from_exception_at core ~origin:Failure.Transition ~trigger exn
 
   let fail_from_cause (core : root_core) trigger cause =
     let packed =
@@ -661,6 +710,43 @@ module Root = struct
         new_endpoints;
     (fresh_works, removed_jobs)
 
+  let observable_work (work : work) =
+    match work.trigger with
+    | Failure.Transition_effect
+    | Failure.Structural_reset
+    | Failure.Poll_effect ->
+        true
+    | Failure.Initial_start
+    | Failure.Endpoint_action
+    | Failure.Clock_sample
+    | Failure.Clock_due
+    | Failure.Lifecycle_program
+    | Failure.Source_opening
+    | Failure.Source_producer
+    | Failure.Local_export_invocation
+    | Failure.Serialized_export_invocation
+    | Failure.Outbound_request
+    | Failure.Inbound_response
+    | Failure.Request_cancellation
+    | Failure.Output_delivery
+    | Failure.Stop_teardown
+    | Failure.Crash_teardown
+    | Failure.Application_crash_handler ->
+        false
+
+  let record_staged_effects (core : root_core) works =
+    match core.post_commit_effect_observer with
+    | None -> ()
+    | Some observer ->
+        let observable = List.filter observable_work works in
+        let observations =
+          Crux_testing.stage observer (List.length observable)
+        in
+        List.iter2
+          (fun work observation ->
+            work.observation <- Some observation)
+          observable observations
+
   let commit (core : root_core) root ~staging ~trigger =
     let open Eta.Syntax in
     let staged_sets =
@@ -719,14 +805,16 @@ module Root = struct
             | None
               when contribution_equal previous_contribution
                      frame.contribution ->
+                let works = List.rev staging.works in
                 root.committed_frame <- Some frame;
+                record_staged_effects core works;
                 Atomic.set core.phase Awaiting_post_commit;
                 Ok
                   (Committed
                      {
                        output = frame.output;
                        post_commit =
-                         make_batch core Normal (List.rev staging.works) [];
+                         make_batch core Normal works [];
                      })
             | failure -> (
             (* A failure latched during staging or stabilization wins over the
@@ -747,6 +835,7 @@ module Root = struct
                     List.rev_append (List.rev staging.works) works
                   in
                   root.committed_frame <- Some frame;
+                  record_staged_effects core works;
                   Atomic.set core.phase Awaiting_post_commit;
                   Either.Right
                     (Committed
@@ -812,13 +901,147 @@ module Root = struct
     Eta.Sync_lock.use core.lock @@ fun () ->
     if Atomic.get core.phase = Advancing then Atomic.set core.phase Ready
 
-  let advance root =
+  type clock_accept_error =
+    | Clock_runtime_mismatch
+    | Clock_moved_backward
+
+  let read_active_clock =
+    Eta.Spi.Expert.make ~leaf_name:"eta_crux.clock_sample"
+      (fun context ->
+        let clock = Eta.Spi.Expert.Clock.current context in
+        let result =
+          try Ok { sample_clock = clock; sample_ms = Eta.Spi.Expert.Clock.now_ms clock }
+          with exn -> Error exn
+        in
+        Eta.Exit.Ok result)
+
+  let accept_clock_sample (core : root_core) sample =
+    Eta.Sync_lock.use core.lock @@ fun () ->
+    match core.bound_clock with
+    | Some clock
+      when not
+             (Eta.Spi.Expert.Clock.same clock sample.sample_clock) ->
+        Error Clock_runtime_mismatch
+    | None ->
+        core.bound_clock <- Some sample.sample_clock;
+        core.last_clock_sample <- Some sample.sample_ms;
+        Ok ()
+    | Some _ -> (
+        match core.last_clock_sample with
+        | Some previous when sample.sample_ms < previous ->
+            Error Clock_moved_backward
+        | Some _ | None ->
+            core.last_clock_sample <- Some sample.sample_ms;
+            Ok ())
+
+  let active_clock_nodes (core : root_core) =
+    List.filter
+      (fun node -> scope_live core node.clock_scope)
+      core.clock_nodes
+
+  let earliest_deadline (core : root_core) =
+    active_clock_nodes core
+    |> List.fold_left
+         (fun earliest node ->
+           match earliest, node.clock_deadline () with
+           | None, deadline -> deadline
+           | earliest, None -> earliest
+           | Some left, Some right -> Some (min left right))
+         None
+
+  let sample_clock_nodes (core : root_core) sample =
+    let rec loop = function
+      | [] -> Ok ()
+      | node :: rest -> (
+          try
+            match node.clock_sample sample with
+            | Ok () -> loop rest
+            | Error error -> Error (`Staging error)
+          with
+          | Runtime_mismatch -> Error `Runtime_mismatch
+          | Clock_regression -> Error `Clock_regression
+          | Deadline_overflow -> Error (`Raised Deadline_overflow)
+          | Past_dynamic_deadline ->
+              Error (`Raised Past_dynamic_deadline)
+          | exn -> Error (`Raised exn))
+    in
+    loop (active_clock_nodes core)
+
+  let clear_current_clock_sample (core : root_core) =
+    Eta.Effect.sync (fun () -> core.current_clock_sample <- None)
+
+  let fail_clock (core : root_core) exn =
+    fail_from_exception_at core ~origin:Failure.Graph_clock
+      ~trigger:Failure.Clock_sample exn
+
+  let accept_or_fail_clock core sample =
+    match accept_clock_sample core sample with
+    | Ok () -> Ok sample
+    | Error Clock_runtime_mismatch ->
+        Error (fail_clock core Runtime_mismatch)
+    | Error Clock_moved_backward ->
+        Error (fail_clock core Clock_regression)
+
+  let claim_direct_authority (core : root_core) =
+    Eta.Sync_lock.use core.lock @@ fun () ->
+    match core.authority with
+    | Unstarted ->
+        core.authority <- Direct_started;
+        Ok ()
+    | Direct_started -> Ok ()
+    | Driver_owned -> Error Driver_attached
+
+  let claim_driver_authority (core : root_core) =
+    Eta.Sync_lock.use core.lock @@ fun () ->
+    match core.authority with
+    | Unstarted
+      when Atomic.get core.start_pending
+           && not (Atomic.get core.stop_requested)
+           && Option.is_none (Atomic.get core.failure)
+           && Atomic.get core.phase = Ready ->
+        core.authority <- Driver_owned;
+        Ok ()
+    | Unstarted -> Error `Root_already_started
+    | Direct_started -> Error `Root_already_started
+    | Driver_owned -> Error `Already_attached
+
+  let with_clock_sample core ~trigger sample effect =
+    core.current_clock_sample <- Some sample;
+    match sample_clock_nodes core sample with
+    | Error `Runtime_mismatch ->
+        core.current_clock_sample <- None;
+        Eta.Effect.sync (fun () ->
+            Ok (fail_clock core Runtime_mismatch))
+    | Error `Clock_regression ->
+        core.current_clock_sample <- None;
+        Eta.Effect.sync (fun () ->
+            Ok (fail_clock core Clock_regression))
+    | Error (`Raised exn) ->
+        core.current_clock_sample <- None;
+        Eta.Effect.sync (fun () ->
+            Ok (fail_from_exception core trigger exn))
+    | Error (`Staging error) ->
+        core.current_clock_sample <- None;
+        Eta.Effect.sync (fun () ->
+            Ok
+              (fail_from_cause core trigger
+                 (Eta.Cause.fail error)))
+    | Ok () ->
+        Eta.Effect.finally (clear_current_clock_sample core) effect
+
+  let advance_with_authority ~driver root =
     let core = root.core in
     let staging = core.staging in
     staging.model_sets <- [];
     staging.undos <- [];
     staging.works <- [];
     staging.message_owner <- None;
+    let authority =
+      if driver then Ok () else claim_direct_authority core
+    in
+    match authority with
+    | Error error -> Eta.Effect.sync (fun () -> Error error)
+    | Ok () -> (
     match begin_advance_and_terminal core with
     | Error _ as error -> Eta.Effect.sync (fun () -> error)
     | Ok (`Crash failure) ->
@@ -841,60 +1064,205 @@ module Root = struct
             Atomic.set core.phase Awaiting_post_commit;
             Ok (Stopped { post_commit = make_batch core Stop [] [] }))
     | Ok `Start ->
-        commit core root ~staging ~trigger:Failure.Initial_start
-    | Ok `None -> (
-        match Eta.Queue.poll_now core.ingress with
-        | `Empty ->
+        Eta.Effect.bind (fun read ->
+        (match read with
+        | Error exn ->
+            Eta.Effect.sync (fun () ->
+                Ok (fail_clock core exn))
+        | Ok sample -> (
+            match accept_or_fail_clock core sample with
+            | Error failed -> Eta.Effect.sync (fun () -> Ok failed)
+            | Ok sample ->
+                with_clock_sample core
+                  ~trigger:Failure.Initial_start sample
+                  (commit core root ~staging
+                     ~trigger:Failure.Initial_start))))
+          read_active_clock
+    | Ok `None ->
+        let process_message sample = function
+        | Message { endpoint; action; owner_scope } ->
+          if
+            (not endpoint.active)
+            || endpoint.root != core
+            || not (scope_live core endpoint.scope)
+            || endpoint.generation <> endpoint.id
+          then (
             reset_ready core;
-            Eta.Effect.sync (fun () -> Ok Idle)
-        | `Closed ->
-            reset_ready core;
-            Eta.Effect.sync (fun () -> Ok Idle)
-        | `Closed_with_error (_ : never) -> .
-        | `Item (Message { endpoint; action; owner_scope }) ->
-                if
-                  (not endpoint.active)
-                  || endpoint.root != core
-                  || not (scope_live core endpoint.scope)
-                  || endpoint.generation <> endpoint.id
-                then (
-                  reset_ready core;
-                  Eta.Effect.sync (fun () -> Ok (Rejected Stale_endpoint)))
-                else (
-                  staging.message_owner <- owner_scope;
-                  let dispatched =
-                    try
-                      endpoint.dispatch staging action;
-                      `Dispatched
-                    with
-                    | Failure_already_latched -> `Latched
-                    | exn -> `Raised exn
-                  in
-                  (match dispatched with
-                  | `Dispatched ->
-                      commit core root ~staging
-                        ~trigger:Failure.Endpoint_message
-                  | `Latched ->
-                      Eta.Effect.sync (fun () ->
-                          List.iter (fun undo -> undo ()) staging.undos;
-                          let failure =
-                            match Atomic.get core.failure with
-                            | Some failure -> failure
-                            | None ->
-                                invalid_arg
-                                  "Eta_crux: latched transition failure was                                    not recorded"
-                          in
-                          Eta.Sync_lock.use core.lock @@ fun () ->
-                          Atomic.set core.failure_reported true;
-                          Atomic.set core.phase Awaiting_post_commit;
-                          Ok
-                            (Failed
-                               {
-                                 failure;
-                                 post_commit = make_batch core Crash [] [];
-                               }))
-                  | `Raised exn ->
-                      Eta.Effect.sync (fun () ->
-                          List.iter (fun undo -> undo ()) staging.undos;
-                          Ok (fail_from_exception core Failure.Endpoint_message exn)))))
+            Eta.Effect.sync (fun () ->
+                Ok (Rejected Stale_endpoint)))
+          else (
+            staging.message_owner <- owner_scope;
+            let dispatched =
+              try
+                endpoint.dispatch staging action;
+                `Dispatched
+              with
+              | Failure_already_latched -> `Latched
+              | exn -> `Raised exn
+            in
+            match dispatched with
+            | `Dispatched ->
+                with_clock_sample core
+                  ~trigger:Failure.Endpoint_action sample
+                  (commit core root ~staging
+                     ~trigger:Failure.Endpoint_action)
+            | `Latched ->
+                Eta.Effect.sync (fun () ->
+                    List.iter (fun undo -> undo ()) staging.undos;
+                    let failure =
+                      match Atomic.get core.failure with
+                      | Some failure -> failure
+                      | None ->
+                          invalid_arg
+                            "Eta_crux: latched transition failure was not recorded"
+                    in
+                    Eta.Sync_lock.use core.lock @@ fun () ->
+                    Atomic.set core.failure_reported true;
+                    Atomic.set core.phase Awaiting_post_commit;
+                    Ok
+                      (Failed
+                         {
+                           failure;
+                           post_commit =
+                             make_batch core Crash [] [];
+                         }))
+            | `Raised exn ->
+                Eta.Effect.sync (fun () ->
+                    List.iter (fun undo -> undo ()) staging.undos;
+                    Ok
+                      (fail_from_exception core
+                         Failure.Endpoint_action exn)))
+        | Reset_message reset ->
+            if
+              reset.reset_root != core
+              || not (scope_live core reset.reset_scope)
+            then (
+              reset_ready core;
+              Eta.Effect.sync (fun () ->
+                  Ok (Rejected Stale_reset)))
+            else
+              let descendants =
+                Int_map.fold
+                  (fun _ endpoint descendants ->
+                    if
+                      endpoint.active
+                      && scope_live core endpoint.scope
+                      && scope_is_descendant core.scopes
+                           ~ancestor:reset.reset_scope endpoint.scope
+                    then endpoint :: descendants
+                    else descendants)
+                  core.endpoints []
+              in
+              let reset_result =
+                try
+                  List.iter
+                    (fun (endpoint : endpoint_core) ->
+                      Option.iter
+                        (fun reset -> reset staging)
+                        endpoint.reset)
+                    descendants;
+                  `Reset
+                with
+                | Failure_already_latched -> `Latched
+                | exn -> `Raised exn
+              in
+              (match reset_result with
+              | `Reset ->
+                  with_clock_sample core
+                    ~trigger:Failure.Structural_reset sample
+                    (commit core root ~staging
+                       ~trigger:Failure.Structural_reset)
+              | `Latched ->
+                  Eta.Effect.sync (fun () ->
+                      List.iter (fun undo -> undo ()) staging.undos;
+                      let failure =
+                        match Atomic.get core.failure with
+                        | Some failure -> failure
+                        | None ->
+                            invalid_arg
+                              "Eta_crux: latched reset failure was not recorded"
+                      in
+                      Eta.Sync_lock.use core.lock @@ fun () ->
+                      Atomic.set core.failure_reported true;
+                      Atomic.set core.phase Awaiting_post_commit;
+                      Ok
+                        (Failed
+                           {
+                             failure;
+                             post_commit =
+                               make_batch core Crash [] [];
+                           }))
+              | `Raised exn ->
+                  Eta.Effect.sync (fun () ->
+                      List.iter (fun undo -> undo ()) staging.undos;
+                      Ok
+                        (fail_from_exception core
+                           Failure.Structural_reset exn)))
+        in
+        let poll_with_sample sample =
+          let due =
+            match earliest_deadline core with
+            | Some deadline -> sample.sample_ms >= deadline
+            | None -> false
+          in
+          if due then
+            with_clock_sample core ~trigger:Failure.Clock_due
+              sample
+              (commit core root ~staging
+                 ~trigger:Failure.Clock_due)
+          else
+          match Eta.Queue.poll_now core.ingress with
+          | `Empty | `Closed ->
+              reset_ready core;
+              Eta.Effect.sync (fun () -> Ok Idle)
+          | `Closed_with_error (_ : never) -> .
+          | `Item message -> process_message sample message
+        in
+        Eta.Effect.bind (fun read ->
+        (match read with
+        | Error exn ->
+            Eta.Effect.sync (fun () -> Ok (fail_clock core exn))
+        | Ok sample -> (
+            match accept_or_fail_clock core sample with
+            | Error failed -> Eta.Effect.sync (fun () -> Ok failed)
+            | Ok sample -> poll_with_sample sample)))
+          read_active_clock)
+
+  let advance root = advance_with_authority ~driver:false root
+  let advance_driver root = advance_with_authority ~driver:true root
+  let attach_driver root = claim_driver_authority root.core
+  let earliest_deadline root = earliest_deadline root.core
+  let bound_clock root = root.core.bound_clock
+
+  let sleep_until_deadline root deadline =
+    let core = root.core in
+    Eta.Spi.Expert.make ~leaf_name:"eta_crux.driver_deadline_sleep"
+      (fun context ->
+        let active = Eta.Spi.Expert.Clock.current context in
+        let sample =
+          try
+            Ok
+              {
+                sample_clock = active;
+                sample_ms = Eta.Spi.Expert.Clock.now_ms active;
+              }
+          with exn -> Error exn
+        in
+        (match sample with
+        | Error exn ->
+            ignore (fail_clock core exn : _ outcome)
+        | Ok sample -> (
+            match accept_clock_sample core sample with
+            | Error Clock_runtime_mismatch ->
+                ignore
+                  (fail_clock core Runtime_mismatch : _ outcome)
+            | Error Clock_moved_backward ->
+                ignore
+                  (fail_clock core Clock_regression : _ outcome)
+            | Ok () ->
+                if sample.sample_ms < deadline then
+                  Eta.Spi.Expert.Clock.sleep active
+                    (Eta.Duration.ms
+                       (deadline - sample.sample_ms))));
+        Eta.Exit.Ok ())
 end

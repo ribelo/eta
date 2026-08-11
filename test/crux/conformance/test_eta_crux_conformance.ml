@@ -1,7 +1,12 @@
 module Crux = Eta_crux
 
+let test_clock = Eta_test.Test_clock.create ()
+let test_clock_capability = Eta_test.Test_clock.as_capability test_clock
+
 let run_ok eff =
-  Eta_test.Run.run eff |> fun result ->
+  Eta_test.Run.run ~clock:test_clock
+    (Eta.Effect.with_clock test_clock_capability eff)
+  |> fun result ->
   Eta_test.Expect.expect_ok result.exit
 
 let committed = function
@@ -18,7 +23,7 @@ let conformance_identity_zero_wire () =
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let description =
     Crux.both machine
@@ -150,7 +155,7 @@ let conformance_identity_serialized_equivalence () =
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let export =
     Crux.Exported_endpoint.create
@@ -770,8 +775,9 @@ let conformance_serialized_request_export () =
         (fun ~self:_ ~input:() ~model:_
              ~action:(request, responder) ->
           ( request,
-            Crux.Responder.resolve responder (request * 2)
-            |> Eta.Effect.ignore_errors ))
+            Some
+              (Crux.Responder.resolve responder (request * 2)
+              |> Eta.Effect.ignore_errors) ))
   in
   let export =
     Crux.Request_export.create

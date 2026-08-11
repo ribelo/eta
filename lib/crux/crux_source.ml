@@ -106,6 +106,7 @@ let create ~spec_cutoff ~spec ~producer ~target ~on_item ~on_terminal =
               Source_open
                 (source_open producer_value spec_value mapping
                    ~scope:scope.id);
+            observation = None;
           }
         in
         ( (spec_value, mapping),

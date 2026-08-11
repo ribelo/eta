@@ -35,6 +35,8 @@ let () =
             test_effect_timeout_cancellation_stays_on_owner_domain;
           Alcotest.test_case "catch preserves concurrent interrupt" `Quick
             test_effect_catch_preserves_concurrent_interrupt;
+          Alcotest.test_case "test clock advance_to is monotonic" `Quick
+            test_clock_advance_to_is_monotonic;
           Alcotest.test_case "stack safety: 1M dynamic binds" `Quick
             test_stack_safety_dynamic_bind;
           Alcotest.test_case "stack safety: 1M static map nesting" `Quick

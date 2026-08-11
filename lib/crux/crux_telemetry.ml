@@ -122,6 +122,7 @@ let root_stopped () =
 let origin = function
   | Crux_failure.Failure.Transition -> "transition"
   | Crux_failure.Failure.Owned_work -> "owned_work"
+  | Crux_failure.Failure.Graph_clock -> "graph_clock"
   | Crux_failure.Failure.Adapter_delivery -> "adapter_delivery"
   | Crux_failure.Failure.Request_dispatch -> "request_dispatch"
   | Crux_failure.Failure.Export_dispatch -> "export_dispatch"
@@ -130,7 +131,9 @@ let origin = function
 
 let trigger = function
   | Crux_failure.Failure.Initial_start -> "initial_start"
-  | Crux_failure.Failure.Endpoint_message -> "endpoint_message"
+  | Crux_failure.Failure.Endpoint_action -> "endpoint_action"
+  | Crux_failure.Failure.Clock_sample -> "clock_sample"
+  | Crux_failure.Failure.Clock_due -> "clock_due"
   | Crux_failure.Failure.Transition_effect -> "transition_effect"
   | Crux_failure.Failure.Lifecycle_program -> "lifecycle_program"
   | Crux_failure.Failure.Source_opening -> "source_opening"
@@ -148,6 +151,8 @@ let trigger = function
   | Crux_failure.Failure.Crash_teardown -> "crash_teardown"
   | Crux_failure.Failure.Application_crash_handler ->
       "application_crash_handler"
+  | Crux_failure.Failure.Structural_reset -> "structural_reset"
+  | Crux_failure.Failure.Poll_effect -> "poll_effect"
 
 let crash_attrs (failure : Crux_failure.Failure.t) =
   let primary = failure.Crux_failure.Failure.primary in

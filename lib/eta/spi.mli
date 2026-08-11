@@ -34,6 +34,20 @@ module Expert : sig
   type context
   type 'a intercept = Keep | Drop | Replace of 'a
 
+  module Clock : sig
+    type t
+
+    val current : context -> t
+    val same : t -> t -> bool
+    val now_ms : t -> int
+    val sleep : t -> Duration.t -> unit
+  end
+  (** Stable access to the active monotonic clock for Eta library packages.
+
+      A clock token captures the base clock or the [Effect.with_clock] override
+      that is active in [current]. Later dynamic overrides do not change the
+      captured token. *)
+
   val make :
     ?leaf_name:string ->
     (context -> ('a, 'err) Exit.t) ->

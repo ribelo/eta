@@ -17,6 +17,10 @@ let cutoff = Crux_engine.cutoff
 let bind = Crux_engine.bind
 
 module Syntax = Crux_engine.Syntax
+module Time = Crux_engine.Time
+module Testing = Crux_testing.Testing
+module Reset = Crux_engine.Reset
+module Poll = Crux_engine.Poll
 module State_machine = Crux_engine.State_machine
 let lifecycle = Crux_engine.lifecycle
 module Assoc = Crux_engine.Assoc.Make

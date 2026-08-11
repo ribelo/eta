@@ -1,6 +1,6 @@
 (library
  (name eta_crux_test)
  (public_name eta_crux_test)
- (modules eta_crux_test crux_test_handle crux_controlled_source crux_recording_adapter)
- (private_modules crux_test_handle crux_controlled_source crux_recording_adapter)
+ (modules eta_crux_test crux_test_handle crux_controlled_source crux_recording_adapter crux_post_commit_effect_observer crux_post_commit_observer_barrier)
+ (private_modules crux_test_handle crux_controlled_source crux_recording_adapter crux_post_commit_effect_observer)
  (libraries eta eta_crux eta_test))

@@ -45,6 +45,15 @@ module Expert = struct
     | Drop
     | Replace of 'a
 
+  module Clock = struct
+    type t = Capabilities.clock
+
+    let current context = Runtime_core.current_clock context.runtime
+    let same left right = left == right
+    let now_ms clock = clock#now_ms ()
+    let sleep clock duration = clock#sleep duration
+  end
+
   let[@inline always] make ?leaf_name f =
     Effect_erasure.effect_to_public (Effect_core.make ?leaf_name f)
   let sync1 value run =

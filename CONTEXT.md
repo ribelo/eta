@@ -71,8 +71,17 @@ Its specification defines producer continuity.
 
 ## Root output
 
-The complete typed application value that one successful advancement commits.
-It is the only application observation boundary.
+The complete application value from one successful commit.
+
+## Latest committed output
+
+The Root output from the greatest completed commit. The production driver
+retains it for pull observation through `Driver.latest_committed_output`.
+
+## Latest delivered output
+
+The last Root output whose delivery token the host accepted. Delivery state
+lives at the adapter boundary.
 
 ## Ingress item
 
@@ -284,12 +293,13 @@ sleep operation.
 
 One effect execution that a Poll starts after activation, a significant input
 change, or manual refresh. A Poll run does not use the shell request protocol.
+Poll terminology is run, run order, and run history — never request.
 
 ## Poll
 
 A graph-owned computation that starts Poll runs when it activates, its input
-changes significantly, or a caller requests a refresh. The input cutoff defines
-a significant change.
+changes significantly, or a caller runs a manual refresh. The input cutoff
+defines a significant change.
 
 Each active interval has one hidden run order. The result with the greatest
 committed run order is current. A new run does not cancel an earlier run in the
@@ -297,3 +307,16 @@ same active interval.
 
 Disposal requests cancellation and fences later completions. A later
 incarnation starts with a fresh run order and starting state.
+
+## Ownership
+
+Eta owns effect execution, scheduling, interruption, scopes, finalizers,
+clocks, and sleeps. Eta Crux owns graph time, active deadlines, clock
+sampling, driver wakes, actions, ingress, structural reset, Poll run order,
+commit publication, shell requests, handler claims, and request settlement.
+`Driver` owns latest committed-output retention. Adapters own
+successful-delivery state, host reconciliation, registration, operation
+routing, buffers, retries, and provider diagnostics. `Eta_crux.Testing` owns
+the post-commit observation types and observer attachment. `eta_crux_test`
+owns the observer controller and destructive reads. Applications own models,
+builders, Poll inputs, cutoffs, result values, and domain policy.

@@ -27,7 +27,7 @@ let counter_root () =
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 machine
 
@@ -36,6 +36,12 @@ let stop runtime root =
   match run_ok runtime (Crux.Root.advance root) with
   | Ok (Crux.Root.Stopped { post_commit }) -> start runtime post_commit
   | _ -> Alcotest.fail "root did not stop"
+
+let stop_driver runtime driver =
+  Crux.Driver.request_stop driver;
+  match run_ok runtime (Crux.Driver.poll driver) with
+  | Some (Crux.Driver.Closed Crux.Driver.Stopped) -> ()
+  | _ -> Alcotest.fail "driver-owned root did not stop"
 
 let race_ingress_close_vs_send_both_winners () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
@@ -193,7 +199,7 @@ let race_commit_vs_crash_both_winners () =
       Crux.State_machine.create (Crux.return ()) ~default_model:0
         ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
           !before_apply ();
-          (model + action, Eta.Effect.unit))
+          (model + action, None))
     in
     let crashing_endpoint =
       Crux.map machine ~f:(fun (_, endpoint) ->
@@ -268,18 +274,19 @@ let race_commit_atomicity () =
     Crux.State_machine.create (Crux.return ()) ~default_model:true
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
         ( action,
-          Eta.Effect.sync (fun () ->
-              transition_effect_started := true) ))
+          Some
+            (Eta.Effect.sync (fun () ->
+                 transition_effect_started := true)) ))
   in
   let retained =
     Crux.State_machine.create (Crux.return ()) ~default_model:7
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let provisional =
     Crux.State_machine.create (Crux.return ()) ~default_model:99
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let selected =
     Crux.bind (Crux.map selector ~f:fst) ~f:(fun keep_retained ->
@@ -343,12 +350,12 @@ let race_export_permit_vs_commit_both_winners () =
     let selector =
       Crux.State_machine.create (Crux.return ()) ~default_model:true
         ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-          (action, Eta.Effect.unit))
+          (action, None))
     in
     let child =
       Crux.State_machine.create (Crux.return ()) ~default_model:0
         ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-          (model + action, Eta.Effect.unit))
+          (model + action, None))
     in
     let active =
       let target =
@@ -523,7 +530,8 @@ let race_cancel_vs_dispatch_both_winners () =
     let request_outcome, host_outcome =
       run_ok runtime (Eta.Effect.par request host)
     in
-    stop runtime root;
+    ignore root;
+    stop_driver runtime driver;
     (request_outcome, host_outcome)
   in
   let cancelled, (acceptance_lost, reason, resolution_lost) =
@@ -577,7 +585,7 @@ let race_cancel_vs_dispatch_both_winners () =
     in
     let* _ = Eta.Promise.await request_settled in
     let cancellation = ref None in
-    let* _ =
+    let* handled =
       Crux.Request.Driver_event.handle event operation
         ~f:(fun _ ~resolve:_ ~on_cancel ->
           on_cancel (fun reason ->
@@ -585,19 +593,24 @@ let race_cancel_vs_dispatch_both_winners () =
           Eta.Effect.unit)
     in
     let+ accepted = Crux.Request.Driver_event.accepted event in
-    (accepted, !cancellation)
+    (handled, accepted, !cancellation)
   in
-  let request_outcome, (accepted, cancellation) =
+  let request_outcome, (handled, accepted, cancellation) =
     run_ok runtime (Eta.Effect.par request late_registration)
   in
-  stop runtime root;
+  ignore root;
+  stop_driver runtime driver;
   Alcotest.(check bool) "late cancellation won" true
     (request_outcome = `Cancelled);
   Alcotest.(check bool) "late dispatch completion rejected" true
     (accepted
     = Error Crux.Request.Driver_event.Already_completed);
-  Alcotest.(check bool) "late handler receives exact reason" true
-    (cancellation = Some Crux.Request.Initiator_cancelled)
+  Alcotest.(check bool) "late handler observes exact closure" true
+    (handled
+    = Crux.Request.Driver_event.Closed
+        Crux.Request.Initiator_cancelled);
+  Alcotest.(check bool) "late closed handler did not run" true
+    (cancellation = None)
 
 let race_resolve_vs_cancel_both_winners () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
@@ -649,7 +662,8 @@ let race_resolve_vs_cancel_both_winners () =
     let request_outcome, host_outcome =
       run_ok runtime (Eta.Effect.par request host)
     in
-    stop runtime root;
+    ignore root;
+    stop_driver runtime driver;
     (request_outcome, host_outcome)
   in
   let _, (first, second, cancellation) =
@@ -716,7 +730,7 @@ let race_terminal_vs_delivery () =
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let target =
     Crux.map machine ~f:(fun (_, endpoint) ->
@@ -787,7 +801,7 @@ let race_session_replacement () =
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:73
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let export =
     Crux.Exported_endpoint.create
@@ -958,6 +972,643 @@ let race_session_replacement () =
   | Some (Crux.Driver.Closed Crux.Driver.Stopped) -> ()
   | _ -> Alcotest.fail "replacement driver did not stop")
 
+let race_test_clock_movement_both_winners () =
+  let run_case ~winner ~loser ~expected_time =
+    Eta_test.with_test_clock @@ fun switch _runtime_clock _runtime ->
+    let clock = Eta_test.Test_clock.create () in
+    Eio.Fiber.fork ~sw:switch (fun () ->
+        Eta_test.Test_clock.sleep clock (Eta.Duration.ms 25));
+    let rec wait_for_sleepers () =
+      if Eta_test.Test_clock.sleeper_count clock = 1 then ()
+      else (
+        Eio.Fiber.yield ();
+        wait_for_sleepers ())
+    in
+    wait_for_sleepers ();
+    let claimed, resolve_claimed = Eio.Promise.create () in
+    let release, resolve_release = Eio.Promise.create () in
+    let winner_done, resolve_winner_done = Eio.Promise.create () in
+    let previous_hook =
+      Eta_test__Eta_test_clock_barrier.set_after_movement_claim
+        (fun () ->
+          Eio.Promise.resolve resolve_claimed ();
+          Eio.Promise.await release)
+    in
+    Eio.Fiber.fork ~sw:switch (fun () ->
+        winner clock;
+        Eio.Promise.resolve resolve_winner_done ());
+    Eio.Promise.await claimed;
+    let loser_rejected =
+      match loser clock with
+      | () -> false
+      | exception Invalid_argument message ->
+          String.equal message
+            "Eta_test.Test_clock: concurrent movement"
+    in
+    Eio.Promise.resolve resolve_release ();
+    Eio.Promise.await winner_done;
+    let (_ : unit -> unit) =
+      Eta_test__Eta_test_clock_barrier.set_after_movement_claim
+        previous_hook
+    in
+    Alcotest.(check bool) "losing movement was rejected" true
+      loser_rejected;
+    Alcotest.(check int) "only the winning movement changed time"
+      expected_time (Eta_test.Test_clock.now_ms clock);
+    Alcotest.(check int) "losing movement woke no future sleeper" 1
+      (Eta_test.Test_clock.sleeper_count clock);
+    Eta_test.Test_clock.advance_to clock 25
+  in
+  let winners =
+    [
+      ( (fun clock ->
+          Eta_test.Test_clock.adjust clock (Eta.Duration.ms 10)),
+        10 );
+      ((fun clock -> Eta_test.Test_clock.set_time clock 15), 15);
+      ((fun clock -> Eta_test.Test_clock.advance_to clock 20), 20);
+    ]
+  in
+  let losers =
+    [
+      (fun clock ->
+        Eta_test.Test_clock.adjust clock (Eta.Duration.ms 30));
+      (fun clock -> Eta_test.Test_clock.set_time clock 30);
+      (fun clock -> Eta_test.Test_clock.advance_to clock 30);
+    ]
+  in
+  List.iter
+    (fun (winner, expected_time) ->
+      List.iter
+        (fun loser ->
+          run_case ~winner ~loser ~expected_time)
+        losers)
+    winners
+
+let race_driver_attachment_both_winners () =
+  Eta_test.with_test_clock @@ fun switch _clock _runtime ->
+  let make_root value =
+    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+      (Crux.return value)
+  in
+  let attach binding root =
+    try
+      ignore (Crux.Driver.create binding root);
+      `Won
+    with Invalid_argument _ -> `Lost
+  in
+  let run_contenders left right =
+    let entered, enter = Eio.Promise.create () in
+    let release, release_resolver = Eio.Promise.create () in
+    let blocked = Atomic.make false in
+    let previous =
+      Eta_crux__Crux_attachment_barrier.set_after_lock
+        (fun () ->
+          if Atomic.compare_and_set blocked false true then (
+            Eio.Promise.resolve enter ();
+            Eio.Promise.await release))
+    in
+    let left_result, resolve_left = Eio.Promise.create () in
+    let right_started, resolve_right_started = Eio.Promise.create () in
+    let right_result, resolve_right = Eio.Promise.create () in
+    Eio.Fiber.fork ~sw:switch (fun () ->
+        Eio.Promise.resolve resolve_left (left ()));
+    Eio.Promise.await entered;
+    Eio.Fiber.fork ~sw:switch (fun () ->
+        Eio.Promise.resolve resolve_right_started ();
+        Eio.Promise.resolve resolve_right (right ()));
+    Eio.Promise.await right_started;
+    Eio.Promise.resolve release_resolver ();
+    let results =
+      (Eio.Promise.await left_result, Eio.Promise.await right_result)
+    in
+    let (_ : unit -> unit) =
+      Eta_crux__Crux_attachment_barrier.set_after_lock previous
+    in
+    results
+  in
+  let shared_root = make_root 1 in
+  let left_binding = Crux.Driver.Binding.identity [] in
+  let right_binding = Crux.Driver.Binding.identity [] in
+  let left, right =
+    run_contenders
+      (fun () -> attach left_binding shared_root)
+      (fun () -> attach right_binding shared_root)
+  in
+  Alcotest.(check int) "one shared-root attachment won" 1
+    (List.length
+       (List.filter (( = ) `Won) [ left; right ]));
+  let losing_binding =
+    match left, right with
+    | `Lost, `Won -> left_binding
+    | `Won, `Lost -> right_binding
+    | _ -> Alcotest.fail "shared-root arbitration was not exclusive"
+  in
+  Alcotest.(check bool) "losing binding remained unused" true
+    (attach losing_binding (make_root 2) = `Won);
+
+  let shared_binding = Crux.Driver.Binding.identity [] in
+  let left_root = make_root 3 in
+  let right_root = make_root 4 in
+  let left, right =
+    run_contenders
+      (fun () -> attach shared_binding left_root)
+      (fun () -> attach shared_binding right_root)
+  in
+  Alcotest.(check int) "one shared-binding attachment won" 1
+    (List.length
+       (List.filter (( = ) `Won) [ left; right ]));
+  let losing_root =
+    match left, right with
+    | `Lost, `Won -> left_root
+    | `Won, `Lost -> right_root
+    | _ -> Alcotest.fail "shared-binding arbitration was not exclusive"
+  in
+  Alcotest.(check bool) "losing root remained unstarted" true
+    (attach (Crux.Driver.Binding.identity []) losing_root = `Won)
+
+let race_handle_shared_clock_movement_both_winners () =
+  Eta_test.with_test_clock @@ fun switch _runtime_clock runtime ->
+  let shell =
+    {
+      Eta_crux_test.Test_shell.pp_error =
+        (fun _ (error : Crux.never) -> match error with _ -> .);
+      deliver = (fun _ -> Eta.Effect.unit);
+      request_event = (fun _ -> Eta.Effect.unit);
+      crash_detected = (fun _ -> Eta.Effect.unit);
+    }
+  in
+  let make_handle clock =
+    let root =
+      Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+        (Crux.return ())
+    in
+    Eta_crux_test.Handle.create ~clock
+      ~incoming:Eta_crux_test.Incoming.none ~shell root
+  in
+  let move handle kind ~winner =
+    match kind with
+    | `By ->
+        Eta_crux_test.Handle.advance_time_by handle
+          (Eta.Duration.ms (if winner then 10 else 30))
+    | `To ->
+        Eta_crux_test.Handle.advance_time_to handle
+          (if winner then 20 else 30)
+  in
+  let expected_time = function `By -> 10 | `To -> 20 in
+  let expect_initial_frame handle =
+    match run_ok runtime (Eta_crux_test.Handle.frame handle) with
+    | Ok
+        {
+          Eta_crux_test.Handle.outcome =
+            Eta_crux_test.Handle.Committed ();
+          _;
+        } ->
+        ()
+    | _ -> Alcotest.fail "handle did not advance after clock movement"
+  in
+  let run_case ~winner_on_left ~winner_kind ~loser_kind =
+    let clock = Eta_test.Test_clock.create () in
+    let left = make_handle clock in
+    let right = make_handle clock in
+    let winner = if winner_on_left then left else right in
+    let loser = if winner_on_left then right else left in
+    let winner_entered, entered_resolver = Eio.Promise.create () in
+    let release, release_resolver = Eio.Promise.create () in
+    let winner_done, done_resolver = Eio.Promise.create () in
+    let previous =
+      Eta_test__Eta_test_clock_barrier.set_after_movement_claim
+        (fun () ->
+          Eio.Promise.resolve entered_resolver ();
+          Eio.Promise.await release)
+    in
+    Eio.Fiber.fork ~sw:switch (fun () ->
+        move winner winner_kind ~winner:true;
+        Eio.Promise.resolve done_resolver ());
+    Eio.Promise.await winner_entered;
+    let loser_rejected =
+      try
+        move loser loser_kind ~winner:false;
+        false
+      with
+      | Invalid_argument message ->
+          String.equal message
+            "Eta_test.Test_clock: concurrent movement"
+    in
+    Eio.Promise.resolve release_resolver ();
+    Eio.Promise.await winner_done;
+    let (_ : unit -> unit) =
+      Eta_test__Eta_test_clock_barrier.set_after_movement_claim
+        previous
+    in
+    Alcotest.(check bool) "losing handle movement rejected" true
+      loser_rejected;
+    Alcotest.(check int) "one shared-clock movement won"
+      (expected_time winner_kind)
+      (Eta_test.Test_clock.now_ms clock);
+    Alcotest.(check (option unit)) "movement did not advance left root"
+      None (Eta_crux_test.Handle.latest_committed_output left);
+    Alcotest.(check (option unit)) "movement did not advance right root"
+      None (Eta_crux_test.Handle.latest_committed_output right);
+    expect_initial_frame left;
+    expect_initial_frame right;
+    ignore (run_ok runtime (Eta_crux_test.Handle.stop left));
+    ignore (run_ok runtime (Eta_crux_test.Handle.stop right))
+  in
+  List.iter
+    (fun winner_on_left ->
+      List.iter
+        (fun winner_kind ->
+          List.iter
+            (fun loser_kind ->
+              run_case ~winner_on_left ~winner_kind
+                ~loser_kind)
+            [ `By; `To ])
+        [ `By; `To ])
+    [ true; false ]
+
+let race_pull_vs_commit_both_winners () =
+  Eta_test.with_test_clock @@ fun switch _clock runtime ->
+  let run_case ~block_before ~expected =
+    let machine =
+      Crux.State_machine.create (Crux.return ())
+        ~default_model:0
+        ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
+          (model + action, None))
+    in
+    let root =
+      Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+        machine
+    in
+    let driver =
+      Crux.Driver.create (Crux.Driver.Binding.identity []) root
+    in
+    let initial =
+      match run_ok runtime (Crux.Driver.poll driver) with
+      | Some (Crux.Driver.Deliver delivery) -> delivery
+      | Some _ | None -> Alcotest.fail "missing initial delivery"
+    in
+    ignore
+      (run_ok runtime
+         (Crux.Driver.Delivery.delivered initial));
+    let _, endpoint = Crux.Driver.Delivery.output initial in
+    ignore
+      (run_ok runtime
+         (Crux.Endpoint.send endpoint 1
+         |> Eta.Effect.or_die (fun _ ->
+                Invalid_argument "ingress closed")));
+    let entered, entered_resolver = Eio.Promise.create () in
+    let release, release_resolver = Eio.Promise.create () in
+    let hook () =
+      Eio.Promise.resolve entered_resolver ();
+      Eio.Promise.await release
+    in
+    let previous_before =
+      Eta_crux__Crux_pull_barrier.set_before_publication
+        (if block_before then hook else fun () -> ())
+    in
+    let previous_after =
+      Eta_crux__Crux_pull_barrier.set_after_publication
+        (if block_before then (fun () -> ()) else hook)
+    in
+    let polling =
+      Eta_test.Async.fork_run switch runtime
+        (Crux.Driver.poll driver)
+    in
+    Eio.Promise.await entered;
+    let pulled =
+      Crux.Driver.latest_committed_output driver
+      |> Option.map fst
+    in
+    Eio.Promise.resolve release_resolver ();
+    let event =
+      Eta_test.Async.await polling |> Eta_test.Expect.expect_ok
+    in
+    let (_ : unit -> unit) =
+      Eta_crux__Crux_pull_barrier.set_before_publication
+        previous_before
+    in
+    let (_ : unit -> unit) =
+      Eta_crux__Crux_pull_barrier.set_after_publication
+        previous_after
+    in
+    let delivery =
+      match event with
+      | Some (Crux.Driver.Deliver delivery) -> delivery
+      | Some _ | None -> Alcotest.fail "missing raced delivery"
+    in
+    Alcotest.(check (option int)) "atomic pull result"
+      (Some expected) pulled;
+    Alcotest.(check int) "complete delivered output" 1
+      (fst (Crux.Driver.Delivery.output delivery));
+    ignore
+      (run_ok runtime
+         (Crux.Driver.Delivery.delivered delivery))
+  in
+  run_case ~block_before:true ~expected:0;
+  run_case ~block_before:false ~expected:1
+
+let race_post_commit_effect_observer_read_both_winners () =
+  Eta_test.with_test_clock @@ fun switch _clock runtime ->
+  let module Observer =
+    Eta_crux_test.Post_commit_effect_observer
+  in
+  let run_operation observer = function
+    | `Poll -> `Poll (Observer.poll observer)
+    | `Drain -> `Drain (Observer.drain observer)
+    | `Expect_empty ->
+        Observer.expect_empty observer;
+        `Expect_empty
+  in
+  let run_case ~nonempty ~winner ~loser =
+    let observer = Observer.create () in
+    if nonempty then (
+      let root =
+        Crux.Root.create
+          ~post_commit_effect_observer:(Observer.attachment observer)
+          ~ingress_capacity:1 ~request_capacity:1
+          (Crux.return ())
+      in
+      ignore (run_ok runtime (Crux.Root.advance root)));
+    let entered, entered_resolver = Eio.Promise.create () in
+    let release, release_resolver = Eio.Promise.create () in
+    let done_, done_resolver = Eio.Promise.create () in
+    let previous =
+      Eta_crux_test__Crux_post_commit_observer_barrier
+      .set_after_consumer_claim
+        (fun () ->
+          Eio.Promise.resolve entered_resolver ();
+          Eio.Promise.await release)
+    in
+    Eio.Fiber.fork ~sw:switch (fun () ->
+        let result =
+          try Ok (run_operation observer winner)
+          with exception_ -> Error exception_
+        in
+        Eio.Promise.resolve done_resolver result);
+    Eio.Promise.await entered;
+    let loser_rejected =
+      try
+        ignore (run_operation observer loser);
+        false
+      with Invalid_argument _ -> true
+    in
+    Eio.Promise.resolve release_resolver ();
+    let observed = Eio.Promise.await done_ in
+    let (_ : unit -> unit) =
+      Eta_crux_test__Crux_post_commit_observer_barrier
+      .set_after_consumer_claim previous
+    in
+    Alcotest.(check bool) "losing consumer rejected" true
+      loser_rejected;
+    (match winner, nonempty, observed with
+    | `Poll, true, Ok (`Poll (Some (Observer.Staged _)))
+    | `Poll, false, Ok (`Poll None)
+    | `Drain, true, Ok (`Drain [ Observer.Staged _ ])
+    | `Drain, false, Ok (`Drain [])
+    | `Expect_empty, false, Ok `Expect_empty
+    | `Expect_empty, true, Error _ ->
+        ()
+    | _ -> Alcotest.fail "observer winner returned the wrong result");
+    let remaining = Observer.drain observer in
+    Alcotest.(check int) "winner preserved the exact remaining queue"
+      (if nonempty && winner = `Expect_empty then 1 else 0)
+      (List.length remaining);
+    Observer.expect_empty observer
+  in
+  List.iter
+    (fun nonempty ->
+      List.iter
+        (fun winner ->
+          List.iter
+            (fun loser ->
+              run_case ~nonempty ~winner ~loser)
+            [ `Poll; `Drain; `Expect_empty ])
+        [ `Poll; `Drain; `Expect_empty ])
+    [ false; true ]
+
+let race_reset_vs_disposal_both_winners () =
+  Eta_test.with_test_clock @@ fun switch _clock runtime ->
+  let make_fixture () =
+    let resets = ref 0 in
+    let selector =
+      Crux.State_machine.create (Crux.return ())
+        ~default_model:true
+        ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+          (action, None))
+    in
+    let description =
+      Crux.bind selector
+        ~f:(fun (active, selector_endpoint) ->
+          if not active then
+            Crux.return (selector_endpoint, None)
+          else
+            Crux.Reset.scope (Crux.return ())
+              ~f:(fun ~reset ~input ->
+                let machine =
+                  Crux.State_machine.create input
+                    ~default_model:0
+                    ~reset:(fun ~self:_ ~input:() ~model ->
+                      incr resets;
+                      (model, None))
+                    ~apply_action:(fun ~self:_ ~input:()
+                                      ~model ~action:_ ->
+                      (model, None))
+                in
+                Crux.map (Crux.both reset machine)
+                  ~f:(fun (reset, _) ->
+                    (selector_endpoint, Some reset))))
+    in
+    let root =
+      Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+        description
+    in
+    let (selector_endpoint, reset), post =
+      committed (run_ok runtime (Crux.Root.advance root))
+    in
+    start runtime post;
+    (root, selector_endpoint, Option.get reset, resets)
+  in
+  let advance root =
+    match run_ok runtime (Crux.Root.advance root) with
+    | Ok (Crux.Root.Committed { post_commit; _ }) ->
+        start runtime post_commit;
+        `Committed
+    | Ok (Crux.Root.Rejected Crux.Root.Stale_reset) -> `Stale
+    | _ -> Alcotest.fail "unexpected reset/disposal outcome"
+  in
+  let run_case ~reset_first =
+    let root, selector, reset, resets = make_fixture () in
+    let entered, entered_resolver = Eio.Promise.create () in
+    let release, release_resolver = Eio.Promise.create () in
+    let hook () =
+      Eio.Promise.resolve entered_resolver ();
+      Eio.Promise.await release
+    in
+    let previous_before =
+      Eta_crux__Crux_reset_barrier.set_before_admission
+        (if reset_first then (fun () -> ()) else hook)
+    in
+    let previous_after =
+      Eta_crux__Crux_reset_barrier.set_after_admission
+        (if reset_first then hook else fun () -> ())
+    in
+    let resetting =
+      Eta_test.Async.fork_run switch runtime
+        (Crux.Reset.trigger reset
+        |> Eta.Effect.or_die (fun _ ->
+               Invalid_argument "reset ingress closed"))
+    in
+    Eio.Promise.await entered;
+    ignore
+      (run_ok runtime
+         (Crux.Endpoint.send selector false
+         |> Eta.Effect.or_die (fun _ ->
+                Invalid_argument "selector ingress closed")));
+    Eio.Promise.resolve release_resolver ();
+    ignore
+      (Eta_test.Async.await resetting
+      |> Eta_test.Expect.expect_ok);
+    let (_ : unit -> unit) =
+      Eta_crux__Crux_reset_barrier.set_before_admission
+        previous_before
+    in
+    let (_ : unit -> unit) =
+      Eta_crux__Crux_reset_barrier.set_after_admission
+        previous_after
+    in
+    if reset_first then (
+      Alcotest.(check bool) "reset won before disposal" true
+        (advance root = `Committed);
+      Alcotest.(check int) "reset callback ran once" 1 !resets;
+      Alcotest.(check bool) "queued disposal followed reset" true
+        (advance root = `Committed))
+    else (
+      Alcotest.(check bool) "disposal won before reset" true
+        (advance root = `Committed);
+      Alcotest.(check bool) "disposed reset became stale" true
+        (advance root = `Stale);
+      Alcotest.(check int) "stale reset ran no callback" 0 !resets)
+  in
+  run_case ~reset_first:true;
+  run_case ~reset_first:false
+
+let race_poll_completion_vs_disposal_both_winners () =
+  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  let make_fixture () =
+    let controlled = Eta_test.Controlled.create () in
+    let selector =
+      Crux.State_machine.create (Crux.return ())
+        ~default_model:true
+        ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+          (action, None))
+    in
+    let description =
+      Crux.bind selector
+        ~f:(fun (active, selector_endpoint) ->
+          if not active then
+            Crux.return (selector_endpoint, None)
+          else
+            let result, refresh =
+              Crux.Poll.manual_refresh
+                ~starting:Crux.Poll.Starting.empty
+                ~effect:
+                  (Crux.return
+                     (Eta_test.Controlled.eff controlled ()))
+                ()
+            in
+            Crux.map (Crux.both result refresh)
+              ~f:(fun (result, refresh) ->
+                (selector_endpoint, Some (result, refresh))))
+    in
+    let root =
+      Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+        description
+    in
+    let (selector, poll), initial_post =
+      committed (run_ok runtime (Crux.Root.advance root))
+    in
+    start runtime initial_post;
+    let _, refresh = Option.get poll in
+    ignore
+      (run_ok runtime
+         (refresh
+         |> Eta.Effect.or_die (fun _ ->
+                Invalid_argument "refresh ingress closed")));
+    let _, trigger_post =
+      committed (run_ok runtime (Crux.Root.advance root))
+    in
+    start runtime trigger_post;
+    let call =
+      run_ok runtime (Eta_test.Controlled.await_call controlled)
+    in
+    (root, selector, call)
+  in
+  let commit root =
+    match run_ok runtime (Crux.Root.advance root) with
+    | Ok (Crux.Root.Committed { output; post_commit }) ->
+        start runtime post_commit;
+        `Committed output
+    | Ok (Crux.Root.Rejected Crux.Root.Stale_endpoint) -> `Stale
+    | _ -> Alcotest.fail "unexpected Poll disposal outcome"
+  in
+  let run_case ~completion_first result =
+    let root, selector, call = make_fixture () in
+    let entered, entered_resolver = Eio.Promise.create () in
+    let release, release_resolver = Eio.Promise.create () in
+    let admitted, admitted_resolver = Eio.Promise.create () in
+    let hook () =
+      Eio.Promise.resolve entered_resolver ();
+      Eio.Promise.await release
+    in
+    let previous_before =
+      Eta_crux__Crux_poll_barrier
+      .set_before_completion_admission
+        (if completion_first then (fun () -> ()) else hook)
+    in
+    let previous_after =
+      Eta_crux__Crux_poll_barrier
+      .set_after_completion_admission
+        (fun () ->
+          Eio.Promise.resolve admitted_resolver ();
+          if completion_first then hook ())
+    in
+    Alcotest.(check bool) "Poll body settled" true
+      (Eta_test.Controlled.succeed call result = Ok ());
+    Eio.Promise.await entered;
+    ignore
+      (run_ok runtime
+         (Crux.Endpoint.send selector false
+         |> Eta.Effect.or_die (fun _ ->
+                Invalid_argument "selector ingress closed")));
+    Eio.Promise.resolve release_resolver ();
+    Eio.Promise.await admitted;
+    let (_ : unit -> unit) =
+      Eta_crux__Crux_poll_barrier
+      .set_before_completion_admission previous_before
+    in
+    let (_ : unit -> unit) =
+      Eta_crux__Crux_poll_barrier
+      .set_after_completion_admission previous_after
+    in
+    if completion_first then (
+      (match commit root with
+      | `Committed (_, Some (Some selected, _))
+        when selected = result ->
+          ()
+      | _ -> Alcotest.fail "completion did not win before disposal");
+      match commit root with
+      | `Committed (_, None) -> ()
+      | _ -> Alcotest.fail "disposal did not follow completion")
+    else (
+      (match commit root with
+      | `Committed (_, None) -> ()
+      | _ -> Alcotest.fail "disposal did not win");
+      Alcotest.(check bool) "old completion fenced" true
+        (commit root = `Stale))
+  in
+  run_case ~completion_first:true 10;
+  run_case ~completion_first:false 20
+
 let () =
   Alcotest.run "eta_crux races"
     [
@@ -983,5 +1634,20 @@ let () =
             race_terminal_vs_delivery;
           Alcotest.test_case "session replacement" `Quick
             race_session_replacement;
+          Alcotest.test_case "test clock movement both winners" `Quick
+            race_test_clock_movement_both_winners;
+          Alcotest.test_case "driver attachment both winners" `Quick
+            race_driver_attachment_both_winners;
+          Alcotest.test_case "handle shared clock movement both winners" `Quick
+            race_handle_shared_clock_movement_both_winners;
+          Alcotest.test_case "pull vs commit both winners" `Quick
+            race_pull_vs_commit_both_winners;
+          Alcotest.test_case
+            "post-commit observer read both winners" `Quick
+            race_post_commit_effect_observer_read_both_winners;
+          Alcotest.test_case "reset vs disposal both winners" `Quick
+            race_reset_vs_disposal_both_winners;
+          Alcotest.test_case "poll completion vs disposal both winners" `Quick
+            race_poll_completion_vs_disposal_both_winners;
         ] );
     ]

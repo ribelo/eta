@@ -293,6 +293,7 @@ module Request = struct
     root : root_core;
     lock : Eta.Sync_lock.t;
     mutable pending : bool;
+    mutable handler_claimed : bool;
     mutable dispatch_completed : bool;
     mutable cancellation_handlers : (closure_reason -> unit) list;
     mutable closure_reason : closure_reason option;
@@ -314,9 +315,16 @@ module Request = struct
         (unit, 'error) Eta.Effect.t;
     }
 
+    type dispatch_result =
+      | Dispatched
+      | Already_handled
+      | Closed of closure_reason
+
     type handle_result =
       | Handled
       | Different_operation
+      | Already_handled
+      | Closed of closure_reason
 
     let resolve state response =
       let won =
@@ -342,9 +350,35 @@ module Request = struct
       in
       Option.iter handler reason
 
-    let dispatch (Event state) handler =
-      handler.handle ~operation:state.operation ~request:state.request
-        ~resolve:(resolve state) ~on_cancel:(on_cancel state)
+    type claim_result =
+      | Claim_won
+      | Claim_already_handled
+      | Claim_closed of closure_reason
+
+    let claim_handler state =
+      Eta.Sync_lock.use state.lock @@ fun () ->
+      if state.handler_claimed then Claim_already_handled
+      else
+        match state.closure_reason with
+        | Some reason -> Claim_closed reason
+        | None ->
+            state.handler_claimed <- true;
+            Claim_won
+
+    let dispatch (Event state) handler : (dispatch_result, 'error) Eta.Effect.t =
+      let open Eta.Syntax in
+      let* claim =
+        Eta.Effect.sync (fun () -> claim_handler state)
+      in
+      match claim with
+      | Claim_already_handled ->
+          Eta.Effect.pure (Already_handled : dispatch_result)
+      | Claim_closed reason ->
+          Eta.Effect.pure (Closed reason : dispatch_result)
+      | Claim_won ->
+          handler.handle ~operation:state.operation ~request:state.request
+            ~resolve:(resolve state) ~on_cancel:(on_cancel state)
+          |> Eta.Effect.map (fun () -> (Dispatched : dispatch_result))
 
     let handle (type request response error) (Event state)
         (operation : (request, response) Host_operation.t) ~f :
@@ -353,8 +387,16 @@ module Request = struct
         Eta.Effect.pure Different_operation
       else
         let state : (request, response) state = Obj.magic state in
-        f state.request ~resolve:(resolve state) ~on_cancel:(on_cancel state)
-        |> Eta.Effect.map (fun () -> Handled)
+        let open Eta.Syntax in
+        let* claim =
+          Eta.Effect.sync (fun () -> claim_handler state)
+        in
+        match claim with
+        | Claim_already_handled -> Eta.Effect.pure Already_handled
+        | Claim_closed reason -> Eta.Effect.pure (Closed reason)
+        | Claim_won ->
+            f state.request ~resolve:(resolve state) ~on_cancel:(on_cancel state)
+            |> Eta.Effect.map (fun () -> Handled)
 
     let complete state =
       Eta.Sync_lock.use state.lock @@ fun () ->
@@ -495,6 +537,7 @@ module Requester = struct
         root;
         lock = Eta.Sync_lock.create ();
         pending = true;
+        handler_claimed = false;
         dispatch_completed = false;
         cancellation_handlers = [];
         closure_reason = None;

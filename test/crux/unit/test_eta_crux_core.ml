@@ -1,11 +1,19 @@
 module Crux = Eta_crux
 
+let test_clock = Eta_test.Test_clock.create ()
+let test_clock_capability = Eta_test.Test_clock.as_capability test_clock
+
 let run_ok eff =
-  let outcome = Eta_test.Run.run eff in
+  let outcome =
+    Eta_test.Run.run ~clock:test_clock
+      (Eta.Effect.with_clock test_clock_capability eff)
+  in
   Eta_test.Expect.expect_ok outcome.exit
 
 let run_runtime_ok runtime eff =
-  Eta.Runtime.run runtime eff |> Eta_test.Expect.expect_ok
+  Eta.Runtime.run runtime
+    (Eta.Effect.with_clock test_clock_capability eff)
+  |> Eta_test.Expect.expect_ok
 
 let committed = function
   | Ok (Crux.Root.Committed committed) ->
@@ -23,7 +31,7 @@ let test_description_is_inert () =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
         incr transitions;
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let description =
     Crux.both machine
@@ -51,7 +59,7 @@ let test_roots_are_isolated () =
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let left =
     Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 machine
@@ -83,7 +91,7 @@ let test_endpoint_acceptance_boundary () =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
         incr transitions;
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let root =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 machine
@@ -105,7 +113,7 @@ let test_transition_effect_is_staged () =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
         ( model + action,
-          Eta.Effect.sync (fun () -> incr effect_starts) ))
+          Some (Eta.Effect.sync (fun () -> incr effect_starts)) ))
   in
   let root =
     Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 machine
@@ -149,7 +157,7 @@ let test_driver_delivers_before_post_commit () =
     !lifecycle_started
 
 let test_outbound_request_round_trip () =
-  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  Eta_test.with_test_clock @@ fun switch _clock runtime ->
   let int_codec =
     Crux.Codec.make
       ~encode:(fun value -> Bytes.of_string (string_of_int value))
@@ -164,6 +172,10 @@ let test_outbound_request_round_trip () =
   in
   let operation =
     Crux.Host_operation.define ~name:"test.echo"
+      ~request:int_codec ~response:string_codec
+  in
+  let different_operation =
+    Crux.Host_operation.define ~name:"test.other"
       ~request:int_codec ~response:string_codec
   in
   let binding =
@@ -207,6 +219,25 @@ let test_outbound_request_round_trip () =
           await_request (attempts - 1)
   in
   let event = await_request 100 in
+  let mismatched_handler_ran = ref false in
+  let mismatched =
+    Crux.Request.Driver_event.handle event different_operation
+      ~f:(fun _request ~resolve:_ ~on_cancel:_ ->
+        mismatched_handler_ran := true;
+        Eta.Effect.unit)
+    |> run_runtime_ok runtime
+  in
+  Alcotest.(check bool) "mismatched handler did not claim" true
+    (mismatched = Crux.Request.Driver_event.Different_operation);
+  Alcotest.(check bool) "mismatched handler did not run" false
+    !mismatched_handler_ran;
+  let unrun_handler_ran = ref false in
+  let _unrun =
+    Crux.Request.Driver_event.handle event operation
+      ~f:(fun _request ~resolve:_ ~on_cancel:_ ->
+        unrun_handler_ran := true;
+        Eta.Effect.unit)
+  in
   let handled =
     Crux.Request.Driver_event.handle event operation
       ~f:(fun request ~resolve ~on_cancel:_ ->
@@ -217,7 +248,25 @@ let test_outbound_request_round_trip () =
   (match handled with
   | Crux.Request.Driver_event.Handled -> ()
   | Crux.Request.Driver_event.Different_operation ->
-      Alcotest.fail "operation did not match");
+      Alcotest.fail "operation did not match"
+  | Crux.Request.Driver_event.Already_handled ->
+      Alcotest.fail "first handler did not claim the request"
+  | Crux.Request.Driver_event.Closed _ ->
+      Alcotest.fail "request closed before its first handler");
+  Alcotest.(check bool) "unrun handler did not claim or run" false
+    !unrun_handler_ran;
+  let second_handler_ran = ref false in
+  let handled_again =
+    Crux.Request.Driver_event.handle event operation
+      ~f:(fun _request ~resolve:_ ~on_cancel:_ ->
+        second_handler_ran := true;
+        Eta.Effect.unit)
+    |> run_runtime_ok runtime
+  in
+  Alcotest.(check bool) "second matching handler was rejected" true
+    (handled_again = Crux.Request.Driver_event.Already_handled);
+  Alcotest.(check bool) "second matching handler did not run" false
+    !second_handler_ran;
   ignore
     (run_runtime_ok runtime
        (Crux.Request.Driver_event.accepted event) :
@@ -230,7 +279,49 @@ let test_outbound_request_round_trip () =
       await_response (attempts - 1))
   in
   await_response 100;
-  Alcotest.(check (option string)) "typed response" (Some "42") !response
+  Alcotest.(check (option string)) "typed response" (Some "42") !response;
+
+  let pending =
+    Eta_test.Async.fork_run switch runtime
+      (Crux.Requester.request requester 7 |> Eta.Effect.to_result)
+  in
+  let event = await_request 100 in
+  let failed_handler_ran = ref 0 in
+  let failed_handler =
+    Crux.Request.Driver_event.handle event operation
+      ~f:(fun _request ~resolve:_ ~on_cancel:_ ->
+        incr failed_handler_ran;
+        Eta.Effect.fail `Handler_failed)
+    |> Eta.Effect.to_result |> run_runtime_ok runtime
+  in
+  Alcotest.(check bool) "typed handler failure returned" true
+    (failed_handler = Error `Handler_failed);
+  let after_failure_ran = ref false in
+  let handled_after_failure =
+    Crux.Request.Driver_event.handle event operation
+      ~f:(fun _request ~resolve:_ ~on_cancel:_ ->
+        after_failure_ran := true;
+        Eta.Effect.unit)
+    |> run_runtime_ok runtime
+  in
+  Alcotest.(check bool) "typed failure retained handler claim" true
+    (handled_after_failure = Crux.Request.Driver_event.Already_handled);
+  Alcotest.(check int) "typed handler ran once" 1 !failed_handler_ran;
+  Alcotest.(check bool) "fall-through handler did not run" false
+    !after_failure_ran;
+  let cause =
+    Crux.Failure.Packed_cause.make
+      ~pp_error:Format.pp_print_string
+      (Eta.Cause.fail "handler failed")
+  in
+  ignore
+    (run_runtime_ok runtime
+       (Crux.Request.Driver_event.failed event cause));
+  let request_result =
+    Eta_test.Async.await pending |> Eta_test.Expect.expect_ok
+  in
+  Alcotest.(check bool) "failed dispatch reached requester" true
+    (request_result = Error Crux.Requester.Dispatch_failed)
 
 let test_requester_rejects_name_collision () =
   let int_codec =
@@ -271,7 +362,7 @@ let test_cutoff_suppresses_only_dependent_recomputation () =
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let model = Crux.map machine ~f:fst in
   let parity =
@@ -340,7 +431,7 @@ let test_transition_rollback () =
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
         if action < 0 then raise Exit;
         ( model + action,
-          Eta.Effect.sync (fun () -> incr staged_starts) ))
+          Some (Eta.Effect.sync (fun () -> incr staged_starts)) ))
   in
   let description =
     Crux.map machine ~f:(fun (model, endpoint) ->
@@ -368,12 +459,12 @@ let test_stale_endpoint_rejection () =
   let selector =
     Crux.State_machine.create (Crux.return ()) ~default_model:true
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-        (action, Eta.Effect.unit))
+        (action, None))
   in
   let child initial =
     Crux.State_machine.create (Crux.return ()) ~default_model:initial
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let present = child 10 in
   let absent = child 20 in
@@ -466,7 +557,7 @@ let test_structural_scope_settlement () =
   let selector =
     Crux.State_machine.create (Crux.return ()) ~default_model:true
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-        (action, Eta.Effect.unit))
+        (action, None))
   in
   let old_subtree =
     Crux.both (Crux.lifecycle (Crux.return parent_program))
@@ -567,7 +658,7 @@ let test_cleanup_overlap () =
   let selector =
     Crux.State_machine.create (Crux.return ()) ~default_model:true
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-        (action, Eta.Effect.unit))
+        (action, None))
   in
   let selected =
     Crux.bind (Crux.map selector ~f:fst) ~f:(fun old_present ->
@@ -653,7 +744,7 @@ let test_concurrent_source_opening () =
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:[]
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model @ [ action ], Eta.Effect.unit))
+        (model @ [ action ], None))
   in
   let target = Crux.map machine ~f:snd in
   let source id =
@@ -750,7 +841,7 @@ let test_source_opening_barrier () =
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:()
       ~apply_action:(fun ~self:_ ~input:() ~model:() ~action:() ->
-        ((), Eta.Effect.unit))
+        ((), None))
   in
   let source =
     Crux.Source.create
@@ -825,7 +916,7 @@ let test_source_argument_work_starts_once () =
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:()
       ~apply_action:(fun ~self:_ ~input:() ~model:() ~action:() ->
-        ((), Eta.Effect.unit))
+        ((), None))
   in
   let producer =
     Crux.map
@@ -934,13 +1025,14 @@ let test_driver_await_wakes_on_fatal () =
   ignore (run_runtime_ok runtime (Eta.Promise.await entered));
   let waiter =
     Eta_test.Async.fork_run switch runtime
-      (Crux.Driver.await driver
-      |> Eta.Effect.map_error (fun (value : Crux.never) ->
-           match value with _ -> .)
-      |> Eta.Effect.timeout_as (Eta.Duration.ms 1)
-           ~on_timeout:`Timeout
-      |> Eta.Effect.or_die (fun `Timeout ->
-           Failure "driver remained asleep after fatal work"))
+      (Eta.Effect.with_clock test_clock_capability
+         (Crux.Driver.await driver
+         |> Eta.Effect.map_error (fun (value : Crux.never) ->
+              match value with _ -> .)
+         |> Eta.Effect.timeout_as (Eta.Duration.ms 1)
+              ~on_timeout:`Timeout
+         |> Eta.Effect.or_die (fun `Timeout ->
+              Failure "driver remained asleep after fatal work")))
   in
   ignore
     (run_runtime_ok runtime
@@ -1013,7 +1105,7 @@ let test_source_opening_defect () =
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:()
       ~apply_action:(fun ~self:_ ~input:() ~model:() ~action:() ->
-        ((), Eta.Effect.unit))
+        ((), None))
   in
   let source =
     Crux.Source.create
@@ -1078,7 +1170,7 @@ let test_source_opening_failures_do_not_block_admission () =
     Crux.State_machine.create (Crux.return ())
       ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let producer () ~emit:_ =
     Eta.Effect.fail "opening failed"
@@ -1149,7 +1241,7 @@ let test_stop_cancels_source_opening () =
     Crux.State_machine.create (Crux.return ())
       ~default_model:()
       ~apply_action:(fun ~self:_ ~input:() ~model:() ~action:() ->
-        ((), Eta.Effect.unit))
+        ((), None))
   in
   let source =
     Crux.Source.create
@@ -1213,7 +1305,7 @@ let test_post_commit_phase_order () =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
         ( action,
-          Eta.Effect.sync (fun () -> transition_started := true) ))
+          Some (Eta.Effect.sync (fun () -> transition_started := true)) ))
   in
   let source =
     Crux.Source.create
@@ -1302,7 +1394,7 @@ let test_diagnostic_hook_failure () =
       ~default_model:5
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
         if action < 0 then raise Exit;
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let root =
     Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 machine
@@ -1360,7 +1452,8 @@ let test_self_disposing_effect () =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
         ( action,
-          Eta.Effect.sync (fun () -> incr transition_effect_starts) ))
+          Some
+            (Eta.Effect.sync (fun () -> incr transition_effect_starts)) ))
   in
   let source =
     Crux.Source.create
@@ -1421,7 +1514,7 @@ let test_export_callback_defect () =
   let machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let target =
     Crux.map machine ~f:(fun (_, endpoint) ->
@@ -1657,7 +1750,7 @@ let test_stop_from_each_driver_phase () =
   let pending_machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let pending_root =
     Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
@@ -1715,7 +1808,7 @@ let test_stop_from_each_driver_phase () =
   let active_machine =
     Crux.State_machine.create (Crux.return ()) ~default_model:0
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
-        (model + action, Eta.Effect.unit))
+        (model + action, None))
   in
   let active_root =
     Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
@@ -1805,7 +1898,7 @@ let test_hosted_resource_boundary () =
   Alcotest.(check bool) "unacquired resource was not released" false
     !acquire_released;
   Alcotest.(check bool) "acquisition failure settled root" true
-    (run_ok (Crux.Root.advance acquire_root) = Error Crux.Root.Closed);
+    (run_ok (Crux.Root.advance acquire_root) = Error Crux.Root.Driver_attached);
 
   let release_root, release_driver = hosted_root () in
   let delivered = ref false in
@@ -1840,7 +1933,7 @@ let test_hosted_resource_boundary () =
   Alcotest.(check bool) "adapter received committed output" true !delivered;
   Alcotest.(check bool) "binding release ran" true !released;
   Alcotest.(check bool) "release failure left root settled" true
-    (run_ok (Crux.Root.advance release_root) = Error Crux.Root.Closed);
+    (run_ok (Crux.Root.advance release_root) = Error Crux.Root.Driver_attached);
 
   let interrupt_root, interrupt_driver = hosted_root () in
   let delivery_entered = Eta.Promise.create () in
@@ -1873,7 +1966,7 @@ let test_hosted_resource_boundary () =
   Alcotest.(check bool) "interruption released binding after settlement" true
     !interrupt_released;
   Alcotest.(check bool) "interruption settled root" true
-    (run_ok (Crux.Root.advance interrupt_root) = Error Crux.Root.Closed)
+    (run_ok (Crux.Root.advance interrupt_root) = Error Crux.Root.Driver_attached)
 
 let test_request_terminal_handoff_fence () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
@@ -1965,15 +2058,15 @@ let test_request_export_closes_on_owner_and_root_termination () =
           | `Request
               ((_request : int),
                (_responder : string Crux.Responder.t)) ->
-              ((), Eta.Effect.unit)
+              ((), None)
           | `Crash ->
-              ((), Eta.Effect.die_message "request export crash"))
+              ((), Some (Eta.Effect.die_message "request export crash")))
     in
     let selector =
       Crux.State_machine.create (Crux.return ())
         ~default_model:true
         ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
-          (action, Eta.Effect.unit))
+          (action, None))
     in
     let request_target =
       Crux.map machine ~f:(fun (_, endpoint) ->

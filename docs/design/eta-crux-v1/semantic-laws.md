@@ -29,7 +29,7 @@ law. A property gate must state its generated class and observation boundary.
 | A-03 | Ingress closure and admission use first-winner arbitration. The losing admission appends nothing and returns `Ingress_closed`. | `race_ingress_close_vs_send_both_winners` |
 | A-04 | Endpoint incarnation is checked during advancement. A stale message is consumed and returns `Rejected Stale_endpoint` without a transition. | `test_stale_endpoint_rejection` |
 | A-05 | `Endpoint.contramap` preserves target identity, incarnation, lifetime, capacity, and admission outcome. | `qcheck_endpoint_contramap` |
-| A-06 | `apply_action` runs once with the committed input and model. Its returned model and effect remain staged until commit. | `qcheck_transition_snapshot` |
+| A-06 | `apply_action` runs once with the committed input and model. Its returned model and optional effect remain staged until commit. `None` stages no effect. | `qcheck_transition_snapshot` |
 | A-07 | A transition exception commits no model or graph change and starts no staged effect. | `test_transition_rollback` |
 | A-08 | A staged effect is typed-infallible. Application success and failure return as later actions. | compile gates `staged_effect_rejects_typed_error` and `admission_must_be_handled` |
 | A-09 | Ingress and request capacities are positive, explicit, separate, and never exceeded. | `qcheck_capacity_bounds` |
@@ -56,10 +56,87 @@ law. A property gate must state its generated class and observation boundary.
 | T-04 | Model, graph, scopes, lifecycle manifests, output, and effect eligibility commit in one root-frame publication. A pre-publication failure preserves the previous frame. A later defect cannot roll back and crashes the root before output delivery. | `race_commit_atomicity` |
 | T-05 | A commit returns one mandatory post-commit token. No later advancement starts before that token starts. | `qcheck_post_commit_fence` |
 | T-06 | A post-commit token starts at most once. Stop or crash changes its work but never invalidates the token. | `race_batch_start_exactly_once` |
-| T-07 | Batch admission first registers new work behind closed gates. It then requests removed-subtree cancellation, opens new sources, and releases the transition effect. | `test_post_commit_phase_order` |
+| T-07 | Batch admission first registers new work behind closed gates. It then requests removed-subtree cancellation, opens new sources, and concurrently releases eligible transition, reset, and Poll effects. | `test_post_commit_phase_order` and `test_poll_post_commit_phase_order` |
 | T-08 | Removal cancellation requests complete before new work starts. Old cleanup does not need to settle before new work starts. | `test_cleanup_overlap` |
 | T-09 | A transition effect whose owner is disposed by its own commit never starts. | `test_self_disposing_effect` |
 | T-10 | Stop closes ingress, discards buffered actions, replaces a pending start, and settles the complete work tree before `Closed`. | `test_stop_from_each_driver_phase` |
+
+## Graph time
+
+| ID | Law | Gate |
+|---|---|---|
+| GTC-01 | Initial advancement captures one `Eta.Spi.Expert.Clock.t`. The root uses that token for its complete lifetime. | `qcheck_graph_time_initial_binding` |
+| GTC-02 | After terminal selection, one advance attempt with active graph-time nodes reads the clock at most once. Each committed nonterminal advancement uses one shared sample. | `qcheck_graph_time_shared_sample` |
+| GTC-03 | A later nonterminal advancement with a different clock terminally fails with `Runtime_mismatch`. | `test_graph_time_runtime_mismatch` |
+| GTC-04 | Only active and necessary graph-time nodes contribute deadlines. Committed disposal removes their deadlines before the next driver wait. | `qcheck_graph_time_structural_ownership` |
+| GTC-05 | `Driver.poll` processes an already-due deadline. A due deadline also makes `Driver.await` continue without ingress. | `qcheck_graph_time_deadline_wake` |
+| GTC-06 | `Driver.await` cancels the losing wait. An ingress wake causes a new deadline calculation before the next wait. | `qcheck_graph_time_await_race` |
+| GTC-07 | Crash and stop precede `Clock_due`. `Clock_due` precedes FIFO ingress. | `qcheck_graph_time_event_priority` |
+| GTC-08 | One clock sample produces at most one `Clock_due` advancement. The event preserves every queued ingress item. | `qcheck_graph_time_due_coalescing` |
+| GTC-09 | A committed one-shot timer retires its deadline. A committed periodic timer installs its next future deadline. | `qcheck_graph_time_timer_progress` |
+| GTC-10 | Each committed advancement gives `now` the shared clock sample. An unrelated Action does not reset the activation-aligned `every` cadence. | `qcheck_graph_time_now_cadence` |
+| GTC-11 | `deadline` changes from false to true once in one active interval. Its timestamp is future and belongs to the root clock at activation. | `qcheck_graph_time_deadline` |
+| GTC-12 | `after` measures from successful activation. A failed activation installs no deadline. | `qcheck_graph_time_after_activation` |
+| GTC-13 | `interval` starts at zero. It catches up arithmetically, saturates at `max_int`, and does not replay missed ticks. | `qcheck_graph_time_interval_catch_up` |
+| GTC-14 | A successful `Clock_due` event produces one complete output and one mandatory post-commit token. | `qcheck_graph_time_commit_fence` |
+| GTC-15 | One `Driver.poll` or `Driver.await` operation performs at most one advancement. | `qcheck_graph_time_driver_bound` |
+| GTC-16 | Moving test time does not advance Eta Crux or trigger Poll. A later `frame` or `drain` observes due work through the production driver. | `test_graph_time_handle_separation` |
+| GTC-17 | Test movement rejects backward targets with `Invalid_argument`. `Eta.Duration.t` is nonnegative, so a negative constructor input reaches the handle as zero. Zero movement is a no-op. | `test_graph_time_handle_validation` |
+| GTC-18 | Identity and serialized bindings observe the same clock advancements and outputs. | `qcheck_graph_time_transport_equivalence` |
+| GTC-19 | Each root or driver clock read compares against the last successful read. Regression, internal overflow, a past dynamic deadline, or mismatch terminally fails the root. | `test_graph_time_dynamic_failures` |
+| GTC-20 | A clock mismatch or regression uses `Graph_clock` and `Clock_sample`. Timer faults preserve the event trigger, and due-time faults use `Clock_due`. | `test_graph_time_failure_attribution` |
+| GTC-21 | Eta Crux does not clamp time, ignore a timer, change clocks, or use wall time as a fallback. | `test_graph_time_no_fallback` |
+| GTC-22 | `now`, `after`, and `interval` reject non-positive durations with `Invalid_argument`. `Time.add` returns its documented arithmetic result. | `test_graph_time_static_validation` |
+
+## Structural reset
+
+| ID | Law | Gate |
+|---|---|---|
+| RST-01 | A reset reaches exactly the active state-machine descendants of its selected scope. An outer reset reaches nested scopes, but an inner reset does not reach its parent. | `qcheck_reset_scope_boundary` |
+| RST-02 | Every reset callback observes the same pre-reset committed frame. One advancement publishes all reset models and graph changes or none. | `qcheck_reset_snapshot_atomicity` |
+| RST-03 | Default reset restores `default_model`. A custom reset can return a default, preserved, or non-idempotent model. Repeated triggers run once each and never coalesce. | `qcheck_reset_default_custom` |
+| RST-04 | Continuous keyed children preserve identity. Removed children dispose, and new children start with defaults. | `qcheck_reset_dynamic_children` |
+| RST-05 | Reset triggers and endpoint Actions preserve accepted FIFO order. Each active no-change or empty reset commits one complete output. | `qcheck_reset_ingress_order` |
+| RST-06 | Reset-scope disposal and reset advancement admit both legal winners. A reset winner commits before disposal. A disposal winner returns `Stale_reset` without a reset transition. | `race_reset_vs_disposal_both_winners` |
+| RST-07 | A callback exception preserves the prior frame, starts no reset effect, and records `Structural_reset` with only the failing cell and model diagnostic. | `test_reset_callback_rollback` |
+| RST-08 | A commit stages the exact reset-effect inventory. Effects obey owner disposal, concurrent sibling start, and the standard settlement classes. | `qcheck_reset_effect_lifecycle` |
+| RST-09 | One reset authority stays stable across input and model changes. Disposal makes it stale, and re-entry creates a fresh authority. | `qcheck_reset_authority_incarnation` |
+| RST-10 | A root with no reset scope performs no reset traversal and allocates no reset authority, item, or observation record during ordinary advancement. | `structural_reset_disabled_allocation` |
+
+## Poll run coordination
+
+| ID | Law | Gate |
+|---|---|---|
+| POLL-01 | Each Poll incarnation publishes its selected starting output and has empty run history. | `qcheck_poll_starting_incarnation` |
+| POLL-02 | Successful activation stages one run after delivery. One advancement stages at most one automatic run with the latest committed input. | `qcheck_poll_activation_and_coalescing` |
+| POLL-03 | `input_cutoff` alone decides whether an active candidate input triggers work. Inactive candidates create no history. | `qcheck_poll_input_cutoff` |
+| POLL-04 | Each run uses the provider from its triggering commit. A provider-only change does not trigger work. | `qcheck_poll_provider_sampling` |
+| POLL-05 | Each refresh invocation appends one ordinary FIFO item or returns `Ingress_closed`. Refreshes never coalesce. | `qcheck_poll_manual_refresh_admission` |
+| POLL-06 | Completion items share bounded FIFO ingress with Actions. One advancement consumes at most one item. | `qcheck_poll_completion_fifo` |
+| POLL-07 | A completion changes output only when its order exceeds every prior committed completion order. | `qcheck_poll_committed_run_order` |
+| POLL-08 | A newer equal completion advances the order fence even when result propagation is suppressed. | `qcheck_poll_result_cutoff_order_fence` |
+| POLL-09 | Run order is strict and never reused within one incarnation. A new incarnation starts a fresh order. | `qcheck_poll_run_order` |
+| POLL-10 | Run-order exhaustion rolls back the complete advancement and records a transition failure with the active trigger. | `qcheck_poll_run_order_overflow` |
+| POLL-11 | Completion and disposal admit both legal winners. Disposal-first requests cancellation without waiting and fences every old result. | `race_poll_completion_vs_disposal_both_winners` |
+| POLL-12 | Output delivery precedes Poll start. Transition, reset, and Poll effects have no relative start or settlement order. | `test_poll_post_commit_phase_order` |
+| POLL-13 | A Poll body cannot expose a typed error. | compile gate `poll_effect_rejects_typed_error` |
+| POLL-14 | Poll defects use `Owned_work` and `Poll_effect`. Interruption-only disposal creates no failure. | `qcheck_poll_failure_attribution` |
+| POLL-15 | The observer inventories each Poll run in its triggering commit and records one lifecycle path. | `qcheck_post_commit_effect_observer_poll_lifecycle` |
+| POLL-16 | Clock-event priority stays ahead of FIFO ingress when a clock commit triggers Poll. | `qcheck_poll_clock_priority` |
+| POLL-17 | Identity and serialized drivers produce the same Poll behavior after boundary validation. | `qcheck_poll_transport_equivalence` |
+| POLL-18 | A graph without Poll allocates no Poll state, run order, endpoint, hook, observer identity, or observer event. | `poll_disabled_allocation` |
+
+## Post-commit effect observation
+
+| ID | Law | Gate |
+|---|---|---|
+| PCO-01 | Every successful commit records one `Staged` event with the next commit index and exact transition, reset, and Poll effect inventory. | `qcheck_post_commit_effect_observer_inventory` |
+| PCO-02 | Each observed effect records exactly one accepted terminal path. | `qcheck_post_commit_effect_observer_lifecycle` |
+| PCO-03 | Each effect obeys its lifecycle order. Different effects have no relative start or settlement order. | `qcheck_post_commit_effect_observer_order` |
+| PCO-04 | `poll` and `drain` preserve event-position order and remove each returned event once. | `qcheck_post_commit_effect_observer_fifo` |
+| PCO-05 | Attaching the canonical observer changes no production result. | `qcheck_post_commit_effect_observer_transparency` |
+| PCO-06 | With no observer, successful commits allocate no observation value or queue entry. | `post_commit_effect_observer_disabled_allocation` |
+| PCO-07 | Overlapping observer-consumer operations have one claim winner. A loser raises `Invalid_argument` before queue inspection or removal. | `race_post_commit_effect_observer_read_both_winners` |
 
 ## Lifetime and sources
 
@@ -91,6 +168,8 @@ law. A property gate must state its generated class and observation boundary.
 | R-05 | Resolution and cancellation use first-winner arbitration. The loser observes `Not_pending`. | `race_resolve_vs_cancel_both_winners` |
 | R-06 | Owner disposal, root termination, or session closure closes pending requests with its exact closure reason. | `qcheck_request_closure_reasons` |
 | R-07 | Root settlement waits for local terminal handoff acceptance. It never waits for foreign acknowledgment or consumption. | `test_request_terminal_handoff_fence` |
+| R-08 | Descriptor mismatch does not claim an event. Constructing an unrun handler effect does not claim it. The first executed matching handler or total dispatcher claims before user work, and typed failure retains the claim. | `test_outbound_request_round_trip` |
+| R-09 | Handler claim and cancellation use first-winner arbitration. Cancellation-first starts no host work. Claim-first delivers the exact closure reason to `on_cancel`. | `race_cancel_vs_dispatch_both_winners` |
 
 ## Failure and driver
 
@@ -108,6 +187,11 @@ law. A property gate must state its generated class and observation boundary.
 | D-02 | Output delivery completes before post-commit admission. A delivery token accepts one answer. | `qcheck_delivery_token` |
 | D-03 | Stop or crash while delivery is pending closes ingress but preserves that committed delivery. Terminal work starts after its answer. | `race_terminal_vs_delivery` |
 | D-04 | Hosted acquisition and release errors stay outside root failure. Hosted interruption settles the root and releases the binding. | `test_hosted_resource_boundary` |
+| D-05 | Attachment atomically claims an unstarted root and an unused binding. Each conflicting race has one winner. A loser raises `Invalid_argument` and leaves each otherwise-unused argument available. | `race_driver_attachment_both_winners` |
+| D-06 | After attachment, direct `Root.advance` returns `Error Driver_attached`. It consumes no ingress, reads no clock, records no observer event, and changes no output. | `test_driver_attachment_fence` |
+| D-07 | The latest committed output is absent before the first commit. Each commit atomically replaces it with one complete output. Delivery and terminal state do not replace or clear it. | `qcheck_latest_committed_output` |
+| D-08 | A pull concurrent with commit publication observes the previous or new complete output and no other value. | `race_pull_vs_commit_both_winners` |
+| D-09 | A pull has no delivery or post-commit effect. | `test_pull_does_not_complete_delivery` |
 
 ## Serialized transport
 
@@ -128,7 +212,7 @@ law. A property gate must state its generated class and observation boundary.
 
 | ID | Law | Gate |
 |---|---|---|
-| O-01 | The complete committed root output is the only application observation. Adapters own snapshot retention and reconciliation. | `test_snapshot_only_observation` |
+| O-01 | One successful commit publishes one complete root output. The driver retains the latest committed output. Adapters own delivered-output retention and reconciliation. | `test_snapshot_only_observation` and `qcheck_latest_committed_output` |
 | O-02 | The driver delivers output after commit and before post-commit work. Adapter callbacks never run during stabilization. | `test_adapter_commit_boundary` |
 | O-03 | Telemetry contains only the fixed names, categories, and redacted attributes in [Verification](verification.md). | `test_telemetry_contract` |
 | O-04 | Disabled telemetry changes no semantic observation and creates no point, attribute, span, or retained state. | `conformance_disabled_telemetry` |
@@ -143,3 +227,12 @@ law. A property gate must state its generated class and observation boundary.
 | H-04 | Test injection uses the latest delivered production endpoint. It never writes directly to ingress. | `test_incoming_uses_endpoint` |
 | H-05 | Controlled effects and sources use FIFO observation and one-shot completion. Real Eta cancellation decides interruption. | `qcheck_controlled_dependencies` |
 | H-06 | Handle finalization settles the root. An unobserved crash fails the test with complete settlement. | `test_handle_bracket_cleanup` |
+| H-07 | Each handle movement delegates once to the supplied clock claim and does not advance a root. Overlapping movements on one shared clock have one winner. | `race_handle_shared_clock_movement_both_winners` |
+| H-08 | The handle exposes committed output through the production driver and delivered output at successful delivery. Test injection uses the delivered output. | `test_handle_output_boundaries` |
+
+## Test-clock movement
+
+| ID | Law | Gate |
+|---|---|---|
+| TC-01 | Overlapping movement operations on one test clock have one claim winner. A loser raises `Invalid_argument`, changes no time, and wakes no sleeper. | `race_test_clock_movement_both_winners` |
+| TC-02 | `advance_to` compares and moves under one claim. It rejects a backward target and wakes each due sleeper before it releases the claim. | `test_clock_advance_to_is_monotonic` |
