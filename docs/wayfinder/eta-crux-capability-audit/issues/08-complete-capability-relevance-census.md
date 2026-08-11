@@ -131,7 +131,7 @@ The complete census adds two candidates:
 | 4. Commands | Candidate | Opaque staged effects exist. [Staged-effect observability](12-staged-effect-observability.md) covers missing test observation. |
 | 5. Subscriptions | Candidate | [Host-owned streaming operations](13-host-owned-streaming-operations.md) decides host-owned event-source lifecycle. |
 | 6. Tasks and typed asynchronous results | Evidence | Eta effects already own typed failure and asynchronous composition. |
-| 7. Processes, sleep, and cancellation | Candidate | Eta owns fibers and cancellation. Graph time and shell cleanup remain in their named candidate tickets. |
+| 7. Processes, sleep, and cancellation | Candidate | Eta owns fibers and cancellation. [Graph time and deterministic clock control](09-graph-time-and-deterministic-clock-control.md) covers graph sleep. [Host-owned streaming operations](13-host-owned-streaming-operations.md) covers shell cleanup. |
 | 8. Effect managers and routers | Out of scope | The contract depends on compiler-approved Elm effect modules and kernel access. |
 | 9. Ports | Out of scope | Ports depend on Elm compiler declarations, generated JavaScript, and application-package restrictions. |
 | 10. Random generators and seeded execution | Evidence | Eta already supplies injected random capabilities and deterministic test random. |
@@ -149,9 +149,9 @@ The complete census adds two candidates:
 | 22. Unit tests, expectations, and fuzz tests | Evidence | Eta test and QCheck own general generators, shrinking, and law execution. |
 | 23. Test execution and failure reports | Evidence | Structured counterexamples inform test quality. They do not define an Eta Crux runtime contract. |
 | 24. HTML query and event tests | Out of scope | These tests inspect Elm virtual-DOM representations. |
-| 25. Whole-program deterministic driver | Candidate | The current handle supplies the driver. Time, staged effects, and pull observation have named decisions. |
-| 26. Simulated commands, tasks, effects, and subscriptions | Candidate | Controlled effects exist. Staged observation and streaming have named decisions. |
-| 27. Program boundary simulation and observation | Candidate | The current test shell exists. Staged effects and pull output have named decisions. |
+| 25. Whole-program deterministic driver | Candidate | The current handle supplies the driver. [Graph time and deterministic clock control](09-graph-time-and-deterministic-clock-control.md), [Staged-effect observability](12-staged-effect-observability.md), and [Pull observation of root output](15-pull-observation-of-root-output.md) cover its gaps. |
+| 26. Simulated commands, tasks, effects, and subscriptions | Candidate | Controlled effects exist. [Staged-effect observability](12-staged-effect-observability.md) and [Host-owned streaming operations](13-host-owned-streaming-operations.md) cover its gaps. |
+| 27. Program boundary simulation and observation | Candidate | The current test shell exists. [Staged-effect observability](12-staged-effect-observability.md) and [Pull observation of root output](15-pull-observation-of-root-output.md) cover its gaps. |
 | 28. Compiler and package tooling | Out of scope | The family implements Elm syntax, metadata, version policy, and registry behavior. |
 
 ### Current, historical, substrate, and consumer closure

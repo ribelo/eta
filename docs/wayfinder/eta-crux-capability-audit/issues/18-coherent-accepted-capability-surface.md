@@ -1,7 +1,7 @@
 # Coherent accepted capability surface
 
 Type: grilling
-Status: resolved
+Status: open
 Blocked by: 08, 09, 10, 11, 12, 13, 14, 15, 16, 17, 20, 21
 
 ## Question
@@ -20,6 +20,20 @@ changes. Update this ticket's blocking list when
 creates additional candidate tickets.
 
 Do not prescribe internal implementation steps.
+
+## Reopened findings
+
+[Audit coverage closure](19-audit-coverage-closure.md) found three accepted
+contracts without complete law and test-gate specifications:
+
+- Exclusive driver attachment and `Driver_attached` behavior have no law or
+  named gate.
+- Concurrent movement of one shared test clock has no arbitration owner or
+  two-winner gate.
+- Concurrent destructive observer reads have no law or named gate.
+
+The next resolution must remove these contracts or specify their law ownership,
+test controls, and named executable gates.
 
 ## Answer
 
