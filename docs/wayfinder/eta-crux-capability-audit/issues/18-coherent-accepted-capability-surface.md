@@ -1,7 +1,7 @@
 # Coherent accepted capability surface
 
 Type: grilling
-Status: open
+Status: resolved
 Blocked by: 08, 09, 10, 11, 12, 13, 14, 15, 16, 17, 20, 21
 
 ## Question
@@ -34,6 +34,9 @@ contracts without complete law and test-gate specifications:
 
 The next resolution must remove these contracts or specify their law ownership,
 test controls, and named executable gates.
+
+The resolution below retains all three contracts. It assigns their normative
+owners, test controls, and named gates.
 
 ## Answer
 
@@ -197,6 +200,16 @@ val latest_delivered_output :
   ('output, 'incoming) t -> 'output option
 ```
 
+`Eta_test.Test_clock` adds:
+
+```ocaml
+val advance_to : t -> int -> unit
+```
+
+`advance_to` rejects a target before the current time with `Invalid_argument`.
+The operation compares and moves time under one test-clock movement claim.
+`set_time` retains its existing direct test-setup contract.
+
 The remaining accepted API shapes stay in their capability tickets. Rejected
 and deferred capabilities add no public module.
 
@@ -207,6 +220,16 @@ driver sole authority to advance the root.
 
 `Driver.create`, `Handle.create`, and `Handle.use` raise `Invalid_argument` for
 a started or attached root. `Driver.create` also rejects a reused binding.
+
+Attachment is one atomic claim over the root and binding. A rejected claim
+leaves each otherwise-unused argument available for a later attachment.
+
+If attachment calls overlap on the same root, exactly one call can attach it.
+This rule covers `Driver.create`, `Handle.create`, and `Handle.use`.
+
+If `Driver.create` calls overlap on the same unused binding, exactly one call
+can claim it. Each loser raises `Invalid_argument`. A losing `Handle.use` call
+does not enter its body.
 
 Direct `Root.advance` on a driver-owned root returns:
 
@@ -262,16 +285,32 @@ attached. The event contains:
 The list has no structural or execution order. Transition, reset, and Poll-run
 effects form one concurrent post-commit class.
 
-The post-commit observer has one destructive consumer. Concurrent `poll`,
-`drain`, or `expect_empty` calls raise `Invalid_argument`.
+The post-commit observer has one consumer-operation claim. The claim covers
+`poll`, `drain`, and `expect_empty`.
+
+A consumer operation holds the claim until its result or assertion error is
+complete. If consumer calls overlap, exactly one call obtains the claim.
+
+Each loser raises `Invalid_argument` before it inspects or removes an event.
+The winner uses the ordinary operation contract. Every operation pairing
+permits either contender to win.
 
 ### Time, Reset, and Poll interactions
 
 Moving a test clock changes time for every root that uses that clock. The move
 does not advance any root.
 
-Two overlapping handle movements on one clock are invalid. One movement wins,
-and the other raises `Invalid_argument`.
+`Eta_test.Test_clock` owns one movement claim for `adjust`, `set_time`, and
+`advance_to`. Handle movement operations use the same claim.
+
+The claim remains held while the clock wakes due sleepers. The target comparison
+for `Handle.advance_time_to` occurs inside this claim.
+
+If movements overlap on one clock, exactly one movement obtains the claim. Each
+loser raises `Invalid_argument` before it reads or changes time.
+
+The loser wakes no sleeper. The winner completes its ordinary movement. Neither
+movement advances an Eta Crux root.
 
 A later `frame`, `drain`, `poll`, or `await` observes due clock work through the
 production driver. A `Clock_due` commit can change a Poll input and start one
@@ -334,6 +373,7 @@ The registry adds these law families:
 - `RST-*` for structural reset.
 - `POLL-*` for Poll runs and result selection.
 - `PCO-*` for post-commit effect observation.
+- `TC-*` for deterministic movement of `Eta_test.Test_clock`.
 
 Shared semantic claims have one normative owner:
 
@@ -344,7 +384,8 @@ Shared semantic claims have one normative owner:
 | `L-*` and `S-*` | Active intervals, disposal, keyed incarnations, and Sources. |
 | `R-*` | Shell-request identity, handler claims, cancellation, and settlement. |
 | `D-*` and `O-*` | Driver publication, delivery, pull observation, and output retention. |
-| `H-*` | Handle ownership, clock movement, output boundaries, and explicit test controls. |
+| `TC-*` | Test-clock movement arbitration and due-sleeper wake completion. |
+| `H-*` | Handle ownership, clock delegation, output boundaries, and explicit test controls. |
 
 Capability laws reference these shared laws. They do not restate FIFO, commit,
 delivery, or lifecycle contracts.
@@ -354,6 +395,25 @@ and Poll laws reference shared ingress laws.
 
 Observer laws own mixed effect inventory. Driver and observation laws own the
 ordering between `Staged`, latest output, `Deliver`, and effect start.
+
+The reconciliation adds these laws and named gates:
+
+| Law | Contract and observation boundary | Gate |
+|---|---|---|
+| D-05 Driver attachment | Attachment atomically claims an unstarted root and an unused binding. Each conflicting race has one winner. The loser raises `Invalid_argument` and claims no otherwise-free argument. Generated cases cover all public attachment entry points, root conflicts, binding conflicts, and both winners. The boundary includes constructor outcomes, `Handle.use` body entry, later attachment of the losing argument, and winner advancement. | `race_driver_attachment_both_winners` |
+| D-06 Direct advance fence | After attachment, direct `Root.advance` returns `Error Driver_attached`. It consumes no ingress, reads no clock, records no observer event, and changes no output. A later driver operation proves that queued ingress remains available. | `test_driver_attachment_fence` |
+| TC-01 Test-clock movement claim | Each overlapping movement pair has one claim winner. The loser raises `Invalid_argument`, changes no time, and wakes no sleeper. Generated cases cross `adjust`, `set_time`, and `advance_to`, with each contender as winner. The boundary includes current time, sleeper wake order, wake count, and loser outcome. | `race_test_clock_movement_both_winners` |
+| H-07 Shared-clock delegation | Each handle movement delegates once to the supplied clock claim and does not advance a root. Generated two-handle cases share one clock, cross relative and target movements, and force each winner. The boundary includes movement outcomes, unchanged outputs, and later frames for both roots. | `race_handle_shared_clock_movement_both_winners` |
+| PCO-07 Consumer claim | Each overlapping observer-consumer pair has one claim winner. The loser raises `Invalid_argument` before queue inspection or removal. Generated pairs cover `poll`, `drain`, and `expect_empty`, empty and nonempty traces, and each winner. The boundary includes results, errors, and a final drain that proves exact event retention or removal. | `race_post_commit_effect_observer_read_both_winners` |
+
+These gates use private barriers at the contract claim points. The Driver gate
+stops contenders before attachment.
+
+The clock gate stops a winner after its movement claim and before its first
+clock change. Due sleepers keep that claim active.
+
+The observer gate stops a winner after its consumer claim and before queue
+inspection. These barriers are test controls and add no public API.
 
 The named executable gates from the capability tickets remain required. Poll
 gate names use the canonical run-order term.

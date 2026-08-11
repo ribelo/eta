@@ -112,6 +112,9 @@ ticket, and research prose with `$simple-english`.
 - [Action history and diagnostics](issues/17-action-history-and-diagnostics.md)
   — Defer action observation and history until a direct consumer demonstrates
   the diagnostic gap. Reject replay, time travel, and graph inspection.
+- [Coherent accepted capability surface](issues/18-coherent-accepted-capability-surface.md)
+  — The accepted surface is coherent. Its Driver, shared-clock, and observer
+  concurrency contracts have normative owners and named gates.
 - [Structural model reset](issues/20-structural-model-reset.md)
   — Adopt scoped atomic reset for active descendant models while preserving
   continuous structural identities and cell-owned staged effects.
