@@ -115,6 +115,9 @@ ticket, and research prose with `$simple-english`.
 - [Coherent accepted capability surface](issues/18-coherent-accepted-capability-surface.md)
   — The accepted surface is coherent. Its Driver, shared-clock, and observer
   concurrency contracts have normative owners and named gates.
+- [Audit coverage closure](issues/19-audit-coverage-closure.md)
+  — The audit covers 71 reference families and 11 candidate decisions. All seven
+  accepted designs are ready for documentation and implementation handoff.
 - [Structural model reset](issues/20-structural-model-reset.md)
   — Adopt scoped atomic reset for active descendant models while preserving
   continuous structural identities and cell-owned staged effects.
