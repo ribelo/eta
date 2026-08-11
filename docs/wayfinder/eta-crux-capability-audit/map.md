@@ -106,6 +106,9 @@ ticket, and research prose with `$simple-english`.
 - [Pull observation of root output](issues/15-pull-observation-of-root-output.md)
   — Adopt linearizable `Driver` pull access to the latest committed output while
   adapters retain delivery state.
+- [Host-operation layers](issues/16-host-operation-layers.md)
+  — Reject a layer abstraction, retain adapter-owned routing, and adopt
+  one-shot handler claims with explicit repeat and closure results.
 
 ## Not yet specified
 
