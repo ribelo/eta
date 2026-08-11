@@ -109,6 +109,9 @@ ticket, and research prose with `$simple-english`.
 - [Host-operation layers](issues/16-host-operation-layers.md)
   — Reject a layer abstraction, retain adapter-owned routing, and adopt
   one-shot handler claims with explicit repeat and closure results.
+- [Action history and diagnostics](issues/17-action-history-and-diagnostics.md)
+  — Defer action observation and history until a direct consumer demonstrates
+  the diagnostic gap. Reject replay, time travel, and graph inspection.
 
 ## Not yet specified
 
@@ -125,3 +128,5 @@ None.
 - Taumel or Sliml application design.
 - Release planning and compatibility shims.
 - Performance tuning that does not change a capability contract.
+- [A generic bounded log-retention sink](issues/17-action-history-and-diagnostics.md)
+  belongs to Eta observability, not Eta Crux.
