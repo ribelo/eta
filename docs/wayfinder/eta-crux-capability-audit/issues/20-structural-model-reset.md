@@ -186,11 +186,16 @@ An effect does not start if the reset commit disposes its owning cell. A later
 effect defect cannot roll back the committed reset and follows the existing
 owned-work failure rules.
 
-### Staged-effect observation
+### Post-commit effect observation
 
-A structural reset can stage zero or many transition effects. Therefore,
-[Staged-effect observability](12-staged-effect-observability.md) changes its
-`Staged` event to:
+A structural reset can stage zero or many effects.
+[Latest-request-wins effect
+coordination](21-latest-request-wins-effect-coordination.md) renames the accepted
+observer to `Post_commit_effect_observer`. The observer covers transition,
+structural-reset, and Poll effects.
+
+[Staged-effect observability](12-staged-effect-observability.md) uses this
+`Staged` event:
 
 ```ocaml
 Staged of {
@@ -211,8 +216,8 @@ start, or settlement meaning.
 
 Eta Crux adds no reset-specific test bypass. Tests obtain a `Reset.t` from
 application output or trigger it through application behavior. They use
-`Reset.trigger`, normal frames, controlled dependencies, and the transition
-effect observer.
+`Reset.trigger`, normal frames, controlled dependencies, and
+`Post_commit_effect_observer`.
 
 The implementation effort adds these laws and named gates:
 
@@ -255,8 +260,9 @@ keeps the unused path inert.
 The production package adds `Reset`, the optional `State_machine.create` reset
 callback, `Root.Stale_reset`, and `Failure.Structural_reset`.
 
-The test package changes `Staged.effect` to `Staged.effects`. Observer consumers
-must process zero, one, or many effect identities for each commit.
+The test package uses `Post_commit_effect_observer` and changes `Staged.effect`
+to `Staged.effects`. Observer consumers must process zero, one, or many effect
+identities for each commit.
 
 The optional reset callback requires no change for callers that use the default.
 The separate staged-effect decision already requires all transition callbacks to

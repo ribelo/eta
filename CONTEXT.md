@@ -229,7 +229,7 @@ application output.
 ## Post-commit batch
 
 Opaque work that belongs to one committed advancement. Starting it acknowledges
-output delivery and admits lifecycle and transition effects.
+output delivery and admits the owned work from that advancement.
 
 ## Test handle
 
@@ -260,3 +260,16 @@ child incarnation.
 One atomic graph-owned model transition for every active state-machine
 descendant of an explicit reset scope. Normal reconciliation applies after the
 model changes.
+
+## Poll
+
+A graph-owned computation that starts effectful requests when it activates, its
+input changes significantly, or a caller requests a refresh. The input cutoff
+defines a significant change.
+
+Each active interval has one request order. A result never replaces a result
+from a newer completed request. A new request does not cancel an earlier request
+in the same active interval.
+
+Disposal requests cancellation and fences later completions. A later
+incarnation starts with a fresh request order and starting state.

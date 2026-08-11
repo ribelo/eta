@@ -95,8 +95,8 @@ ticket, and research prose with `$simple-english`.
   — Reject a distinct startup-input capability because typed construction
   dependencies already carry validated startup data.
 - [Staged-effect observability](issues/12-staged-effect-observability.md)
-  — Adopt opaque per-commit transition-effect lifecycle observations and make
-  effect absence explicit.
+  — Adopt opaque lifecycle observations for selected post-commit effects and
+  make effect absence explicit.
 - [Host-owned streaming operations](issues/13-host-owned-streaming-operations.md)
   — Reject many-response host operations because `Source` already owns the
   repeated-event lifecycle. Providers own host binding and buffering.
@@ -115,6 +115,9 @@ ticket, and research prose with `$simple-english`.
 - [Structural model reset](issues/20-structural-model-reset.md)
   — Adopt scoped atomic reset for active descendant models while preserving
   continuous structural identities and cell-owned staged effects.
+- [Latest-request-wins effect coordination](issues/21-latest-request-wins-effect-coordination.md)
+  — Adopt Bonsai-style Poll with hidden request order and stale-result
+  suppression.
 
 ## Not yet specified
 

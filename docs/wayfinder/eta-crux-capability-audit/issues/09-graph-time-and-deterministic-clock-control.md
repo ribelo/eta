@@ -170,6 +170,9 @@ It contains the complete root output and one mandatory post-commit token.
 `Driver.event` remains unchanged. The driver reports the result through its
 ordinary `Deliver` event.
 
+If that commit changes a `Poll` input, the Poll stages one request from the
+latest committed input. The normal post-commit delivery fence applies.
+
 ### Timer behavior
 
 A timer exists only while its computation is active and necessary. A committed
@@ -210,7 +213,7 @@ saturates at `max_int`. It does not replay missed ticks.
 | GTC-13 Interval catch-up | `interval` starts at zero. It catches up arithmetically, saturates at `max_int`, and does not replay missed ticks. | `qcheck_graph_time_interval_catch_up` |
 | GTC-14 Commit fence | A successful `Clock_due` event produces one complete output and one mandatory post-commit token. | `qcheck_graph_time_commit_fence` |
 | GTC-15 Driver bound | One `Driver.poll` or `Driver.await` operation performs at most one advancement. | `qcheck_graph_time_driver_bound` |
-| GTC-16 Test separation | Moving test time does not advance Eta Crux. A later `frame` or `drain` observes due work through the production driver. | `test_graph_time_handle_separation` |
+| GTC-16 Test separation | Moving test time does not advance Eta Crux or trigger Poll. A later `frame` or `drain` observes due work through the production driver. | `test_graph_time_handle_separation` |
 | GTC-17 Test monotonicity | Test movement rejects negative deltas and backward targets with `Invalid_argument`. Zero movement is a no-op. | `test_graph_time_handle_validation` |
 | GTC-18 Transport independence | Identity and serialized bindings observe the same clock advancements and outputs. | `qcheck_graph_time_transport_equivalence` |
 | GTC-19 Dynamic failure | Each root or driver clock read compares against the last successful read. Regression, internal overflow, a past dynamic deadline, or mismatch terminally fails the root. | `test_graph_time_dynamic_failures` |
@@ -242,8 +245,8 @@ val advance_time_to :
 time. Zero movement is a no-op.
 
 These operations move only the supplied test clock. They do not run `frame`,
-`drain`, `poll`, or `await`. Tests move time and then use the existing driver
-operations.
+`drain`, `poll`, or `await`. They do not trigger Poll. Tests move time and then
+use the existing driver operations.
 
 The supplied test clock must be the active clock when the root first advances.
 The handle creates one capability from that clock and stores it. Each handle

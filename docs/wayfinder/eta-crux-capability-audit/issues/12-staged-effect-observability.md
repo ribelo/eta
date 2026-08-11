@@ -25,9 +25,9 @@ API shape, laws, test controls, ownership, runtime cost, and migration effects.
 
 ## Answer
 
-Adopt an optional, test-only observer for transition effects. The observer
-records the effect lifecycle for each successful commit. It does not inspect
-the effect value.
+Adopt an optional, test-only observer for selected post-commit effects. The
+observer records their lifecycle for each successful commit. It does not inspect
+an effect value.
 
 Keep controlled dependencies for typed calls and results. Reject Eta-level
 events as a substitute for commit observation. Reject an inspectable command
@@ -47,7 +47,7 @@ staging. They also cannot attribute overlapping effects to exact commits.
 
 | Mechanism | Decision | Reason |
 |---|---|---|
-| Per-commit transition-effect lifecycle | Adopt | Only Eta Crux knows the successful commit, structural owner, and post-commit admission point. |
+| Lifecycle of selected post-commit effects | Adopt | Only Eta Crux knows the successful commit, structural owner, and post-commit admission point. |
 | Injected controlled dependencies | Adopt as a complementary control | They provide typed input, completion, cancellation, and scheduler control after an effect starts. |
 | Eta-level effect observations | Reject as the Crux staging surface | They observe execution, not committed staging or effects that never start. |
 | Inspectable command algebra | Reject | Opaque effects plus lifecycle records provide every required assertion. |
@@ -77,12 +77,17 @@ This option is not a command wrapper or command algebra.
 
 ### Observation scope
 
-The observer covers transition effects only. It does not cover lifecycle
-programs, source openings, source producers, requests, or adapter work.
+The observer covers application transition effects, structural-reset effects,
+and Poll request effects. [Latest-request-wins effect
+coordination](21-latest-request-wins-effect-coordination.md) adds Poll to this
+scope.
+
+The observer does not cover lifecycle programs, source openings, source
+producers, requests, or adapter work.
 
 [Structural model reset](20-structural-model-reset.md) can stage zero or many
-transition effects in one commit. An ordinary endpoint transition still stages
-zero or one effect.
+effects in one commit. An ordinary endpoint transition stages zero or one
+effect. One Poll trigger stages one effect.
 
 The observer is local to one root and one test. It is not operational
 telemetry. No event crosses a local or serialized adapter boundary.
@@ -92,7 +97,7 @@ telemetry. No event crosses a local or serialized adapter boundary.
 `eta_crux_test` exposes this controller:
 
 ```ocaml
-module Transition_effect_observer : sig
+module Post_commit_effect_observer : sig
   module Effect_id : sig
     type t
     val compare : t -> t -> int
@@ -141,7 +146,7 @@ module Transition_effect_observer : sig
   type t
 
   val create : unit -> t
-  val attachment : t -> Eta_crux.Testing.transition_effect_observer
+  val attachment : t -> Eta_crux.Testing.post_commit_effect_observer
   val poll : t -> event option
   val drain : t -> event list
   val expect_empty : t -> unit
@@ -152,7 +157,7 @@ end
 types. `Eta_crux.Root.create` gains this optional argument:
 
 ```ocaml
-?transition_effect_observer:Eta_crux.Testing.transition_effect_observer
+?post_commit_effect_observer:Eta_crux.Testing.post_commit_effect_observer
 ```
 
 The controller remains the supported user API. The SPI does not expose custom
@@ -168,16 +173,16 @@ Commit indices start at zero. Each successful commit consumes the next index.
 Idle, rejected, stopped, and failed advancements do not consume an index.
 
 Every successful commit records one `Staged` event. An empty `effects` list
-proves that the commit staged no transition effect. Each list item introduces
-one new effect identity.
+proves that the commit staged no observed post-commit effect. Each list item
+introduces one new effect identity.
 
 Effect identities are opaque and root-local. They exist only when an attached
 observer records them in `effects`. They expose no structural identity.
 
 An ordinary endpoint transition contributes zero or one effect. A structural
 reset contributes one effect for each reset callback that returns `Some effect`.
-List order introduces observer identities only. It has no structural, callback,
-start, or settlement meaning.
+One Poll trigger contributes one effect. List order introduces observer
+identities only. It has no structural, callback, start, or settlement meaning.
 
 Event positions start at zero. Each recorded event consumes the next position.
 Positions define the FIFO observation order.
@@ -230,18 +235,20 @@ spans, and runtime causes remain Eta observations.
 
 The implementation effort adds these laws and named gates:
 
-| Law | Gate |
-|---|---|
-| Every successful commit records exactly one `Staged` event with the next commit index. Its list exactly matches all optional transition effects from that commit. Generated commits cover empty, singleton, and multi-effect inventories. | `qcheck_transition_effect_observer_inventory` |
-| Each present effect records exactly one terminal path. Generated cases cover success, interruption, failure, and discard before start. | `qcheck_transition_effect_observer_lifecycle` |
-| Per-effect lifecycle order follows the two accepted paths. Generated overlapping effects include an observed out-of-order settlement. | `qcheck_transition_effect_observer_order` |
-| `poll` and `drain` preserve event-position order and remove each returned event exactly once. | `qcheck_transition_effect_observer_fifo` |
-| Adding the canonical observer changes no root output, failure, terminal result, admission result, or fiber settlement. | `qcheck_transition_effect_observer_transparency` |
-| With no observer, committed actions allocate no observation IDs, events, or queue entries. Per-action allocation matches the current path. | `transition_effect_observer_disabled_allocation` |
+| Law | Generated class and observation boundary | Gate |
+|---|---|---|
+| Every successful commit records one `Staged` event with the next commit index and exact effect inventory. | Generated commits include empty, transition-only, reset-only, Poll-only, transition-plus-Poll, and reset-plus-Poll inventories. Callback and provider witnesses are compared with the `Staged.effects` list. | `qcheck_post_commit_effect_observer_inventory` |
+| Each observed effect records exactly one accepted terminal path. | Generated effects from each observed source force success, interruption, failure, and discard before start. The boundary is the complete observer-event trace and controlled settlement witnesses. | `qcheck_post_commit_effect_observer_lifecycle` |
+| Each effect obeys its lifecycle order, with no order between different effects. | Generated commits overlap two or more observed sources and force one out-of-order settlement. The boundary is event position and effect identity in the observer trace. | `qcheck_post_commit_effect_observer_order` |
+| `poll` and `drain` preserve event-position order and remove each returned event once. | Generated observer traces interleave staging, start, and settlement events. The boundary is the concatenation of all controller results and the final empty queue. | `qcheck_post_commit_effect_observer_fifo` |
+| Attaching the canonical observer changes no production result. | Generated roots run identical workloads with and without the observer. The boundary includes root output, failure, terminal result, admission result, and fiber settlement. | `qcheck_post_commit_effect_observer_transparency` |
+| With no observer, committed actions allocate no observation value or queue entry. | The disabled-path benchmark covers empty, transition, reset, and Poll commits. The boundary is exact allocation counters and the existing latency threshold. | `post_commit_effect_observer_disabled_allocation` |
 
 The generated laws execute both sides of each comparison. Each failure prints
-the generated commits and observed events. Tests with no valid background work
-finish with an empty fiber census.
+the graph, commit sources, effect sources, controlled settlements, and observed
+events.
+
+Tests with no valid background work finish with an empty fiber census.
 
 The disabled-path benchmark uses the existing disabled-telemetry threshold. It
 requires equal per-action allocation and no more than a 5% median regression
