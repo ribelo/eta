@@ -44,6 +44,9 @@ gates, and all affected Eta packages and modules.
 - [Current Eta Crux delivery baseline](issues/01-current-eta-crux-delivery-baseline.md)
   — Current Eta Crux delivers complete committed outputs. The baseline corrects
   stale pull, clock, and session claims and records three gate gaps.
+- [Incremental and Bonsai publication semantics](issues/02-incremental-and-bonsai-publication-semantics.md)
+  — Incremental and Bonsai support stabilize-then-publish, bounded notification
+  frequency, explicit disposal, internal cutoff, and latest-value pull patterns.
 
 ## Not yet specified
 
