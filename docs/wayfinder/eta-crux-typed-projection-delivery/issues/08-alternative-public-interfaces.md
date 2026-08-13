@@ -1,7 +1,7 @@
 # Alternative public interfaces
 
 Type: grilling
-Status: open
+Status: claimed
 Blocked by: 06, 07
 
 ## Question
