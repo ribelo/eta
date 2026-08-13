@@ -53,6 +53,10 @@ gates, and all affected Eta packages and modules.
 - [Rust Crux and Elm publication semantics](issues/04-rust-crux-and-elm-publication-semantics.md)
   — Rust Crux supports notification-then-pull, while Elm publishes one
   frame-coalesced whole-program view. Neither defines typed projection delivery.
+- [Snapshot-subscription and incremental-view prior art](issues/05-snapshot-subscription-and-incremental-view-prior-art.md)
+  — React supplies a missed-wake fence. Solid, Feldera, and Materialize add
+  batching and snapshot patterns, but none meets Eta Crux acknowledgment and
+  ownership contracts.
 
 ## Not yet specified
 
