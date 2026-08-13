@@ -47,6 +47,9 @@ gates, and all affected Eta packages and modules.
 - [Incremental and Bonsai publication semantics](issues/02-incremental-and-bonsai-publication-semantics.md)
   — Incremental and Bonsai support stabilize-then-publish, bounded notification
   frequency, explicit disposal, internal cutoff, and latest-value pull patterns.
+- [StateFlow publication semantics](issues/03-stateflow-publication-semantics.md)
+  — StateFlow supports one retained current value, equality conflation, and
+  current-value replay, but not atomic multi-flow observation or acknowledgment.
 
 ## Not yet specified
 
