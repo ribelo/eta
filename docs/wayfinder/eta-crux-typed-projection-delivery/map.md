@@ -64,6 +64,10 @@ gates, and all affected Eta packages and modules.
 - [Canonical domain language](issues/07-canonical-domain-language.md)
   — Projection is canonical. Its vocabulary separates values, identities,
   incarnations, updates, batches, states, transport handles, and bootstrap.
+- [Alternative public interfaces](issues/08-alternative-public-interfaces.md)
+  — Three interfaces are eligible. Changed complete-value batch push is
+  recommended. Independent streams and application publication conflict with
+  Eta Crux delivery semantics.
 
 ## Not yet specified
 
