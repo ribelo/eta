@@ -57,6 +57,10 @@ gates, and all affected Eta packages and modules.
   — React supplies a missed-wake fence. Solid, Feldera, and Materialize add
   batching and snapshot patterns, but none meets Eta Crux acknowledgment and
   ownership contracts.
+- [Prior-art transfer matrix](issues/06-prior-art-transfer-matrix.md)
+  — Prior art supplies separate patterns for commit-fenced publication,
+  current-snapshot notice and pull, and bounded consumption. No source replaces
+  Eta Crux acknowledgment, ordering, session, capacity, or ownership contracts.
 
 ## Not yet specified
 
