@@ -41,6 +41,10 @@ gates, and all affected Eta packages and modules.
 
 <!-- Closed tickets are indexed here. Each decision remains in its ticket. -->
 
+- [Current Eta Crux delivery baseline](issues/01-current-eta-crux-delivery-baseline.md)
+  — Current Eta Crux delivers complete committed outputs. The baseline corrects
+  stale pull, clock, and session claims and records three gate gaps.
+
 ## Not yet specified
 
 - The internal module split and migration sequence depend on the selected public
