@@ -50,6 +50,9 @@ gates, and all affected Eta packages and modules.
 - [StateFlow publication semantics](issues/03-stateflow-publication-semantics.md)
   — StateFlow supports one retained current value, equality conflation, and
   current-value replay, but not atomic multi-flow observation or acknowledgment.
+- [Rust Crux and Elm publication semantics](issues/04-rust-crux-and-elm-publication-semantics.md)
+  — Rust Crux supports notification-then-pull, while Elm publishes one
+  frame-coalesced whole-program view. Neither defines typed projection delivery.
 
 ## Not yet specified
 
