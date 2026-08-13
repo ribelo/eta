@@ -41,6 +41,13 @@ let create () =
     consumer_busy = Atomic.make false;
   }
 
+let effect_id_of = function
+  | Started { effect; _ }
+  | Settled { effect; _ }
+  | Discarded_before_start { effect; _ } ->
+      Some effect
+  | Staged _ -> None
+
 let attachment controller = controller.observer
 
 let with_consumer controller operation =

@@ -165,12 +165,21 @@ module Post_commit_effect_observer : sig
 
   type t
 
+  val effect_id_of : event -> Effect_id.t option
+  (** The effect identity carried by [Started], [Settled], and
+      [Discarded_before_start] events. [Staged] events carry an inventory
+      instead of one identity.
+
+      Consumers whose toolchain reserves the [effect] keyword use this
+      accessor instead of matching on the record label. *)
+
   val create : unit -> t
   val attachment : t -> Eta_crux.Testing.post_commit_effect_observer
   val poll : t -> event option
   val drain : t -> event list
   val expect_empty : t -> unit
 end
+
 
 module Controlled_source : sig
   type ('spec, 'item, 'error) t
