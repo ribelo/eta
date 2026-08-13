@@ -61,6 +61,9 @@ gates, and all affected Eta packages and modules.
   — Prior art supplies separate patterns for commit-fenced publication,
   current-snapshot notice and pull, and bounded consumption. No source replaces
   Eta Crux acknowledgment, ordering, session, capacity, or ownership contracts.
+- [Canonical domain language](issues/07-canonical-domain-language.md)
+  — Projection is canonical. Its vocabulary separates values, identities,
+  incarnations, updates, batches, states, transport handles, and bootstrap.
 
 ## Not yet specified
 

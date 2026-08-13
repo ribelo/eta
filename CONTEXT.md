@@ -83,6 +83,80 @@ retains it for pull observation through `Driver.latest_committed_output`.
 The last Root output whose delivery token the host accepted. Delivery state
 lives at the adapter boundary.
 
+## Projection
+
+A structural computation occurrence that produces one typed, complete derived
+value.
+
+## Projection value
+
+The complete typed value that one projection produces for one committed graph
+state.
+
+## Projection identity
+
+The stable name of one logical projection. The name remains stable during one
+projection incarnation.
+
+## Projection incarnation
+
+One continuous active lifetime of one projection identity.
+
+## Projection attachment
+
+The association between an active projection incarnation and its current
+projection value.
+
+## Projection update
+
+One `Attached`, `Changed`, or `Removed` member of a projection batch. `Attached`
+starts an incarnation and carries its first projection value. `Changed` carries
+a changed projection value. `Removed` records a projection removal.
+
+## Projection batch
+
+One atomic set of projection updates from one successful commit. A projection
+batch can be empty.
+
+## Projection state
+
+The state of one projection identity. It is either `Active` with an incarnation
+and projection value, or `Absent`.
+
+## Latest committed projection state
+
+The projection state after the latest completed commit.
+
+## Latest delivered projection state
+
+The projection state after the latest projection batch whose delivery the host
+accepted.
+
+## Changed projection value
+
+The complete new value carried by a `Changed` projection update. It is not a
+diff.
+
+## Projection removal
+
+A `Removed` projection update that ends the active incarnation and makes the
+projection state `Absent`.
+
+## Projection handle
+
+An opaque transport handle that represents a projection during one serialized
+shell session.
+
+## Projection bootstrap
+
+The process that gives a serialized shell session its starting projection
+states.
+
+## Bootstrap batch
+
+An atomic batch that carries the starting projection states for a projection
+bootstrap.
+
 ## Ingress item
 
 One value accepted by the root ingress queue. Actions, reset triggers, Poll
