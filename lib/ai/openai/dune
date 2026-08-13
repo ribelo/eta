@@ -10,7 +10,6 @@
   common
   images
   openai_chat
-  openai_error
   responses
   speech
   transcriptions
