@@ -68,6 +68,10 @@ gates, and all affected Eta packages and modules.
   — Three interfaces are eligible. Changed complete-value batch push is
   recommended. Independent streams and application publication conflict with
   Eta Crux delivery semantics.
+- [Commit observation and ownership contract](issues/09-commit-observation-and-ownership-contract.md)
+  — Each commit owns one atomic snapshot and batch. The driver retains committed
+  state, recipients retain delivered state, and acknowledgment gates post-commit
+  work.
 
 ## Not yet specified
 
