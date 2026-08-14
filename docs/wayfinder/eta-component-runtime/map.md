@@ -71,6 +71,7 @@ not in scope.
 - [Typed key and coeffect contract](issues/10-typed-key-and-coeffect-contract.md) — Typed schemas over generative `Type.Id` keys bind activation inputs and outputs before existential `Component.t` hides their types.
 - [Temporal ownership and recovery](issues/11-temporal-ownership-and-recovery.md) — A public tracked-effect operation adds generation admission while one Eta activation scope owns LIFO recovery and settlement.
 - [Component lifecycle and failure](issues/12-component-lifecycle-and-failure.md) — Inertial generations retain complete causes; clean failures retry explicitly, while recovery failures quarantine one instance and degrade its context.
+- [Reactive resolution and withdrawal](issues/13-reactive-resolution-and-withdrawal.md) — Immutable provider views and direct episode leases permit dependent-first withdrawal and distinct-provider handoff behind one discoverable slot.
 
 ## Not yet specified
 
