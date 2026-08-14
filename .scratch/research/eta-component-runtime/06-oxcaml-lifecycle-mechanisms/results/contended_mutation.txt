@@ -1,0 +1,11 @@
+command: ocamlc -c contended_mutation.ml
+expected exit: 2
+actual exit: 2
+verdict: pass
+--- compiler output ---
+File "contended_mutation.ml", line 3, characters 26-27:
+3 | let bad (x @ contended) = x.state <- 1
+                              ^
+Error: This value is "contended"
+       but is expected to be "uncontended"
+         because its mutable field "state" is being written.

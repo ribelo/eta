@@ -1,0 +1,9 @@
+command: ocamlc -c capsule_unavailable.ml
+expected exit: 2
+actual exit: 2
+verdict: pass
+--- compiler output ---
+File "capsule_unavailable.ml", line 1, characters 8-22:
+1 | let _ = Capsule.create ()
+            ^^^^^^^^^^^^^^
+Error: Unbound module "Capsule"

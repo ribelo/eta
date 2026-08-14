@@ -1,0 +1,13 @@
+command: ocamlc -c unique_twice.ml
+expected exit: 2
+actual exit: 2
+verdict: pass
+--- compiler output ---
+File "unique_twice.ml", line 4, characters 42-43:
+4 | let bad (x @ unique) = consume x; consume x
+                                              ^
+Error: This value is used here, but it has already been used as unique at:
+File "unique_twice.ml", line 4, characters 31-32:
+4 | let bad (x @ unique) = consume x; consume x
+                                   ^
+  

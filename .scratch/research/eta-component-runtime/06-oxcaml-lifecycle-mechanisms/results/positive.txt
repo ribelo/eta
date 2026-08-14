@@ -1,0 +1,10 @@
+command: ocamlc -c positive.ml
+expected exit: 0
+actual exit: 0
+verdict: pass
+--- compiler output ---
+File "positive.ml", line 15, characters 14-31:
+15 | let spawn f = Domain.Safe.spawn f
+                   ^^^^^^^^^^^^^^^^^
+Alert do_not_spawn_domains: Stdlib.Domain.Safe.spawn
+User programs should never spawn domains. To execute a function on a domain, use [Multicore] from the threading library. This is because spawning more than [recommended_domain_count] domains (the CPU core count) will significantly degrade GC performance.

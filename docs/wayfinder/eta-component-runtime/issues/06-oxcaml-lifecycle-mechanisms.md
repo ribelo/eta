@@ -1,7 +1,7 @@
 # OxCaml lifecycle mechanisms
 
 Type: research
-Status: open
+Status: resolved
 Blocked by:
 
 ## Question
@@ -20,3 +20,12 @@ contexts outlive a stack frame or cross domains.
 
 Write one cited report under
 `.scratch/research/eta-component-runtime/`.
+
+## Answer
+
+OxCaml can add static lifetime, ownership, and cross-domain race checks, plus
+temporary-allocation optimizations. It cannot replace the backend-neutral
+lifecycle state machine or its exactly-once cleanup semantics. Capsules remain
+unresolved because their external API is not an Eta dependency and is still
+evolving. See
+[the cited report](../../../../.scratch/research/eta-component-runtime/06-oxcaml-lifecycle-mechanisms.md).

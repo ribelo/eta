@@ -1,0 +1,14 @@
+command: ocamlc -c once_twice.ml
+expected exit: 2
+actual exit: 2
+verdict: pass
+--- compiler output ---
+File "once_twice.ml", line 1, characters 44-45:
+1 | let bad (f : (unit -> unit) @ once) = f (); f ()
+                                                ^
+Error: This value is used here,
+       but it is defined as once and has already been used at:
+File "once_twice.ml", line 1, characters 38-39:
+1 | let bad (f : (unit -> unit) @ once) = f (); f ()
+                                          ^
+  

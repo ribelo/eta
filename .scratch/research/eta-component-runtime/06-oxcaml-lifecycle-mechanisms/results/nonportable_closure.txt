@@ -1,0 +1,12 @@
+command: ocamlc -c nonportable_closure.ml
+expected exit: 2
+actual exit: 2
+verdict: pass
+--- compiler output ---
+File "nonportable_closure.ml", line 4, characters 21-22:
+4 |   let _ @ portable = f in
+                         ^
+Error: This value is "nonportable"
+         because it contains a usage (of the value "r" at file "nonportable_closure.ml", line 3, characters 13-14)
+         which is expected to be "uncontended".
+       However, the highlighted expression is expected to be "portable".

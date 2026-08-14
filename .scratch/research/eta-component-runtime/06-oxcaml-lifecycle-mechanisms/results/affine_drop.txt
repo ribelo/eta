@@ -1,0 +1,5 @@
+command: ocamlc -c affine_drop.ml
+expected exit: 0
+actual exit: 0
+verdict: pass
+--- compiler output ---

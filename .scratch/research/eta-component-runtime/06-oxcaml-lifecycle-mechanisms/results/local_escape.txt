@@ -1,0 +1,12 @@
+command: ocamlc -c local_escape.ml
+expected exit: 2
+actual exit: 2
+verdict: pass
+--- compiler output ---
+File "local_escape.ml", line 3, characters 2-3:
+3 |   r
+      ^
+Error: This value is "local"
+       but is expected to be "local" to the parent region or "global"
+         because it is a function return value.
+         Hint: Use exclave_ to return a local value.
