@@ -555,3 +555,49 @@ component context has not accepted it as a desired target.
 
 One component-context decision that fences affected provider episodes, stages
 replacement generations, and commits or restores one declaration batch.
+
+## Component diagnostics snapshot
+
+One immutable, atomic projection of the visible state of a component context at
+one observation revision. The snapshot grants no lifecycle authority.
+
+## Component observation revision
+
+One opaque, context-local position in the visible lifecycle order. Every
+snapshot-visible mutation creates a later revision.
+
+## Component context lifecycle
+
+The lifetime state of a component context. It is `Running`, `Stopping`, or
+`Stopped`.
+
+## Component context progress
+
+The work state of a component context. It is `Quiescent`, `Reconciling`, or
+`Blocked`.
+
+## Component context integrity
+
+The recovery state of a component context. It is `Sound`, `Degraded`, or
+`Failed`.
+
+## Component settlement fence
+
+One immutable identity for the settlement of an accepted context operation.
+Waiting on a fence grants no lifecycle authority.
+
+## Component settlement report
+
+One immutable terminal result for a component settlement fence. It retains the
+final snapshot and every participant, including removed component instances.
+
+## Component failure observation
+
+One opaque diagnostic value for a complete Eta cause. Its public rendering is
+stable and does not expose typed application error values.
+
+## Component loader report
+
+One immutable result of source preparation or native loading. A rejection
+before component-context admission does not change the component observation
+revision.
