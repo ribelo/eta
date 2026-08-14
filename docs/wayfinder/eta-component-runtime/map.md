@@ -59,6 +59,14 @@ not in scope.
 
 ## Decisions so far
 
+- [Cordis semantic contract](issues/01-cordis-semantic-contract.md) — Transfer witnessed recovery, committed provider views, guarded withdrawal, and convergence assumptions, not the recursive context or TypeScript interface.
+- [Cordis TypeScript implementation](issues/02-cordis-typescript-implementation.md) — Cordis demonstrates the lifecycle mechanisms, but it does not enforce the paper's inverse, independence, typing, cycle, or rollback laws.
+- [Eta substrate and no-R boundary](issues/03-eta-substrate-and-no-r-boundary.md) — Reuse Eta scopes, supervisors, causes, runtime coordination, and observability behind a separate component context.
+- [Eio lifetime transfer](issues/04-eio-lifetime-transfer.md) — Eio owns each activation's lexical lifetime, while the component context adds generations, publication, admission fences, and dependency-safe withdrawal.
+- [Typed coeffect representations](issues/05-typed-coeffect-representations.md) — Retain portable generative `Type.Id` keys and existential GADT storage, then prototype stronger typed declaration forms.
+- [OxCaml lifecycle mechanisms](issues/06-oxcaml-lifecycle-mechanisms.md) — OxCaml modes add static lifetime, ownership, and race checks, but runtime semantics still own lifecycle and cleanup.
+- [Native loading and HMR](issues/07-native-loading-and-hmr.md) — Native HMR loads immutable private code generations and replaces declarations transactionally. Only process restart reclaims code.
+
 ## Not yet specified
 
 - The operational diagnostics surface depends on the selected lifecycle and
