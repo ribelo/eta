@@ -67,6 +67,7 @@ not in scope.
 - [OxCaml lifecycle mechanisms](issues/06-oxcaml-lifecycle-mechanisms.md) — OxCaml modes add static lifetime, ownership, and race checks, but runtime semantics still own lifecycle and cleanup.
 - [Native loading and HMR](issues/07-native-loading-and-hmr.md) — Native HMR loads immutable private code generations and replaces declarations transactionally. Only process restart reclaims code.
 - [Eta semantic adoption](issues/08-eta-semantic-adoption.md) — Eta adopts conditional observational recovery and confluence with typed total provisions, generation fences, safe withdrawal, cycle rejection, and cause-preserving failure.
+- [Component language and seams](issues/09-component-language-and-seams.md) — Public coeffects and four external seams separate component authoring, desired state, context control, and runtime-owned lifecycle coordination.
 
 ## Not yet specified
 

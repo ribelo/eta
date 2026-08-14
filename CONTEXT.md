@@ -415,13 +415,37 @@ work. A component can have several component instances.
 ## Component instance
 
 One live installation of a component in a component context. The instance can
-have several provider episodes over its lifetime.
+have several provider episodes over its lifetime. The component runtime creates
+the instance from a component declaration and a desired-state entry.
 
 ## Component context
 
-A long-lived owner of provider availability, registrations, child instances,
-and lifecycle coordination. Eta scopes own the lexical resources used by each
-activation.
+A long-lived owner and lifecycle authority for provider availability, component
+instances, registrations, reconciliation, and shutdown. Eta scopes own the
+lexical resources used by each activation.
+
+## Coeffect
+
+A public typed dependency contract. It defines typed key identity, observable
+operations, and value equivalence. A provision supplies an ordinary typed value
+for the contract.
+
+## Requirement
+
+A declaration that a component needs one coeffect.
+
+## Provision
+
+A declaration that a component supplies one coeffect.
+
+## Consumer
+
+The runtime role of a component instance for a coeffect that it requires. One
+component can be a consumer and a provider for different coeffects.
+
+## Provider
+
+The runtime role of a component instance for a coeffect that it supplies.
 
 ## Provider episode
 
@@ -432,6 +456,26 @@ provider episode, even when the component instance remains the same.
 
 The mapping from each declared requirement to the provider episode selected for
 one consumer activation. The view remains stable until that consumer settles.
+
+## Desired state
+
+The immutable lifecycle authority that an application supplies to a component
+context. A desired-state tree contains desired-state entries.
+
+## Desired-state entry
+
+An item in a desired-state tree. An entry identifies requested structure and can
+carry a component declaration and application-owned configuration.
+
+## Component configuration
+
+Application-owned data that specializes a desired-state entry. Configuration is
+not a separate lifecycle authority.
+
+## Reconciliation
+
+The component-context operation that interprets desired state and coordinates
+changes to the committed component state.
 
 ## Isolation realm
 
