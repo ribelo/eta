@@ -1,7 +1,7 @@
 # Reactive resolution and withdrawal
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 08, 10, 12
 
 ## Question
