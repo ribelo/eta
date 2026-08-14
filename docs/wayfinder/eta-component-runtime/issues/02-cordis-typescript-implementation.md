@@ -1,7 +1,7 @@
 # Cordis TypeScript implementation
 
 Type: research
-Status: open
+Status: resolved
 Blocked by:
 
 ## Question
@@ -22,3 +22,12 @@ incidental TypeScript representation as an Eta requirement.
 
 Write one cited report under
 `.scratch/research/eta-component-runtime/`.
+
+## Answer
+
+Decision gist: Cordis demonstrates owned reverse-order disposal, provider-identity
+reactivity, dependency-safe withdrawal, realms, reconciliation, and HMR. It does
+not enforce inverse or independence laws, cycle diagnostics, typed runtime
+compatibility, or rollback after an asynchronous `apply` failure.
+
+See [the cited implementation census](../../../../.scratch/research/eta-component-runtime/02-cordis-typescript-implementation.md).
