@@ -487,6 +487,26 @@ key in one isolation realm.
 A scoped change to how a provision is used. Interception does not change
 provider availability or provider-episode identity.
 
+## Interception metadata
+
+Typed policy data for one coeffect. A requirement supplies component metadata,
+and derived contexts supply outer and inner metadata. The coeffect defines the
+merge operation.
+
+Context metadata has priority over component metadata. An inner context has
+priority over an outer context.
+
+## Interception snapshot
+
+The immutable merged interception metadata that one coeffect operation observes
+at entry. A concurrent metadata change affects later operations.
+
+## Realm reassignment
+
+One component-context transaction that changes typed realm mappings and moves
+owned provider bindings. Consumers reactivate only when their complete provider
+views change.
+
 ## Component recovery
 
 Sequential execution of recovery witnesses that restores mediated component
