@@ -1,7 +1,7 @@
 # Module replacement and rollback
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 02, 07, 12, 16
 
 ## Question
