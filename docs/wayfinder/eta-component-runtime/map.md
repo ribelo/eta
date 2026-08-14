@@ -70,11 +70,10 @@ not in scope.
 - [Component language and seams](issues/09-component-language-and-seams.md) — Public coeffects and four external seams separate component authoring, desired state, context control, and runtime-owned lifecycle coordination.
 - [Typed key and coeffect contract](issues/10-typed-key-and-coeffect-contract.md) — Typed schemas over generative `Type.Id` keys bind activation inputs and outputs before existential `Component.t` hides their types.
 - [Temporal ownership and recovery](issues/11-temporal-ownership-and-recovery.md) — A public tracked-effect operation adds generation admission while one Eta activation scope owns LIFO recovery and settlement.
+- [Component lifecycle and failure](issues/12-component-lifecycle-and-failure.md) — Inertial generations retain complete causes; clean failures retry explicitly, while recovery failures quarantine one instance and degrade its context.
 
 ## Not yet specified
 
-- The operational diagnostics surface depends on the selected lifecycle and
-  failure model.
 - Quantitative allocation and latency gates depend on the selected
   representation and runtime seam.
 - The final public names for loader adapters depend on the module-loading

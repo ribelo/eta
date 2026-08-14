@@ -503,3 +503,25 @@ scope before it returns.
 
 The release operation for one successful tracked component effect. The Eta
 activation scope runs recovery witnesses serially in reverse registration order.
+
+## Component activation failure
+
+A settled activation outcome that retains the complete Eta cause after
+successful cleanup. The instance has no provider episode from that generation.
+
+## Component recovery failure
+
+A settled activation-scope outcome whose cleanup failed. Eta retains the
+complete finalizer or suppressed cause, and observational recovery does not
+apply.
+
+## Quarantined component instance
+
+A component instance whose recovery failed. It cannot start another generation
+in the same component context.
+
+## Degraded component context
+
+A component context that contains at least one quarantined component instance.
+It continues unrelated lifecycle coordination, diagnostics, settlement, and
+controlled shutdown.
