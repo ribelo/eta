@@ -1,7 +1,7 @@
 # Public interface alternatives
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 09, 10, 11, 12, 13, 14, 15, 16, 17, 23
 
 ## Question
