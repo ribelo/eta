@@ -1,7 +1,7 @@
 # Typed coeffect representations
 
 Type: research
-Status: open
+Status: resolved
 Blocked by:
 
 ## Question
@@ -20,3 +20,11 @@ domain boundaries and identify which claims require compiler probes.
 
 Write one cited report under
 `.scratch/research/eta-component-runtime/`.
+
+## Answer
+
+Retain generative `'a key` values backed by `Type.Id`, existential GADT
+bindings, and type-equality witnesses for prototypes. Compare an extensible
+GADT and a static functor boundary, but reject structural rows as key identity.
+See the
+[cited report](../../../../.scratch/research/eta-component-runtime/05-typed-coeffect-representations.md).

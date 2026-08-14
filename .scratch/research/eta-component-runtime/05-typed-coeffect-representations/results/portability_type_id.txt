@@ -1,0 +1,3 @@
+$ ocamlc -c portability_type_id.ml
+exit: 0
+expected exit: 0

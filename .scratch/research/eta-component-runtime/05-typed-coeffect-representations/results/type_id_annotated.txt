@@ -1,0 +1,3 @@
+$ ocamlc -c type_id_annotated.ml
+exit: 0
+expected exit: 0

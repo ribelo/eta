@@ -1,0 +1,7 @@
+$ ocamlc -c portability_package.ml
+File "/home/ribelo/projects/ribelo/ocaml/Eta/.scratch/worktrees/eta-component-runtime/05-typed-coeffects/.scratch/research/eta-component-runtime/05-typed-coeffect-representations/probes/portability_package.ml", line 8, characters 2-7:
+8 |   value
+      ^^^^^
+Error: This value is "nonportable" but is expected to be "portable".
+exit: 2
+expected exit: 2

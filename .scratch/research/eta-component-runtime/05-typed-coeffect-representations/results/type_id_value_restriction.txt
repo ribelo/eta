@@ -1,0 +1,9 @@
+$ ocamlc -c type_id_value_restriction.ml
+File "/home/ribelo/projects/ribelo/ocaml/Eta/.scratch/worktrees/eta-component-runtime/05-typed-coeffects/.scratch/research/eta-component-runtime/05-typed-coeffect-representations/probes/type_id_value_restriction.ml", line 1, characters 4-7:
+1 | let key = Type.Id.make ()
+        ^^^
+Error: The type of this expression, "'_weak1 Type.Id.t",
+       contains the non-generalizable type variable(s): "'_weak1".
+       (see manual section 6.1.2)
+exit: 2
+expected exit: 2
