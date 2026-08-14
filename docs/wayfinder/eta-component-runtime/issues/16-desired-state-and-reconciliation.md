@@ -1,7 +1,7 @@
 # Desired state and reconciliation
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 02, 12, 13, 14
 
 ## Question
