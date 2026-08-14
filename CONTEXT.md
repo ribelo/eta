@@ -492,3 +492,14 @@ provider availability or provider-episode identity.
 Sequential execution of recovery witnesses that restores mediated component
 state up to key-defined observational equivalence. External-emission history is
 not part of component recovery.
+
+## Tracked component effect
+
+A long-lived component mutation admitted for one activation generation. A
+successful acquisition registers one recovery witness in the Eta activation
+scope before it returns.
+
+## Recovery witness
+
+The release operation for one successful tracked component effect. The Eta
+activation scope runs recovery witnesses serially in reverse registration order.

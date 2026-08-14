@@ -69,6 +69,7 @@ not in scope.
 - [Eta semantic adoption](issues/08-eta-semantic-adoption.md) — Eta adopts conditional observational recovery and confluence with typed total provisions, generation fences, safe withdrawal, cycle rejection, and cause-preserving failure.
 - [Component language and seams](issues/09-component-language-and-seams.md) — Public coeffects and four external seams separate component authoring, desired state, context control, and runtime-owned lifecycle coordination.
 - [Typed key and coeffect contract](issues/10-typed-key-and-coeffect-contract.md) — Typed schemas over generative `Type.Id` keys bind activation inputs and outputs before existential `Component.t` hides their types.
+- [Temporal ownership and recovery](issues/11-temporal-ownership-and-recovery.md) — A public tracked-effect operation adds generation admission while one Eta activation scope owns LIFO recovery and settlement.
 
 ## Not yet specified
 
