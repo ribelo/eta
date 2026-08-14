@@ -1,7 +1,7 @@
 # Isolation and interception
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 02, 10, 13
 
 ## Question
