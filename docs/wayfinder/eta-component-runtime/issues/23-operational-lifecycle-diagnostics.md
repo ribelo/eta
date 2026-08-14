@@ -20,9 +20,15 @@ must not expose mutable instance handles or erase typed Eta causes.
 ## Prototype for review
 
 The comparison prototype is on branch
-`prototype/eta-component-operational-diagnostics` at commit `da579616`. See the
-[prototype source](https://github.com/ribelo/eta/tree/da579616c7284cbe870b4ecceeeb8b9d356878fe/.scratch/eta-component-runtime-operational-diagnostics).
+`prototype/eta-component-operational-diagnostics` at commit `f5744913`. See the
+[prototype source](https://github.com/ribelo/eta/tree/f574491301cb455b1481a41a1dd247c5c3665910/.scratch/eta-component-runtime-operational-diagnostics).
 
-The prototype compares an atomic snapshot, a bounded event journal, and a
-terminal settlement report. Its current recommendation selects a snapshot,
-coalesced change waits, and context-owned settlement reports.
+The corrected prototype compares an atomic snapshot, a typed bounded journal,
+and operation settlement reports. It uses complete `Eta.Cause` values.
+
+An independent high-tier review checked Cordis commit
+`8cc9e33fab69e2d0476d126baaf2acb24e6a6ab4` and the resolved Eta decisions. The
+final verdict was `ready for human validation`.
+
+The provisional recommendation selects snapshots, coalesced change waits,
+context-owned settlement reports, and loader-owned pre-admission reports.
