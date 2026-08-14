@@ -1,0 +1,83 @@
+# Eta component runtime map
+
+## Destination
+
+A decision-ready Eta-native design package for spatiotemporal components. The
+package specifies public interfaces, semantics, laws, package ownership,
+prototype evidence, and an implementation sequence for the complete Cordis
+system.
+
+## Notes
+
+This effort adapts Cordis semantics to Eta. It does not port the TypeScript
+implementation or reproduce its public interface.
+
+`Effect.t` remains `('a, 'err) Effect.t`. Requirements and provisions belong to
+the component-runtime seam. This effort does not add an environment channel,
+`Layer`, or `provide` operation to Eta effects.
+
+The core belongs in the optional `eta_component` package. Configuration loading
+and hot module replacement belong in a separate optional package. The final
+package split remains a named decision because source and dependency evidence
+can refine these package names.
+
+Keys and values remain statically typed. The design uses the strongest practical
+static representation for requirements and provisions that the prototypes
+support. Provider availability remains dynamic.
+
+Eta scopes own lexical resources. A component context tracks long-lived
+acquisitions, registrations, and child components. Recovery uses observational
+equivalence, not physical-state equality.
+
+`Component` means a reusable declaration. `Component instance` means one live
+installation. Do not use the paper's term `fiber` for a component instance,
+because Eta uses `fiber` for concurrent execution.
+
+The configuration authority is a typed desired-state tree. Serialization and
+module-resolution formats use separate adapters. Component-local state does not
+survive replacement. State survives only when a longer-lived context or
+coeffect owns it.
+
+The semantics remain backend-neutral. Eio is the reference adapter. OxCaml
+supplies possible representation and optimization mechanisms. The verification
+target includes executable laws, property tests, adversarial lifecycle tests,
+and a deterministic reference model.
+
+Primary Cordis sources are:
+
+- `.reference/cordis/paper.pdf`, titled *A Programming Paradigm for
+  Spatiotemporal Composability*.
+- `.reference/cordis`, the TypeScript implementation at commit
+  `8cc9e33fab69e2d0476d126baaf2acb24e6a6ab4`.
+
+Use `$wayfinder`, `$simple-english`, `$codebase-design`, and `$domain-modeling`
+for all decision work. Use `$research` for research tickets. Use `$prototype`
+for throwaway logic probes. Use `$eio` and `$oxcaml` for their named tickets.
+
+Planning and throwaway prototypes are in scope. Production implementation is
+not in scope.
+
+## Decisions so far
+
+## Not yet specified
+
+- The operational diagnostics surface depends on the selected lifecycle and
+  failure model.
+- Quantitative allocation and latency gates depend on the selected
+  representation and runtime seam.
+- The final public names for loader adapters depend on the module-loading
+  decision.
+
+## Out of scope
+
+- An environment parameter on `Effect.t`, Eta layers, or dynamic effect
+  provisioning.
+- Production implementation of the selected design.
+- Automatic or callback-based migration of component-local state.
+- Source compatibility with the TypeScript Cordis interface.
+- Distributed service brokers, RPC transparency, and cross-process components.
+- Sandboxing untrusted native code and operating-system co-design.
+- Compensation for irreversible emissions outside the component context.
+- Mechanized proofs of the complete paper metatheory.
+- Provider package versioning and structural interface compatibility.
+- A production JavaScript adapter or JavaScript verification gate.
