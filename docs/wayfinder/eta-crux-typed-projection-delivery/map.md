@@ -63,7 +63,7 @@ gates, and all affected Eta packages and modules.
   Eta Crux acknowledgment, ordering, session, capacity, or ownership contracts.
 - [Canonical domain language](issues/07-canonical-domain-language.md)
   — Projection is canonical. Its vocabulary separates values, identities,
-  incarnations, updates, batches, states, transport handles, and bootstrap.
+  kinds, catalogs, incarnations, updates, batches, states, and bootstrap.
 - [Alternative public interfaces](issues/08-alternative-public-interfaces.md)
   — Three interfaces are eligible. Changed complete-value batch push is
   recommended. Independent streams and application publication conflict with
@@ -72,6 +72,10 @@ gates, and all affected Eta packages and modules.
   — Each commit owns one atomic snapshot and batch. The driver retains committed
   state, recipients retain delivered state, and acknowledgment gates post-commit
   work.
+- [Identity, codec, and wire contract](issues/10-identity-codec-and-wire-contract.md)
+  — Kind and key define typed identity. Root-owned incarnations, a closed
+  catalog, fallible codecs, strict capacity, and three exact protocol profiles
+  preserve atomic delivery without projection handles.
 
 ## Not yet specified
 

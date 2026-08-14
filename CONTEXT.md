@@ -71,17 +71,20 @@ Its specification defines producer continuity.
 
 ## Root output
 
-The complete application value from one successful commit.
+The complete application value that current Eta Crux V1 publishes from one
+successful commit. The typed projection target keeps the root result local.
 
 ## Latest committed output
 
-The Root output from the greatest completed commit. The production driver
-retains it for pull observation through `Driver.latest_committed_output`.
+The current Eta Crux V1 Root output from the greatest completed commit. The
+typed projection target replaces this term with the latest committed projection
+state.
 
 ## Latest delivered output
 
-The last Root output whose delivery token the host accepted. Delivery state
-lives at the adapter boundary.
+The current Eta Crux V1 Root output whose delivery token the host last accepted.
+The typed projection target replaces this term with the latest delivered
+projection state.
 
 ## Projection
 
@@ -93,10 +96,18 @@ value.
 The complete typed value that one projection produces for one committed graph
 state.
 
+## Projection kind
+
+One generative immutable descriptor for keyed projection values.
+
+## Projection catalog
+
+The closed ordered set of projection kinds in one root contract.
+
 ## Projection identity
 
-The stable name of one logical projection. The name remains stable during one
-projection incarnation.
+One projection kind and one equivalent key. The identity can have several
+projection incarnations over time.
 
 ## Projection incarnation
 
@@ -115,8 +126,13 @@ a changed projection value. `Removed` records a projection removal.
 
 ## Projection batch
 
-One atomic set of projection updates from one successful commit. A projection
-batch can be empty.
+One atomic ordered sequence of projection updates from one successful commit. A
+projection batch can be empty.
+
+## Projection image
+
+The complete framework-owned outward state from one successful commit. It
+contains all active projection attachments.
 
 ## Projection state
 
@@ -129,7 +145,7 @@ The projection state after the latest completed commit.
 
 ## Latest delivered projection state
 
-The projection state after the latest projection batch whose delivery the host
+The projection state after the latest projection delivery that the host
 accepted.
 
 ## Changed projection value
@@ -142,19 +158,14 @@ diff.
 A `Removed` projection update that ends the active incarnation and makes the
 projection state `Absent`.
 
-## Projection handle
-
-An opaque transport handle that represents a projection during one serialized
-shell session.
-
 ## Projection bootstrap
 
 The process that gives a serialized shell session its starting projection
 states.
 
-## Bootstrap batch
+## Bootstrap snapshot
 
-An atomic batch that carries the starting projection states for a projection
+An atomic snapshot that carries the starting projection states for a projection
 bootstrap.
 
 ## Ingress item
@@ -388,7 +399,8 @@ Eta owns effect execution, scheduling, interruption, scopes, finalizers,
 clocks, and sleeps. Eta Crux owns graph time, active deadlines, clock
 sampling, driver wakes, actions, ingress, structural reset, Poll run order,
 commit publication, shell requests, handler claims, and request settlement.
-`Driver` owns latest committed-output retention. Adapters own
+`Driver` owns the latest committed `Projection.Snapshot.t` in the typed
+projection target. Adapters own
 successful-delivery state, host reconciliation, registration, operation
 routing, buffers, retries, and provider diagnostics. `Eta_crux.Testing` owns
 the post-commit observation types and observer attachment. `eta_crux_test`

@@ -39,11 +39,12 @@ module Projection : sig
       key_compare:('key -> 'key -> int) ->
       key_codec:'key Codec.t ->
       value_codec:'value Codec.t ->
+      value_equal:('value -> 'value -> bool) ->
       cutoff:'value Cutoff.t ->
       ('key, 'value) t
   end
 
-  module Schema : sig
+  module Catalog : sig
     type t
     val create : Kind.packed list -> t
   end
@@ -59,7 +60,8 @@ module Root : sig
   type t
 
   val create :
-    schema:Projection.Schema.t ->
+    catalog:Projection.Catalog.t ->
+    projection_capacity:int ->
     ingress_capacity:int ->
     request_capacity:int ->
     _ Eta_crux.t ->
@@ -68,10 +70,10 @@ end
 ```
 
 Each `Projection.Kind.define` call creates a distinct kind. A kind owns its
-wire name, key order, key codec, value codec, and value cutoff.
+wire name, key order, key codec, value codec, value equality, and value cutoff.
 
-`Projection.Schema.create` fixes all kinds for one root. It rejects duplicate
-wire names before root startup. The same schema applies to identity and
+`Projection.Catalog.create` fixes all kinds for one root. It rejects duplicate
+wire names before root startup. The same catalog applies to identity and
 serialized transport.
 
 `unit` is the key type for a singleton projection. Dynamic projections use
@@ -205,7 +207,7 @@ It is not an Eta Crux projection-delivery interface.
 | Removal | Derived from absence | Explicit | Explicit in the pulled batch |
 | Dynamic structure | Native | Native | Native |
 | Typed heterogeneity | Typed lookup and fold | Typed lookup and fold | Typed pull and fold |
-| Codec registration | Kind and schema | Kind and schema | Kind and schema |
+| Codec registration | Kind and catalog | Kind and catalog | Kind and catalog |
 | Identity transport | Direct typed snapshot | Direct typed batch | Direct typed pull |
 | Serialized transport | Snapshot push | Batch push | Notification and pull |
 | Atomic acknowledgment | One snapshot | One batch | One frozen commit |
@@ -222,7 +224,7 @@ This ticket recommends an interface but does not select it.
 contract](09-commit-observation-and-ownership-contract.md) owns the exact commit
 and acknowledgment semantics. [Identity, codec, and wire
 contract](10-identity-codec-and-wire-contract.md) owns wire representation and
-projection handles. [Session replacement and
+rules out projection handles. [Session replacement and
 bootstrap](11-session-replacement-and-bootstrap.md) owns bootstrap sequencing.
 
 No new ticket is necessary.
