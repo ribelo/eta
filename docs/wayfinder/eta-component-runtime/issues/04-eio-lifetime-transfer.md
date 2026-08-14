@@ -1,7 +1,7 @@
 # Eio lifetime transfer
 
 Type: research
-Status: open
+Status: resolved
 Blocked by:
 
 ## Question
@@ -21,3 +21,11 @@ Eio wrapper without an Eta-owned invariant.
 
 Write one cited report under
 `.scratch/research/eta-component-runtime/`.
+
+## Answer
+
+[Research report](../../../../.scratch/research/eta-component-runtime/04-eio-lifetime-transfer.md)
+
+Eio proves the lexical resource and child lifetime of one activation. A
+backend-neutral component context must add serialized generations, staged
+publication, admission fencing, and dependency-safe withdrawal.
