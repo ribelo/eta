@@ -75,11 +75,9 @@ not in scope.
 - [Isolation and interception](issues/14-isolation-and-interception.md) — Typed derived contexts combine live interception snapshots with transactional, episode-preserving realm reassignment.
 - [Backend-neutral runtime and Eio adapter](issues/15-backend-neutral-runtime-and-eio-adapter.md) — One lexical Eta effect owns private supervisor children. Eio interprets it, normal stop handles deactivation, and cancellation handles interruption.
 - [Desired state and reconciliation](issues/16-desired-state-and-reconciliation.md) — Typed stable-ID trees use whole-snapshot admission, global provider fencing, and order-independent reconciliation.
+- [Module replacement and rollback](issues/17-module-replacement-and-rollback.md) — Native loading stays separate. Retained instances stage serialized candidates, publish one batch, and restore old declarations while native code remains loaded.
 
 ## Not yet specified
-
-- The final public names for loader adapters depend on the module-loading
-  decision.
 
 ## Out of scope
 

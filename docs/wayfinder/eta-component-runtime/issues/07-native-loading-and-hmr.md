@@ -30,3 +30,10 @@ instance. A failed installation restores the old declaration as another fresh
 instance. Machine code cannot be unloaded, initializer effects cannot be
 rolled back, and a process restart is the code-reclamation boundary. See
 [the cited report](../../../../.scratch/research/eta-component-runtime/07-native-loading-and-hmr.md).
+
+### Later refinement
+
+[Module replacement and rollback](17-module-replacement-and-rollback.md)
+refines “fresh instance” to “fresh activation generation in the retained
+component instance.” The native loading and code-retention conclusions remain
+unchanged.

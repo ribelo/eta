@@ -545,3 +545,13 @@ in the same component context.
 A component context that contains at least one quarantined component instance.
 It continues unrelated lifecycle coordination, diagnostics, settlement, and
 controlled shutdown.
+
+## Candidate declaration
+
+An inactive component declaration prepared for one source revision. The
+component context has not accepted it as a desired target.
+
+## Replacement transaction
+
+One component-context decision that fences affected provider episodes, stages
+replacement generations, and commits or restores one declaration batch.
