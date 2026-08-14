@@ -1,7 +1,7 @@
 # Temporal ownership and recovery
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 03, 04, 06, 08, 09
 
 ## Question
