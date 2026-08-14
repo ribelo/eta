@@ -66,6 +66,7 @@ not in scope.
 - [Typed coeffect representations](issues/05-typed-coeffect-representations.md) — Retain portable generative `Type.Id` keys and existential GADT storage, then prototype stronger typed declaration forms.
 - [OxCaml lifecycle mechanisms](issues/06-oxcaml-lifecycle-mechanisms.md) — OxCaml modes add static lifetime, ownership, and race checks, but runtime semantics still own lifecycle and cleanup.
 - [Native loading and HMR](issues/07-native-loading-and-hmr.md) — Native HMR loads immutable private code generations and replaces declarations transactionally. Only process restart reclaims code.
+- [Eta semantic adoption](issues/08-eta-semantic-adoption.md) — Eta adopts conditional observational recovery and confluence with typed total provisions, generation fences, safe withdrawal, cycle rejection, and cause-preserving failure.
 
 ## Not yet specified
 

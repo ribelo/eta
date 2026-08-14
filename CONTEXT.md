@@ -406,3 +406,45 @@ routing, buffers, retries, and provider diagnostics. `Eta_crux.Testing` owns
 the post-commit observation types and observer attachment. `eta_crux_test`
 owns the observer controller and destructive reads. Applications own models,
 builders, Poll inputs, cutoffs, result values, and domain policy.
+
+## Component
+
+A reusable declaration of typed requirements, typed provisions, and activation
+work. A component can have several component instances.
+
+## Component instance
+
+One live installation of a component in a component context. The instance can
+have several provider episodes over its lifetime.
+
+## Component context
+
+A long-lived owner of provider availability, registrations, child instances,
+and lifecycle coordination. Eta scopes own the lexical resources used by each
+activation.
+
+## Provider episode
+
+One activation generation of one component instance. Reactivation creates a new
+provider episode, even when the component instance remains the same.
+
+## Committed provider view
+
+The mapping from each declared requirement to the provider episode selected for
+one consumer activation. The view remains stable until that consumer settles.
+
+## Isolation realm
+
+A provider-resolution scope. One committed provider episode can own a coeffect
+key in one isolation realm.
+
+## Interception
+
+A scoped change to how a provision is used. Interception does not change
+provider availability or provider-episode identity.
+
+## Component recovery
+
+Sequential execution of recovery witnesses that restores mediated component
+state up to key-defined observational equivalence. External-emission history is
+not part of component recovery.
