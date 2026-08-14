@@ -1,7 +1,7 @@
 # Eta substrate and no-R boundary
 
 Type: research
-Status: open
+Status: resolved
 Blocked by:
 
 ## Question
@@ -20,3 +20,22 @@ State which existing contracts the new design must not weaken.
 
 Write one cited report under
 `.scratch/research/eta-component-runtime/`.
+
+## Answer
+
+Keep `Effect.t` as `('a, 'err) Effect.t`. Eta already provides the reusable
+substrate for lexical ownership, finalization, structured cancellation,
+coordination, typed causes, dynamic runtime scope, and observability.
+
+Requirements and provisions stay at a separate component-runtime seam. That seam
+must own typed declarations, dynamic provider availability, long-lived
+component contexts, reconciliation, replacement, stale-instance handling, and
+component recovery. It must compose with Eta scopes and supervisors instead of
+adding `R`, `Layer`, `Tag`, an effect-environment `Context`, `provide`, or a
+second effect type. This rejects only a ZIO-style environment context attached
+to `Effect.t`; it does not reject the separate component context approved by
+the design.
+
+The cited substrate inventory, preserved contracts, exact gaps, verification
+plan, and evidence gaps are in the
+[Eta substrate and no-`R` boundary report](../../../../.scratch/research/eta-component-runtime/03-eta-substrate-and-no-r-boundary.md).
