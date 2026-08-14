@@ -1,7 +1,7 @@
 # Native loading and HMR
 
 Type: research
-Status: open
+Status: resolved
 Blocked by:
 
 ## Question
@@ -20,3 +20,13 @@ native OCaml cannot satisfy.
 
 Write one cited report under
 `.scratch/research/eta-component-runtime/`.
+
+## Answer
+
+Native HMR is private loading of immutable, unique `.cmxs` generations,
+followed by a separate reconciler transaction that replaces the component
+declaration. Replacement withdraws old context effects and creates a fresh
+instance. A failed installation restores the old declaration as another fresh
+instance. Machine code cannot be unloaded, initializer effects cannot be
+rolled back, and a process restart is the code-reclamation boundary. See
+[the cited report](../../../../.scratch/research/eta-component-runtime/07-native-loading-and-hmr.md).
