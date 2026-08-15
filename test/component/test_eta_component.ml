@@ -1582,3 +1582,1186 @@ let test_component_group_kind_authority_retention () =
   let rejected = expect_ok outcome in
   Alcotest.(check bool) "group id reuse as entry rejected" true rejected;
   check_census outcome
+
+(* ------------------------------------------------------------------ *)
+(* Ported gates from the cordis reference suite                        *)
+(* (.reference/cordis/packages/core/tests/dispose.spec.ts).            *)
+(*                                                                     *)
+(* Cordis model difference: JS async functions cannot be cancelled, so  *)
+(* cordis lets an in-flight activation run to its next yield and then  *)
+(* disposes. Eta delivers interruption to the pending acquisition      *)
+(* directly. The ported gates therefore assert: completed acquisitions *)
+(* are released, pending acquisitions never complete, and interrupted  *)
+(* activations never stage.                                            *)
+(* ------------------------------------------------------------------ *)
+
+(* "async yield 2 (aborted)": retirement during a pending acquisition
+   interrupts the acquisition; the already-completed acquisition is
+   released and the pending one never lands. *)
+let test_component_retire_mid_activation_interrupts () =
+  let log = ref [] in
+  let record event = log := !log @ [ event ] in
+  let family = Component.Family.create ~name:"abort" ~module_locator:"abort" () in
+  let outcome =
+    run_program
+      (Context.run (fun context _diagnostics ->
+           let started = Promise.create () in
+           let gate = Promise.create () in
+           let component =
+             match
+               Component.make ~family ~config_equal:Int.equal
+                 ~requirements:Requirement.none ~provisions:Provision.none
+                 ~pp_error:(fun ppf error -> Format.pp_print_string ppf error)
+                 ~activate:(fun _config () activation ->
+                   let* () =
+                     Activation.own activation
+                       ~acquire:(Effect.sync (fun () -> record "acquire:1"))
+                       ~release:(fun () ->
+                         Effect.sync (fun () -> record "release:1"))
+                       ~pp_release_error:(fun ppf _ ->
+                         Format.pp_print_string ppf "e")
+                   in
+                   let* () =
+                     Effect.map (fun _ -> ())
+                       (Promise.resolve started (Exit.Ok ()))
+                   in
+                   (* The second acquisition never lands: retirement
+                      interrupts the pending gate wait. *)
+                   Activation.own activation
+                     ~acquire:
+                       (Effect.map (fun _ -> record "acquire:2")
+                          (Promise.await gate))
+                     ~release:(fun () ->
+                       Effect.sync (fun () -> record "release:2"))
+                     ~pp_release_error:(fun ppf _ ->
+                       Format.pp_print_string ppf "e"))
+             with
+             | Ok component -> component
+             | Error _ -> Alcotest.fail "make failed"
+           in
+           let* _fence =
+             any_error
+               (Context.reconcile context (tree_of [ entry "a" component 1 ]))
+           in
+           (* Wait until the activation is parked on the gated acquire. *)
+           let* () = any_error (Promise.await started) in
+           (* Retire the entry while the activation is in flight. *)
+           let* retire_fence =
+             any_error (Context.reconcile context (tree_of []))
+           in
+           let* _ = Diagnostics.Fence.await retire_fence in
+           Effect.unit))
+  in
+  let () = expect_ok outcome in
+  Alcotest.(check (list string))
+    "completed acquire released, pending acquire never lands"
+    [ "acquire:1"; "release:1" ] !log;
+  check_census outcome
+
+(* "yield with error": an activation failure after a successful [own]
+   releases the registered resource. *)
+let test_component_activation_failure_releases_owned () =
+  let log = ref [] in
+  let record event = log := !log @ [ event ] in
+  let family = Component.Family.create ~name:"yerr" ~module_locator:"yerr" () in
+  let component =
+    match
+      Component.make ~family ~config_equal:Int.equal
+        ~requirements:Requirement.none ~provisions:Provision.none
+        ~pp_error:(fun ppf error -> Format.pp_print_string ppf error)
+        ~activate:(fun _config () activation ->
+          let* () =
+            Activation.own activation
+              ~acquire:(Effect.sync (fun () -> record "acquire:1"))
+              ~release:(fun () -> Effect.sync (fun () -> record "release:1"))
+              ~pp_release_error:(fun ppf _ -> Format.pp_print_string ppf "e")
+          in
+          Effect.fail "boom")
+    with
+    | Ok component -> component
+    | Error _ -> Alcotest.fail "make failed"
+  in
+  let outcome =
+    run_program
+      (Context.run (fun context diagnostics ->
+           let* fence =
+             Context.reconcile context (tree_of [ entry "a" component 1 ])
+           in
+           let* _ = Diagnostics.Fence.await fence in
+           Diagnostics.snapshot diagnostics))
+  in
+  let snapshot = expect_ok outcome in
+  Alcotest.(check (list string)) "owned resource released on failure"
+    [ "acquire:1"; "release:1" ] !log;
+  Alcotest.(check string) "phase" "activation-failed" (find_phase snapshot "a");
+  check_census outcome
+
+(* ------------------------------------------------------------------ *)
+(* Ported from .reference/cordis/packages/core/tests/fiber.spec.ts and  *)
+(* service.spec.ts.                                                    *)
+(*                                                                     *)
+(* Cordis "inertia lock" semantics differ from Eta's: a cordis fiber   *)
+(* whose inject disappears mid-activation finishes loading, then        *)
+(* unloads; Eta interrupts the in-flight activation directly. The      *)
+(* ported gates assert the Eta observables of the same scenarios:      *)
+(* lease-drain ordering, consumer reactivation, and single-restart     *)
+(* semantics for combined updates.                                     *)
+(* ------------------------------------------------------------------ *)
+
+(* fiber.spec "inertia lock 1": the provider is withdrawn while the
+   consumer activation is in flight. The consumer's pending acquisition
+   is interrupted, its registered release runs, and the provider settles
+   only after the consumer lease drains. Re-providing reactivates the
+   consumer. *)
+let test_component_provider_withdrawal_during_activation () =
+  let key = coeffect_exn "inertia" in
+  let provider_tracked, consumer_tracked = tracked_pair "provider" "consumer" in
+  let provider = provider_component provider_tracked key (fun config -> config) in
+  let outcome =
+    run_program
+      (Context.run (fun context _diagnostics ->
+           let started = Promise.create () in
+           let gate = Promise.create () in
+           let consumer_family =
+             Component.Family.create ~name:"consumer" ~module_locator:"consumer"
+               ()
+           in
+           let consumer =
+             match
+               Component.make ~family:consumer_family ~config_equal:Int.equal
+                 ~requirements:(Requirement.one key) ~provisions:Provision.none
+                 ~pp_error:(fun ppf error -> Format.pp_print_string ppf error)
+                 ~activate:(fun _config _requirement activation ->
+                   let* () =
+                     Activation.own activation
+                       ~acquire:
+                         (Effect.sync (fun () ->
+                              track consumer_tracked "acquire:consumer"))
+                       ~release:(fun () ->
+                         Effect.sync (fun () ->
+                             track consumer_tracked "release:consumer"))
+                       ~pp_release_error:(fun ppf _ ->
+                         Format.pp_print_string ppf "e")
+                   in
+                   let* () =
+                     Effect.map (fun _ -> ())
+                       (Promise.resolve started (Exit.Ok ()))
+                   in
+                   (* Park mid-activation so the withdrawal lands while the
+                      generation is still uncommitted. *)
+                   Effect.map (fun _ -> ()) (Promise.await gate))
+             with
+             | Ok component -> component
+             | Error _ -> Alcotest.fail "make consumer failed"
+           in
+           let* _fence =
+             any_error
+               (Context.reconcile context
+                  (tree_of [ entry "db" provider 7; entry "svc" consumer 0 ]))
+           in
+           let* () = any_error (Promise.await started) in
+           provider_tracked.t_shared := [];
+           (* Withdraw the provider mid-activation. *)
+           let* retire_fence =
+             any_error
+               (Context.reconcile context (tree_of [ entry "svc" consumer 0 ]))
+           in
+           let* _ = Diagnostics.Fence.await retire_fence in
+           (* Let any surviving gate waiter complete (none should exist:
+              the in-flight generation was interrupted). *)
+           let* _ = Promise.resolve gate (Exit.Ok ()) in
+           (* Re-provide: the consumer reactivates against the fresh
+              episode. *)
+           let* fence2 =
+             any_error
+               (Context.reconcile context
+                  (tree_of [ entry "db" provider 9; entry "svc" consumer 0 ]))
+           in
+           let* _ = Diagnostics.Fence.await fence2 in
+           Effect.unit))
+  in
+  let () = expect_ok outcome in
+  let all_events = shared_events provider_tracked in
+  (* The consumer's interrupted activation released its registered
+     resource before the provider's own release ran. *)
+  let consumer_release_idx =
+    List.find_index (fun event -> event = "release:consumer") all_events
+  in
+  let provider_release_idx =
+    List.find_index (fun event -> event = "release:provider") all_events
+  in
+  (match consumer_release_idx, provider_release_idx with
+  | Some consumer_idx, Some provider_idx ->
+      Alcotest.(check bool) "consumer release before provider release" true
+        (consumer_idx < provider_idx)
+  | _ ->
+      Alcotest.failf "expected both releases; got %s"
+        (String.concat ";" all_events));
+  (* The shared log was reset after the first generation parked, so it
+     contains: the interrupted generation's release, the provider's release,
+     and the reactivated generation's acquire (plus the shutdown releases at
+     context exit). The reactivated generation acquired exactly once. *)
+  Alcotest.(check int) "reactivated generation acquired once" 1
+    (List.length
+       (List.filter (fun event -> event = "acquire:consumer") all_events));
+  check_census outcome
+
+(* fiber.spec "update config while injected service reloads": one
+   reconcile that changes the provider value and the consumer config
+   restarts the consumer exactly once, observing both new values. *)
+let test_component_combined_provider_consumer_update () =
+  let key = coeffect_exn "combined" in
+  let provider_tracked, consumer_tracked = tracked_pair "provider" "consumer" in
+  let provider = provider_component provider_tracked key (fun config -> config) in
+  let consumer_family =
+    Component.Family.create ~name:"consumer" ~module_locator:"consumer" ()
+  in
+  let consumer =
+    match
+      Component.make ~family:consumer_family ~config_equal:Int.equal
+        ~requirements:(Requirement.one key) ~provisions:Provision.none
+        ~pp_error:(fun ppf error -> Format.pp_print_string ppf error)
+        ~activate:(fun config requirement activation ->
+          Effect.sync (fun () ->
+              track consumer_tracked
+                (Printf.sprintf "activate:%d:%d" requirement config))
+          >>= fun () ->
+          Activation.own activation
+            ~acquire:
+              (Effect.sync (fun () -> track consumer_tracked "acquire:consumer"))
+            ~release:(fun () ->
+              Effect.sync (fun () -> track consumer_tracked "release:consumer"))
+            ~pp_release_error:(fun ppf _ -> Format.pp_print_string ppf "e"))
+    with
+    | Ok component -> component
+    | Error _ -> Alcotest.fail "make consumer failed"
+  in
+  let outcome =
+    run_program
+      (Context.run (fun context _diagnostics ->
+           let* fence =
+             any_error
+               (Context.reconcile context
+                  (tree_of [ entry "db" provider 1; entry "svc" consumer 0 ]))
+           in
+           let* _ = Diagnostics.Fence.await fence in
+           (* One atomic snapshot changes both the provider value and the
+              consumer configuration. *)
+           let* fence2 =
+             any_error
+               (Context.reconcile context
+                  (tree_of [ entry "db" provider 2; entry "svc" consumer 1 ]))
+           in
+           let* _ = Diagnostics.Fence.await fence2 in
+           Effect.unit))
+  in
+  let () = expect_ok outcome in
+  let consumer_activations =
+    List.filter
+      (fun event -> String.starts_with ~prefix:"activate:" event)
+      (events consumer_tracked)
+  in
+  Alcotest.(check (list string))
+    "consumer restarted once with both new values"
+    [ "activate:1:0"; "activate:2:1" ]
+    consumer_activations;
+  check_census outcome
+
+(* service.spec "pending inject": a consumer whose provider activation is
+   still in flight waits; it activates only after the provider commits. *)
+let test_component_consumer_waits_for_gated_provider () =
+  let key = coeffect_exn "gated" in
+  let provider_tracked, consumer_tracked = tracked_pair "provider" "consumer" in
+  let outcome =
+    run_program
+      (Context.run (fun context diagnostics ->
+           let gate = Promise.create () in
+           let provider_family =
+             Component.Family.create ~name:"provider" ~module_locator:"provider"
+               ()
+           in
+           let provider =
+             match
+               Component.make ~family:provider_family ~config_equal:Int.equal
+                 ~requirements:Requirement.none
+                 ~provisions:(Provision.one key)
+                 ~pp_error:(fun ppf error -> Format.pp_print_string ppf error)
+                 ~activate:(fun config () activation ->
+                   Effect.sync (fun () -> track provider_tracked "activate")
+                   >>= fun () ->
+                   Effect.map (fun _ -> ()) (Promise.await gate)
+                   >>= fun () ->
+                   Activation.own activation
+                     ~acquire:
+                       (Effect.sync (fun () ->
+                            track provider_tracked "acquire:provider"))
+                     ~release:(fun () ->
+                       Effect.sync (fun () ->
+                           track provider_tracked "release:provider"))
+                     ~pp_release_error:(fun ppf _ ->
+                       Format.pp_print_string ppf "e")
+                   >>= fun () -> Effect.pure config)
+             with
+             | Ok component -> component
+             | Error _ -> Alcotest.fail "make provider failed"
+           in
+           let consumer = consumer_component consumer_tracked key in
+           let* fence =
+             any_error
+               (Context.reconcile context
+                  (tree_of [ entry "db" provider 42; entry "svc" consumer 0 ]))
+           in
+           (* Let the coordinator process the plan while the provider is
+              gated; the consumer must be waiting. Poll snapshots until the
+              coordinator has placed the consumer. *)
+           let rec poll_waiting () =
+             let* snapshot = Diagnostics.snapshot diagnostics in
+             let phase =
+               match
+                 List.find_opt
+                   (fun (id, _) -> Entry_id.equal id (entry_id_exn "svc"))
+                   (snapshot_phases snapshot)
+               with
+               | Some (_, phase) -> phase
+               | None -> "absent"
+             in
+             if phase = "waiting" then Effect.pure phase
+             else Effect.yield >>= poll_waiting
+           in
+           let* waiting_phase = any_error (poll_waiting ()) in
+           (* Open the provider gate: the consumer may now activate. *)
+           let* _ = Promise.resolve gate (Exit.Ok ()) in
+           let* _ = Diagnostics.Fence.await fence in
+           let* after = Diagnostics.snapshot diagnostics in
+           Effect.sync (fun () -> (waiting_phase, after))))
+  in
+  let waiting_phase, after = expect_ok outcome in
+  Alcotest.(check string) "consumer waiting while provider gated" "waiting"
+    waiting_phase;
+  Alcotest.(check string) "consumer active after gate" "active"
+    (find_phase after "svc");
+  Alcotest.(check bool) "consumer saw provision" true
+    (List.exists (fun event -> event = "activate:42") (events consumer_tracked));
+  check_census outcome
+
+(* service.spec "multiple injects": activation order follows the
+   requirement topology — qux before foo before bar. *)
+let test_component_topological_activation_chain () =
+  let key_a = coeffect_exn "chain-a" in
+  let key_b = coeffect_exn "chain-b" in
+  let log = ref [] in
+  let record event = log := !log @ [ event ] in
+  let pp ppf error = Format.pp_print_string ppf error in
+  let mk name requirements provisions activate =
+    match
+      Component.make
+        ~family:(Component.Family.create ~name ~module_locator:name ())
+        ~config_equal:Int.equal ~requirements ~provisions ~pp_error:pp
+        ~activate
+    with
+    | Ok component -> component
+    | Error _ -> Alcotest.failf "make %s failed" name
+  in
+  (* qux provides key_a; foo requires key_a and provides key_b; bar
+     requires key_b. *)
+  let qux =
+    mk "qux" Requirement.none (Provision.one key_a)
+      (fun config () activation ->
+        Effect.sync (fun () -> record "activate:qux")
+        >>= fun () ->
+        Activation.own activation
+          ~acquire:Effect.unit
+          ~release:(fun () -> Effect.unit)
+          ~pp_release_error:pp
+        >>= fun () -> Effect.pure config)
+  in
+  let foo =
+    mk "foo" (Requirement.one key_a) (Provision.one key_b)
+      (fun config _requirement activation ->
+        Effect.sync (fun () -> record "activate:foo")
+        >>= fun () ->
+        Activation.own activation
+          ~acquire:Effect.unit
+          ~release:(fun () -> Effect.unit)
+          ~pp_release_error:pp
+        >>= fun () -> Effect.pure config)
+  in
+  let bar =
+    mk "bar" (Requirement.one key_b) Provision.none
+      (fun _config _requirement activation ->
+        Effect.sync (fun () -> record "activate:bar")
+        >>= fun () ->
+        Activation.own activation
+          ~acquire:Effect.unit
+          ~release:(fun () -> Effect.unit)
+          ~pp_release_error:pp)
+  in
+  let outcome =
+    run_program
+      (Context.run (fun context _diagnostics ->
+           let* fence =
+             any_error
+               (Context.reconcile context
+                  (tree_of
+                     [ entry "bar" bar 0; entry "foo" foo 1; entry "qux" qux 2 ]))
+           in
+           let* _ = Diagnostics.Fence.await fence in
+           Effect.unit))
+  in
+  let () = expect_ok outcome in
+  Alcotest.(check (list string)) "topological activation order"
+    [ "activate:qux"; "activate:foo"; "activate:bar" ]
+    !log;
+  check_census outcome
+
+(* ------------------------------------------------------------------ *)
+(* Ported from .reference/cordis/packages/loader/tests/group.spec.ts   *)
+(* and index.spec.ts. Cordis groups are loader entries; ours are       *)
+(* Desired_state.group nodes. The observable semantics port directly:  *)
+(* enablement cascades down the tree and transfers between groups      *)
+(* retain the instance when the effective enabled state is unchanged.  *)
+(* ------------------------------------------------------------------ *)
+
+let group_node id enabled children =
+  Desired_state.group ~id:(entry_id_exn id) ~enabled
+    ~context:Desired_state.Context_spec.empty children
+
+(* group.spec "Group: basic support": nested groups cascade enablement.
+   Disabling the inner group settles only its children; disabling the
+   outer group settles everything; enabling the inner group while the
+   outer is disabled activates nothing; enabling the outer activates
+   both. *)
+let test_component_group_disable_cascade () =
+  let outer_tracked, inner_tracked = tracked_pair "outer" "inner" in
+  let outer_component = tracked_component outer_tracked in
+  let inner_component = tracked_component inner_tracked in
+  let tree outer_enabled inner_enabled =
+    Desired_state.tree
+      [ group_node "outer" outer_enabled
+          [ Desired_state.component (entry "a" outer_component 1);
+            group_node "inner" inner_enabled
+              [ Desired_state.component (entry "b" inner_component 1) ] ] ]
+  in
+  let outcome =
+    run_program
+      (Context.run (fun context _diagnostics ->
+           let* fence = any_error (Context.reconcile context (tree true true)) in
+           let* _ = Diagnostics.Fence.await fence in
+           (* Disable the inner group: only the inner child settles. *)
+           let* fence2 = any_error (Context.reconcile context (tree true false)) in
+           let* _ = Diagnostics.Fence.await fence2 in
+           let* () =
+             Effect.sync (fun () ->
+                 Alcotest.(check int) "inner released" 1
+                   (List.length
+                      (List.filter
+                         (fun event -> event = "release:inner")
+                         (events inner_tracked)));
+                 Alcotest.(check int) "outer untouched" 0
+                   (List.length
+                      (List.filter
+                         (fun event -> event = "release:outer")
+                         (events outer_tracked))))
+           in
+           (* Disable the outer group: the outer child settles too. *)
+           let* fence3 =
+             any_error (Context.reconcile context (tree false false))
+           in
+           let* _ = Diagnostics.Fence.await fence3 in
+           let* () =
+             Effect.sync (fun () ->
+                 Alcotest.(check int) "outer released" 1
+                   (List.length
+                      (List.filter
+                         (fun event -> event = "release:outer")
+                         (events outer_tracked))))
+           in
+           (* Enable the inner group while the outer is disabled: nothing
+              activates. *)
+           let* fence4 = any_error (Context.reconcile context (tree false true)) in
+           let* _ = Diagnostics.Fence.await fence4 in
+           let* () =
+             Effect.sync (fun () ->
+                 Alcotest.(check int) "inner not reactivated" 1
+                   inner_tracked.t_activations)
+           in
+           (* Enable the outer group: both activate. *)
+           let* fence5 = any_error (Context.reconcile context (tree true true)) in
+           let* _ = Diagnostics.Fence.await fence5 in
+           Effect.unit))
+  in
+  let () = expect_ok outcome in
+  Alcotest.(check int) "outer activated twice" 2 outer_tracked.t_activations;
+  Alcotest.(check int) "inner activated twice" 2 inner_tracked.t_activations;
+  check_census outcome
+
+(* group.spec "Group: transfer": moving an entry between groups retains
+   the instance while the effective enabled state is unchanged, settles
+   it on a move into a disabled group, and reactivates it on a move back
+   to an enabled position. *)
+let test_component_group_transfer_matrix () =
+  let tracked = tracked "transfer" in
+  let component = tracked_component tracked in
+  let instance_id_of snapshot =
+    match
+      List.find_opt
+        (fun instance ->
+          Entry_id.equal (Diagnostics.entry_id instance) (entry_id_exn "x"))
+        (Diagnostics.instances snapshot)
+    with
+    | Some instance -> Diagnostics.instance_id instance
+    | None -> Alcotest.fail "instance x missing"
+  in
+  let outcome =
+    run_program
+      (Context.run (fun context diagnostics ->
+           let node_x = Desired_state.component (entry "x" component 1) in
+           (* Start at the root, enabled. *)
+           let* fence =
+             any_error (Context.reconcile context (Desired_state.tree [ node_x ]))
+           in
+           let* _ = Diagnostics.Fence.await fence in
+           let* snapshot1 = Diagnostics.snapshot diagnostics in
+           let id_root = instance_id_of snapshot1 in
+           (* Move into an enabled group: the instance is retained. *)
+           let* fence2 =
+             any_error
+               (Context.reconcile context
+                  (Desired_state.tree [ group_node "alpha" true [ node_x ] ]))
+           in
+           let* _ = Diagnostics.Fence.await fence2 in
+           let* snapshot2 = Diagnostics.snapshot diagnostics in
+           let id_alpha = instance_id_of snapshot2 in
+           let releases_after_alpha =
+             List.length
+               (List.filter
+                  (fun event -> event = "release:transfer")
+                  (events tracked))
+           in
+           (* Move into a disabled group: the instance settles. *)
+           let* fence3 =
+             any_error
+               (Context.reconcile context
+                  (Desired_state.tree [ group_node "beta" false [ node_x ] ]))
+           in
+           let* _ = Diagnostics.Fence.await fence3 in
+           let releases_after_beta =
+             List.length
+               (List.filter
+                  (fun event -> event = "release:transfer")
+                  (events tracked))
+           in
+           (* Move between two disabled groups: nothing happens. *)
+           let* fence4 =
+             any_error
+               (Context.reconcile context
+                  (Desired_state.tree
+                     [ group_node "beta" false
+                         [ group_node "gamma" true [ node_x ] ] ]))
+           in
+           let* _ = Diagnostics.Fence.await fence4 in
+           let activations_after_gamma = tracked.t_activations in
+           (* Move back to the root: the entry reactivates. *)
+           let* fence5 =
+             any_error (Context.reconcile context (Desired_state.tree [ node_x ]))
+           in
+           let* _ = Diagnostics.Fence.await fence5 in
+           let* snapshot5 = Diagnostics.snapshot diagnostics in
+           let id_root2 = instance_id_of snapshot5 in
+           Effect.sync (fun () ->
+               ( id_root,
+                 id_alpha,
+                 releases_after_alpha,
+                 releases_after_beta,
+                 activations_after_gamma,
+                 id_root2 ))))
+  in
+  let ( id_root,
+        id_alpha,
+        releases_after_alpha,
+        releases_after_beta,
+        activations_after_gamma,
+        id_root2 ) =
+    expect_ok outcome
+  in
+  Alcotest.(check bool) "enabled->enabled retains instance" true
+    (Diagnostics.Instance_id.equal id_root id_alpha);
+  Alcotest.(check int) "enabled->enabled runs no release" 0 releases_after_alpha;
+  Alcotest.(check int) "enabled->disabled releases" 1 releases_after_beta;
+  Alcotest.(check int) "disabled->disabled does not reactivate" 1
+    activations_after_gamma;
+  Alcotest.(check bool) "disabled->enabled reactivates" true
+    (tracked.t_activations = 2);
+  Alcotest.(check bool) "same instance across settle/reactivate" true
+    (Diagnostics.Instance_id.equal id_root id_root2);
+  check_census outcome
+
+(* index.spec "loader initiate": a disabled entry never activates, even
+   when its enabled sibling does. *)
+let test_component_disabled_entry_never_activates () =
+  let enabled_tracked, disabled_tracked = tracked_pair "enabled" "disabled" in
+  let enabled_component = tracked_component enabled_tracked in
+  let disabled_component = tracked_component disabled_tracked in
+  let outcome =
+    run_program
+      (Context.run (fun context diagnostics ->
+           let disabled_entry =
+             Desired_state.Entry.make ~id:(entry_id_exn "off")
+               ~component:disabled_component ~config:1 ~enabled:false
+               ~context:Desired_state.Context_spec.empty
+           in
+           let* fence =
+             any_error
+               (Context.reconcile context
+                  (Desired_state.tree
+                     [ Desired_state.component (entry "on" enabled_component 1);
+                       Desired_state.component disabled_entry ]))
+           in
+           let* _ = Diagnostics.Fence.await fence in
+           Diagnostics.snapshot diagnostics))
+  in
+  let snapshot = expect_ok outcome in
+  Alcotest.(check int) "disabled entry never activated" 0
+    disabled_tracked.t_activations;
+  Alcotest.(check string) "enabled sibling active" "active"
+    (find_phase snapshot "on");
+  check_census outcome
+
+(* ------------------------------------------------------------------ *)
+(* Ported from .reference/cordis/packages/core/tests/isolate.spec.ts   *)
+(* and packages/loader/tests/isolate.spec.ts. Cordis realms are named  *)
+(* or anonymous labels on isolate maps; ours are generative            *)
+(* Desired_state.Realm.t values bound through Context_spec.isolate.    *)
+(* Sharing a Realm.t value between two groups is the port of cordis's  *)
+(* shared label.                                                       *)
+(* ------------------------------------------------------------------ *)
+
+(* core isolate.spec "shared label": two groups isolating one key to the
+   SAME realm share the provider episode published inside that realm. *)
+let test_component_shared_realm_across_groups () =
+  let key = coeffect_exn "shared-realm" in
+  let realm = Desired_state.Realm.create ~name:"shared" () in
+  let provider_tracked, consumer_tracked = tracked_pair "provider" "consumer" in
+  let provider = provider_component provider_tracked key (fun config -> config) in
+  let consumer = consumer_component consumer_tracked key in
+  let spec =
+    Desired_state.Context_spec.isolate key realm
+      Desired_state.Context_spec.empty
+  in
+  let outcome =
+    run_program
+      (Context.run (fun context diagnostics ->
+           let provider_node =
+             Desired_state.component
+               (Desired_state.Entry.make ~id:(entry_id_exn "p")
+                  ~component:provider ~config:7 ~enabled:true ~context:spec)
+           in
+           let consumer_node =
+             Desired_state.component
+               (Desired_state.Entry.make ~id:(entry_id_exn "c")
+                  ~component:consumer ~config:0 ~enabled:true ~context:spec)
+           in
+           let* fence =
+             any_error
+               (Context.reconcile context
+                  (Desired_state.tree
+                     [ group_node "ga" true [ provider_node ];
+                       group_node "gb" true [ consumer_node ] ]))
+           in
+           let* _ = Diagnostics.Fence.await fence in
+           let* snapshot = Diagnostics.snapshot diagnostics in
+           (* Withdraw the provider: the consumer across the group
+              boundary settles. *)
+           let* fence2 =
+             any_error
+               (Context.reconcile context
+                  (Desired_state.tree
+                     [ group_node "gb" true [ consumer_node ] ]))
+           in
+           let* _ = Diagnostics.Fence.await fence2 in
+           let* after = Diagnostics.snapshot diagnostics in
+           Effect.sync (fun () -> (snapshot, after))))
+  in
+  let snapshot, after = expect_ok outcome in
+  Alcotest.(check string) "provider active" "active" (find_phase snapshot "p");
+  Alcotest.(check string) "consumer active" "active" (find_phase snapshot "c");
+  Alcotest.(check bool) "consumer saw shared-realm value" true
+    (List.exists (fun event -> event = "activate:7") (events consumer_tracked));
+  Alcotest.(check string) "consumer settles after provider withdrawal"
+    "waiting" (find_phase after "c");
+  check_census outcome
+
+(* loader isolate.spec "Service Isolation: basic": changing the isolate
+   spec on the INJECTOR for a relevant key restarts it (release + it
+   waits for a provider in the fresh realm); an irrelevant isolate change
+   restarts nothing; removing the isolate reactivates against the root
+   provider. *)
+let test_component_isolate_reassignment_matrix () =
+  let key = coeffect_exn "reassign" in
+  let other_key = coeffect_exn "irrelevant" in
+  let provider_tracked, consumer_tracked = tracked_pair "provider" "consumer" in
+  let provider = provider_component provider_tracked key (fun config -> config) in
+  let consumer = consumer_component consumer_tracked key in
+  let consumer_entry_with context =
+    Desired_state.Entry.make ~id:(entry_id_exn "c") ~component:consumer
+      ~config:0 ~enabled:true ~context
+  in
+  let provider_node =
+    Desired_state.component (entry "p" provider 5)
+  in
+  let tree_with context =
+    Desired_state.tree
+      [ provider_node; Desired_state.component (consumer_entry_with context) ]
+  in
+  let empty = Desired_state.Context_spec.empty in
+  let realm = Desired_state.Realm.create ~name:"fresh" () in
+  let outcome =
+    run_program
+      (Context.run (fun context diagnostics ->
+           let* fence =
+             any_error (Context.reconcile context (tree_with empty))
+           in
+           let* _ = Diagnostics.Fence.await fence in
+           (* Add a relevant isolate: the consumer settles (release runs)
+              and waits — the fresh realm has no provider. *)
+           let* fence2 =
+             any_error
+               (Context.reconcile context
+                  (tree_with
+                     (Desired_state.Context_spec.isolate key realm empty)))
+           in
+           let* _ = Diagnostics.Fence.await fence2 in
+           let* waiting_snapshot = Diagnostics.snapshot diagnostics in
+           let releases_after_isolate =
+             List.length
+               (List.filter
+                  (fun event -> event = "release:consumer")
+                  (events consumer_tracked))
+           in
+           (* Add an irrelevant isolate alongside: nothing changes. *)
+           let* fence3 =
+             any_error
+               (Context.reconcile context
+                  (tree_with
+                     (Desired_state.Context_spec.isolate other_key
+                        (Desired_state.Realm.create ~name:"other" ())
+                        (Desired_state.Context_spec.isolate key realm empty))))
+           in
+           let* _ = Diagnostics.Fence.await fence3 in
+           let activations_after_irrelevant = consumer_tracked.t_activations in
+           let releases_after_irrelevant =
+             List.length
+               (List.filter
+                  (fun event -> event = "release:consumer")
+                  (events consumer_tracked))
+           in
+           (* Remove the relevant isolate: the consumer reactivates against
+              the root provider. *)
+           let* fence4 =
+             any_error
+               (Context.reconcile context
+                  (tree_with
+                     (Desired_state.Context_spec.isolate other_key
+                        (Desired_state.Realm.create ~name:"other2" ())
+                        empty)))
+           in
+           let* _ = Diagnostics.Fence.await fence4 in
+           let* reactivated = Diagnostics.snapshot diagnostics in
+           (* Remove the irrelevant isolate: nothing changes. *)
+           let* fence5 =
+             any_error (Context.reconcile context (tree_with empty))
+           in
+           let* _ = Diagnostics.Fence.await fence5 in
+           let activations_final = consumer_tracked.t_activations in
+           Effect.sync (fun () ->
+               ( waiting_snapshot,
+                 releases_after_isolate,
+                 activations_after_irrelevant,
+                 releases_after_irrelevant,
+                 reactivated,
+                 activations_final ))))
+  in
+  let ( waiting_snapshot,
+        releases_after_isolate,
+        activations_after_irrelevant,
+        releases_after_irrelevant,
+        reactivated,
+        activations_final ) =
+    expect_ok outcome
+  in
+  Alcotest.(check int) "relevant isolate released the consumer" 1
+    releases_after_isolate;
+  Alcotest.(check string) "consumer waits in the fresh realm" "waiting"
+    (find_phase waiting_snapshot "c");
+  Alcotest.(check int) "irrelevant isolate reactivates nothing" 1
+    activations_after_irrelevant;
+  Alcotest.(check int) "irrelevant isolate releases nothing" 1
+    releases_after_irrelevant;
+  Alcotest.(check string) "consumer reactivated at root" "active"
+    (find_phase reactivated "c");
+  Alcotest.(check int) "removing irrelevant isolate reactivates nothing" 2
+    activations_final;
+  check_census outcome
+
+(* loader isolate.spec "Service Isolation: realm": named realms route
+   resolutions. A consumer inside a group isolating the key to realm A
+   sees the provider published in realm A; a consumer isolating the key
+   to a fresh realm with no provider waits. *)
+let test_component_named_realm_routing () =
+  let key = coeffect_exn "routing" in
+  let realm_a = Desired_state.Realm.create ~name:"alpha" () in
+  let realm_b = Desired_state.Realm.create ~name:"beta" () in
+  let provider_tracked = tracked "provider" in
+  let consumer_a_tracked = tracked "consumer-a" in
+  let consumer_b_tracked = tracked "consumer-b" in
+  let consumer_fresh_tracked = tracked "consumer-fresh" in
+  let provider = provider_component provider_tracked key (fun config -> config) in
+  let consumer_a = consumer_component consumer_a_tracked key in
+  let consumer_b = consumer_component consumer_b_tracked key in
+  let consumer_fresh = consumer_component consumer_fresh_tracked key in
+  let spec_a = Desired_state.Context_spec.isolate key realm_a Desired_state.Context_spec.empty in
+  let spec_b = Desired_state.Context_spec.isolate key realm_b Desired_state.Context_spec.empty in
+  let spec_fresh =
+    Desired_state.Context_spec.isolate key
+      (Desired_state.Realm.create ~name:"anon" ())
+      Desired_state.Context_spec.empty
+  in
+  let node id component config spec =
+    Desired_state.component
+      (Desired_state.Entry.make ~id:(entry_id_exn id) ~component ~config
+         ~enabled:true ~context:spec)
+  in
+  let outcome =
+    run_program
+      (Context.run (fun context diagnostics ->
+           (* Providers publish into realm A and realm B; consumers in each
+              realm resolve their own provider; the fresh-realm consumer
+              waits. *)
+           let* fence =
+             any_error
+               (Context.reconcile context
+                  (Desired_state.tree
+                     [ group_node "ga" true
+                         [ node "pa" provider 1 spec_a;
+                           node "ca" consumer_a 0 spec_a ];
+                       group_node "gb" true
+                         [ node "pb" provider 2 spec_b;
+                           node "cb" consumer_b 0 spec_b ];
+                       node "cf" consumer_fresh 0 spec_fresh ]))
+           in
+           let* _ = Diagnostics.Fence.await fence in
+           Diagnostics.snapshot diagnostics))
+  in
+  let snapshot = expect_ok outcome in
+  Alcotest.(check string) "realm A consumer active" "active"
+    (find_phase snapshot "ca");
+  Alcotest.(check string) "realm B consumer active" "active"
+    (find_phase snapshot "cb");
+  Alcotest.(check string) "fresh-realm consumer waiting" "waiting"
+    (find_phase snapshot "cf");
+  Alcotest.(check bool) "realm A consumer saw value 1" true
+    (List.exists (fun event -> event = "activate:1") (events consumer_a_tracked));
+  Alcotest.(check bool) "realm B consumer saw value 2" true
+    (List.exists (fun event -> event = "activate:2") (events consumer_b_tracked));
+  Alcotest.(check int) "fresh consumer never activated" 0
+    consumer_fresh_tracked.t_activations;
+  check_census outcome
+
+(* loader isolate.spec "special case: change provider": switching one
+   group's isolate from realm A to realm B reroutes its consumer to the
+   other provider episode. *)
+let test_component_group_isolate_switch_reroutes () =
+  let key = coeffect_exn "switch" in
+  let realm_a = Desired_state.Realm.create ~name:"ra" () in
+  let realm_b = Desired_state.Realm.create ~name:"rb" () in
+  let provider_tracked = tracked "provider" in
+  let consumer_tracked = tracked "consumer" in
+  let provider = provider_component provider_tracked key (fun config -> config) in
+  let consumer = consumer_component consumer_tracked key in
+  let spec_a = Desired_state.Context_spec.isolate key realm_a Desired_state.Context_spec.empty in
+  let spec_b = Desired_state.Context_spec.isolate key realm_b Desired_state.Context_spec.empty in
+  let node id component config spec =
+    Desired_state.component
+      (Desired_state.Entry.make ~id:(entry_id_exn id) ~component ~config
+         ~enabled:true ~context:spec)
+  in
+  let tree_with consumer_spec =
+    Desired_state.tree
+      [ node "pa" provider 10 spec_a;
+        node "pb" provider 20 spec_b;
+        group_node "g" true [ node "c" consumer 0 consumer_spec ] ]
+  in
+  let outcome =
+    run_program
+      (Context.run (fun context diagnostics ->
+           let* fence =
+             any_error (Context.reconcile context (tree_with spec_a))
+           in
+           let* _ = Diagnostics.Fence.await fence in
+           (* Switch the group's isolate from realm A to realm B. *)
+           let* fence2 =
+             any_error (Context.reconcile context (tree_with spec_b))
+           in
+           let* _ = Diagnostics.Fence.await fence2 in
+           Diagnostics.snapshot diagnostics))
+  in
+  let snapshot = expect_ok outcome in
+  Alcotest.(check string) "consumer active after switch" "active"
+    (find_phase snapshot "c");
+  Alcotest.(check bool) "consumer saw realm A value first" true
+    (List.exists (fun event -> event = "activate:10") (events consumer_tracked));
+  Alcotest.(check bool) "consumer rerouted to realm B value" true
+    (List.exists (fun event -> event = "activate:20") (events consumer_tracked));
+  Alcotest.(check int) "consumer restarted exactly once" 2
+    consumer_tracked.t_activations;
+  check_census outcome
+
+(* ------------------------------------------------------------------ *)
+(* Ported from .reference/cordis/packages/hmr/tests/index.spec.ts.     *)
+(* Cordis HMR watches files and reloads changed modules through the    *)
+(* loader; ours is the explicit Replacement batch API. The ported      *)
+(* gates assert the runtime observables: dependency-chain restarts,    *)
+(* untouched siblings, and recovery after a rolled-back candidate.     *)
+(* ------------------------------------------------------------------ *)
+
+(* Build and submit a one-candidate replacement batch for [entry_id]
+   against its current instance and target revision. *)
+let replace_one context diagnostics ~entry_id ~candidate_component ~config
+    ~source_revision =
+  let* snapshot = Diagnostics.snapshot diagnostics in
+  let instance_id, target_revision =
+    match
+      List.find_opt
+        (fun instance ->
+          Entry_id.equal (Diagnostics.entry_id instance)
+            (entry_id_exn entry_id))
+        (Diagnostics.instances snapshot)
+    with
+    | Some instance ->
+        ( Diagnostics.instance_id instance,
+          Diagnostics.target_revision instance )
+    | None -> Alcotest.failf "instance %s missing" entry_id
+  in
+  let target_revision =
+    match target_revision with
+    | Some revision -> revision
+    | None -> Alcotest.fail "target revision missing"
+  in
+  let target =
+    Replacement.target
+      ~entry:(entry entry_id candidate_component config)
+      ~expected_instance:instance_id ~expected_target:target_revision
+  in
+  let* candidate =
+    match Replacement.candidate ~target ~component:candidate_component with
+    | Ok candidate -> Effect.pure candidate
+    | Error _ -> Alcotest.fail "candidate construction failed"
+  in
+  let* batch =
+    match Replacement.batch ~source_revision [ candidate ] with
+    | Ok batch -> Effect.pure batch
+    | Error _ -> Alcotest.fail "batch construction failed"
+  in
+  any_error (Context.replace context batch)
+
+(* hmr "dependency chain": replacing the provider declaration restarts
+   its consumer against the new episode. *)
+let test_component_replace_provider_restarts_consumer () =
+  let key = coeffect_exn "dep-chain" in
+  let provider_tracked, consumer_tracked = tracked_pair "provider" "consumer" in
+  let provider_v1 = provider_component provider_tracked key (fun config -> config) in
+  let consumer = consumer_component consumer_tracked key in
+  let outcome =
+    run_program
+      (Context.run (fun context diagnostics ->
+           let* fence =
+             any_error
+               (Context.reconcile context
+                  (tree_of [ entry "db" provider_v1 1; entry "svc" consumer 0 ]))
+           in
+           let* _ = Diagnostics.Fence.await fence in
+           (* The replacement declaration shares the family but is a fresh
+              declaration providing a new value. *)
+           let provider_v2_tracked = tracked "provider-v2" in
+           let provider_v2 =
+             match
+               Component.make ~family:(Component.family provider_v1)
+                 ~config_equal:Int.equal ~requirements:Requirement.none
+                 ~provisions:(Provision.one key)
+                 ~pp_error:(fun ppf error -> Format.pp_print_string ppf error)
+                 ~activate:(fun config () activation ->
+                   Effect.sync (fun () ->
+                       track provider_v2_tracked "activate:v2")
+                   >>= fun () ->
+                   Activation.own activation
+                     ~acquire:Effect.unit
+                     ~release:(fun () -> Effect.unit)
+                     ~pp_release_error:(fun ppf _ ->
+                       Format.pp_print_string ppf "e")
+                   >>= fun () -> Effect.pure config)
+             with
+             | Ok component -> component
+             | Error _ -> Alcotest.fail "make provider v2 failed"
+           in
+           let* replace_fence =
+             replace_one context diagnostics ~entry_id:"db"
+               ~candidate_component:provider_v2 ~config:2
+               ~source_revision:(Source_revision.of_int64 1L)
+           in
+           let* report = Diagnostics.Fence.await replace_fence in
+           let* after = Diagnostics.snapshot diagnostics in
+           Effect.sync (fun () -> (report, after))))
+  in
+  let report, after = expect_ok outcome in
+  Alcotest.(check bool) "replacement quiescent" true
+    (Diagnostics.Fence.outcome report = Diagnostics.Fence.Quiescent);
+  Alcotest.(check string) "provider active after replace" "active"
+    (find_phase after "db");
+  (* The consumer restarted against the fresh episode and observed the new
+     provision value. *)
+  Alcotest.(check bool) "consumer restarted with new value" true
+    (List.exists (fun event -> event = "activate:2") (events consumer_tracked));
+  Alcotest.(check int) "consumer activated twice" 2 consumer_tracked.t_activations;
+  check_census outcome
+
+(* hmr "multiple plugins": replacing one entry leaves its independent
+   sibling untouched. *)
+let test_component_replace_leaves_sibling_untouched () =
+  let a_tracked, b_tracked = tracked_pair "a" "b" in
+  let component_a = tracked_component a_tracked in
+  let component_b = tracked_component b_tracked in
+  let outcome =
+    run_program
+      (Context.run (fun context diagnostics ->
+           let* fence =
+             any_error
+               (Context.reconcile context
+                  (tree_of [ entry "a" component_a 1; entry "b" component_b 1 ]))
+           in
+           let* _ = Diagnostics.Fence.await fence in
+           (* A fresh declaration on the same family for entry "a". *)
+           let component_a2 =
+             match
+               Component.make ~family:(Component.family component_a)
+                 ~config_equal:Int.equal ~requirements:Requirement.none
+                 ~provisions:Provision.none
+                 ~pp_error:(fun ppf error -> Format.pp_print_string ppf error)
+                 ~activate:(fun _config () activation ->
+                   Effect.sync (fun () -> track a_tracked "activate:v2")
+                   >>= fun () ->
+                   Activation.own activation
+                     ~acquire:Effect.unit
+                     ~release:(fun () ->
+                       Effect.sync (fun () -> track a_tracked "release:v2"))
+                     ~pp_release_error:(fun ppf _ ->
+                       Format.pp_print_string ppf "e"))
+             with
+             | Ok component -> component
+             | Error _ -> Alcotest.fail "make a2 failed"
+           in
+           let* replace_fence =
+             replace_one context diagnostics ~entry_id:"a"
+               ~candidate_component:component_a2 ~config:2
+               ~source_revision:(Source_revision.of_int64 1L)
+           in
+           let* _ = Diagnostics.Fence.await replace_fence in
+           (* Observe the sibling before the context-exit shutdown releases
+              everything. *)
+           let* b_releases_after_replace =
+             Effect.sync (fun () ->
+                 List.length
+                   (List.filter
+                      (fun event -> event = "release:b")
+                      (events b_tracked)))
+           in
+           let* b_activations_after_replace =
+             Effect.sync (fun () -> b_tracked.t_activations)
+           in
+           Effect.sync (fun () ->
+               (b_activations_after_replace, b_releases_after_replace))))
+  in
+  let b_activations, b_releases = expect_ok outcome in
+  Alcotest.(check int) "sibling never reactivated" 1 b_activations;
+  Alcotest.(check int) "sibling never released" 0 b_releases;
+  Alcotest.(check bool) "replaced entry reactivated" true
+    (List.exists (fun event -> event = "activate:v2") (events a_tracked));
+  check_census outcome
+
+(* hmr "import error rollback" + "recover after fixing the error": a
+   failing candidate rolls back to the saved declaration; a later
+   well-formed candidate then succeeds. *)
+let test_component_recovery_replace_after_rollback () =
+  let good = tracked "good" in
+  let fixed = tracked "fixed" in
+  let good_component = tracked_component good in
+  let outcome =
+    run_program
+      (Context.run (fun context diagnostics ->
+           let* fence =
+             any_error
+               (Context.reconcile context
+                  (tree_of [ entry "a" good_component 1 ]))
+           in
+           let* _ = Diagnostics.Fence.await fence in
+           (* First candidate fails its activation: the batch rolls back. *)
+           let failing_tracked = tracked "failing" in
+           let failing_component =
+             match
+               Component.make ~family:(Component.family good_component)
+                 ~config_equal:Int.equal ~requirements:Requirement.none
+                 ~provisions:Provision.none
+                 ~pp_error:(fun ppf error -> Format.pp_print_string ppf error)
+                 ~activate:(fun _config () _activation ->
+                   Effect.sync (fun () -> track failing_tracked "activate:bad")
+                   >>= fun () -> Effect.fail "candidate boom")
+             with
+             | Ok component -> component
+             | Error _ -> Alcotest.fail "make failing failed"
+           in
+           let* bad_fence =
+             replace_one context diagnostics ~entry_id:"a"
+               ~candidate_component:failing_component ~config:2
+               ~source_revision:(Source_revision.of_int64 1L)
+           in
+           let* bad_report = Diagnostics.Fence.await bad_fence in
+           let rolled_back =
+             Diagnostics.Fence.outcome bad_report
+             = Diagnostics.Fence.Rolled_back
+           in
+           (* The fixed candidate on the same family succeeds. *)
+           let fixed_component =
+             match
+               Component.make ~family:(Component.family good_component)
+                 ~config_equal:Int.equal ~requirements:Requirement.none
+                 ~provisions:Provision.none
+                 ~pp_error:(fun ppf error -> Format.pp_print_string ppf error)
+                 ~activate:(fun _config () activation ->
+                   Effect.sync (fun () -> track fixed "activate:fixed")
+                   >>= fun () ->
+                   Activation.own activation
+                     ~acquire:Effect.unit
+                     ~release:(fun () -> Effect.unit)
+                     ~pp_release_error:(fun ppf _ ->
+                       Format.pp_print_string ppf "e"))
+             with
+             | Ok component -> component
+             | Error _ -> Alcotest.fail "make fixed failed"
+           in
+           let* good_fence =
+             replace_one context diagnostics ~entry_id:"a"
+               ~candidate_component:fixed_component ~config:3
+               ~source_revision:(Source_revision.of_int64 2L)
+           in
+           let* good_report = Diagnostics.Fence.await good_fence in
+           let* after = Diagnostics.snapshot diagnostics in
+           Effect.sync (fun () -> (rolled_back, good_report, after))))
+  in
+  let rolled_back, good_report, after = expect_ok outcome in
+  Alcotest.(check bool) "failing candidate rolled back" true rolled_back;
+  Alcotest.(check bool) "recovery replace quiescent" true
+    (Diagnostics.Fence.outcome good_report = Diagnostics.Fence.Quiescent);
+  Alcotest.(check string) "entry active after recovery" "active"
+    (find_phase after "a");
+  Alcotest.(check bool) "fixed declaration activated" true
+    (List.exists (fun event -> event = "activate:fixed") (events fixed));
+  check_census outcome

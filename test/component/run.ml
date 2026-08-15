@@ -71,5 +71,37 @@ let () =
             test_component_post_shutdown_rejection;
           Alcotest.test_case "group kind authority retention" `Quick
             test_component_group_kind_authority_retention;
+          Alcotest.test_case "retire mid-activation interrupts" `Quick
+            test_component_retire_mid_activation_interrupts;
+          Alcotest.test_case "activation failure releases owned" `Quick
+            test_component_activation_failure_releases_owned;
+          Alcotest.test_case "provider withdrawal during activation" `Quick
+            test_component_provider_withdrawal_during_activation;
+          Alcotest.test_case "combined provider consumer update" `Quick
+            test_component_combined_provider_consumer_update;
+          Alcotest.test_case "consumer waits for gated provider" `Quick
+            test_component_consumer_waits_for_gated_provider;
+          Alcotest.test_case "topological activation chain" `Quick
+            test_component_topological_activation_chain;
+          Alcotest.test_case "group disable cascade" `Quick
+            test_component_group_disable_cascade;
+          Alcotest.test_case "group transfer matrix" `Quick
+            test_component_group_transfer_matrix;
+          Alcotest.test_case "disabled entry never activates" `Quick
+            test_component_disabled_entry_never_activates;
+          Alcotest.test_case "shared realm across groups" `Quick
+            test_component_shared_realm_across_groups;
+          Alcotest.test_case "isolate reassignment matrix" `Quick
+            test_component_isolate_reassignment_matrix;
+          Alcotest.test_case "named realm routing" `Quick
+            test_component_named_realm_routing;
+          Alcotest.test_case "group isolate switch reroutes" `Quick
+            test_component_group_isolate_switch_reroutes;
+          Alcotest.test_case "replace provider restarts consumer" `Quick
+            test_component_replace_provider_restarts_consumer;
+          Alcotest.test_case "replace leaves sibling untouched" `Quick
+            test_component_replace_leaves_sibling_untouched;
+          Alcotest.test_case "recovery replace after rollback" `Quick
+            test_component_recovery_replace_after_rollback;
         ] );
     ]
