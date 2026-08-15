@@ -97,6 +97,11 @@ gates, and all affected Eta packages and modules.
   — Changed complete-value batch push is the approved public interface. The
   snapshot-push and pull profiles are deleted with their laws, gates, and
   workloads in the selection change. The ownership seam is unchanged.
+- [Implementation plan](issues/15-implementation-plan.md)
+  — One baseline-recording task plus three gated changes: fallible `Codec`
+  migration, the atomic projection replacement with every surviving registry
+  row and gate, and the performance gates. Compile-time migrations and
+  deletions are named; no compatibility paths.
 
 ## Not yet specified
 
