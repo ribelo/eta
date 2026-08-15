@@ -102,11 +102,14 @@ gates, and all affected Eta packages and modules.
   migration, the atomic projection replacement with every surviving registry
   row and gate, and the performance gates. Compile-time migrations and
   deletions are named; no compatibility paths.
+- [Design package coherence audit](issues/16-design-package-coherence-audit.md)
+  — All source claims verified against current code. Nine record corrections
+  applied across tickets 10 to 15, including an exact gate schedule. The exact
+  read and delivery signatures graduate to a new ticket that blocks approval.
 
 ## Not yet specified
 
-- The final approval changes can only be specified after the package coherence
-  audit.
+<!-- see "Fog of war": in-scope fog you can't ticket yet; graduates as the frontier advances -->
 
 ## Out of scope
 

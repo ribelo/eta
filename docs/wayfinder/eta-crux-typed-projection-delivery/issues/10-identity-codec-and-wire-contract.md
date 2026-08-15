@@ -815,7 +815,7 @@ the active export or request boundary.
 ### Adapter atomicity
 
 The adapter decodes and validates the complete delivery before host mutation.
-It then installs the complete new projection state as one host-visible
+It then installs the complete new delivered projection snapshot as one host-visible
 transaction.
 
 If installation fails, the prior delivered state remains observable. Partial

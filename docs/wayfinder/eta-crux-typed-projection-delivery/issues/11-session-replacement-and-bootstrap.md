@@ -64,11 +64,15 @@ advancement batch follows it in order.
 The closed five-case family stays unchanged: `Starting`,
 `Replacement_pending`, `Awaiting_delivery`, `Terminating`, and `Closed`.
 
-A pending pull-profile notification is an unacknowledged delivery. Replacement
-during this interval returns `Awaiting_delivery`. This rule resolves the
-replacement race that [Identity, codec, and wire
-contract](10-identity-codec-and-wire-contract.md) delegated to this ticket.
-Session closure releases the frozen observation.
+Any unacknowledged delivery blocks replacement. Replacement during this
+interval returns `Awaiting_delivery`. This rule covers every profile. The
+current driver already maps both `Delivering` and `Replacement_delivering` to
+`Awaiting_delivery`. This rule resolves the replacement race that [Identity,
+codec, and wire contract](10-identity-codec-and-wire-contract.md) delegated to
+this ticket.
+
+A pending pull-profile notification is an unacknowledged delivery under this
+rule. Session closure releases the frozen observation.
 
 Replacement on an identity binding returns `Closed`.
 

@@ -49,8 +49,10 @@ remains the only transport writer.
 The selection change deletes the complete snapshot push profile and the
 notification followed by bounded pull profile. The deletion covers their wire
 frames, cursor and paging machinery, profile-specific PRW rows (PRW-21 and
-PRW-23 to PRW-29), the pull-only clauses of shared rows (PRB-07, PRB-18), the
-snapshot-push and pull clauses of PRF-06 with their byte workloads, and the
+PRW-23 to PRW-29), the pull-only clauses of shared rows (the frozen-observation clause of
+PRB-07, the paging clause and `test_projection_bootstrap_paged` gate of
+PRB-18, and the continuation clause of PRW-15), the snapshot-push and pull
+clauses of PRF-06 with their byte workloads, and the
 rejected-profile generated classes under W-02, W-03, W-06, and W-07. The
 protocol keeps exactly one profile. PRW-18 (no negotiation, no fallback, no
 dormant tags) becomes executable in the same change.

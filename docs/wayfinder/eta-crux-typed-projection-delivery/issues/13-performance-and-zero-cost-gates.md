@@ -75,6 +75,11 @@ the existing `eta_crux.` prefix.
 | `projection.bootstrap.{10000,100000}` | Session replacement with N active projections | `deliveries=1`, `bootstrap_entries=N` | — |
 | `projection.absent` | Empty catalog, no publish occurrence, advance and deliver | `commits=1`, `deliveries=1`, `batch_records=0`, `encoded_entries=0` | — |
 
+The `deliveries` counter counts one answered delivery: the workload operation
+ends with the single acknowledgment, following the existing
+`action.complete_advancement` pattern. D-02 and H-09 gate the one-answer
+property itself.
+
 The one-changed rows answer both ticket questions: one changed value among
 many, and one changed keyed row among 10,000 and 100,000 rows.
 

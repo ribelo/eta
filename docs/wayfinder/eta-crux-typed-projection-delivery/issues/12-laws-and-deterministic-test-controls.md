@@ -119,8 +119,8 @@ Binding tag: `both` for every row. PRJ-30 is compile-level.
 
 ### New PRW family: wire contracts
 
-Binding tag: `serialized-only` for every row except PRW-20, which is
-`identity-only`.
+Binding tag: `serialized-only` for every row except PRW-16, which is `both`,
+and PRW-20, which is `identity-only`.
 
 #### Common rows
 
@@ -135,13 +135,13 @@ Binding tag: `serialized-only` for every row except PRW-20, which is
 | PRW-07 | A failed diagnostic is redacted UTF-8 of at most 1,024 bytes. A longer or invalid diagnostic closes the session. Eta Crux never truncates it. | `qcheck_projection_result_diagnostic` |
 | PRW-08 | The eight payload-rejection conditions return `failed` and keep the session open. | `qcheck_projection_payload_rejection` (one violation per generated batch; all eight classes discriminated) |
 | PRW-09 | Structural errors close the session: malformed envelope, bad sequence, bad correlation, invalid diagnostic. | Extends the W-04 generated class |
-| PRW-10 | `max_frame_bytes` applies before decode and after encode. An oversize push frame closes the session with `Frame_too_large` and fails the delivery. No split and no truncation. | `test_projection_push_frame_too_large` plus a qcheck boundary property |
+| PRW-10 | `max_frame_bytes` applies before decode and after encode. An oversize push frame closes the session with `Frame_too_large` and fails the delivery. No split and no truncation. | `test_projection_push_frame_too_large` plus `qcheck_projection_frame_size_boundary` (generated sizes around `max_frame_bytes`) |
 | PRW-11 | The shell decodes each key, encodes it again, and requires byte equality. It uses `key_compare` to detect duplicate identities. | `qcheck_projection_wire_key_canonicality` |
 | PRW-12 | An encode error after commit keeps the commit published and fails the complete delivery with `Adapter_delivery` and trigger `Projection_delivery`. | `test_projection_encode_failure_key` and `test_projection_encode_failure_value` |
 | PRW-13 | A codec exception is a defect with the local cause retained. No conversion into a typed codec error. | `test_projection_codec_raise_defect` |
 | PRW-14 | Local diagnostics never enter frames. A shell decode failure returns one bounded redacted diagnostic. The diagnostic can name the kind and field, never payload data. | Extends the W-10 generated class |
-| PRW-15 | The shell validates every transition against its prior delivered snapshot, plus count and continuation. A capacity mismatch fails the complete delivery atomically. No fallback. | `qcheck_projection_shell_transition_validation` |
-| PRW-16 | Adapter atomicity: decode and validate before host mutation, install as one transaction, keep the prior delivered state on failure, and advance delivered state before `accepted`. | `test_projection_adapter_atomic_install` (failure during install) |
+| PRW-15 | The shell validates every transition against its prior delivered snapshot, plus count. Pull profile: the shell also validates continuation. A capacity mismatch fails the complete delivery atomically. No fallback. | `qcheck_projection_shell_transition_validation` |
+| PRW-16 | Adapter atomicity: decode and validate before host mutation, install as one transaction, keep the prior delivered state on failure, and advance delivered state before `accepted`. Identity adapters perform no decode work; the same install rules apply. | `test_projection_adapter_atomic_install` (failure during install) |
 | PRW-17 | No catalog exchange, fingerprint, or negotiation exists. Unknown tags are rejected. | Shared with the W-06 gate |
 | PRW-18 | After interface selection, the protocol keeps exactly one profile. No negotiation, fallback, or dormant tags for the rejected profiles. | Gate lands in the selection change (see Profile coverage) |
 | PRW-19 | Value codecs run inside the committed export-registry fence. A handle request for an absent export raises. The commit stays published and the delivery fails as `Adapter_delivery`. | `test_projection_value_handle_fence` |
@@ -183,7 +183,7 @@ Binding tag: `serialized-only` for every row.
 | PRB-04 | The replacement sequence runs in order: preflight, fresh registration, bootstrap encode, old-session close, bootstrap send, permit settlement, result wait, fence lift. | `test_projection_replacement_step_order` (ordered observation log) |
 | PRB-05 | The bootstrap is always the first delivery on the new session. Every later advancement batch follows it in order. | `test_projection_bootstrap_first_delivery` |
 | PRB-06 | The preflight family is closed: `Starting`, `Replacement_pending`, `Awaiting_delivery`, `Terminating`, and `Closed`. | `test_replace_error_starting`, `test_replace_error_replacement_pending`, `test_replace_error_awaiting_delivery`, `test_replace_error_terminating`, `test_replace_error_closed` (five new gates) |
-| PRB-07 | A pending pull-profile notification is an unacknowledged delivery and returns `Awaiting_delivery`. Session closure releases the frozen observation. | Shared with `test_replace_error_awaiting_delivery` |
+| PRB-07 | An unacknowledged delivery blocks replacement and returns `Awaiting_delivery`. Pull profile: a pending notification is an unacknowledged delivery, and session closure releases the frozen observation. | Shared with `test_replace_error_awaiting_delivery` |
 | PRB-08 | Replacement on an identity binding returns `Closed`. | Shared with `test_replace_error_closed` |
 | PRB-09 | `Starting` means no committed image. An empty initial commit permits replacement with an empty bootstrap. | `test_projection_replace_empty_bootstrap` |
 | PRB-10 | A commit with no live session publishes, fails delivery immediately, latches `Adapter_delivery`, and crashes the root. | `test_projection_commit_no_session` |
@@ -194,7 +194,7 @@ Binding tag: `serialized-only` for every row.
 | PRB-15 | Commit and replacement use first-winner arbitration at driver-operation granularity. The bootstrap carries the prior or the new complete committed snapshot, never a mix. | `race_replacement_vs_commit_both_winners` (new) |
 | PRB-16 | Advancement runs only in driver state `Running`. No advancement runs while a replacement delivery is pending. | `test_projection_advancement_fence` |
 | PRB-17 | The bootstrap entry count cannot exceed `projection_capacity`. Replacement adds no new preflight failure. | Shared with the PRJ-19 gate |
-| PRB-18 | An oversize push bootstrap closes the new session with `Frame_too_large`, fails the delivery, latches `Adapter_delivery`, and returns `Crashed`. The pull profile pages the bootstrap. An entry that cannot fit returns `Entry_too_large` and the shell returns a failed final result. | `test_projection_bootstrap_frame_too_large` and `test_projection_bootstrap_paged` |
+| PRB-18 | An oversize push bootstrap closes the new session with `Frame_too_large`, fails the delivery, latches `Adapter_delivery`, and returns `Crashed`. The pull profile pages the bootstrap. An entry that cannot fit returns `Entry_too_large` and the shell returns a failed final result. | `test_projection_bootstrap_frame_too_large` (push) and `test_projection_bootstrap_paged` (pull) |
 | PRB-19 | Initial attach has no bootstrap. The first commit's `Attached` advancement is the starting observation. | `test_projection_initial_attach_no_bootstrap` |
 
 ### Harness laws
