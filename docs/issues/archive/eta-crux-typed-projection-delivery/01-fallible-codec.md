@@ -1,6 +1,6 @@
 ---
 kind: issue
-status: complete
+status: change-1-complete
 requirements:
   - crxcdc-vw4r
   - crxcdc-gszc
