@@ -16,11 +16,6 @@ implementation or reproduce its public interface.
 the component-runtime seam. This effort does not add an environment channel,
 `Layer`, or `provide` operation to Eta effects.
 
-The core belongs in the optional `eta_component` package. Configuration loading
-and hot module replacement belong in a separate optional package. The final
-package split remains a named decision because source and dependency evidence
-can refine these package names.
-
 Keys and values remain statically typed. The design uses the strongest practical
 static representation for requirements and provisions that the prototypes
 support. Provider availability remains dynamic.
@@ -78,6 +73,7 @@ not in scope.
 - [Module replacement and rollback](issues/17-module-replacement-and-rollback.md) — Native loading stays separate. Retained instances stage serialized candidates, publish one batch, and restore old declarations while native code remains loaded.
 - [Public interface alternatives](issues/18-public-interface-alternatives.md) — Typed requirement and provision schemas give static declaration checks without public row or context indices.
 - [Operational lifecycle diagnostics](issues/23-operational-lifecycle-diagnostics.md) — Atomic snapshots and coalesced waits expose current state. Context fences and loader reports preserve terminal facts and complete causes.
+- [Package and module ownership](issues/19-package-and-module-ownership.md) — Three optional packages isolate core, generic loading, and native HMR. Existing `eta_eio` remains the only Eio backend.
 
 ## Not yet specified
 
@@ -94,3 +90,4 @@ not in scope.
 - Mechanized proofs of the complete paper metatheory.
 - Provider package versioning and structural interface compatibility.
 - A production JavaScript adapter or JavaScript verification gate.
+- Built-in serialized configuration formats and file-watch adapter packages.
