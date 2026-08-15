@@ -76,6 +76,11 @@ gates, and all affected Eta packages and modules.
   — Kind and key define typed identity. Root-owned incarnations, a closed
   catalog, fallible codecs, strict capacity, and three exact protocol profiles
   preserve atomic delivery without projection handles.
+- [Session replacement and bootstrap](issues/11-session-replacement-and-bootstrap.md)
+  — Replacement redelivers the retained committed snapshot as one acknowledged
+  bootstrap on a fresh session, after old-session closure and permit
+  settlement. A commit with no live session latches `Adapter_delivery`. The
+  preflight, outcome, and bounds families stay closed.
 
 ## Not yet specified
 
