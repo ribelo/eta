@@ -1,0 +1,28 @@
+(test
+ (name run)
+ (modules run test_component_support test_eta_component)
+ (libraries
+  eta
+  eta_component
+  eta_observability
+  eta_test
+  eta_eio
+  alcotest
+  eio_main)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))
+
+(test
+ (name component_law_properties)
+ (modules component_law_properties)
+ (libraries
+  eta
+  eta_component
+  eta_observability
+  eta_test
+  qcheck
+  qcheck-core.runner)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

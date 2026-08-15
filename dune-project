@@ -26,6 +26,16 @@
   eta))
 
 (package
+ (name eta_component)
+ (synopsis "Spatiotemporal component runtime for Eta")
+ (description
+  "eta_component provides a component runtime whose declarations are statically typed, whose lifecycle authority is an immutable desired-state tree, and whose observations are immutable snapshots and settlement reports.")
+ (depends
+  (ocaml (>= 5.2.0))
+  eta
+  eta_observability))
+
+(package
  (name eta_cache)
  (synopsis "Effect-integrated keyed cache for Eta")
  (description
