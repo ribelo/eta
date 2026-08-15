@@ -74,6 +74,7 @@ not in scope.
 - [Public interface alternatives](issues/18-public-interface-alternatives.md) — Typed requirement and provision schemas give static declaration checks without public row or context indices.
 - [Operational lifecycle diagnostics](issues/23-operational-lifecycle-diagnostics.md) — Atomic snapshots and coalesced waits expose current state. Context fences and loader reports preserve terminal facts and complete causes.
 - [Package and module ownership](issues/19-package-and-module-ownership.md) — Three optional packages isolate core, generic loading, and native HMR. Existing `eta_eio` remains the only Eio backend.
+- [Executable laws and reference model](issues/20-executable-laws-and-reference-model.md) — A factored pure oracle, prefix comparison, identity bijection, exhaustive matrices, and Eta-test and Eio gates define the proof plan.
 
 ## Not yet specified
 
