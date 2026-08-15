@@ -93,11 +93,13 @@ gates, and all affected Eta packages and modules.
   baselines. Scaled rows run at 10,000 and 100,000, the empty-catalog root
   gets a zero-delta allocation gate, and all three profiles get byte gates
   until selection deletes two.
+- [Select the public interface and seam](issues/14-select-public-interface-and-seam.md)
+  — Changed complete-value batch push is the approved public interface. The
+  snapshot-push and pull profiles are deleted with their laws, gates, and
+  workloads in the selection change. The ownership seam is unchanged.
 
 ## Not yet specified
 
-- The internal module split and migration sequence depend on the selected public
-  interface and transport contract.
 - The final approval changes can only be specified after the package coherence
   audit.
 
