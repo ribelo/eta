@@ -106,6 +106,12 @@ gates, and all affected Eta packages and modules.
   — All source claims verified against current code. Nine record corrections
   applied across tickets 10 to 15, including an exact gate schedule. The exact
   read and delivery signatures graduate to a new ticket that blocks approval.
+- [Exact projection read and delivery signatures](issues/18-exact-projection-read-and-delivery-signatures.md)
+  — One entry record serves snapshots and updates; `find_opt` and GADT-pack
+  folds read the opaque snapshot, batch, and commit types; `advance` returns
+  `Committed` with the commit; `Delivery.projection` and the adapter record
+  expose the typed delivery; wire frames carry `int64` incarnations and reuse
+  `delivery_reason` and `delivery_result`.
 
 ## Not yet specified
 
