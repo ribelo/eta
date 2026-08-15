@@ -1,6 +1,6 @@
 ---
 kind: issue
-status: ready-for-agent
+status: complete
 requirements:
   - crxcdc-vw4r
   - crxcdc-gszc
@@ -144,3 +144,9 @@ Order matters. This change lands first, then task T0 records the baseline, then
 [Typed projection delivery](02-typed-projection-delivery.md) lands. Recording the
 baseline between the two changes isolates the projection allocation delta from
 the codec delta.
+
+T0 result: `bench/results/20260815T184109Z-b5c4e3d6.json`. The official
+`bench/run.sh` hang on `eta_crux.capacity.serialized_handles` is reproduced on
+HEAD before this change (`removed export survived replacement and major
+collection`, or a hang after `capacity.request.1024`). The recorded file includes
+every other `run.sh` suite and every other `bench_eta_crux` workload.

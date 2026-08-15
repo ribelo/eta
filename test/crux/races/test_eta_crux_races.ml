@@ -207,7 +207,7 @@ let race_commit_vs_crash_both_winners () =
               raise (Failure "fatal export mapper")))
     in
     let unit_codec =
-      Crux.Codec.make ~encode:(fun () -> Bytes.empty)
+      Crux.Codec.make ~encode:(fun () -> Ok Bytes.empty)
         ~decode:(fun _ -> Ok ())
     in
     let export =
@@ -339,7 +339,7 @@ let race_export_permit_vs_commit_both_winners () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let codec =
     Crux.Codec.make
-      ~encode:(fun value -> Bytes.of_string (string_of_int value))
+      ~encode:(fun value -> Ok (Bytes.of_string (string_of_int value)))
       ~decode:(fun bytes ->
         match int_of_string_opt (Bytes.to_string bytes) with
         | Some value -> Ok value
@@ -425,7 +425,7 @@ let race_export_permit_vs_commit_both_winners () =
 let request_race_fixture runtime =
   let codec =
     Crux.Codec.make
-      ~encode:(fun value -> Bytes.of_string (string_of_int value))
+      ~encode:(fun value -> Ok (Bytes.of_string (string_of_int value)))
       ~decode:(fun bytes ->
         match int_of_string_opt (Bytes.to_string bytes) with
         | Some value -> Ok value
@@ -489,6 +489,10 @@ let race_cancel_vs_dispatch_both_winners () =
           |> Eta.Effect.or_die (function
                | Crux.Requester.Ingress_closed ->
                    Failure "request ingress closed"
+               | Crux.Requester.Encode_failed _ ->
+                   Failure "request encode failed"
+               | Crux.Requester.Decode_failed _ ->
+                   Failure "request decode failed"
                | Crux.Requester.Dispatch_failed ->
                    Failure "request dispatch failed"
                | Crux.Requester.Closed _ ->
@@ -721,7 +725,7 @@ let race_terminal_vs_delivery () =
   let crash_work_started = ref false in
   let codec =
     Crux.Codec.make
-      ~encode:(fun value -> Bytes.of_string (string_of_int value))
+      ~encode:(fun value -> Ok (Bytes.of_string (string_of_int value)))
       ~decode:(fun bytes ->
         match int_of_string_opt (Bytes.to_string bytes) with
         | Some value -> Ok value
@@ -792,7 +796,7 @@ let race_session_replacement () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let codec =
     Crux.Codec.make
-      ~encode:(fun value -> Bytes.of_string (string_of_int value))
+      ~encode:(fun value -> Ok (Bytes.of_string (string_of_int value)))
       ~decode:(fun bytes ->
         match int_of_string_opt (Bytes.to_string bytes) with
         | Some value -> Ok value
@@ -816,7 +820,7 @@ let race_session_replacement () =
         let bytes = Bytes.create (4 + Bytes.length handle) in
         Bytes.set_int32_be bytes 0 (Int32.of_int model);
         Bytes.blit handle 0 bytes 4 (Bytes.length handle);
-        bytes)
+        Ok bytes)
       ~decode:(fun _ ->
         Error
           {
@@ -941,7 +945,10 @@ let race_session_replacement () =
       {
         seq = sequence;
         handle;
-        payload = Crux.Codec.encode codec 1;
+        payload =
+          (match Crux.Codec.encode codec 1 with
+          | Ok payload -> payload
+          | Error _ -> Alcotest.fail "codec encode failed");
       }
     |> Eta_crux_json.Format.encode
     |> Crux.Serialized_session.receive new_peer

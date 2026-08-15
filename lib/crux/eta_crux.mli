@@ -167,15 +167,16 @@ module Source : sig
 end
 
 module Codec : sig
+  type encode_error = { message : string }
   type decode_error = { message : string }
   type 'a t
 
   val make :
-    encode:('a -> bytes) ->
+    encode:('a -> (bytes, encode_error) result) ->
     decode:(bytes -> ('a, decode_error) result) ->
     'a t
 
-  val encode : 'a t -> 'a -> bytes
+  val encode : 'a t -> 'a -> (bytes, encode_error) result
   val decode : 'a t -> bytes -> ('a, decode_error) result
 end
 
@@ -389,9 +390,16 @@ module Requester : sig
 
   type error =
     | Ingress_closed
+    | Encode_failed of Codec.encode_error
+    | Decode_failed of Codec.decode_error
     | Dispatch_failed
     | Closed of Request.closure_reason
 
+  (** [request requester payload] encodes [payload] before it allocates a
+      request identity, consumes request capacity, or emits a driver event.
+      An encode error returns [Encode_failed] and leaves no request behind.
+      A later response decode error returns [Decode_failed], closes only that
+      request, and keeps the session open. *)
   val request :
     ('request, 'response) t ->
     'request ->
@@ -400,8 +408,14 @@ end
 
 module Responder : sig
   type 'response t
-  type error = Request.not_pending
 
+  type error =
+    | Not_pending
+    | Encode_failed of Codec.encode_error
+
+  (** [resolve responder response] encodes [response] before it consumes the
+      pending request. An encode error returns [Encode_failed] and keeps the
+      request pending. *)
   val resolve :
     'response t ->
     'response ->

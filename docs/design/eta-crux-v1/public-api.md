@@ -204,15 +204,16 @@ end
 
 ```ocaml
 module Codec : sig
+  type encode_error = { message : string }
   type decode_error = { message : string }
   type 'a t
 
   val make :
-    encode:('a -> bytes) ->
+    encode:('a -> (bytes, encode_error) result) ->
     decode:(bytes -> ('a, decode_error) result) ->
     'a t
 
-  val encode : 'a t -> 'a -> bytes
+  val encode : 'a t -> 'a -> (bytes, encode_error) result
   val decode : 'a t -> bytes -> ('a, decode_error) result
 end
 ```
@@ -318,6 +319,8 @@ module Requester : sig
 
   type error =
     | Ingress_closed
+    | Encode_failed of Codec.encode_error
+    | Decode_failed of Codec.decode_error
     | Dispatch_failed
     | Closed of Request.closure_reason
 
@@ -329,7 +332,10 @@ end
 
 module Responder : sig
   type 'response t
-  type error = Request.not_pending
+
+  type error =
+    | Not_pending
+    | Encode_failed of Codec.encode_error
 
   val resolve :
     'response t ->

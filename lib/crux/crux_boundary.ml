@@ -3,9 +3,10 @@ open Crux_engine
 module Failure = Crux_failure.Failure
 
 module Codec = struct
+  type encode_error = { message : string }
   type decode_error = { message : string }
   type 'a t = {
-    encode : 'a -> bytes;
+    encode : 'a -> (bytes, encode_error) result;
     decode : bytes -> ('a, decode_error) result;
   }
 
@@ -283,12 +284,15 @@ module Request = struct
 
   type outbound_error =
     | Ingress_closed
+    | Encode_failed of Codec.encode_error
+    | Decode_failed of Codec.decode_error
     | Dispatch_failed
     | Closed of closure_reason
 
   type ('request, 'response) state = {
     operation : ('request, 'response) Host_operation.t;
     request : 'request;
+    encoded : bytes;
     response : ('response, outbound_error) Eta.Promise.t;
     root : root_core;
     lock : Eta.Sync_lock.t;
@@ -487,6 +491,19 @@ module Request = struct
     else
       Eta.Promise.resolve state.response
         (Eta.Exit.Error (Eta.Cause.Fail (Closed reason)))
+
+  let fail_decode state error =
+    let won =
+      Eta.Sync_lock.use state.lock @@ fun () ->
+      if state.pending then (
+        state.pending <- false;
+        true)
+      else false
+    in
+    if not won then Eta.Effect.pure false
+    else
+      Eta.Promise.resolve state.response
+        (Eta.Exit.Error (Eta.Cause.Fail (Decode_failed error)))
 end
 
 type binding_core = {
@@ -515,6 +532,8 @@ module Requester = struct
 
   type error = Request.outbound_error =
     | Ingress_closed
+    | Encode_failed of Codec.encode_error
+    | Decode_failed of Codec.decode_error
     | Dispatch_failed
     | Closed of Request.closure_reason
 
@@ -527,12 +546,28 @@ module Requester = struct
           | Some root, Some push -> Ok (root, push)
           | None, _ | _, None -> Error Ingress_closed)
     in
+    let* encoded =
+      Eta.Effect.sync_result (fun () ->
+          try
+            match
+              Codec.encode
+                (Host_operation.request_codec requester.operation)
+                request
+            with
+            | Ok payload -> Ok payload
+            | Error error -> Error (Encode_failed error)
+          with exn ->
+            latch_exception root ~origin:Failure.Request_dispatch
+              ~trigger:Failure.Outbound_request exn;
+            raise exn)
+    in
     let* () = Eta.Semaphore.acquire root.request_slots 1 in
     let response = Eta.Promise.create () in
     let state =
       {
         Request.operation = requester.operation;
         request;
+        encoded;
         response;
         root;
         lock = Eta.Sync_lock.create ();
@@ -581,12 +616,14 @@ module Requester = struct
 end
 
 module Responder = struct
+  type error =
+    | Not_pending
+    | Encode_failed of Codec.encode_error
+
   type 'response t = {
     resolve_response :
-      'response -> ((unit, Request.not_pending) result, never) Eta.Effect.t;
+      'response -> ((unit, error) result, never) Eta.Effect.t;
   }
-
-  type error = Request.not_pending
 
   let resolve responder response =
     responder.resolve_response response
@@ -713,14 +750,19 @@ module Request_export = struct
                             Failure.Serialized_export_invocation exn;
                         raise exn
                     in
-                    Eta.Effect.sync (fun () ->
-                        match
-                          finish_now
-                            (Boundary_request_resolved encoded)
-                        with
-                        | Boundary_request_accepted -> Ok ()
-                        | Boundary_request_not_pending ->
-                            Error Request.Not_pending));
+                    match encoded with
+                    | Error error ->
+                        Eta.Effect.pure
+                          (Error (Responder.Encode_failed error))
+                    | Ok payload ->
+                        Eta.Effect.sync (fun () ->
+                            match
+                              finish_now
+                                (Boundary_request_resolved payload)
+                            with
+                            | Boundary_request_accepted -> Ok ()
+                            | Boundary_request_not_pending ->
+                                Error Responder.Not_pending));
               }
             in
             let close_now reason =
@@ -914,7 +956,7 @@ module Request_export = struct
               (fun value ->
                 Eta.Effect.sync (fun () ->
                     if finish_now (Ok value) then Ok ()
-                    else Error Request.Not_pending));
+                    else Error Responder.Not_pending));
           }
         in
         let close_now reason =

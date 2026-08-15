@@ -187,26 +187,8 @@ let dispatch_serialized_request (driver : _ t)
   in
   if cancelled_before_encode then Eta.Effect.pure None
   else
-    let payload =
-      try
-        Ok
-          (Codec.encode
-             (Host_operation.request_codec state.operation)
-             state.request)
-      with exn -> Error exn
-    in
-    match payload with
-    | Error exn ->
-        let cause =
-          Failure.Packed_cause.make
-            ~pp_error:(fun _ (value : never) -> absurd value)
-            (Eta.Cause.die exn)
-        in
-        Request.Driver_event.failed event cause
-        |> Eta.Effect.map_error absurd
-        |> Eta.Effect.map (fun _ -> None)
-    | Ok payload ->
-        let cancelled_before_dispatch =
+    let payload = state.encoded in
+    let cancelled_before_dispatch =
           Eta.Sync_lock.use dispatch_lock @@ fun () ->
           !cancelled
         in
@@ -475,14 +457,8 @@ let handle_serialized_frame (driver : _ t) frame =
                 cause
               |> Eta.Effect.map_error absurd
               |> Eta.Effect.map (fun _ -> None)
-          | `Result (Error _) ->
-              (match driver.binding.mode with
-              | Identity -> ()
-              | Serialized serialized ->
-                  Serialized_session.fail_protocol
-                    serialized.candidate
-                    Wire.Invalid_field);
-              Request.close_state state Request.Session_closed
+          | `Result (Error error) ->
+              Request.fail_decode state error
               |> Eta.Effect.map (fun _ -> None)
           | `Result (Ok response) ->
               Request.Driver_event.resolve state response

@@ -54,14 +54,14 @@ let request_program () =
   let int_codec =
     Crux.Codec.make
       ~encode:(fun value ->
-        Bytes.of_string (string_of_int value))
+        Ok (Bytes.of_string (string_of_int value)))
       ~decode:(fun bytes ->
         try Ok (int_of_string (Bytes.to_string bytes))
         with Failure message ->
           Error { Crux.Codec.message = message })
   in
   let string_codec =
-    Crux.Codec.make ~encode:Bytes.of_string
+    Crux.Codec.make ~encode:(fun bytes -> Ok (Bytes.of_string bytes))
       ~decode:(fun bytes -> Ok (Bytes.to_string bytes))
   in
   let operation =
@@ -142,7 +142,7 @@ let replacement_attempt () =
   let binding, admin =
     Crux.Driver.Binding.serialized
       ~output:
-        (Crux.Codec.make ~encode:Bytes.of_string
+        (Crux.Codec.make ~encode:(fun bytes -> Ok (Bytes.of_string bytes))
            ~decode:(fun bytes ->
              Ok (Bytes.to_string bytes)))
       ~operations:[] ~session:first

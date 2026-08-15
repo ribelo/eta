@@ -986,7 +986,7 @@ let qcheck_lifecycle_once_per_interval =
 
 let int_codec =
   Crux.Codec.make
-    ~encode:(fun value -> Bytes.of_string (string_of_int value))
+    ~encode:(fun value -> Ok (Bytes.of_string (string_of_int value)))
     ~decode:(fun bytes ->
       match int_of_string_opt (Bytes.to_string bytes) with
       | Some value -> Ok value
@@ -1697,7 +1697,7 @@ let qcheck_export_rebinding =
         Crux.Codec.make
           ~encode:(fun value ->
             incr codec_calls;
-            Bytes.of_string (string_of_int value))
+            Ok (Bytes.of_string (string_of_int value)))
           ~decode:(fun bytes ->
             incr codec_calls;
             match int_of_string_opt (Bytes.to_string bytes) with
@@ -1827,6 +1827,10 @@ let qcheck_request_first_resolution =
         |> Eta.Effect.or_die (function
              | Crux.Requester.Ingress_closed ->
                  Failure "request ingress closed"
+             | Crux.Requester.Encode_failed _ ->
+                 Failure "request encode failed"
+             | Crux.Requester.Decode_failed _ ->
+                 Failure "request decode failed"
              | Crux.Requester.Dispatch_failed ->
                  Failure "request dispatch failed"
              | Crux.Requester.Closed _ ->
@@ -2834,7 +2838,7 @@ let qcheck_wire_bounds =
               ~format:(module Eta_crux_json.Format)
           in
           let bytes_codec =
-            Crux.Codec.make ~encode:Fun.id
+            Crux.Codec.make ~encode:(fun bytes -> Ok bytes)
               ~decode:(fun bytes -> Ok bytes)
           in
           let binding, _admin =
@@ -2898,7 +2902,7 @@ let qcheck_wire_redaction =
             (action, None))
       in
       let payload_codec =
-        Crux.Codec.make ~encode:Bytes.of_string
+        Crux.Codec.make ~encode:(fun bytes -> Ok (Bytes.of_string bytes))
           ~decode:(fun _ ->
             Error { Crux.Codec.message = diagnostic })
       in
@@ -2914,8 +2918,9 @@ let qcheck_wire_redaction =
             let handle =
               Crux.Exported_endpoint.remote_handle export
             in
-            Bytes.concat (Bytes.of_string "\000")
-              [ Bytes.of_string model; handle ])
+            Ok
+              (Bytes.concat (Bytes.of_string "\000")
+                 [ Bytes.of_string model; handle ]))
           ~decode:(fun _ ->
             Error
               {

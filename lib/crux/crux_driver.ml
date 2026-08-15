@@ -116,6 +116,11 @@ module Driver = struct
       (fun identity -> Int_map.find_opt identity handles)
       (fun () -> Codec.encode serialized.output_codec output)
 
+  let encoded_output_or_delivery_cause driver serialized registry output =
+    match encode_serialized_output driver serialized registry output with
+    | Ok payload -> Ok payload
+    | Error error -> Error (adapter_delivery_cause error.message)
+
   let terminal_of_start_result driver = function
     | Post_commit.Admitted ->
         set_state driver Running;
@@ -290,9 +295,16 @@ module Driver = struct
                         (fun () -> wake driver))
                 in
                 let* encoded =
-                  Eta.Effect.sync (fun () ->
-                      encode_serialized_output driver serialized
-                        registry output)
+                  Eta.Effect.sync_result (fun () ->
+                      match
+                        encoded_output_or_delivery_cause driver serialized
+                          registry output
+                      with
+                      | Ok payload -> Ok payload
+                      | Error cause ->
+                          ignore
+                            (latch_adapter_delivery_failure driver cause);
+                          Error Serialized_session.Closed)
                 in
                 let* reply_to =
                   Eta.Effect.sync_result (fun () ->
@@ -546,26 +558,28 @@ module Driver = struct
                 | Serialized serialized ->
                     let result =
                       try
-                        let output =
-                          encode_serialized_output driver serialized
-                            serialized.registry committed.output
-                        in
                         match
-                          Serialized_session.send
-                            serialized.candidate
-                            (fun seq ->
-                              Wire.Frame.Output_deliver
-                                {
-                                  seq;
-                                  reason = `Advancement;
-                                  output;
-                                })
+                          encoded_output_or_delivery_cause driver serialized
+                            serialized.registry committed.output
                         with
-                        | Ok reply_to -> Ok reply_to
-                        | Error _ ->
-                            Error
-                              (adapter_delivery_cause
-                                 "serialized session closed during output delivery")
+                        | Error cause -> Error cause
+                        | Ok output -> (
+                            match
+                              Serialized_session.send
+                                serialized.candidate
+                                (fun seq ->
+                                  Wire.Frame.Output_deliver
+                                    {
+                                      seq;
+                                      reason = `Advancement;
+                                      output;
+                                    })
+                            with
+                            | Ok reply_to -> Ok reply_to
+                            | Error _ ->
+                                Error
+                                  (adapter_delivery_cause
+                                     "serialized session closed during output delivery"))
                       with exn ->
                         Error
                           (Failure.Packed_cause.make

@@ -160,14 +160,14 @@ let test_outbound_request_round_trip () =
   Eta_test.with_test_clock @@ fun switch _clock runtime ->
   let int_codec =
     Crux.Codec.make
-      ~encode:(fun value -> Bytes.of_string (string_of_int value))
+      ~encode:(fun value -> Ok (Bytes.of_string (string_of_int value)))
       ~decode:(fun bytes ->
         try Ok (int_of_string (Bytes.to_string bytes))
         with Failure message ->
           Error { Crux.Codec.message = message })
   in
   let string_codec =
-    Crux.Codec.make ~encode:Bytes.of_string
+    Crux.Codec.make ~encode:(fun bytes -> Ok (Bytes.of_string bytes))
       ~decode:(fun bytes -> Ok (Bytes.to_string bytes))
   in
   let operation =
@@ -189,6 +189,8 @@ let test_outbound_request_round_trip () =
            response := Some value)
     |> Eta.Effect.or_die (function
          | Crux.Requester.Ingress_closed -> Failure "ingress closed"
+         | Crux.Requester.Encode_failed _ -> Failure "encode failed"
+         | Crux.Requester.Decode_failed _ -> Failure "decode failed"
          | Crux.Requester.Dispatch_failed -> Failure "dispatch failed"
          | Crux.Requester.Closed _ -> Failure "request closed")
   in
@@ -327,14 +329,14 @@ let test_requester_rejects_name_collision () =
   let int_codec =
     Crux.Codec.make
       ~encode:(fun value ->
-        Bytes.of_string (string_of_int value))
+        Ok (Bytes.of_string (string_of_int value)))
       ~decode:(fun bytes ->
         try Ok (int_of_string (Bytes.to_string bytes))
         with Failure message ->
           Error { Crux.Codec.message = message })
   in
   let string_codec =
-    Crux.Codec.make ~encode:Bytes.of_string
+    Crux.Codec.make ~encode:(fun bytes -> Ok (Bytes.of_string bytes))
       ~decode:(fun bytes -> Ok (Bytes.to_string bytes))
   in
   let registered =
@@ -1522,7 +1524,7 @@ let test_export_callback_defect () =
             raise (Failure "export mapper defect")))
   in
   let codec =
-    Crux.Codec.make ~encode:(fun _ -> Bytes.empty)
+    Crux.Codec.make ~encode:(fun _ -> Ok (Bytes.empty))
       ~decode:(fun _ -> Ok 0)
   in
   let description =
@@ -1639,7 +1641,7 @@ let test_request_dispatch_fence () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let int_codec =
     Crux.Codec.make
-      ~encode:(fun value -> Bytes.of_string (string_of_int value))
+      ~encode:(fun value -> Ok (Bytes.of_string (string_of_int value)))
       ~decode:(fun bytes ->
         match int_of_string_opt (Bytes.to_string bytes) with
         | Some value -> Ok value
@@ -1660,6 +1662,8 @@ let test_request_dispatch_fence () =
     |> Eta.Effect.map (fun value -> response := Some value)
     |> Eta.Effect.or_die (function
          | Crux.Requester.Ingress_closed -> Failure "ingress closed"
+         | Crux.Requester.Encode_failed _ -> Failure "encode failed"
+         | Crux.Requester.Decode_failed _ -> Failure "decode failed"
          | Crux.Requester.Dispatch_failed -> Failure "dispatch failed"
          | Crux.Requester.Closed _ -> Failure "request closed")
   in
@@ -1972,7 +1976,7 @@ let test_request_terminal_handoff_fence () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let codec =
     Crux.Codec.make
-      ~encode:(fun value -> Bytes.of_string (string_of_int value))
+      ~encode:(fun value -> Ok (Bytes.of_string (string_of_int value)))
       ~decode:(fun bytes ->
         match int_of_string_opt (Bytes.to_string bytes) with
         | Some value -> Ok value
@@ -2039,14 +2043,14 @@ let test_request_export_closes_on_owner_and_root_termination () =
   Eta_test.with_test_clock @@ fun switch clock runtime ->
   let int_codec =
     Crux.Codec.make
-      ~encode:(fun value -> Bytes.of_string (string_of_int value))
+      ~encode:(fun value -> Ok (Bytes.of_string (string_of_int value)))
       ~decode:(fun bytes ->
         match int_of_string_opt (Bytes.to_string bytes) with
         | Some value -> Ok value
         | None -> Error { Crux.Codec.message = "expected integer" })
   in
   let string_codec =
-    Crux.Codec.make ~encode:Bytes.of_string
+    Crux.Codec.make ~encode:(fun bytes -> Ok (Bytes.of_string bytes))
       ~decode:(fun bytes -> Ok (Bytes.to_string bytes))
   in
   let run_case expected terminate =
@@ -2202,6 +2206,532 @@ let test_request_export_closes_on_owner_and_root_termination () =
       in
       settle 100)
 
+let int_bytes_codec =
+  Crux.Codec.make
+    ~encode:(fun value -> Ok (Bytes.of_string (string_of_int value)))
+    ~decode:(fun bytes ->
+      match int_of_string_opt (Bytes.to_string bytes) with
+      | Some value -> Ok value
+      | None -> Error { Crux.Codec.message = "invalid integer" })
+
+let unit_bytes_codec =
+  Crux.Codec.make
+    ~encode:(fun () -> Ok Bytes.empty)
+    ~decode:(fun _ -> Ok ())
+
+let rec stop_driver driver leftover =
+  let open Eta.Syntax in
+  if leftover = 0 then Eta.Effect.unit
+  else
+    let* event = Crux.Driver.poll driver in
+    match event with
+    | Some (Crux.Driver.Closed _) | None -> Eta.Effect.unit
+    | Some (Crux.Driver.Deliver delivery) ->
+        let* _ = Crux.Driver.Delivery.delivered delivery in
+        stop_driver driver (leftover - 1)
+    | Some _ -> stop_driver driver (leftover - 1)
+
+let ack_output peer driver =
+  let open Eta.Syntax in
+  let rec await attempts =
+    if attempts = 0 then
+      Eta.Effect.sync (fun () -> Alcotest.fail "serialized output missing")
+    else
+      let* outgoing = Crux.Serialized_session.poll_outgoing peer in
+      match outgoing with
+      | Some bytes -> (
+          match Eta_crux_json.Format.decode bytes with
+          | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) ->
+              let* () =
+                Crux.Serialized_session.receive peer
+                  (Eta_crux_json.Format.encode
+                     (Crux.Wire.Frame.Output_result
+                        { seq = 0l; reply_to = seq; result = `Accepted }))
+                |> Eta.Effect.map (fun _ -> ())
+              in
+              let* _ = Crux.Driver.poll driver in
+              Eta.Effect.unit
+          | Ok (Crux.Wire.Frame.Request_dispatch _) ->
+              Eta.Effect.sync (fun () ->
+                  Alcotest.fail "unexpected request dispatch frame")
+          | Ok _ | Error _ ->
+              let* _ = Crux.Driver.poll driver in
+              let* () = Eta.Effect.yield in
+              await (attempts - 1))
+      | None ->
+          let* _ = Crux.Driver.poll driver in
+          let* () = Eta.Effect.yield in
+          await (attempts - 1)
+  in
+  await 100
+
+let test_requester_encode_failed () =
+  let clock = Eta_test.Test_clock.create () in
+  let encode_calls = ref 0 in
+  let request_codec =
+    Crux.Codec.make
+      ~encode:(fun _value ->
+        incr encode_calls;
+        Error { Crux.Codec.message = "outbound encode refused" })
+      ~decode:(fun bytes ->
+        match int_of_string_opt (Bytes.to_string bytes) with
+        | Some value -> Ok value
+        | None -> Error { Crux.Codec.message = "invalid integer" })
+  in
+  let operation =
+    Crux.Host_operation.define ~name:"test.encode-failed"
+      ~request:request_codec ~response:int_bytes_codec
+  in
+  let candidate, peer =
+    Crux.Serialized_session.candidate ~max_frame_bytes:1024
+      ~format:(module Eta_crux_json.Format)
+  in
+  let binding, _admin =
+    Crux.Driver.Binding.serialized ~output:unit_bytes_codec
+      ~operations:[ Crux.Host_operation.Pack operation ]
+      ~session:candidate
+  in
+  let requester = Crux.Driver.Binding.requester binding operation in
+  let first = ref None in
+  let second = ref None in
+  let seen_request_event = ref false in
+  let program =
+    let open Eta.Syntax in
+    let request value cell =
+      Crux.Requester.request requester value
+      |> Eta.Effect.to_result
+      |> Eta.Effect.map (fun result -> cell := Some result)
+    in
+    let description =
+      Crux.lifecycle
+        (Crux.return
+           (let* () = request 1 first in
+            request 1 second))
+    in
+    let root =
+      Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 description
+    in
+    let driver = Crux.Driver.create binding root in
+    let rec note_events leftover =
+      if leftover = 0 then Eta.Effect.unit
+      else
+        let* event = Crux.Driver.poll driver in
+        match event with
+        | Some (Crux.Driver.Request _) ->
+            seen_request_event := true;
+            note_events (leftover - 1)
+        | Some (Crux.Driver.Deliver delivery) ->
+            let* _ = Crux.Driver.Delivery.delivered delivery in
+            note_events (leftover - 1)
+        | Some _ | None -> Eta.Effect.unit
+    in
+    let rec await_results attempts =
+      if attempts = 0 then
+        Eta.Effect.sync (fun () ->
+            Alcotest.fail "encode-failed scenario did not finish")
+      else if Option.is_some !first && Option.is_some !second then
+        Eta.Effect.unit
+      else
+        let* () = note_events 4 in
+        let* () = Eta.Effect.yield in
+        await_results (attempts - 1)
+    in
+    let* () = note_events 4 in
+    let* () = ack_output peer driver in
+    let* () = await_results 100 in
+    let rec assert_no_dispatch leftover =
+      if leftover = 0 then Eta.Effect.unit
+      else
+        let* outgoing = Crux.Serialized_session.poll_outgoing peer in
+        match outgoing with
+        | Some bytes -> (
+            match Eta_crux_json.Format.decode bytes with
+            | Ok (Crux.Wire.Frame.Request_dispatch _) ->
+                Eta.Effect.sync (fun () ->
+                    Alcotest.fail "encode failure wrote a request frame")
+            | Ok _ | Error _ -> assert_no_dispatch (leftover - 1))
+        | None -> Eta.Effect.unit
+    in
+    let* () = assert_no_dispatch 8 in
+    Crux.Driver.request_stop driver;
+    stop_driver driver 20
+  in
+  let outcome = Eta_test.Run.run ~clock program in
+  ignore (Eta_test.Expect.expect_ok outcome.exit);
+  (match !first with
+  | Some
+      (Error
+        (Crux.Requester.Encode_failed { message = "outbound encode refused" })) ->
+      ()
+  | Some other ->
+      Alcotest.failf "expected Encode_failed, got %s"
+        (match other with
+        | Ok _ -> "Ok"
+        | Error Crux.Requester.Ingress_closed -> "Ingress_closed"
+        | Error (Crux.Requester.Encode_failed _) -> "other Encode_failed"
+        | Error (Crux.Requester.Decode_failed _) -> "Decode_failed"
+        | Error Crux.Requester.Dispatch_failed -> "Dispatch_failed"
+        | Error (Crux.Requester.Closed _) -> "Closed")
+  | None -> Alcotest.fail "first request did not finish");
+  (match !second with
+  | Some
+      (Error
+        (Crux.Requester.Encode_failed { message = "outbound encode refused" })) ->
+      ()
+  | Some _ -> Alcotest.fail "second request did not return Encode_failed"
+  | None -> Alcotest.fail "second request did not start");
+  Alcotest.(check int) "encode ran before allocation" 2 !encode_calls;
+  Alcotest.(check bool) "no request driver event" false !seen_request_event;
+  Eta_test.Run.expect_no_pending_fibers outcome
+
+let test_requester_decode_failed () =
+  let clock = Eta_test.Test_clock.create () in
+  let operation =
+    Crux.Host_operation.define ~name:"test.decode-failed"
+      ~request:int_bytes_codec ~response:int_bytes_codec
+  in
+  let candidate, peer =
+    Crux.Serialized_session.candidate ~max_frame_bytes:2048
+      ~format:(module Eta_crux_json.Format)
+  in
+  let binding, _admin =
+    Crux.Driver.Binding.serialized ~output:unit_bytes_codec
+      ~operations:[ Crux.Host_operation.Pack operation ]
+      ~session:candidate
+  in
+  let requester = Crux.Driver.Binding.requester binding operation in
+  let request_result = ref None in
+  let program =
+    let open Eta.Syntax in
+    let root =
+      Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+        (Crux.lifecycle
+           (Crux.return
+              (Crux.Requester.request requester 7
+              |> Eta.Effect.to_result
+              |> Eta.Effect.map (fun result ->
+                     request_result := Some result))))
+    in
+    let driver = Crux.Driver.create binding root in
+    let rec await_dispatch attempts =
+      if attempts = 0 then
+        Eta.Effect.sync (fun () ->
+            Alcotest.fail "decode-failed dispatch missing")
+      else
+        let* outgoing = Crux.Serialized_session.poll_outgoing peer in
+        match outgoing with
+        | Some bytes -> (
+            match Eta_crux_json.Format.decode bytes with
+            | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) ->
+                let* () =
+                  Crux.Serialized_session.receive peer
+                    (Eta_crux_json.Format.encode
+                       (Crux.Wire.Frame.Output_result
+                          {
+                            seq = 0l;
+                            reply_to = seq;
+                            result = `Accepted;
+                          }))
+                  |> Eta.Effect.map (fun _ -> ())
+                in
+                let* _ = Crux.Driver.poll driver in
+                await_dispatch (attempts - 1)
+            | Ok
+                (Crux.Wire.Frame.Request_dispatch
+                  { seq; request; _ }) ->
+                Eta.Effect.pure (seq, request)
+            | Ok _ | Error _ ->
+                Eta.Effect.sync (fun () ->
+                    Alcotest.fail "decode-failed unexpected frame"))
+        | None ->
+            let* _ = Crux.Driver.poll driver in
+            let* () = Eta.Effect.yield in
+            await_dispatch (attempts - 1)
+    in
+    let* dispatch_sequence, request = await_dispatch 100 in
+    let* () =
+      Crux.Serialized_session.receive peer
+        (Eta_crux_json.Format.encode
+           (Crux.Wire.Frame.Request_dispatch_result
+              {
+                seq = 1l;
+                reply_to = dispatch_sequence;
+                accepted = true;
+              }))
+      |> Eta.Effect.map (fun _ -> ())
+    in
+    let* _ = Crux.Driver.poll driver in
+    let* () =
+      Crux.Serialized_session.receive peer
+        (Eta_crux_json.Format.encode
+           (Crux.Wire.Frame.Request_resolved
+              {
+                seq = 2l;
+                request;
+                payload = Bytes.of_string "not-an-int";
+              }))
+      |> Eta.Effect.map (fun _ -> ())
+    in
+    let* _ = Crux.Driver.poll driver in
+    let rec await_result attempts =
+      if attempts = 0 then
+        Eta.Effect.sync (fun () ->
+            Alcotest.fail "decode-failed request did not finish")
+      else if Option.is_some !request_result then Eta.Effect.unit
+      else
+        let* _ = Crux.Driver.poll driver in
+        let* () = Eta.Effect.yield in
+        await_result (attempts - 1)
+    in
+    let* () = await_result 100 in
+    let* still_open = Crux.Serialized_session.poll_outgoing peer in
+    (match still_open with
+    | Some bytes -> (
+        match Eta_crux_json.Format.decode bytes with
+        | Ok (Crux.Wire.Frame.Crash_notify _) ->
+            Alcotest.fail "decode error closed the session"
+        | Ok _ | Error _ -> ())
+    | None -> ());
+    Crux.Driver.request_stop driver;
+    let rec close leftover =
+      if leftover = 0 then Eta.Effect.unit
+      else
+        let* event = Crux.Driver.poll driver in
+        match event with
+        | Some (Crux.Driver.Closed _) | None -> Eta.Effect.unit
+        | Some (Crux.Driver.Deliver delivery) ->
+            let* _ = Crux.Driver.Delivery.delivered delivery in
+            close (leftover - 1)
+        | Some _ -> close (leftover - 1)
+    in
+    close 20
+  in
+  let outcome = Eta_test.Run.run ~clock program in
+  ignore (Eta_test.Expect.expect_ok outcome.exit);
+  (match !request_result with
+  | Some (Error (Crux.Requester.Decode_failed { message = "invalid integer" }))
+    ->
+      ()
+  | Some (Error (Crux.Requester.Decode_failed _)) -> ()
+  | Some (Error (Crux.Requester.Closed Crux.Request.Session_closed)) ->
+      Alcotest.fail "decode error closed the request as Session_closed"
+  | Some _ -> Alcotest.fail "expected Decode_failed, got unexpected result"
+  | None -> Alcotest.fail "decode-failed request missing");
+  Eta_test.Run.expect_no_pending_fibers outcome
+
+let test_responder_encode_failed () =
+  let clock = Eta_test.Test_clock.create () in
+  let fail_encode = ref true in
+  let captured = ref None in
+  let response_codec =
+    Crux.Codec.make
+      ~encode:(fun value ->
+        if !fail_encode then
+          Error { Crux.Codec.message = "inbound encode refused" }
+        else Ok (Bytes.of_string (string_of_int value)))
+      ~decode:(fun bytes ->
+        match int_of_string_opt (Bytes.to_string bytes) with
+        | Some value -> Ok value
+        | None -> Error { Crux.Codec.message = "invalid integer" })
+  in
+  let machine =
+    Crux.State_machine.create (Crux.return ()) ~default_model:0
+      ~apply_action:
+        (fun ~self:_ ~input:() ~model:_
+             ~action:(request, responder) ->
+          captured := Some responder;
+          (request, None))
+  in
+  let export =
+    Crux.Request_export.create (Crux.map machine ~f:snd)
+      ~request:int_bytes_codec ~response:response_codec
+  in
+  let output_codec =
+    Crux.Codec.make
+      ~encode:(fun export -> Ok (Crux.Request_export.remote_handle export))
+      ~decode:(fun _ ->
+        Error
+          { Crux.Codec.message = "request export output is encode-only" })
+  in
+  let candidate, peer =
+    Crux.Serialized_session.candidate ~max_frame_bytes:1024
+      ~format:(module Eta_crux_json.Format)
+  in
+  let binding, _admin =
+    Crux.Driver.Binding.serialized ~output:output_codec ~operations:[]
+      ~session:candidate
+  in
+  let program =
+    let open Eta.Syntax in
+    let root =
+      Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 export
+    in
+    let driver = Crux.Driver.create binding root in
+    let rec await_output attempts =
+      if attempts = 0 then
+        Eta.Effect.sync (fun () ->
+            Alcotest.fail "responder encode output missing")
+      else
+        let* outgoing = Crux.Serialized_session.poll_outgoing peer in
+        match outgoing with
+        | Some bytes -> (
+            match Eta_crux_json.Format.decode bytes with
+            | Ok (Crux.Wire.Frame.Output_deliver { seq; output; _ }) ->
+                Eta.Effect.pure (seq, output)
+            | Ok _ | Error _ ->
+                Eta.Effect.sync (fun () ->
+                    Alcotest.fail "responder encode output malformed"))
+        | None ->
+            let* _ = Crux.Driver.poll driver in
+            let* () = Eta.Effect.yield in
+            await_output (attempts - 1)
+    in
+    let* initial_sequence, handle = await_output 100 in
+    let* () =
+      Crux.Serialized_session.receive peer
+        (Eta_crux_json.Format.encode
+           (Crux.Wire.Frame.Output_result
+              {
+                seq = 0l;
+                reply_to = initial_sequence;
+                result = `Accepted;
+              }))
+      |> Eta.Effect.map (fun _ -> ())
+    in
+    let* _ = Crux.Driver.poll driver in
+    let start_payload =
+      match Crux.Codec.encode int_bytes_codec 21 with
+      | Ok payload -> payload
+      | Error _ -> Alcotest.fail "request payload encode failed"
+    in
+    let* () =
+      Crux.Serialized_session.receive peer
+        (Eta_crux_json.Format.encode
+           (Crux.Wire.Frame.Request_start
+              { seq = 1l; handle; payload = start_payload }))
+      |> Eta.Effect.map (fun _ -> ())
+    in
+    let* _ = Crux.Driver.poll driver in
+    let rec await_started attempts =
+      if attempts = 0 then
+        Eta.Effect.sync (fun () ->
+            Alcotest.fail "request export did not start")
+      else
+        let* outgoing = Crux.Serialized_session.poll_outgoing peer in
+        match outgoing with
+        | Some bytes -> (
+            match Eta_crux_json.Format.decode bytes with
+            | Ok
+                (Crux.Wire.Frame.Request_start_result
+                  { result = `Started _; _ }) ->
+                Eta.Effect.unit
+            | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) ->
+                let* () =
+                  Crux.Serialized_session.receive peer
+                    (Eta_crux_json.Format.encode
+                       (Crux.Wire.Frame.Output_result
+                          {
+                            seq = Int32.add seq 10l;
+                            reply_to = seq;
+                            result = `Accepted;
+                          }))
+                  |> Eta.Effect.map (fun _ -> ())
+                in
+                let* _ = Crux.Driver.poll driver in
+                await_started (attempts - 1)
+            | Ok _ | Error _ ->
+                Eta.Effect.sync (fun () ->
+                    Alcotest.fail "request export start malformed"))
+        | None ->
+            let* _ = Crux.Driver.poll driver in
+            let* () = Eta.Effect.yield in
+            await_started (attempts - 1)
+    in
+    let* () = await_started 100 in
+    let rec await_responder attempts =
+      if attempts = 0 then
+        Eta.Effect.sync (fun () ->
+            Alcotest.fail "responder was not captured")
+      else
+        match !captured with
+        | Some responder -> Eta.Effect.pure responder
+        | None ->
+            let* _ = Crux.Driver.poll driver in
+            let* () = Eta.Effect.yield in
+            await_responder (attempts - 1)
+    in
+    let* responder = await_responder 100 in
+    let* first = Crux.Responder.resolve responder 42 |> Eta.Effect.to_result in
+    let* outgoing_after_fail = Crux.Serialized_session.poll_outgoing peer in
+    (match outgoing_after_fail with
+    | Some bytes -> (
+        match Eta_crux_json.Format.decode bytes with
+        | Ok (Crux.Wire.Frame.Request_resolve _) ->
+            Alcotest.fail "failed response encode wrote a resolve frame"
+        | Ok _ | Error _ -> ())
+    | None -> ());
+    fail_encode := false;
+    let* second = Crux.Responder.resolve responder 42 |> Eta.Effect.to_result in
+    let rec ack_resolve leftover =
+      if leftover = 0 then Eta.Effect.unit
+      else
+        let* outgoing = Crux.Serialized_session.poll_outgoing peer in
+        match outgoing with
+        | Some bytes -> (
+            match Eta_crux_json.Format.decode bytes with
+            | Ok (Crux.Wire.Frame.Request_resolve { seq; _ }) ->
+                Crux.Serialized_session.receive peer
+                  (Eta_crux_json.Format.encode
+                     (Crux.Wire.Frame.Request_resolve_result
+                        {
+                          seq = Int32.add seq 1l;
+                          reply_to = seq;
+                          result = `Identity `Accepted;
+                        }))
+                |> Eta.Effect.map (fun _ -> ())
+            | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) ->
+                let* () =
+                  Crux.Serialized_session.receive peer
+                    (Eta_crux_json.Format.encode
+                       (Crux.Wire.Frame.Output_result
+                          {
+                            seq = Int32.add seq 20l;
+                            reply_to = seq;
+                            result = `Accepted;
+                          }))
+                  |> Eta.Effect.map (fun _ -> ())
+                in
+                let* _ = Crux.Driver.poll driver in
+                ack_resolve (leftover - 1)
+            | Ok _ | Error _ -> ack_resolve (leftover - 1))
+        | None ->
+            let* _ = Crux.Driver.poll driver in
+            let* () = Eta.Effect.yield in
+            ack_resolve (leftover - 1)
+    in
+    let* () = ack_resolve 100 in
+    Crux.Driver.request_stop driver;
+    let* () = stop_driver driver 20 in
+    Eta.Effect.pure (first, second)
+  in
+  let outcome = Eta_test.Run.run ~clock program in
+  let first, second = Eta_test.Expect.expect_ok outcome.exit in
+  (match first with
+  | Error
+      (Crux.Responder.Encode_failed { message = "inbound encode refused" }) ->
+      ()
+  | Error Crux.Responder.Not_pending ->
+      Alcotest.fail "encode failure consumed the pending request"
+  | Error (Crux.Responder.Encode_failed _) -> ()
+  | Ok () -> Alcotest.fail "failing response encode succeeded");
+  (match second with
+  | Ok () -> ()
+  | Error Crux.Responder.Not_pending ->
+      Alcotest.fail "request was not pending for the retry"
+  | Error (Crux.Responder.Encode_failed _) ->
+      Alcotest.fail "retry encode failed");
+  Eta_test.Run.expect_no_pending_fibers outcome
+
 let () =
   Alcotest.run "eta_crux core"
     [
@@ -2275,5 +2805,11 @@ let () =
             test_request_terminal_handoff_fence;
           Alcotest.test_case "request export terminal closure" `Quick
             test_request_export_closes_on_owner_and_root_termination;
+          Alcotest.test_case "requester encode failed" `Quick
+            test_requester_encode_failed;
+          Alcotest.test_case "requester decode failed" `Quick
+            test_requester_decode_failed;
+          Alcotest.test_case "responder encode failed" `Quick
+            test_responder_encode_failed;
         ] );
     ]

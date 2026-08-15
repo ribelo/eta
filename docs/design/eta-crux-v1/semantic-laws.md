@@ -170,6 +170,9 @@ law. A property gate must state its generated class and observation boundary.
 | R-07 | Root settlement waits for local terminal handoff acceptance. It never waits for foreign acknowledgment or consumption. | `test_request_terminal_handoff_fence` |
 | R-08 | Descriptor mismatch does not claim an event. Constructing an unrun handler effect does not claim it. The first executed matching handler or total dispatcher claims before user work, and typed failure retains the claim. | `test_outbound_request_round_trip` |
 | R-09 | Handler claim and cancellation use first-winner arbitration. Cancellation-first starts no host work. Claim-first delivers the exact closure reason to `on_cancel`. | `race_cancel_vs_dispatch_both_winners` |
+| R-10 | An outbound request encode error returns `Requester.Encode_failed`, allocates no request identity, consumes no request capacity, and emits no driver event. | `test_requester_encode_failed` |
+| R-11 | A host-operation response decode error returns `Requester.Decode_failed`, closes only that request, and keeps the session open. | `test_requester_decode_failed` |
+| R-12 | An inbound request-export response encode error returns `Responder.Encode_failed` and keeps that request pending. | `test_responder_encode_failed` |
 
 ## Failure and driver
 

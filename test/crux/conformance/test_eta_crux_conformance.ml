@@ -54,7 +54,7 @@ let conformance_identity_zero_wire () =
 
 let int_codec =
   Crux.Codec.make
-    ~encode:(fun value -> Bytes.of_string (string_of_int value))
+    ~encode:(fun value -> Ok (Bytes.of_string (string_of_int value)))
     ~decode:(fun bytes ->
       match int_of_string_opt (Bytes.to_string bytes) with
       | Some value -> Ok value
@@ -172,7 +172,7 @@ let conformance_identity_serialized_equivalence () =
         let bytes = Bytes.create (4 + Bytes.length handle) in
         Bytes.set_int32_be bytes 0 (Int32.of_int model);
         Bytes.blit handle 0 bytes 4 (Bytes.length handle);
-        bytes)
+        Ok bytes)
       ~decode:(fun _ ->
         Error
           {
@@ -226,7 +226,10 @@ let conformance_identity_serialized_equivalence () =
       {
         seq = 1l;
         handle;
-        payload = Crux.Codec.encode int_codec 11;
+        payload =
+          (match Crux.Codec.encode int_codec 11 with
+          | Ok payload -> payload
+          | Error _ -> Alcotest.fail "int codec encode failed");
       }
     |> Eta_crux_json.Format.encode
   in
@@ -293,7 +296,7 @@ let test_session_loss_requests () =
       ~format:(module Eta_crux_json.Format)
   in
   let unit_codec =
-    Crux.Codec.make ~encode:(fun () -> Bytes.empty)
+    Crux.Codec.make ~encode:(fun () -> Ok Bytes.empty)
       ~decode:(fun bytes ->
         if Bytes.length bytes = 0 then Ok ()
         else Error { Crux.Codec.message = "expected empty payload" })
@@ -401,7 +404,7 @@ let test_serialized_receive_wakes_await () =
       ~format:(module Eta_crux_json.Format)
   in
   let unit_codec =
-    Crux.Codec.make ~encode:(fun () -> Bytes.empty)
+    Crux.Codec.make ~encode:(fun () -> Ok Bytes.empty)
       ~decode:(fun _ -> Ok ())
   in
   let binding, _admin =
@@ -619,7 +622,7 @@ let test_raising_response_decoder_is_fatal () =
   in
   let response_codec =
     Crux.Codec.make ~encode:(fun value ->
-        Bytes.of_string (string_of_int value))
+        Ok (Bytes.of_string (string_of_int value)))
       ~decode:(fun _ ->
         raise (Failure "response decoder sentinel"))
   in
@@ -633,7 +636,7 @@ let test_raising_response_decoder_is_fatal () =
       ~format:(module Eta_crux_json.Format)
   in
   let unit_codec =
-    Crux.Codec.make ~encode:(fun () -> Bytes.empty)
+    Crux.Codec.make ~encode:(fun () -> Ok Bytes.empty)
       ~decode:(fun _ -> Ok ())
   in
   let binding, _admin =
@@ -786,7 +789,7 @@ let conformance_serialized_request_export () =
   in
   let output_codec =
     Crux.Codec.make
-      ~encode:Crux.Request_export.remote_handle
+      ~encode:(fun export -> Ok (Crux.Request_export.remote_handle export))
       ~decode:(fun _ ->
         Error
           {
@@ -838,7 +841,10 @@ let conformance_serialized_request_export () =
       {
         seq = 1l;
         handle;
-        payload = Crux.Codec.encode int_codec 21;
+        payload =
+          (match Crux.Codec.encode int_codec 21 with
+          | Ok payload -> payload
+          | Error _ -> Alcotest.fail "int codec encode failed");
       }
     |> Eta_crux_json.Format.encode
   in
@@ -931,7 +937,7 @@ let conformance_serialized_crash () =
         raise (Failure "serialized-crash-sentinel"))
   in
   let unit_codec =
-    Crux.Codec.make ~encode:(fun () -> Bytes.empty)
+    Crux.Codec.make ~encode:(fun () -> Ok Bytes.empty)
       ~decode:(fun bytes ->
         if Bytes.length bytes = 0 then Ok ()
         else

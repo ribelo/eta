@@ -269,7 +269,7 @@ type serialized_output = {
 
 let output_codec =
   Crux.Codec.make
-    ~encode:(fun output -> output.payload)
+    ~encode:(fun output -> Ok (output.payload))
     ~decode:(fun _ ->
       Error
         {
@@ -377,7 +377,7 @@ let make_capacity_workload runtime capacity =
   in
   let codec =
     Crux.Codec.make
-      ~encode:(fun value -> Bytes.of_string (string_of_int value))
+      ~encode:(fun value -> Ok (Bytes.of_string (string_of_int value)))
       ~decode:(fun bytes ->
         try Ok (int_of_string (Bytes.to_string bytes))
         with Failure message ->
@@ -428,10 +428,10 @@ let make_request_capacity_workload runtime capacity =
   let operation =
     Crux.Host_operation.define ~name:"bench.capacity"
       ~request:
-        (Crux.Codec.make ~encode:Bytes.of_string
+        (Crux.Codec.make ~encode:(fun bytes -> Ok (Bytes.of_string bytes))
            ~decode:(fun bytes -> Ok (Bytes.to_string bytes)))
       ~response:
-        (Crux.Codec.make ~encode:Bytes.of_string
+        (Crux.Codec.make ~encode:(fun bytes -> Ok (Bytes.of_string bytes))
            ~decode:(fun bytes -> Ok (Bytes.to_string bytes)))
   in
   let binding =
@@ -551,7 +551,7 @@ let make_serialized_handle_retention_workload runtime =
       ~codec:
         (Crux.Codec.make
            ~encode:(fun value ->
-             Bytes.of_string (string_of_int value))
+             Ok (Bytes.of_string (string_of_int value)))
            ~decode:(fun bytes ->
              match
                int_of_string_opt (Bytes.to_string bytes)
@@ -577,10 +577,10 @@ let make_serialized_handle_retention_workload runtime =
       ~encode:(fun ((_, endpoint), export) ->
         selector_endpoint := Some endpoint;
         match export with
-        | None -> Bytes.empty
+        | None -> Ok Bytes.empty
         | Some export ->
             Weak.set observed_export 0 (Some export);
-            Crux.Exported_endpoint.remote_handle export)
+            Ok (Crux.Exported_endpoint.remote_handle export))
       ~decode:(fun _ ->
         Error
           {
