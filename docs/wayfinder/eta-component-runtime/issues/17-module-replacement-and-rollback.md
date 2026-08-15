@@ -54,14 +54,22 @@ rule against trusted native code.
 
 ### Stale candidate detection
 
-Preparation records the source revision and each affected entry incarnation.
-Admission rejects the complete batch if either stamp is stale.
+Preparation records the source revision, each affected entry incarnation, and
+each accepted target revision. A target revision covers enablement,
+declaration, configuration equivalence, and effective context. Admission
+rejects the complete batch if any stamp is stale.
+
+One source authority assigns strictly increasing source revisions. Equal or
+decreasing revisions fail before preparation or core admission.
 
 A rejected batch is terminal. A retry requires a fresh source revision and new
 candidate authority.
 
 The adapter also checks the candidate component identity and module locator.
 These checks occur before lifecycle mutation.
+
+The stable component family owns the authorized module locator. A native load
+token binds that locator to one target, artifact, and unique compilation unit.
 
 ### Instance and generation identity
 
@@ -86,8 +94,9 @@ component instance.
 
 ### Replacement transaction
 
-The transaction retains the old declarations and last committed configuration
-snapshots. It then fences each provider in the affected runtime closure.
+Immediately before lifecycle mutation, the transaction retains the current
+declarations and committed configuration snapshots. It then fences each
+provider in the affected runtime closure.
 
 Old generations settle in consumer-first order. A fenced old provider remains
 available only through committed old consumer leases during drainage.
@@ -126,8 +135,9 @@ Keep these outcomes distinct:
 Rollback after asynchronous activation failure is an Eta strengthening. Cordis
 removes the old fiber and records the new fiber failure without HMR rollback.
 
-Clean rollback closes every candidate attempt. It then activates the retained
-old declarations with the last committed configuration.
+Clean rollback closes every candidate attempt. It then activates the
+declarations and configurations captured immediately before lifecycle
+mutation. It does not restore a preparation-time target.
 
 Restoration stages all successful old generations before one coordinator
 commit. A failed restoration closes every staged restoration attempt and

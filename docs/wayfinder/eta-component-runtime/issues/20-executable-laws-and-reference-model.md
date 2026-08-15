@@ -65,8 +65,8 @@ Rotation and reversal vary only the branch order.
 
 The production matrix has 23 named law families. It covers:
 
-- recovery, cleanup cardinality, generation fences, causes, retry, children,
-  quarantine, and failure locality.
+- recovery, cleanup cardinality, generation fences, causes, retry, quarantine,
+  and failure locality.
 - provider ordering, committed views, lease cardinality, duplicate providers,
   equal-value replacement, cycles, isolation, and interception.
 - desired-state admission, preparation revisions, simultaneous updates,
@@ -82,6 +82,11 @@ The production matrix has 23 named law families. It covers:
 
 The executable-law registry must cite each normative public-interface span.
 The public interface and registry must name each property in the same change.
+
+[Integrated design and handoff](22-integrated-design-and-handoff.md) adds named
+properties for schema uniqueness, callback classification, episode identity,
+and metadata fold order. It also covers operation supersession, degraded
+fences, shutdown idempotence, and replacement target freshness.
 
 ### Progress and failure boundary
 

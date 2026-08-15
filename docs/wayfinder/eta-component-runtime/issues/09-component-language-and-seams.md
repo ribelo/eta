@@ -35,9 +35,9 @@ supplies a coeffect.
 fixed component kinds. One component can consume one coeffect and provide
 another.
 
-A `Provider episode` is one activation generation of one component instance.
-Provider identity includes the component instance and the activation
-generation.
+A `Provider episode` has one opaque runtime identity. The identity has a
+one-to-one association with one component instance and one activation
+generation. The pair remains diagnostic data and does not define equality.
 
 A `Component` is a reusable declaration. A `Component instance` is one live
 installation of that declaration. The component runtime constructs an instance

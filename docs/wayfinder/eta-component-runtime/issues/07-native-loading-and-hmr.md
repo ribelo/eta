@@ -37,3 +37,8 @@ rolled back, and a process restart is the code-reclamation boundary. See
 refines “fresh instance” to “fresh activation generation in the retained
 component instance.” The native loading and code-retention conclusions remain
 unchanged.
+
+[Integrated design and handoff](22-integrated-design-and-handoff.md) requires a
+non-reloadable stable host interface to own configuration types, coeffect
+descriptors, and component-family values that cross native generations.
+Manifest names remain diagnostic and do not establish type identity.

@@ -21,8 +21,8 @@ static representation for requirements and provisions that the prototypes
 support. Provider availability remains dynamic.
 
 Eta scopes own lexical resources. A component context tracks long-lived
-acquisitions, registrations, and child components. Recovery uses observational
-equivalence, not physical-state equality.
+acquisitions, registrations, and component instances. Recovery uses
+observational equivalence, not physical-state equality.
 
 `Component` means a reusable declaration. `Component instance` means one live
 installation. Do not use the paper's term `fiber` for a component instance,
@@ -76,6 +76,7 @@ not in scope.
 - [Package and module ownership](issues/19-package-and-module-ownership.md) — Three optional packages isolate core, generic loading, and native HMR. Existing `eta_eio` remains the only Eio backend.
 - [Executable laws and reference model](issues/20-executable-laws-and-reference-model.md) — A factored pure oracle, prefix comparison, identity bijection, exhaustive matrices, and Eta-test and Eio gates define the proof plan.
 - [OxCaml portability and cost gates](issues/21-oxcaml-portability-and-cost-gates.md) — Owner-domain authorities stay abstract, while private compiler checks and baseline-driven benchmarks guard portability and cost.
+- [Integrated design and handoff](issues/22-integrated-design-and-handoff.md) — The approved package reconciles all interfaces and semantics, then fixes the implementation sequence and final verification matrix.
 
 ## Not yet specified
 

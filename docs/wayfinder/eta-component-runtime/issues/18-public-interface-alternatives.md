@@ -72,8 +72,13 @@ provision, and activation-error types become existential after
 - An activation function from configuration, resolved input, and
   `Activation.t` to the complete provision effect.
 
-`Activation.t` exposes only tracked ownership. It exposes no registry, dynamic
-lookup, publication operation, context authority, runtime token, or lifecycle
+It returns a typed declaration error for duplicate requirement keys, duplicate
+provision keys, or a key present in both schemas.
+
+`Activation.t` exposes only tracked ownership. `Activation.own` requires a
+release-error renderer. Closed admission appears as requested lifecycle
+interruption. The value exposes no registry, dynamic lookup, publication
+operation, child installation, context authority, runtime token, or lifecycle
 handle.
 
 ### Desired state and context control
@@ -96,6 +101,11 @@ Keep explicit context operations:
 
 Each accepted operation returns one settlement fence. Each rejected admission
 returns a detailed typed error and creates no fence.
+
+A later accepted target supersedes an earlier conflicting target. The earlier
+fence waits for work that it started. Clean settlement reports `Superseded`;
+recovery failure reports `Degraded`. Repeated shutdown returns the first
+shutdown fence.
 
 Do not combine these operations behind one public `Change.t` sum. That sum
 moves names without hiding lifecycle complexity or improving error locality.
@@ -138,7 +148,8 @@ desired-state IDs, acyclic provider graphs, current candidate freshness, or
 successful recovery.
 
 Dynamic replacement still checks stable component identity and the expected
-runtime instance incarnation before lifecycle mutation.
+runtime instance incarnation before lifecycle mutation. It also checks the
+context-qualified accepted target revision.
 
 ### Rejected alternatives
 

@@ -76,6 +76,14 @@ owns source supersession and admission linkage.
 A loader adapter prepares `Desired_state.t` or `Replacement.batch`. It receives
 no `Context.t` and has no component lifecycle authority.
 
+The loader coordinator has one lexical `Eta_component_loader.Make.run`
+lifetime. It owns preparation work, source supersession, loader shutdown, and
+immutable operation reports. The coordinator, not the adapter, holds the
+context authority used for admission.
+
+One loader accepts a strictly increasing source-revision sequence. Equal or
+decreasing submissions fail before preparation.
+
 These private modules implement the loader:
 
 - `Component_loader_coordinator`
@@ -109,6 +117,13 @@ plugin initializers. A private load token admits exactly one inactive candidate
 for each authorized native load. Registration outside that load, no
 registration, or duplicate registration fails explicitly.
 
+A non-reloadable stable host interface owns each hot-replaceable configuration
+type, coeffect descriptor, and `Component.Family.t` value. Every native
+generation imports the same stable interface. A stable-interface change
+requires process restart. Manifest names are diagnostic and do not establish
+type identity. The family also owns the stable module locator used for native
+authorization.
+
 These private modules implement native loading:
 
 - `Component_loader_native_manifest`
@@ -118,7 +133,8 @@ These private modules implement native loading:
 - `Component_loader_native_residency`
 
 The package owns immutable artifact naming, dependency-closure classification,
-private `Dynlink` mutation, and residency accounting. It cannot unload native
+private `Dynlink` mutation, and residency accounting. It copies each build
+artifact to a unique generation path before loading. It cannot unload native
 code.
 
 ### Eio, formats, watching, and tests

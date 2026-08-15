@@ -55,8 +55,8 @@ inner metadata for the same coeffect. Resolution merges metadata in this order:
 2. Outer context metadata.
 3. Inner context metadata.
 
-The merge is right-biased. Therefore, an inner context has final priority and
-can constrain a component declaration.
+The runtime folds metadata in this exact order. The algebra defines the
+result. It need not be right-biased.
 
 A requirement with no declared metadata uses the empty value. It still receives
 context interception. Thus, a component cannot bypass interception by omitting
@@ -78,8 +78,9 @@ executable identity and associativity laws for its merge operation.
 
 ### Provider identity and admission
 
-One provider episode has opaque, runtime-generated identity. Its component
-instance and generation are diagnostic data, not its equality definition.
+One provider episode has opaque, runtime-generated identity. The identity has
+a one-to-one association with one component instance and generation. The pair
+is diagnostic data and does not define equality.
 
 Provider admission checks the prospective `(key, realm)` slot before mutation.
 An occupied slot rejects the complete admission. The registry never contains
@@ -136,9 +137,9 @@ Cordis uses traceable proxies to recover the caller context during service
 invocation. Eta uses a typed wrapper with a runtime-owned snapshot. These
 representations have the same operation-entry observation boundary.
 
-The paper gives context metadata priority over component metadata. Eta keeps
-that rule. The default TypeScript object merge can give component injection
-metadata priority, so Eta does not copy that incidental behavior.
+The paper orders context metadata after component metadata. Eta keeps that
+order without requiring one metadata algebra to model override priority. The
+default TypeScript object merge remains an incidental behavior.
 
 ### Prototype evidence
 

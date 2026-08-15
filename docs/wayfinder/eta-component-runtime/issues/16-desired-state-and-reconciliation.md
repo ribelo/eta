@@ -61,6 +61,11 @@ Each component defines typed configuration equivalence. Equivalent
 configuration preserves the current activation target. Non-equivalent
 configuration starts a fresh serialized activation generation.
 
+Each retained entry also has one opaque accepted target revision. It covers
+the entry incarnation, enablement, declaration, configuration equivalence
+class, and complete effective context. Reordering does not change this
+revision.
+
 ### Authority split
 
 The application owns:
@@ -99,11 +104,15 @@ lifecycle mutation:
 
 - All node IDs are unique.
 - A retained ID does not change node kind.
-- Each active prospective `(coeffect key, realm)` slot has at most one
-  provider.
+- Each effectively enabled prospective `(coeffect key, realm)` slot has at
+  most one provider declaration.
 - The prospective provider graph is acyclic.
 
 A missing provider is valid. The affected consumer remains waiting.
+
+Configuration-equivalence and interception-merge callbacks run before
+lifecycle mutation. A callback exception rejects admission with a typed
+callback-defect error. The accepted state remains unchanged.
 
 The coordinator accepts one validated candidate as one desired revision. A
 newer source revision replaces an incomplete older revision. Preparation order
@@ -133,6 +142,11 @@ providers and then retries the complete realm transaction.
 
 After admission, each component-instance coordinator reads only the latest
 accepted snapshot. It does not apply an incremental tree patch.
+
+A later accepted operation supersedes an unfinished conflicting target. The
+older fence waits for work that it started. Clean settlement reports
+`Superseded`; recovery failure reports `Degraded`. Disjoint operations can
+settle independently.
 
 The coordinator applies these entry rules:
 

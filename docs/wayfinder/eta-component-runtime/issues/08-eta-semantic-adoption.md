@@ -31,16 +31,17 @@ Recovery covers state that the component runtime mediates:
 - provider-episode identity.
 - the committed provider view.
 - the current component lifecycle outcome.
-- tracked registrations and child instances.
+- tracked registrations.
 - component-owned state behind declared coeffect operations.
 
 Each typed coeffect key defines its observable operations and value
 equivalence. Runtime observations add provider presence, provider-episode
 identity, lifecycle state, and retained causes.
 
-A provider episode is one activation generation of one component instance.
-Each reactivation creates a new provider episode. Equal values from different
-provider episodes do not make provider views equal.
+A provider episode has one opaque runtime identity. The identity has a
+one-to-one association with one component instance and one activation
+generation. Each reactivation creates a new provider episode. Equal values
+from different episodes do not make provider views equal.
 
 Recovery does not require physical-state equality. It also excludes allocation
 identity, diagnostic history, and external-emission history. Terminal
@@ -102,10 +103,6 @@ Provider withdrawal first closes admission for new consumers. The runtime then
 retires and settles existing consumers before it runs provider recovery.
 Consumers use their committed provider view during teardown.
 
-Child registration is tracked. Parent retirement retires and settles its
-children. Dependency edges, not parent-child position, determine withdrawal
-order between providers and consumers.
-
 Global recovery requires cross-instance independence. Operations at different
 keys must not affect each other. Shared-key operations must commute and preserve
 outcomes, recovery witnesses, and continuations. Executable laws provide
@@ -159,7 +156,6 @@ The design must preserve:
 - an admission fence before cancellation.
 - dependent-first withdrawal and settlement.
 - sequential recovery accumulation.
-- tracked child ownership.
 - duplicate-provider and cycle validation.
 - cause-preserving lifecycle outcomes.
 
@@ -167,8 +163,9 @@ An implementation can replace one of these protocol elements only with an
 observationally equivalent mechanism and matching executable laws.
 
 Eta scopes continue to own lexical resources. The component context owns
-provider availability, long-lived registrations, child instances, and lifecycle
-coordination across activations. The design does not add another effect algebra.
+provider availability, long-lived registrations, desired-state component
+instances, and lifecycle coordination across activations. The design does not
+add another effect algebra.
 
 The exact state names, iterator form, context representation, notification
 primitive, scheduler, storage layout, and Eio adapter are later design choices.

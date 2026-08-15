@@ -88,7 +88,10 @@ an interruption path for invalidated activation and forced context shutdown.
 
 If a dependent cleanup fails or does not terminate, its provider lease remains.
 The coordinator does not send the provider's normal-stop signal. The provider
-stays guarded, and the context remains degraded or nonquiescent.
+stays guarded. A completed cleanup failure can terminate a reconciliation,
+retry, or replacement fence as `Degraded`. A shutdown fence remains pending
+while the lease blocks provider settlement. A nonterminating cleanup keeps the
+context nonquiescent.
 
 ### Causes and settlement
 
@@ -101,8 +104,9 @@ activation failure followed by failed cleanup produces `Cause.Suppressed`.
 Requested interruption without another failure is lifecycle control. An
 unexpected interruption remains part of the retained generation cause.
 
-Repeated shutdown or disposal requests observe or join the same child
-settlement. They do not start another cleanup pass.
+Repeated disposal requests observe or join the same child settlement. The
+first context shutdown request creates one shutdown fence. Repeated shutdown
+requests return that fence and do not start another cleanup pass.
 
 ### Cordis comparison
 

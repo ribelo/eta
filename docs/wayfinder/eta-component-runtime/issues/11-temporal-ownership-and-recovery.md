@@ -9,9 +9,9 @@ Blocked by: 03, 04, 06, 08, 09
 What is the smallest context operation that tracks long-lived component effects
 while Eta scopes retain lexical resource ownership?
 
-Prototype registration, acquisition, child-component creation, partial
-activation failure, cancellation, and repeated disposal. Compare explicit
-inverse accumulation with scope-owned finalizers and derived child contexts.
+Prototype registration, acquisition, partial activation failure, cancellation,
+and repeated disposal. Compare explicit inverse accumulation with scope-owned
+finalizers and derived child contexts.
 
 The answer must define at-most-once behavior, recovery order, the observation
 boundary, and the contract for an operation that cannot be reversed.
@@ -26,6 +26,7 @@ val own :
   Activation.t ->
   acquire:('a, 'error) Effect.t ->
   release:('a -> (unit, 'release_error) Effect.t) ->
+  pp_release_error:(Format.formatter -> 'release_error -> unit) ->
   ('a, 'error) Effect.t
 ```
 
@@ -38,6 +39,8 @@ preserve the operation below.
 generation. It adds component semantics to Eta's existing resource operation:
 
 - Before acquisition, it rejects a stale generation or closed admission.
+- This rejection is requested lifecycle interruption. It does not widen the
+  acquisition-error type.
 - A successful acquisition registers its release before it returns.
 - The current Eta activation scope owns and runs the release.
 - A successful operation that lands after cancellation still registers its
@@ -54,7 +57,7 @@ remain spatial tools for isolation and interception.
 `Activation.own` is for a tracked effect whose lifetime can extend to activation
 settlement.
 
-### Registrations, acquisitions, and children
+### Registrations and acquisitions
 
 A registration acquisition returns its registration token. Its release
 withdraws that token.
@@ -62,13 +65,12 @@ withdraws that token.
 A resource acquisition returns its resource value. Its release uses the
 ordinary Eta finalizer contract.
 
-A child acquisition creates and tracks one child component instance. Its
-release retires the child and waits for child settlement. It does not remove an
-active child.
-
 Specialized component operations can use `Activation.own` internally. This
 keeps generation checks, recovery ownership, and diagnostics at one mediation
 point.
+
+Desired-state reconciliation is the only component-instance creation
+authority. `Activation.t` exposes no child-installation operation.
 
 ### Failure, cancellation, and repeated disposal
 
@@ -88,6 +90,10 @@ release at most once, including when the release fails. Repeated disposal
 requests join or observe one settlement fence. They return the same terminal
 outcome and do not run a release again.
 
+The runtime invokes `pp_release_error` at most once for one settled failure
+leaf. A raising renderer produces a separate `Renderer_failed` diagnostic. It
+does not replace or augment the authoritative finalizer cause.
+
 The scope runs releases serially in reverse registration order. A failed release
 does not stop later releases. Eta retains the failure in its finalizer cause.
 The component instance settles in a recovery-failed state after the scope
@@ -99,9 +105,8 @@ order remains a separate runtime responsibility.
 ### Observation boundary
 
 Recovery compares the mediated state before activation with the state after
-scope settlement. The comparison includes tracked registrations, child
-instances, provisions, and component-owned state behind declared coeffect
-operations.
+scope settlement. The comparison includes tracked registrations, provisions,
+and component-owned state behind declared coeffect operations.
 
 The comparison uses each coeffect's value equivalence. It does not require
 physical-state equality. It excludes lifecycle bookkeeping, diagnostics,

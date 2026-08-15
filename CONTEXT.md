@@ -449,8 +449,9 @@ The runtime role of a component instance for a coeffect that it supplies.
 
 ## Provider episode
 
-One activation generation of one component instance. Reactivation creates a new
-provider episode, even when the component instance remains the same.
+One opaque runtime identity for one activation generation of one component
+instance. The identity has a one-to-one association with that instance and
+generation. Reactivation creates a new provider episode.
 
 ## Committed provider view
 
@@ -493,8 +494,8 @@ Typed policy data for one coeffect. A requirement supplies component metadata,
 and derived contexts supply outer and inner metadata. The coeffect defines the
 merge operation.
 
-Context metadata has priority over component metadata. An inner context has
-priority over an outer context.
+The runtime merges component metadata, outer-context metadata, and
+inner-context metadata in that order. The metadata algebra defines the result.
 
 ## Interception snapshot
 
@@ -555,6 +556,12 @@ component context has not accepted it as a desired target.
 
 One component-context decision that fences affected provider episodes, stages
 replacement generations, and commits or restores one declaration batch.
+
+## Accepted target revision
+
+One opaque, context-qualified identity for the effective target of a
+desired-state entry. It covers the entry incarnation, enablement, declaration,
+configuration equivalence class, and effective context.
 
 ## Component diagnostics snapshot
 

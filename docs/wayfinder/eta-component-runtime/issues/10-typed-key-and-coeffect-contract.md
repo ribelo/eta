@@ -86,7 +86,7 @@ val both :
 val contramap : ('b -> 'a) -> 'a Provision.t -> 'b Provision.t
 ```
 
-`unit` represents an empty declaration in each module. `map` and `contramap`
+`none` represents an empty declaration in each module. `map` and `contramap`
 let component authors use named records instead of nested tuples.
 
 The runtime resolves a complete requirement value before activation. It does
@@ -120,8 +120,11 @@ type t =
 It does not expose dynamic coeffect lookup.
 
 `Component.make` checks the relationships while all types remain visible. It
-then hides the requirement, provision, and error types in `Component.t`. This
-shape permits heterogeneous component and desired-state storage.
+also rejects duplicate requirement keys, duplicate provision keys, and a key
+that occurs in both schemas. It returns a typed declaration error for these
+cases. It then hides the requirement, provision, and error types in
+`Component.t`. This shape permits heterogeneous component and desired-state
+storage.
 
 The public component type therefore has no requirement, provision, or error
 parameters. Reject the original three-parameter component type. Its parameters

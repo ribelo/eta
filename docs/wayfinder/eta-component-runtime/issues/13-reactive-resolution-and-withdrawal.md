@@ -117,8 +117,10 @@ its leases. Repeating this argument in reverse dependency order releases every
 guard.
 
 A failed or nonterminating cleanup does not release its leases. The provider
-remains guarded. The affected context stays degraded or nonquiescent and does
-not claim successful recovery.
+remains guarded. A completed cleanup failure can finish reconciliation, retry,
+or replacement as `Degraded`. Shutdown remains pending while a retained lease
+blocks provider settlement. A nonterminating cleanup keeps the context
+nonquiescent.
 
 ### Cordis relationship
 

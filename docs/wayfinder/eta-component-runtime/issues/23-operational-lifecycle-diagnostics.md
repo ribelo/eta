@@ -89,6 +89,7 @@ One snapshot contains:
 - the accepted desired revision.
 - context lifecycle, progress, and integrity.
 - desired-state entry and component-instance identities.
+- each accepted target revision.
 - each current component-instance phase.
 - activation generation and provider-episode identities.
 - committed provider views without provider values.
@@ -151,8 +152,14 @@ new identity.
 Every activation attempt gets a fresh generation identity. Generation identity
 is monotonic within one component instance and is never reused.
 
-Every committed provider activation gets a fresh opaque provider-episode
-identity. Equal provision values do not preserve episode identity.
+Every generation that stages a complete provision set gets one fresh opaque
+provider-episode identity. The identity has a one-to-one association with its
+component instance and generation. Equal provision values do not preserve
+episode identity.
+
+Each retained entry has one opaque, context-qualified target revision. It
+changes with incarnation, enablement, declaration, configuration equivalence,
+or effective context. Reordering does not change it.
 
 One settlement-fence identity belongs to one accepted context operation. One
 loader-operation identity belongs to one submitted source revision.
@@ -217,6 +224,19 @@ They do not create separate public lifecycle authorities.
 Repeated waits on one fence return the same terminal report. Different fences
 can remain pending or complete at the same time.
 
+A later accepted operation supersedes only an unfinished conflicting target.
+The older fence waits for work that it started. Clean settlement reports
+`Superseded`; recovery or context failure uses the terminal-outcome
+precedence. Disjoint operations can both finish normally.
+
+Each generation records the fence that started it. A later fence can retire or
+wait for that generation. Both reports retain the generation with distinct
+participant roles.
+
+The first shutdown request creates one shutdown fence. Repeated shutdown
+requests return the same fence. Shutdown closes admission for other context
+operations.
+
 One terminal settlement report contains:
 
 - fence identity and operation kind.
@@ -250,8 +270,12 @@ The operation outcome is one of:
 A rejected admission returns its typed admission error and creates no
 settlement fence.
 
-A nonterminating operation produces no false terminal report. A blocked
-shutdown remains pending.
+A completed cleanup failure can finish reconciliation, retry, or replacement
+as `Degraded`. Its final snapshot can report `Blocked`. A shutdown fence
+remains pending while a retained lease blocks provider settlement.
+
+A nonterminating cleanup reports `Reconciling` and produces no false terminal
+report.
 
 ### Retained failures and rendering
 
@@ -271,6 +295,10 @@ component code or a retained error printer.
 If rendering raises, diagnostics retain the original cause and expose an
 explicit `Renderer_failed` diagnostic. The rendering failure does not replace,
 suppress, or augment the lifecycle cause.
+
+`Activation.own` supplies the renderer for a release-error leaf. The runtime
+uses a total internal wrapper so a raising renderer does not replace the
+authoritative finalizer cause.
 
 The production interface does not unpack the existential cause. This rule
 prevents callers from observing mutable application error payloads.
