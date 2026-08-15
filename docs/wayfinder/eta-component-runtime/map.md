@@ -75,6 +75,7 @@ not in scope.
 - [Operational lifecycle diagnostics](issues/23-operational-lifecycle-diagnostics.md) — Atomic snapshots and coalesced waits expose current state. Context fences and loader reports preserve terminal facts and complete causes.
 - [Package and module ownership](issues/19-package-and-module-ownership.md) — Three optional packages isolate core, generic loading, and native HMR. Existing `eta_eio` remains the only Eio backend.
 - [Executable laws and reference model](issues/20-executable-laws-and-reference-model.md) — A factored pure oracle, prefix comparison, identity bijection, exhaustive matrices, and Eta-test and Eio gates define the proof plan.
+- [OxCaml portability and cost gates](issues/21-oxcaml-portability-and-cost-gates.md) — Owner-domain authorities stay abstract, while private compiler checks and baseline-driven benchmarks guard portability and cost.
 
 ## Not yet specified
 
