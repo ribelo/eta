@@ -87,6 +87,12 @@ gates, and all affected Eta packages and modules.
   tag. A projection harness in `eta_crux_test` supplies the deterministic
   controls. All three protocol profiles are gated until interface selection
   deletes two. The three inherited gate gaps get named gates.
+- [Performance and zero-cost gates](issues/13-performance-and-zero-cost-gates.md)
+  — Semantic complexity bounds become PRF law rows executed by exact counters
+  in the registered bench suite; budgets stay regression-only against recorded
+  baselines. Scaled rows run at 10,000 and 100,000, the empty-catalog root
+  gets a zero-delta allocation gate, and all three profiles get byte gates
+  until selection deletes two.
 
 ## Not yet specified
 
