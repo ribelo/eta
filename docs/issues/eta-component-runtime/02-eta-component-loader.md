@@ -185,7 +185,7 @@ unchanged — and asserts no coordinator internals. Law-bearing prose in
 `eta_component_loader.mli` lands with its named gate and registry row in the
 same change.
 
-**Seams** (these need user confirmation before implementation starts):
+**Seams** (confirmed with the user):
 
 1. The public `Eta_component_loader` surface driven by controlled test
    adapters. A test adapter can complete, fail, raise, hang, or be cancelled on

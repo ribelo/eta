@@ -777,7 +777,7 @@ Every law-bearing claim added to `eta_component.mli` needs its named
 executable gate and its registry row in the same change, per the repository
 executable-law policy.
 
-**Seams** (these need user confirmation before implementation starts):
+**Seams** (confirmed with the user):
 
 1. The public `Eta_component` surface. This is the highest seam and carries
    almost every law: declaration errors, admission errors, fences, reports,

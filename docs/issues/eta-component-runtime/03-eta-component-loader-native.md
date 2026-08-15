@@ -224,7 +224,7 @@ errors, residency reports, and the unchanged component-context observations that
 a rejection must preserve — and asserts no private loader state. Because native
 loading mutates the process, results must be observed in a fresh process.
 
-**Seams** (these need user confirmation before implementation starts):
+**Seams** (confirmed with the user):
 
 1. The public adapter surface: `Make (Source).prepare` over scripted
    `SOURCE` implementations and fixture manifests. This is the highest seam and
