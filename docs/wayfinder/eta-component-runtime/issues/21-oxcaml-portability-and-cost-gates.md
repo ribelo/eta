@@ -1,7 +1,7 @@
 # OxCaml portability and cost gates
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 06, 15, 18
 
 ## Question
