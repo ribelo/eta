@@ -81,6 +81,12 @@ gates, and all affected Eta packages and modules.
   bootstrap on a fresh session, after old-session closure and permit
   settlement. A commit with no live session latches `Adapter_delivery`. The
   preflight, outcome, and bounds families stay closed.
+- [Laws and deterministic test controls](issues/12-laws-and-deterministic-test-controls.md)
+  — New PRJ, PRW, and PRB law families plus amended output-delivery laws give
+  every claim a named gate, generated class, observation boundary, and binding
+  tag. A projection harness in `eta_crux_test` supplies the deterministic
+  controls. All three protocol profiles are gated until interface selection
+  deletes two. The three inherited gate gaps get named gates.
 
 ## Not yet specified
 
