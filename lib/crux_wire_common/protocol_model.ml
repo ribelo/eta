@@ -54,10 +54,30 @@ type callback_outcome =
   | Callback_accepted
   | Callback_failed of string
 
+type projection_entry = {
+  kind : string;
+  key : string;
+  incarnation : int64;
+  value : string;
+}
+
+type projection_update =
+  | Projection_attached of projection_entry
+  | Projection_changed of projection_entry
+  | Projection_removed of {
+      kind : string;
+      key : string;
+      incarnation : int64;
+    }
+
+type projection_content =
+  | Projection_updates of projection_update list
+  | Projection_bootstrap of projection_entry list
+
 type body =
-  | Deliver_output of {
+  | Deliver_projection of {
       reason : delivery_reason;
-      payload : string;
+      content : projection_content;
     }
   | Notify_crash of { failure : string }
   | Invoke_endpoint of {
@@ -106,7 +126,7 @@ type body =
       reply_to : int;
       outcome : request_cancel_outcome;
     }
-  | Output_result of {
+  | Projection_result of {
       reply_to : int;
       outcome : callback_outcome;
     }
@@ -121,7 +141,7 @@ type frame = {
 }
 
 let tag = function
-  | Deliver_output _ -> "output.deliver"
+  | Deliver_projection _ -> "projection.deliver"
   | Notify_crash _ -> "crash.notify"
   | Invoke_endpoint _ -> "endpoint.invoke"
   | Start_request _ -> "request.start"
@@ -135,7 +155,7 @@ let tag = function
   | Request_dispatch_result _ -> "request.dispatch_result"
   | Request_resolve_result _ -> "request.resolve_result"
   | Request_cancel_result _ -> "request.cancel_result"
-  | Output_result _ -> "output.result"
+  | Projection_result _ -> "projection.result"
   | Crash_result _ -> "crash.result"
 
 let reason_to_string = function
@@ -227,6 +247,8 @@ let delivery_reason_of_string = function
 let callback_outcome_to_fields = function
   | Callback_accepted -> "accepted", None
   | Callback_failed message -> "failed", Some message
+
+let uint64_to_string value = Printf.sprintf "%Lu" value
 
 let encode_bytes value =
   Base64.encode_string ~pad:false ~alphabet:Base64.uri_safe_alphabet value

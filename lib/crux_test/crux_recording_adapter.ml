@@ -1,18 +1,18 @@
 module Crux = Eta_crux
 
-type 'output event =
+type event =
   | Acquire
-  | Deliver of 'output Crux.Adapter.delivery
+  | Deliver of Crux.Adapter.delivery
   | Request_event of Crux.Request.Driver_event.t
   | Crash_detected of Crux.Failure.t
   | Release
 
-type ('output, 'error) t = {
+type 'error t = {
   pp_error : Format.formatter -> 'error -> unit;
   acquire : (unit, unit, 'error) Eta_test.Controlled.t;
   release : (unit, unit, 'error) Eta_test.Controlled.t;
   deliver :
-    ('output Crux.Adapter.delivery, unit, 'error)
+    (Crux.Adapter.delivery, unit, 'error)
     Eta_test.Controlled.t;
   request_event :
     (Crux.Request.Driver_event.t, unit, 'error)
@@ -20,7 +20,7 @@ type ('output, 'error) t = {
   crash_detected :
     (Crux.Failure.t, unit, 'error) Eta_test.Controlled.t;
   lock : Eta.Sync_lock.t;
-  mutable events_rev : 'output event list;
+  mutable events_rev : event list;
 }
 
 let create ~pp_error =

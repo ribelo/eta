@@ -8,6 +8,7 @@ module Wire = Crux_wire.Wire
 module Serialized_session = Crux_wire.Serialized_session
 module Root = Crux_root.Root
 module Post_commit = Crux_root.Post_commit
+module Projection = Crux_projection
 module Remote_registry = Crux_remote_registry
 module Seq_map = Map.Make (Int32)
 module String_map = Map.Make (String)
@@ -17,8 +18,7 @@ type request_command =
   | Request_cancel_command of string
   | Inbound_resolve_command of string
 
-type 'output serialized_binding = {
-  output_codec : 'output Codec.t;
+type serialized_binding = {
   mutable candidate : Serialized_session.candidate;
   mutable replacement_pending : bool;
   authentication_key : string;
@@ -28,13 +28,13 @@ type 'output serialized_binding = {
   mutable closure_observed : bool;
 }
 
-type 'output binding_mode =
+type binding_mode =
   | Identity
-  | Serialized of 'output serialized_binding
+  | Serialized of serialized_binding
 
-type 'output binding = {
+type binding = {
   core : binding_core;
-  mode : 'output binding_mode;
+  mode : binding_mode;
   mutable replace :
     Serialized_session.candidate ->
     (Serialized_session.replace_outcome,
@@ -50,13 +50,13 @@ type reason =
   | Advancement
   | Session_replacement
 
-type 'output t = {
-  binding : 'output binding;
-  root : 'output Root.t;
+type t = {
+  binding : binding;
+  root : Root.t;
   requests : (Request.Driver_event.t, never) Eta.Queue.t;
   lock : Eta.Sync_lock.t;
-  mutable state : 'output state;
-  mutable last_output : 'output option;
+  mutable state : state;
+  mutable last_snapshot : Projection.Snapshot.t option;
   mutable next_request_token : int64;
   mutable request_commands : request_command Seq_map.t;
   mutable remote_requests : Request.Driver_event.t String_map.t;
@@ -64,9 +64,10 @@ type 'output t = {
     boundary_remote_request String_map.t;
 }
 
-and 'output state =
+and state =
   | Running
-  | Delivering of 'output delivery * int32 option
+  | Advancing
+  | Delivering of delivery * int32 option
   | Replacement_delivering of
       int32 * (Serialized_session.replace_outcome, never) Eta.Promise.t
   | Crash_detected_pending of Failure.t * Post_commit.t
@@ -78,8 +79,8 @@ and 'output state =
   | Stopped_closed_pending
   | Closed_done
 
-and 'output delivery = {
-  output : 'output;
+and delivery = {
+  projection : Projection.delivery;
   reason : reason;
   lock : Eta.Sync_lock.t;
   mutable completed : bool;
@@ -90,8 +91,8 @@ and 'output delivery = {
 
 and delivery_completion_error = Already_completed
 
-type 'output event =
-  | Deliver of 'output delivery
+type event =
+  | Deliver of delivery
   | Request of Request.Driver_event.t
   | Rejected of Root.delivery_error
   | Crash_detected of Failure.t
@@ -116,12 +117,12 @@ let latch_adapter_delivery_failure driver cause =
   latch_failure_record driver.root.core
     (failure_record driver.root.core
        ~origin:Failure.Adapter_delivery
-       ~trigger:Failure.Output_delivery cause);
+       ~trigger:Failure.Projection_delivery cause);
   Eta.Sync_lock.use driver.root.core.lock @@ fun () ->
   Option.get (Atomic.get driver.root.core.failure)
 
 module Delivery = struct
-  type 'output t = 'output delivery
+  type t = delivery
   type nonrec reason = reason =
     | Advancement
     | Session_replacement
@@ -129,7 +130,7 @@ module Delivery = struct
   type completion_error = delivery_completion_error =
     Already_completed
 
-  let output delivery = delivery.output
+  let projection delivery = delivery.projection
   let reason delivery = delivery.reason
   let delivered delivery = delivery.answer `Delivered
   let failed delivery cause = delivery.answer (`Failed cause)

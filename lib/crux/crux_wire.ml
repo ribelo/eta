@@ -55,13 +55,33 @@ module Wire = struct
     type request_resolve_result =
       [ `Identity of request_identity_result | `Malformed_payload ]
 
+    type projection_entry = {
+      kind : string;
+      key : bytes;
+      incarnation : int64;
+      value : bytes;
+    }
+
+    type projection_update =
+      | Attached of projection_entry
+      | Changed of projection_entry
+      | Removed of {
+          kind : string;
+          key : bytes;
+          incarnation : int64;
+        }
+
+    type projection_content =
+      | Updates of projection_update list
+      | Bootstrap of projection_entry list
+
     type t =
-      | Output_deliver of {
+      | Projection_deliver of {
           seq : int32;
           reason : delivery_reason;
-          output : bytes;
+          content : projection_content;
         }
-      | Output_result of {
+      | Projection_result of {
           seq : int32;
           reply_to : int32;
           result : delivery_result;
@@ -149,7 +169,7 @@ module Serialized_session = struct
   type format = Format : (module Wire.FORMAT) -> format
 
   type result_family =
-    | Output_result_family
+    | Projection_result_family
     | Crash_result_family
     | Endpoint_result_family
     | Request_start_result_family
@@ -218,8 +238,8 @@ module Serialized_session = struct
     ({ shared; claimed = false }, { shared })
 
   let frame_seq = function
-    | Wire.Frame.Output_deliver { seq; _ }
-    | Output_result { seq; _ }
+    | Wire.Frame.Projection_deliver { seq; _ }
+    | Projection_result { seq; _ }
     | Crash_notify { seq; _ }
     | Crash_result { seq; _ }
     | Endpoint_invoke { seq; _ }
@@ -256,7 +276,35 @@ module Serialized_session = struct
     in
     loop 1
 
+  let valid_utf8 value =
+    let rec loop index =
+      if index = String.length value then true
+      else
+        let decoded = String.get_utf_8_uchar value index in
+        Uchar.utf_decode_is_valid decoded
+        && loop (index + Uchar.utf_decode_length decoded)
+    in
+    loop 0
+
   let validate_frame = function
+    | Wire.Frame.Projection_deliver
+        {
+          reason = `Advancement;
+          content = Updates _;
+          _;
+        }
+    | Projection_deliver
+        {
+          reason = `Session_replacement;
+          content = Bootstrap _;
+          _;
+        } ->
+        Ok ()
+    | Projection_deliver _ -> Error Wire.Invalid_field
+    | Projection_result { result = `Failed diagnostic; _ }
+      when String.length diagnostic > 1024
+           || not (valid_utf8 diagnostic) ->
+        Error Wire.Invalid_field
     | Wire.Frame.Endpoint_invoke { handle; _ }
     | Request_start { handle; _ } ->
         if Bytes.length handle <= 64 then Ok ()
@@ -272,15 +320,15 @@ module Serialized_session = struct
     | Request_closed { request; _ } ->
         if Bytes.length request <= 64 then Ok ()
         else Error Wire.Invalid_field
-    | Output_deliver _ | Output_result _ | Crash_notify _
+    | Projection_result _ | Crash_notify _
     | Crash_result _ | Endpoint_result _ | Request_start_result _
     | Request_dispatch_result _ | Request_resolve_result _
     | Request_cancel_result _ ->
         Ok ()
 
   let result_frame = function
-    | Wire.Frame.Output_result { reply_to; _ } ->
-        Some (reply_to, Output_result_family)
+    | Wire.Frame.Projection_result { reply_to; _ } ->
+        Some (reply_to, Projection_result_family)
     | Crash_result { reply_to; _ } ->
         Some (reply_to, Crash_result_family)
     | Endpoint_result { reply_to; _ } ->
@@ -293,20 +341,20 @@ module Serialized_session = struct
         Some (reply_to, Request_resolve_result_family)
     | Request_cancel_result { reply_to; _ } ->
         Some (reply_to, Request_cancel_result_family)
-    | Output_deliver _ | Crash_notify _ | Endpoint_invoke _
+    | Projection_deliver _ | Crash_notify _ | Endpoint_invoke _
     | Request_start _ | Request_dispatch _ | Request_resolve _
     | Request_cancel _ | Request_resolved _ | Request_closed _ ->
         None
 
   let expected_result_family = function
-    | Wire.Frame.Output_deliver _ -> Some Output_result_family
+    | Wire.Frame.Projection_deliver _ -> Some Projection_result_family
     | Crash_notify _ -> Some Crash_result_family
     | Endpoint_invoke _ -> Some Endpoint_result_family
     | Request_start _ -> Some Request_start_result_family
     | Request_dispatch _ -> Some Request_dispatch_result_family
     | Request_resolve _ -> Some Request_resolve_result_family
     | Request_cancel _ -> Some Request_cancel_result_family
-    | Output_result _ | Crash_result _ | Endpoint_result _
+    | Projection_result _ | Crash_result _ | Endpoint_result _
     | Request_start_result _ | Request_dispatch_result _
     | Request_resolve_result _ | Request_cancel_result _
     | Request_resolved _ | Request_closed _ ->

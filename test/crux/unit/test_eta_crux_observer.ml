@@ -1,4 +1,26 @@
 module Crux = Eta_crux
+module Projection = Eta_crux_test.Projection_harness.Opaque
+
+let output_of_delivery delivery =
+  Eta_crux_test.Projection_harness.Opaque.delivery_value
+    (Crux.Driver.Delivery.projection delivery)
+  |> Option.get
+
+let output_of_commit commit =
+  Eta_crux_test.Projection_harness.Opaque.commit_value commit
+  |> Option.get
+
+let latest_committed_snapshot driver =
+  Option.bind (Crux.Driver.latest_committed_snapshot driver)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let handle_latest_committed_snapshot handle =
+  Option.bind (Eta_crux_test.Handle.latest_committed_snapshot handle)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let handle_latest_delivered_snapshot handle =
+  Option.bind (Eta_crux_test.Handle.latest_delivered_snapshot handle)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
 module Observer = Eta_crux_test.Post_commit_effect_observer
 
 let run_ok runtime effect =
@@ -9,7 +31,7 @@ let accept_delivery runtime = function
       ignore
         (run_ok runtime
            (Crux.Driver.Delivery.delivered delivery));
-      Crux.Driver.Delivery.output delivery
+      output_of_delivery delivery
   | Some _ | None -> Alcotest.fail "expected delivery"
 
 type action =
@@ -38,7 +60,7 @@ let observer_machine ran =
 
 let create_driver observer ran =
   let root =
-    Crux.Root.create
+    Projection.root ~projection_capacity:1
       ~post_commit_effect_observer:(Observer.attachment observer)
       ~ingress_capacity:2 ~request_capacity:1
       (observer_machine ran)
@@ -189,14 +211,14 @@ let test_post_commit_effect_observer_discard_before_start () =
 let test_post_commit_effect_observer_single_attachment () =
   let observer = Observer.create () in
   ignore
-    (Crux.Root.create
+    (Projection.root ~projection_capacity:1
        ~post_commit_effect_observer:(Observer.attachment observer)
        ~ingress_capacity:1 ~request_capacity:1
        (Crux.return ()));
   let rejected =
     try
       ignore
-        (Crux.Root.create
+        (Projection.root ~projection_capacity:1
            ~post_commit_effect_observer:(Observer.attachment observer)
            ~ingress_capacity:1 ~request_capacity:1
            (Crux.return ()));

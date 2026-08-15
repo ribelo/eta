@@ -950,3 +950,36 @@ cancellation semantics where cordis relies on uncancellable JS promises.
 | EC-32 | The first shutdown request creates one shutdown fence and closes admission for every other operation; a repeated shutdown returns the existing fence and starts no additional cleanup pass; a non-shutdown operation after shutdown started returns `Context_not_running`; shutdown supersedes every unfinished target and waits for every owned scope. | `lib/component/eta_component.mli:653-658` | covered | `shutdown fence idempotence`; `post shutdown rejection` |
 | EC-33 | Admission of every context operation and every atomic state mutation is serialized through one context coordinator. | `lib/component/eta_component.mli:658-660` | covered | `diagnostics revision atomicity` (monotonic revisions across serialized operations) |
 | EC-34 | A group retains its kind authority while any descendant instance is still known, so a removed group's identifier cannot be reused as a component entry until the last descendant has settled. | `lib/component/eta_component.mli:209-211` (child position/identity) + admission `Entry_kind_changed` at `lib/component/eta_component.mli:584` | covered | `group kind authority retention` |
+
+## Eta Crux projection mli-stated laws
+
+Coverage for law-bearing prose added to
+`lib/crux/eta_crux.mli`. The named gates live in `test/crux/`. The detailed
+Crux registry is `docs/design/eta-crux-v1/semantic-laws.md`.
+The key restriction at `lib/crux/eta_crux.mli:186-187` is application usage
+advice. It does not claim that the runtime can inspect or reject arbitrary key
+types.
+
+| ID | Exact normative claim | Exact normative span | Status | Named executable evidence |
+| --- | --- | --- | --- | --- |
+| CRX-PRJ-01 | A projection is the only outward value of a root commit. | `lib/crux/eta_crux.mli:184-185` | covered | qcheck `qcheck_projection_commit_endpoints_only`; qcheck `qcheck_projection_image_per_commit` |
+| CRX-PRJ-02 | Each `Projection.Kind.define` call creates a distinct kind. | `lib/crux/eta_crux.mli:207` | covered | `test_projection_kind_generativity` |
+| CRX-PRJ-03 | A projection key comparator is a stable total order. | `lib/crux/eta_crux.mli:209` | covered | qcheck `qcheck_projection_key_compare_total_order` |
+| CRX-PRJ-04 | Equivalent projection keys have equal successful encodings or equal encode failures. | `lib/crux/eta_crux.mli:209-211` | covered | qcheck `qcheck_projection_key_codec_laws` |
+| CRX-PRJ-05 | Non-equivalent projection keys have different successful encodings. | `lib/crux/eta_crux.mli:210-211` | covered | qcheck `qcheck_projection_key_codec_laws` |
+| CRX-PRJ-06 | Decoding an encoded projection key returns an equivalent key. | `lib/crux/eta_crux.mli:213` | covered | qcheck `qcheck_projection_key_codec_laws` |
+| CRX-PRJ-07 | Decoding an encoded projection value returns a value equal under `value_equal`. | `lib/crux/eta_crux.mli:213-214` | covered | qcheck `qcheck_projection_value_codec_roundtrip` |
+| CRX-PRJ-08 | A kind keeps its comparator, codecs, equality, and cutoff obligations for its lifetime. | `lib/crux/eta_crux.mli:215` | covered | `test_projection_kind_generativity`; qcheck `qcheck_projection_incarnation_continuity` |
+| CRX-PRJ-09 | `Projection.Catalog.create` fixes catalog order and accepts an empty list. | `lib/crux/eta_crux.mli:221-223` | covered | qcheck `qcheck_projection_catalog_rejection`; qcheck `qcheck_projection_canonical_order` |
+| CRX-PRJ-10 | `Projection.Catalog.create` raises `Invalid_argument` for a repeated descriptor. | `lib/crux/eta_crux.mli:223-224` | covered | qcheck `qcheck_projection_catalog_rejection` |
+| CRX-PRJ-11 | `Projection.Catalog.create` raises `Invalid_argument` for a repeated wire name. | `lib/crux/eta_crux.mli:223-224` | covered | qcheck `qcheck_projection_catalog_rejection` |
+| CRX-PRJ-12 | A projection wire name starts with a lowercase ASCII letter, and later bytes use only lowercase ASCII letters, digits, periods, underscores, or hyphens. | `lib/crux/eta_crux.mli:224-227` | covered | qcheck `qcheck_projection_catalog_rejection` |
+| CRX-PRJ-13 | A projection wire name has a 128-byte limit. | `lib/crux/eta_crux.mli:226-227` | covered | qcheck `qcheck_projection_catalog_rejection` |
+| CRX-PRJ-14 | The projection preflight error family contains exactly `Unknown_kind`, `Identity_collision`, `Projection_capacity_exceeded`, and `Incarnation_exhausted`. | `lib/crux/eta_crux.mli:230-235` | covered | qcheck `qcheck_projection_preflight_cause` |
+| CRX-PRJ-15 | Snapshot lookup uses the kind key comparator. | `lib/crux/eta_crux.mli:270-271` | covered | `test_projection_typed_lookup_fold`; qcheck `qcheck_projection_identity_equivalence` |
+| CRX-PRJ-16 | Snapshot fold order is catalog order and then key order. | `lib/crux/eta_crux.mli:270-271` | covered | qcheck `qcheck_projection_canonical_order`; `test_projection_typed_lookup_fold` |
+| CRX-PRJ-17 | Batch lookup returns every update for one identity in delivery order. | `lib/crux/eta_crux.mli:293-294` | covered | qcheck `qcheck_projection_batch_validity`; `test_projection_typed_lookup_fold` |
+| CRX-PRJ-18 | Batch fold order is catalog order and then key order. | `lib/crux/eta_crux.mli:293-294` | covered | qcheck `qcheck_projection_canonical_order`; `test_projection_typed_lookup_fold` |
+| CRX-PRJ-19 | A commit exposes only its complete snapshot and ordered update batch. | `lib/crux/eta_crux.mli:297-301` | covered | `race_commit_atomicity`; qcheck `qcheck_projection_commit_endpoints_only` |
+| CRX-PRJ-20 | `Projection.publish` returns its candidate to the local computation. | `lib/crux/eta_crux.mli:313-314` | covered | qcheck `qcheck_projection_publish_local_value` |
+| CRX-PRJ-21 | A projection kind cutoff changes only the outward projection image. | `lib/crux/eta_crux.mli:313-314` | covered | qcheck `qcheck_projection_cutoff_retention`; qcheck `qcheck_cutoff_boundary` |

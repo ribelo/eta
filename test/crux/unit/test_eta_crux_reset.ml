@@ -1,4 +1,26 @@
 module Crux = Eta_crux
+module Projection = Eta_crux_test.Projection_harness.Opaque
+
+let output_of_delivery delivery =
+  Eta_crux_test.Projection_harness.Opaque.delivery_value
+    (Crux.Driver.Delivery.projection delivery)
+  |> Option.get
+
+let output_of_commit commit =
+  Eta_crux_test.Projection_harness.Opaque.commit_value commit
+  |> Option.get
+
+let latest_committed_snapshot driver =
+  Option.bind (Crux.Driver.latest_committed_snapshot driver)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let handle_latest_committed_snapshot handle =
+  Option.bind (Eta_crux_test.Handle.latest_committed_snapshot handle)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let handle_latest_delivered_snapshot handle =
+  Option.bind (Eta_crux_test.Handle.latest_delivered_snapshot handle)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
 module Observer = Eta_crux_test.Post_commit_effect_observer
 
 let run_ok runtime effect =
@@ -15,7 +37,7 @@ let committed runtime root =
   match run_ok runtime (Crux.Root.advance root) with
   | Ok (Crux.Root.Committed committed) ->
       start runtime committed.post_commit;
-      committed.output
+      output_of_commit committed.commit
   | _ -> Alcotest.fail "expected committed reset advancement"
 
 let send runtime endpoint action =
@@ -70,7 +92,7 @@ let test_reset_snapshot_atomicity_and_effect_inventory () =
         (authority, left, right))
   in
   let root =
-    Crux.Root.create
+    Projection.root ~projection_capacity:1
       ~post_commit_effect_observer:(Observer.attachment observer)
       ~ingress_capacity:4 ~request_capacity:1 description
   in
@@ -136,7 +158,7 @@ let test_nested_reset_scope_boundary () =
         (outer_reset, outer, inner))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:4 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:4 ~request_capacity:1
       description
   in
   let outer_reset, (outer_model, outer_endpoint),
@@ -181,7 +203,7 @@ let test_stale_reset_is_rejected_after_disposal () =
         else Crux.return (selector_endpoint, None))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
       description
   in
   let selector_endpoint, authority =
@@ -228,7 +250,7 @@ let test_reset_callback_rollback () =
         Crux.both reset machine)
   in
   let root =
-    Crux.Root.create
+    Projection.root ~projection_capacity:1
       ~post_commit_effect_observer:(Observer.attachment observer)
       ~ingress_capacity:2 ~request_capacity:1 description
   in
@@ -238,7 +260,7 @@ let test_reset_callback_rollback () =
   let deliver () =
     match run_ok runtime (Crux.Driver.poll driver) with
     | Some (Crux.Driver.Deliver delivery) ->
-        let output = Crux.Driver.Delivery.output delivery in
+        let output = output_of_delivery delivery in
         ignore
           (run_ok runtime
              (Crux.Driver.Delivery.delivered delivery));
@@ -269,7 +291,7 @@ let test_reset_callback_rollback () =
            record.model_snapshot);
       Alcotest.(check (option int)) "prior committed frame retained"
         (Some 7)
-        (Crux.Driver.latest_committed_output driver
+        (latest_committed_snapshot driver
         |> Option.map (fun (_, (model, _)) -> model));
       Observer.expect_empty observer
   | _ -> Alcotest.fail "reset callback failure did not fail root"
@@ -307,7 +329,7 @@ let test_reset_effect_discarded_with_owner () =
         Crux.both reset (Crux.both selector child))
   in
   let root =
-    Crux.Root.create
+    Projection.root ~projection_capacity:1
       ~post_commit_effect_observer:(Observer.attachment observer)
       ~ingress_capacity:1 ~request_capacity:1 description
   in

@@ -1,4 +1,26 @@
 module Crux = Eta_crux
+module Projection = Eta_crux_test.Projection_harness.Opaque
+
+let output_of_delivery delivery =
+  Eta_crux_test.Projection_harness.Opaque.delivery_value
+    (Crux.Driver.Delivery.projection delivery)
+  |> Option.get
+
+let output_of_commit commit =
+  Eta_crux_test.Projection_harness.Opaque.commit_value commit
+  |> Option.get
+
+let latest_committed_snapshot driver =
+  Option.bind (Crux.Driver.latest_committed_snapshot driver)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let handle_latest_committed_snapshot handle =
+  Option.bind (Eta_crux_test.Handle.latest_committed_snapshot handle)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let handle_latest_delivered_snapshot handle =
+  Option.bind (Eta_crux_test.Handle.latest_delivered_snapshot handle)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
 module Crux_test = Eta_crux_test
 
 let run_ok runtime eff =
@@ -7,7 +29,7 @@ let run_ok runtime eff =
 let inject_ok runtime eff =
   eff
   |> Eta.Effect.or_die (function
-       | Crux_test.Handle.No_output ->
+       | Crux_test.Handle.No_projection ->
            Failure "test injection has no output"
        | Crux_test.Handle.Ingress_closed ->
            Failure "test injection ingress closed")
@@ -34,7 +56,7 @@ let test_frame_boundary () =
             |> Eta.Effect.ignore_errors) ))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:4 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:4 ~request_capacity:1
       machine
   in
   let handle =
@@ -42,7 +64,10 @@ let test_frame_boundary () =
       ~clock
       ~incoming:
         (Crux_test.Incoming.create
-           ~send:(fun (_model, endpoint) action ->
+           ~send:(fun snapshot action ->
+             let _model, endpoint =
+               Projection.snapshot_value snapshot |> Option.get
+             in
              Crux.Endpoint.send endpoint action))
       ~shell:quiet_shell root
   in
@@ -50,14 +75,16 @@ let test_frame_boundary () =
     run_ok runtime (Crux_test.Handle.frame handle)
   in
   (match initial with
-  | Ok { outcome = Committed (0, _); _ } -> ()
+  | Ok { outcome = Committed snapshot; _ }
+    when fst (Projection.snapshot_value snapshot |> Option.get) = 0 -> ()
   | _ -> Alcotest.fail "initial frame did not commit once");
   ignore (inject_ok runtime (Crux_test.Handle.inject handle 1));
   let first =
     run_ok runtime (Crux_test.Handle.frame handle)
   in
   (match first with
-  | Ok { outcome = Committed (1, _); _ } -> ()
+  | Ok { outcome = Committed snapshot; _ }
+    when fst (Projection.snapshot_value snapshot |> Option.get) = 1 -> ()
   | _ ->
       Alcotest.fail
         "frame crossed the one-advancement boundary");
@@ -65,7 +92,8 @@ let test_frame_boundary () =
     run_ok runtime (Crux_test.Handle.frame handle)
   in
   (match second with
-  | Ok { outcome = Committed (2, _); _ } -> ()
+  | Ok { outcome = Committed snapshot; _ }
+    when fst (Projection.snapshot_value snapshot |> Option.get) = 2 -> ()
   | _ ->
       Alcotest.fail
         "post-commit action was not left for the next frame");
@@ -81,12 +109,15 @@ let test_incoming_uses_endpoint () =
   in
   let incoming =
     Crux_test.Incoming.create
-      ~send:(fun ((model, endpoint) as _output) action ->
+      ~send:(fun snapshot action ->
+        let model, endpoint =
+          Projection.snapshot_value snapshot |> Option.get
+        in
         observed_outputs := model :: !observed_outputs;
         Crux.Endpoint.send endpoint action)
   in
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
       machine
   in
   let handle =
@@ -95,7 +126,7 @@ let test_incoming_uses_endpoint () =
   Alcotest.(check bool) "injection requires delivered output" true
     (run_ok runtime (Eta.Effect.to_result
        (Crux_test.Handle.inject handle 1))
-    = Error Crux_test.Handle.No_output);
+    = Error Crux_test.Handle.No_projection);
   ignore (run_ok runtime (Crux_test.Handle.frame handle));
   ignore (inject_ok runtime (Crux_test.Handle.inject handle 3));
   ignore (run_ok runtime (Crux_test.Handle.frame handle));
@@ -118,7 +149,7 @@ let test_handle_exclusive_ownership () =
     }
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return 1)
   in
   let handle =
@@ -139,7 +170,8 @@ let test_handle_exclusive_ownership () =
     (Eta_test.Controlled.succeed call () = Ok ());
   (match Eta_test.Async.await first with
   | Eta.Exit.Ok
-      (Ok { Crux_test.Handle.outcome = Committed 1; _ }) ->
+      (Ok { Crux_test.Handle.outcome = Committed snapshot; _ })
+      when Projection.snapshot_value snapshot = Some 1 ->
       ()
   | _ -> Alcotest.fail "first frame did not resume");
   ignore (run_ok runtime (Crux_test.Handle.stop handle))
@@ -147,7 +179,7 @@ let test_handle_exclusive_ownership () =
 let test_handle_bracket_cleanup () =
   Eta_test.with_test_clock @@ fun _switch clock runtime ->
   let normal_root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return ())
   in
   ignore
@@ -163,7 +195,7 @@ let test_handle_bracket_cleanup () =
     | _ -> false);
 
   let crashing_root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.map (Crux.return ()) ~f:(fun () ->
            raise (Failure "unobserved-crash")))
   in
@@ -185,7 +217,7 @@ let test_handle_bracket_cleanup () =
     | Eta.Exit.Ok _ | Eta.Exit.Error _ -> false);
 
   let observed_root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.map (Crux.return ()) ~f:(fun () ->
            raise (Failure "observed-crash")))
   in
@@ -222,7 +254,9 @@ let test_snapshot_only_observation () =
       deliver =
         (fun delivery ->
           delivered :=
-            delivery.Crux.Adapter.output
+            (Projection.delivery_value
+               delivery.Crux.Adapter.projection
+            |> Option.get)
             :: !delivered;
           Eta.Effect.unit);
       request_event = (fun _ -> Eta.Effect.unit);
@@ -247,7 +281,7 @@ let test_snapshot_only_observation () =
         ((left_model, right_model), left_endpoint))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
       description
   in
   let handle =
@@ -255,7 +289,10 @@ let test_snapshot_only_observation () =
       ~clock
       ~incoming:
         (Crux_test.Incoming.create
-           ~send:(fun (_, endpoint) action ->
+           ~send:(fun snapshot action ->
+             let _, endpoint =
+               Projection.snapshot_value snapshot |> Option.get
+             in
              Crux.Endpoint.send endpoint action))
       ~shell root
   in
@@ -285,7 +322,10 @@ let test_adapter_commit_boundary () =
         (fun delivery ->
           events :=
             Delivering
-              (fst delivery.Crux.Adapter.output)
+              (fst
+                 (Projection.delivery_value
+                    delivery.Crux.Adapter.projection
+                 |> Option.get))
             :: !events;
           Eta.Effect.unit);
       request_event = (fun _ -> Eta.Effect.unit);
@@ -303,7 +343,7 @@ let test_adapter_commit_boundary () =
                  events := Post_commit :: !events)) ))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
       machine
   in
   let handle =
@@ -311,7 +351,10 @@ let test_adapter_commit_boundary () =
       ~clock
       ~incoming:
         (Crux_test.Incoming.create
-           ~send:(fun (_, endpoint) action ->
+           ~send:(fun snapshot action ->
+             let _, endpoint =
+               Projection.snapshot_value snapshot |> Option.get
+             in
              Crux.Endpoint.send endpoint action))
       ~shell root
   in
@@ -328,10 +371,10 @@ let test_adapter_commit_boundary () =
         "adapter delivery did not remain between commit and post-commit work");
   ignore (run_ok runtime (Crux_test.Handle.stop handle))
 
-let test_handle_output_boundaries () =
+let test_handle_projection_boundaries () =
   Eta_test.with_test_clock @@ fun _switch clock runtime ->
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.after (Eta.Duration.ms 10))
   in
   let handle =
@@ -339,26 +382,212 @@ let test_handle_output_boundaries () =
       ~incoming:Crux_test.Incoming.none
       ~shell:quiet_shell root
   in
-  Alcotest.(check (option bool)) "no committed output" None
-    (Crux_test.Handle.latest_committed_output handle);
+  Alcotest.(check (option bool)) "no committed snapshot" None
+    (handle_latest_committed_snapshot handle);
   Alcotest.(check (option bool)) "no delivered output" None
-    (Crux_test.Handle.latest_delivered_output handle);
+    (handle_latest_delivered_snapshot handle);
   ignore (run_ok runtime (Crux_test.Handle.frame handle));
   Alcotest.(check (option bool)) "initial commit visible" (Some false)
-    (Crux_test.Handle.latest_committed_output handle);
+    (handle_latest_committed_snapshot handle);
   Alcotest.(check (option bool)) "initial delivery visible" (Some false)
-    (Crux_test.Handle.latest_delivered_output handle);
+    (handle_latest_delivered_snapshot handle);
   Crux_test.Handle.advance_time_by handle (Eta.Duration.ms 5);
   Crux_test.Handle.advance_time_to handle 10;
   Alcotest.(check int) "handle moved only its clock" 10
     (Eta_test.Test_clock.now_ms clock);
   Alcotest.(check (option bool)) "movement did not run driver" (Some false)
-    (Crux_test.Handle.latest_committed_output handle);
+    (handle_latest_committed_snapshot handle);
   ignore (run_ok runtime (Crux_test.Handle.frame handle));
   Alcotest.(check (option bool)) "due commit visible" (Some true)
-    (Crux_test.Handle.latest_committed_output handle);
+    (handle_latest_committed_snapshot handle);
   Alcotest.(check (option bool)) "due delivery visible" (Some true)
-    (Crux_test.Handle.latest_delivered_output handle);
+    (handle_latest_delivered_snapshot handle);
+  ignore (run_ok runtime (Crux_test.Handle.stop handle))
+
+let poll_delivery runtime handle =
+  match run_ok runtime (Crux_test.Handle.poll handle) with
+  | Ok (Some (Crux.Driver.Deliver delivery)) -> delivery
+  | _ -> Alcotest.fail "expected a pending projection delivery"
+
+let test_projection_delivered_shadow () =
+  Eta_test.with_test_clock @@ fun _switch clock runtime ->
+  let machine =
+    Crux.State_machine.create (Crux.return ()) ~default_model:0
+      ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+        (action, None))
+  in
+  let root =
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2
+      ~request_capacity:1 machine
+  in
+  let handle =
+    Crux_test.Handle.create ~clock
+      ~incoming:
+        (Crux_test.Incoming.create ~send:(fun snapshot action ->
+             let _, endpoint =
+               Projection.snapshot_value snapshot |> Option.get
+             in
+             Crux.Endpoint.send endpoint action))
+      ~shell:quiet_shell root
+  in
+  Alcotest.(check (option int)) "no committed snapshot" None
+    (Option.map fst (handle_latest_committed_snapshot handle));
+  Alcotest.(check (option int)) "no delivered snapshot" None
+    (Option.map fst (handle_latest_delivered_snapshot handle));
+  let initial = poll_delivery runtime handle in
+  Alcotest.(check (option int)) "commit published before answer" (Some 0)
+    (Option.map fst (handle_latest_committed_snapshot handle));
+  Alcotest.(check (option int)) "pending delivery retained no state" None
+    (Option.map fst (handle_latest_delivered_snapshot handle));
+  Alcotest.(check bool) "initial delivery accepted" true
+    (run_ok runtime
+       (Crux_test.Handle.delivery_delivered handle initial)
+    = Ok ());
+  Alcotest.(check (option int)) "accepted delivery installed" (Some 0)
+    (Option.map fst (handle_latest_delivered_snapshot handle));
+  ignore (inject_ok runtime (Crux_test.Handle.inject handle 7));
+  let changed = poll_delivery runtime handle in
+  Alcotest.(check (option int)) "new commit published" (Some 7)
+    (Option.map fst (handle_latest_committed_snapshot handle));
+  Alcotest.(check (option int)) "pending delivery retained prior state" (Some 0)
+    (Option.map fst (handle_latest_delivered_snapshot handle));
+  let cause =
+    Crux.Failure.Packed_cause.make ~pp_error:Format.pp_print_string
+      (Eta.Cause.fail "injected delivery failure")
+  in
+  Alcotest.(check bool) "failed answer accepted once" true
+    (run_ok runtime
+       (Crux_test.Handle.delivery_failed handle changed cause)
+    = Ok ());
+  Alcotest.(check (option int)) "failed delivery did not install" (Some 0)
+    (Option.map fst (handle_latest_delivered_snapshot handle));
+  Alcotest.(check bool) "failed delivery cannot be accepted later" true
+    (run_ok runtime
+       (Crux_test.Handle.delivery_delivered handle changed)
+    = Error Crux.Driver.Delivery.Already_completed);
+  Alcotest.(check (option int)) "late answer did not install" (Some 0)
+    (Option.map fst (handle_latest_delivered_snapshot handle));
+  ignore (run_ok runtime (Crux_test.Handle.stop handle))
+
+let test_projection_install_before_ack () =
+  Eta_test.with_test_clock @@ fun _switch clock runtime ->
+  let handle_ref = ref None in
+  let observed_at_post_commit = ref None in
+  let machine =
+    Crux.State_machine.create (Crux.return ()) ~default_model:0
+      ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+        ( action,
+          Some
+            (Eta.Effect.sync (fun () ->
+                 let handle = Option.get !handle_ref in
+                 observed_at_post_commit :=
+                   Option.map fst
+                     (handle_latest_delivered_snapshot handle))) ))
+  in
+  let root =
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2
+      ~request_capacity:1 machine
+  in
+  let handle =
+    Crux_test.Handle.create ~clock
+      ~incoming:
+        (Crux_test.Incoming.create ~send:(fun snapshot action ->
+             let _, endpoint =
+               Projection.snapshot_value snapshot |> Option.get
+             in
+             Crux.Endpoint.send endpoint action))
+      ~shell:quiet_shell root
+  in
+  handle_ref := Some handle;
+  let initial = poll_delivery runtime handle in
+  ignore
+    (run_ok runtime
+       (Crux_test.Handle.delivery_delivered handle initial));
+  ignore (inject_ok runtime (Crux_test.Handle.inject handle 9));
+  let changed = poll_delivery runtime handle in
+  ignore
+    (run_ok runtime
+       (Crux_test.Handle.delivery_delivered handle changed));
+  let rec await attempts =
+    if !observed_at_post_commit = Some 9 then ()
+    else if attempts = 0 then
+      Alcotest.fail "post-commit effect did not observe installed state"
+    else (
+      ignore (run_ok runtime Eta.Effect.yield);
+      await (attempts - 1))
+  in
+  await 100;
+  ignore (run_ok runtime (Crux_test.Handle.stop handle))
+
+let test_projection_responder_one_answer () =
+  Eta_test.with_test_clock @@ fun _switch clock runtime ->
+  let root =
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1
+      ~request_capacity:1 (Crux.return 1)
+  in
+  let handle =
+    Crux_test.Handle.create ~clock ~incoming:Crux_test.Incoming.none
+      ~shell:quiet_shell root
+  in
+  let delivery = poll_delivery runtime handle in
+  Alcotest.(check bool) "first answer accepted" true
+    (run_ok runtime
+       (Crux_test.Handle.delivery_delivered handle delivery)
+    = Ok ());
+  Alcotest.(check bool) "second answer rejected" true
+    (run_ok runtime
+       (Crux_test.Handle.delivery_delivered handle delivery)
+    = Error Crux.Driver.Delivery.Already_completed);
+  ignore (run_ok runtime (Crux_test.Handle.stop handle))
+
+let test_projection_held_delivery_fences_post_commit () =
+  Eta_test.with_test_clock @@ fun _switch clock runtime ->
+  let effect_started = ref false in
+  let machine =
+    Crux.State_machine.create (Crux.return ()) ~default_model:0
+      ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+        ( action,
+          Some
+            (Eta.Effect.sync (fun () ->
+                 effect_started := true)) ))
+  in
+  let root =
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2
+      ~request_capacity:1 machine
+  in
+  let handle =
+    Crux_test.Handle.create ~clock
+      ~incoming:
+        (Crux_test.Incoming.create ~send:(fun snapshot action ->
+             let _, endpoint =
+               Projection.snapshot_value snapshot |> Option.get
+             in
+             Crux.Endpoint.send endpoint action))
+      ~shell:quiet_shell root
+  in
+  let initial = poll_delivery runtime handle in
+  ignore
+    (run_ok runtime
+       (Crux_test.Handle.delivery_delivered handle initial));
+  ignore (inject_ok runtime (Crux_test.Handle.inject handle 1));
+  let held = poll_delivery runtime handle in
+  ignore (run_ok runtime Eta.Effect.yield);
+  Alcotest.(check bool) "held delivery fenced post-commit work" false
+    !effect_started;
+  Alcotest.(check bool) "driver remains fenced" true
+    (run_ok runtime (Crux_test.Handle.poll handle) = Ok None);
+  ignore
+    (run_ok runtime
+       (Crux_test.Handle.delivery_delivered handle held));
+  let rec await attempts =
+    if !effect_started then ()
+    else if attempts = 0 then
+      Alcotest.fail "acknowledgment did not admit post-commit work"
+    else (
+      ignore (run_ok runtime Eta.Effect.yield);
+      await (attempts - 1))
+  in
+  await 100;
   ignore (run_ok runtime (Crux_test.Handle.stop handle))
 
 let test_graph_time_handle_separation () =
@@ -379,7 +608,7 @@ let test_graph_time_handle_separation () =
       ()
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.both due polled)
   in
   let handle =
@@ -389,26 +618,26 @@ let test_graph_time_handle_separation () =
   ignore (run_ok runtime (Crux_test.Handle.frame handle));
   Alcotest.(check (option (pair bool (option bool))))
     "initial commit" (Some (false, None))
-    (Crux_test.Handle.latest_committed_output handle);
+    (handle_latest_committed_snapshot handle);
   Alcotest.(check int) "activation ran the Poll provider" 1
     !provider_calls;
   Crux_test.Handle.advance_time_to handle 10;
   Alcotest.(check (option (pair bool (option bool))))
     "movement did not advance" (Some (false, None))
-    (Crux_test.Handle.latest_committed_output handle);
+    (handle_latest_committed_snapshot handle);
   Alcotest.(check int) "movement did not trigger Poll" 1
     !provider_calls;
   ignore (run_ok runtime (Crux_test.Handle.frame handle));
   Alcotest.(check (option (pair bool (option bool))))
     "frame observed the due commit" (Some (true, None))
-    (Crux_test.Handle.latest_committed_output handle);
+    (handle_latest_committed_snapshot handle);
   Alcotest.(check int) "due commit triggered Poll" 2
     !provider_calls;
   ignore
     (run_ok runtime (Crux_test.Handle.drain handle ~max_steps:8));
   Alcotest.(check (option (pair bool (option bool))))
     "drain published the Poll result" (Some (true, Some true))
-    (Crux_test.Handle.latest_committed_output handle);
+    (handle_latest_committed_snapshot handle);
   ignore (run_ok runtime (Crux_test.Handle.stop handle))
 
 let test_graph_time_handle_validation () =
@@ -417,7 +646,7 @@ let test_graph_time_handle_validation () =
      Backward targets raise Invalid_argument. Zero movement is a no-op. *)
   Eta_test.with_test_clock @@ fun _switch clock runtime ->
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return 0)
   in
   let handle =
@@ -436,7 +665,7 @@ let test_graph_time_handle_validation () =
   Alcotest.(check int) "failed movement preserved time" 10
     (Eta_test.Test_clock.now_ms clock);
   Alcotest.(check (option int)) "no movement ran the driver" None
-    (Crux_test.Handle.latest_committed_output handle);
+    (handle_latest_committed_snapshot handle);
   ignore (run_ok runtime (Crux_test.Handle.stop handle))
 
 let () =
@@ -457,7 +686,15 @@ let () =
           Alcotest.test_case "adapter commit boundary" `Quick
             test_adapter_commit_boundary;
           Alcotest.test_case "clock and output boundaries" `Quick
-            test_handle_output_boundaries;
+            test_handle_projection_boundaries;
+          Alcotest.test_case "projection delivered shadow" `Quick
+            test_projection_delivered_shadow;
+          Alcotest.test_case "projection install before ack" `Quick
+            test_projection_install_before_ack;
+          Alcotest.test_case "projection responder one answer" `Quick
+            test_projection_responder_one_answer;
+          Alcotest.test_case "held projection delivery fence" `Quick
+            test_projection_held_delivery_fences_post_commit;
           Alcotest.test_case "graph time handle separation" `Quick
             test_graph_time_handle_separation;
           Alcotest.test_case "graph time handle validation" `Quick

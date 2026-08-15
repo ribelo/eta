@@ -1,4 +1,26 @@
 module Crux = Eta_crux
+module Projection = Eta_crux_test.Projection_harness.Opaque
+
+let output_of_delivery delivery =
+  Eta_crux_test.Projection_harness.Opaque.delivery_value
+    (Crux.Driver.Delivery.projection delivery)
+  |> Option.get
+
+let output_of_commit commit =
+  Eta_crux_test.Projection_harness.Opaque.commit_value commit
+  |> Option.get
+
+let latest_committed_snapshot driver =
+  Option.bind (Crux.Driver.latest_committed_snapshot driver)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let handle_latest_committed_snapshot handle =
+  Option.bind (Eta_crux_test.Handle.latest_committed_snapshot handle)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let handle_latest_delivered_snapshot handle =
+  Option.bind (Eta_crux_test.Handle.latest_delivered_snapshot handle)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
 module Observer = Eta_crux_test.Post_commit_effect_observer
 
 let run_ok runtime effect =
@@ -18,7 +40,8 @@ type 'output advancement = {
 
 let advance runtime root =
   match run_ok runtime (Crux.Root.advance root) with
-  | Ok (Crux.Root.Committed { output; post_commit }) ->
+  | Ok (Crux.Root.Committed { commit; post_commit }) ->
+      let output = output_of_commit commit in
       { output; post_commit }
   | Ok Crux.Root.Idle -> Alcotest.fail "expected Poll commit, got idle"
   | Ok (Crux.Root.Rejected _) ->
@@ -89,7 +112,7 @@ let test_poll_activation_input_and_provider_sampling () =
         (input, input_endpoint, provider, provider_endpoint, result))
   in
   let root =
-    Crux.Root.create
+    Projection.root ~projection_capacity:1
       ~post_commit_effect_observer:(Observer.attachment observer)
       ~ingress_capacity:4 ~request_capacity:1 description
   in
@@ -157,7 +180,7 @@ let test_poll_manual_refresh_committed_run_order () =
       ~starting:Crux.Poll.Starting.empty ~effect ()
   in
   let root =
-    Crux.Root.create ~ingress_capacity:4 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:4 ~request_capacity:1
       (Crux.both result refresh)
   in
   let initial = advance runtime root in
@@ -216,7 +239,7 @@ let test_poll_stale_refresh_after_disposal () =
               (endpoint, Some refresh)))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
       description
   in
   let initial = advance runtime root in
@@ -247,7 +270,7 @@ let test_poll_result_cutoff_order_fence () =
       ()
   in
   let root =
-    Crux.Root.create ~ingress_capacity:4 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:4 ~request_capacity:1
       (Crux.both result refresh)
   in
   let initial = advance runtime root in
@@ -310,7 +333,7 @@ let test_poll_post_commit_phase_order () =
   in
   let description = Crux.both machine polled in
   let root =
-    Crux.Root.create
+    Projection.root ~projection_capacity:1
       ~post_commit_effect_observer:(Observer.attachment observer)
       ~ingress_capacity:4 ~request_capacity:1 description
   in
@@ -320,7 +343,7 @@ let test_poll_post_commit_phase_order () =
   let accept () =
     match run_ok runtime (Crux.Driver.poll driver) with
     | Some (Crux.Driver.Deliver delivery) ->
-        let output = Crux.Driver.Delivery.output delivery in
+        let output = output_of_delivery delivery in
         ignore
           (run_ok runtime
              (Crux.Driver.Delivery.delivered delivery));
@@ -343,7 +366,7 @@ let test_poll_post_commit_phase_order () =
     | Some (Crux.Driver.Deliver delivery) -> delivery
     | _ -> Alcotest.fail "mixed commit did not deliver"
   in
-  let (model, _), result = Crux.Driver.Delivery.output delivery in
+  let (model, _), result = output_of_delivery delivery in
   Alcotest.(check (pair int (option int)))
     "complete output published before effects" (7, Some 0)
     (model, result);
@@ -393,7 +416,7 @@ let test_poll_failure_attribution () =
       ()
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 polled
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1 polled
   in
   let initial = advance runtime root in
   start runtime initial.post_commit;

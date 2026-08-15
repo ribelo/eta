@@ -1,4 +1,43 @@
 module Crux = Eta_crux
+module Projection = Eta_crux_test.Projection_harness.Opaque
+module Typed_projection = Eta_crux_test.Projection_harness
+
+let output_of_delivery delivery =
+  Eta_crux_test.Projection_harness.Opaque.delivery_value
+    (Crux.Driver.Delivery.projection delivery)
+  |> Option.get
+
+let output_of_commit commit =
+  Eta_crux_test.Projection_harness.Opaque.commit_value commit
+  |> Option.get
+
+let latest_committed_snapshot driver =
+  Option.bind (Crux.Driver.latest_committed_snapshot driver)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let handle_latest_committed_snapshot handle =
+  Option.bind (Eta_crux_test.Handle.latest_committed_snapshot handle)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let handle_latest_delivered_snapshot handle =
+  Option.bind (Eta_crux_test.Handle.latest_delivered_snapshot handle)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let projection_content_value = function
+  | Crux.Wire.Frame.Bootstrap (entry :: _) -> entry.value
+  | Crux.Wire.Frame.Updates updates ->
+      let rec latest = function
+        | [] -> None
+        | Crux.Wire.Frame.Attached entry :: rest
+        | Crux.Wire.Frame.Changed entry :: rest -> (
+            match latest rest with
+            | Some _ as value -> value
+            | None -> Some entry.value)
+        | Crux.Wire.Frame.Removed _ :: rest -> latest rest
+      in
+      latest updates |> Option.get
+  | Crux.Wire.Frame.Bootstrap [] ->
+      invalid_arg "expected a nonempty projection frame"
 
 let test_clock = Eta_test.Test_clock.create ()
 let test_clock_capability = Eta_test.Test_clock.as_capability test_clock
@@ -10,7 +49,8 @@ let run_ok eff =
   Eta_test.Expect.expect_ok result.exit
 
 let committed = function
-  | Ok (Crux.Root.Committed { output; post_commit }) ->
+  | Ok (Crux.Root.Committed { commit; post_commit }) ->
+      let output = output_of_commit commit in
       (output, post_commit)
   | _ -> Alcotest.fail "expected committed advancement"
 
@@ -31,7 +71,7 @@ let conformance_identity_zero_wire () =
          ~codec)
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 description
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1 description
   in
   let ((_, _), export), initial_post =
     committed (run_ok (Crux.Root.advance root))
@@ -60,10 +100,15 @@ let int_codec =
       | Some value -> Ok value
       | None -> Error { Crux.Codec.message = "invalid integer" })
 
-let conformance_identity_serialized_equivalence () =
+let conformance_projection_transport_equivalence () =
+  let projection =
+    Typed_projection.create ~name:"equivalence"
+      ~codec:int_codec ~value_equal:Int.equal
+      ~cutoff:Crux.Cutoff.never
+  in
   let identity_root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
-      (Crux.return 7)
+    Typed_projection.root projection ~projection_capacity:1
+      ~ingress_capacity:1 ~request_capacity:1 (Crux.return 7)
   in
   let identity_driver =
     Crux.Driver.create
@@ -76,7 +121,9 @@ let conformance_identity_serialized_equivalence () =
     | _ -> Alcotest.fail "identity binding did not deliver output"
   in
   let identity_output =
-    Crux.Driver.Delivery.output identity_delivery
+    Typed_projection.delivery_value projection
+      (Crux.Driver.Delivery.projection identity_delivery)
+    |> Option.get
   in
   ignore
     (run_ok
@@ -93,12 +140,12 @@ let conformance_identity_serialized_equivalence () =
       ~format:(module Eta_crux_json.Format)
   in
   let serialized_binding, _admin =
-    Crux.Driver.Binding.serialized ~output:int_codec ~operations:[]
+    Crux.Driver.Binding.serialized ~operations:[]
       ~session:candidate
   in
   let serialized_root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
-      (Crux.return 7)
+    Typed_projection.root projection ~projection_capacity:1
+      ~ingress_capacity:1 ~request_capacity:1 (Crux.return 7)
   in
   let serialized_driver =
     Crux.Driver.create serialized_binding serialized_root
@@ -113,12 +160,13 @@ let conformance_identity_serialized_equivalence () =
   let sequence, serialized_output =
     match Eta_crux_json.Format.decode outgoing with
     | Ok
-        (Crux.Wire.Frame.Output_deliver
+        (Crux.Wire.Frame.Projection_deliver
           {
             seq;
             reason = `Advancement;
-            output;
+            content;
           }) ->
+        let output = projection_content_value content in
         let output =
           match Crux.Codec.decode int_codec output with
           | Ok value -> value
@@ -129,7 +177,7 @@ let conformance_identity_serialized_equivalence () =
     | Error _ -> Alcotest.fail "serialized output envelope did not decode"
   in
   let response =
-    Crux.Wire.Frame.Output_result
+    Crux.Wire.Frame.Projection_result
       {
         seq = 0l;
         reply_to = sequence;
@@ -180,17 +228,22 @@ let conformance_identity_serialized_equivalence () =
               "test output codec is encode-only";
           })
   in
+  let exported_projection =
+    Typed_projection.create ~name:"exported-endpoint"
+      ~codec:exported_output_codec ~value_equal:( == )
+      ~cutoff:Crux.Cutoff.never
+  in
   let candidate, peer =
     Crux.Serialized_session.candidate ~max_frame_bytes:1024
       ~format:(module Eta_crux_json.Format)
   in
   let binding, _admin =
-    Crux.Driver.Binding.serialized ~output:exported_output_codec
+    Crux.Driver.Binding.serialized
       ~operations:[] ~session:candidate
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
-      description
+    Typed_projection.root exported_projection ~projection_capacity:1
+      ~ingress_capacity:1 ~request_capacity:1 description
   in
   let driver = Crux.Driver.create binding root in
   ignore (run_ok (Crux.Driver.poll driver));
@@ -199,8 +252,9 @@ let conformance_identity_serialized_equivalence () =
     | Some bytes -> (
         match Eta_crux_json.Format.decode bytes with
         | Ok
-            (Crux.Wire.Frame.Output_deliver
-              { seq; output; _ }) ->
+            (Crux.Wire.Frame.Projection_deliver
+              { seq; content; _ }) ->
+            let output = projection_content_value content in
             Alcotest.(check int32) "initial exported model" 0l
               (Bytes.get_int32_be output 0);
             (seq, Bytes.sub output 4 (Bytes.length output - 4))
@@ -209,7 +263,7 @@ let conformance_identity_serialized_equivalence () =
     | None -> Alcotest.fail "serialized export output missing"
   in
   let acknowledge_initial =
-    Crux.Wire.Frame.Output_result
+    Crux.Wire.Frame.Projection_result
       {
         seq = 0l;
         reply_to = initial_output_sequence;
@@ -255,8 +309,9 @@ let conformance_identity_serialized_equivalence () =
     | Some bytes -> (
         match Eta_crux_json.Format.decode bytes with
         | Ok
-            (Crux.Wire.Frame.Output_deliver
-              { seq; output; _ }) ->
+            (Crux.Wire.Frame.Projection_deliver
+              { seq; content; _ }) ->
+            let output = projection_content_value content in
             (seq, Int32.to_int (Bytes.get_int32_be output 0))
         | Ok _ | Error _ ->
             Alcotest.fail "serialized endpoint commit malformed")
@@ -266,7 +321,7 @@ let conformance_identity_serialized_equivalence () =
   Alcotest.(check int) "serialized endpoint typed action" 11
     committed_model;
   let acknowledge_commit =
-    Crux.Wire.Frame.Output_result
+    Crux.Wire.Frame.Projection_result
       {
         seq = 2l;
         reply_to = committed_sequence;
@@ -295,14 +350,14 @@ let test_session_loss_requests () =
     Crux.Serialized_session.candidate ~max_frame_bytes:1024
       ~format:(module Eta_crux_json.Format)
   in
-  let unit_codec =
+  let _unit_codec =
     Crux.Codec.make ~encode:(fun () -> Ok Bytes.empty)
       ~decode:(fun bytes ->
         if Bytes.length bytes = 0 then Ok ()
         else Error { Crux.Codec.message = "expected empty payload" })
   in
   let binding, _admin =
-    Crux.Driver.Binding.serialized ~output:unit_codec
+    Crux.Driver.Binding.serialized
       ~operations:[ Crux.Host_operation.Pack operation ]
       ~session:candidate
   in
@@ -317,7 +372,7 @@ let test_session_loss_requests () =
            request_result := Some result)
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.lifecycle (Crux.return request_program))
   in
   let driver = Crux.Driver.create binding root in
@@ -326,13 +381,13 @@ let test_session_loss_requests () =
     match run_ok (Crux.Serialized_session.poll_outgoing peer) with
     | Some bytes -> (
         match Eta_crux_json.Format.decode bytes with
-        | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) -> seq
+        | Ok (Crux.Wire.Frame.Projection_deliver { seq; _ }) -> seq
         | Ok _ | Error _ ->
             Alcotest.fail "session-loss output frame malformed")
     | None -> Alcotest.fail "session-loss output was not emitted"
   in
   let output_reply =
-    Crux.Wire.Frame.Output_result
+    Crux.Wire.Frame.Projection_result
       {
         seq = 0l;
         reply_to = output_frame;
@@ -403,16 +458,16 @@ let test_serialized_receive_wakes_await () =
     Crux.Serialized_session.candidate ~max_frame_bytes:1024
       ~format:(module Eta_crux_json.Format)
   in
-  let unit_codec =
+  let _unit_codec =
     Crux.Codec.make ~encode:(fun () -> Ok Bytes.empty)
       ~decode:(fun _ -> Ok ())
   in
   let binding, _admin =
-    Crux.Driver.Binding.serialized ~output:unit_codec
+    Crux.Driver.Binding.serialized
       ~operations:[] ~session:candidate
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.lifecycle (Crux.return program))
   in
   let driver = Crux.Driver.create binding root in
@@ -424,7 +479,7 @@ let test_serialized_receive_wakes_await () =
     match run_ok (Crux.Serialized_session.poll_outgoing peer) with
     | Some bytes -> (
         match Eta_crux_json.Format.decode bytes with
-        | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) -> seq
+        | Ok (Crux.Wire.Frame.Projection_deliver { seq; _ }) -> seq
         | Ok _ | Error _ ->
             Alcotest.fail "serialized await output malformed")
     | None when attempts = 0 ->
@@ -435,7 +490,7 @@ let test_serialized_receive_wakes_await () =
   in
   let output_sequence = await_output 100 in
   let acknowledgment =
-    Crux.Wire.Frame.Output_result
+    Crux.Wire.Frame.Projection_result
       {
         seq = 0l;
         reply_to = output_sequence;
@@ -484,11 +539,11 @@ let test_session_loss_settles_pending_delivery () =
       ~format:(module Eta_crux_json.Format)
   in
   let binding, _admin =
-    Crux.Driver.Binding.serialized ~output:int_codec
+    Crux.Driver.Binding.serialized
       ~operations:[] ~session:candidate
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return 17)
   in
   let driver = Crux.Driver.create binding root in
@@ -510,7 +565,7 @@ let test_session_loss_settles_pending_delivery () =
           "session loss emitted a nonterminal event"
     | None when attempts = 0 ->
         Alcotest.fail
-          "session loss stranded pending output delivery"
+          "session loss stranded pending projection delivery"
     | None -> await_closed (attempts - 1)
   in
   let settlement = await_closed 5 in
@@ -519,7 +574,7 @@ let test_session_loss_settles_pending_delivery () =
     = Crux.Failure.Adapter_delivery);
   Alcotest.(check bool) "delivery failure trigger" true
     (settlement.failure.primary.trigger
-    = Crux.Failure.Output_delivery)
+    = Crux.Failure.Projection_delivery)
 
 let test_session_loss_settles_replacement () =
   Eta_test.with_test_clock @@ fun switch _clock runtime ->
@@ -532,11 +587,11 @@ let test_session_loss_settles_replacement () =
       ~format:(module Eta_crux_json.Format)
   in
   let binding, admin =
-    Crux.Driver.Binding.serialized ~output:int_codec
+    Crux.Driver.Binding.serialized
       ~operations:[] ~session:old_candidate
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return 23)
   in
   let driver = Crux.Driver.create binding root in
@@ -545,7 +600,7 @@ let test_session_loss_settles_replacement () =
     match run_ok (Crux.Serialized_session.poll_outgoing old_peer) with
     | Some bytes -> (
         match Eta_crux_json.Format.decode bytes with
-        | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) -> seq
+        | Ok (Crux.Wire.Frame.Projection_deliver { seq; _ }) -> seq
         | Ok _ | Error _ ->
             Alcotest.fail "replacement-loss initial output malformed")
     | None ->
@@ -555,7 +610,7 @@ let test_session_loss_settles_replacement () =
     (run_ok
        (Crux.Serialized_session.receive old_peer
           (Eta_crux_json.Format.encode
-             (Crux.Wire.Frame.Output_result
+             (Crux.Wire.Frame.Projection_result
                 {
                   seq = 0l;
                   reply_to = initial_sequence;
@@ -577,7 +632,7 @@ let test_session_loss_settles_replacement () =
     | Some bytes -> (
         match Eta_crux_json.Format.decode bytes with
         | Ok
-            (Crux.Wire.Frame.Output_deliver
+            (Crux.Wire.Frame.Projection_deliver
               { reason = `Session_replacement; _ }) ->
             ()
         | Ok _ | Error _ ->
@@ -635,12 +690,12 @@ let test_raising_response_decoder_is_fatal () =
     Crux.Serialized_session.candidate ~max_frame_bytes:2048
       ~format:(module Eta_crux_json.Format)
   in
-  let unit_codec =
+  let _unit_codec =
     Crux.Codec.make ~encode:(fun () -> Ok Bytes.empty)
       ~decode:(fun _ -> Ok ())
   in
   let binding, _admin =
-    Crux.Driver.Binding.serialized ~output:unit_codec
+    Crux.Driver.Binding.serialized
       ~operations:[ Crux.Host_operation.Pack operation ]
       ~session:candidate
   in
@@ -655,7 +710,7 @@ let test_raising_response_decoder_is_fatal () =
            request_result := Some result)
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.lifecycle (Crux.return request_program))
   in
   let driver = Crux.Driver.create binding root in
@@ -664,7 +719,7 @@ let test_raising_response_decoder_is_fatal () =
     match run_ok (Crux.Serialized_session.poll_outgoing peer) with
     | Some bytes -> (
         match Eta_crux_json.Format.decode bytes with
-        | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) -> seq
+        | Ok (Crux.Wire.Frame.Projection_deliver { seq; _ }) -> seq
         | Ok _ | Error _ ->
             Alcotest.fail "decoder test output malformed")
     | None -> Alcotest.fail "decoder test output missing"
@@ -673,7 +728,7 @@ let test_raising_response_decoder_is_fatal () =
     (run_ok
        (Crux.Serialized_session.receive peer
           (Eta_crux_json.Format.encode
-             (Crux.Wire.Frame.Output_result
+             (Crux.Wire.Frame.Projection_result
                 {
                   seq = 0l;
                   reply_to = output_sequence;
@@ -797,17 +852,22 @@ let conformance_serialized_request_export () =
               "request export output is encode-only";
           })
   in
+  let projection =
+    Typed_projection.create ~name:"request-export"
+      ~codec:output_codec ~value_equal:( == )
+      ~cutoff:Crux.Cutoff.never
+  in
   let candidate, peer =
     Crux.Serialized_session.candidate ~max_frame_bytes:1024
       ~format:(module Eta_crux_json.Format)
   in
   let binding, _admin =
-    Crux.Driver.Binding.serialized ~output:output_codec
+    Crux.Driver.Binding.serialized
       ~operations:[] ~session:candidate
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
-      export
+    Typed_projection.root projection ~projection_capacity:1
+      ~ingress_capacity:1 ~request_capacity:1 export
   in
   let driver = Crux.Driver.create binding root in
   ignore (run_ok (Crux.Driver.poll driver));
@@ -816,15 +876,16 @@ let conformance_serialized_request_export () =
     | Some bytes -> (
         match Eta_crux_json.Format.decode bytes with
         | Ok
-            (Crux.Wire.Frame.Output_deliver
-              { seq; output; _ }) ->
+            (Crux.Wire.Frame.Projection_deliver
+              { seq; content; _ }) ->
+            let output = projection_content_value content in
             (seq, output)
         | Ok _ | Error _ ->
             Alcotest.fail "request export output malformed")
     | None -> Alcotest.fail "request export output missing"
   in
   let initial_reply =
-    Crux.Wire.Frame.Output_result
+    Crux.Wire.Frame.Projection_result
       {
         seq = 0l;
         reply_to = initial_sequence;
@@ -868,13 +929,13 @@ let conformance_serialized_request_export () =
     match run_ok (Crux.Serialized_session.poll_outgoing peer) with
     | Some bytes -> (
         match Eta_crux_json.Format.decode bytes with
-        | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) -> seq
+        | Ok (Crux.Wire.Frame.Projection_deliver { seq; _ }) -> seq
         | Ok _ | Error _ ->
             Alcotest.fail "request export commit malformed")
     | None -> Alcotest.fail "request export did not commit"
   in
   let commit_reply =
-    Crux.Wire.Frame.Output_result
+    Crux.Wire.Frame.Projection_result
       {
         seq = 2l;
         reply_to = commit_sequence;
@@ -936,7 +997,7 @@ let conformance_serialized_crash () =
     Crux.map (Crux.return ()) ~f:(fun () ->
         raise (Failure "serialized-crash-sentinel"))
   in
-  let unit_codec =
+  let _unit_codec =
     Crux.Codec.make ~encode:(fun () -> Ok Bytes.empty)
       ~decode:(fun bytes ->
         if Bytes.length bytes = 0 then Ok ()
@@ -949,11 +1010,11 @@ let conformance_serialized_crash () =
       ~format:(module Eta_crux_json.Format)
   in
   let binding, _admin =
-    Crux.Driver.Binding.serialized ~output:unit_codec
+    Crux.Driver.Binding.serialized
       ~operations:[] ~session:candidate
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       description
   in
   let driver = Crux.Driver.create binding root in
@@ -1004,7 +1065,7 @@ let () =
           Alcotest.test_case "zero wire" `Quick
             conformance_identity_zero_wire;
           Alcotest.test_case "identity serialized equivalence" `Quick
-            conformance_identity_serialized_equivalence;
+            conformance_projection_transport_equivalence;
           Alcotest.test_case "session loss requests" `Quick
             test_session_loss_requests;
           Alcotest.test_case "serialized receive wakes await" `Quick

@@ -1,5 +1,94 @@
 module Crux = Eta_crux
 
+let unit_codec =
+  Crux.Codec.make ~encode:(fun () -> Ok Bytes.empty)
+    ~decode:(fun bytes ->
+      if Bytes.length bytes = 0 then Ok ()
+      else Error { Crux.Codec.message = "invalid unit key" })
+
+type 'value projection = {
+  kind : (unit, 'value) Crux.Projection.Kind.t;
+  catalog : Crux.Projection.Catalog.t;
+}
+
+let projection ~name codec =
+  let kind =
+    Crux.Projection.Kind.define ~name ~key_compare:Unit.compare
+      ~key_codec:unit_codec ~value_codec:codec
+      ~value_equal:(fun _ _ -> false) ~cutoff:Crux.Cutoff.never
+  in
+  {
+    kind;
+    catalog =
+      Crux.Projection.Catalog.create
+        [ Crux.Projection.Kind.Pack kind ];
+  }
+
+let projection_root projection ~ingress_capacity ~request_capacity
+    description =
+  Crux.Root.create ~catalog:projection.catalog ~projection_capacity:1
+    ~ingress_capacity ~request_capacity
+    (Crux.Projection.publish projection.kind ~key:() description)
+
+let projection_delivery_value projection delivery =
+  match delivery with
+  | Crux.Projection.Bootstrap snapshot -> (
+      match
+        Crux.Projection.Snapshot.find_opt projection.kind ~key:() snapshot
+      with
+      | None -> None
+      | Some entry -> Some entry.value)
+  | Updates batch ->
+      let updates =
+        Crux.Projection.Batch.find_opt projection.kind ~key:() batch
+      in
+      List.find_map
+        (function
+          | Crux.Projection.Attached entry
+          | Changed entry ->
+              Some entry.value
+          | Removed _ -> None)
+        updates
+
+let projection_commit_value projection commit =
+  match
+    Crux.Projection.Snapshot.find_opt projection.kind ~key:()
+      (Crux.Projection.Commit.snapshot commit)
+  with
+  | None -> None
+  | Some entry -> Some entry.value
+
+let opaque_projection =
+  projection ~name:"benchmark.opaque"
+    (Crux.Codec.make ~encode:(fun _ -> Ok Bytes.empty)
+       ~decode:(fun _ ->
+         Error { Crux.Codec.message = "opaque benchmark projection" }))
+
+let opaque_root ~ingress_capacity ~request_capacity description =
+  projection_root opaque_projection ~ingress_capacity ~request_capacity
+    (Crux.map description ~f:Obj.repr)
+
+let opaque_delivery_value delivery =
+  projection_delivery_value opaque_projection delivery
+  |> Option.map Obj.obj
+
+let opaque_commit_value commit =
+  projection_commit_value opaque_projection commit
+  |> Option.map Obj.obj
+
+let projection_content_value = function
+  | Crux.Wire.Frame.Bootstrap (entry :: _) -> entry.value
+  | Updates updates ->
+      updates
+      |> List.find_map (function
+           | Crux.Wire.Frame.Attached entry
+           | Changed entry ->
+               Some entry.value
+           | Removed _ -> None)
+      |> Option.get
+  | Bootstrap [] ->
+      invalid_arg "benchmark expected a nonempty projection frame"
+
 let failf format = Printf.ksprintf failwith format
 let cleanup_actions = ref []
 let wire_operations = ref 0
@@ -68,15 +157,17 @@ let stop_driver runtime driver =
 
 let setup_identity runtime description =
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
-      description
+    opaque_root ~ingress_capacity:2 ~request_capacity:1 description
   in
   let driver =
     Crux.Driver.create (Crux.Driver.Binding.identity []) root
   in
   let initial = poll_delivery runtime driver in
   answer_delivery runtime initial;
-  (driver, Crux.Driver.Delivery.output initial)
+  ( driver,
+    opaque_delivery_value
+      (Crux.Driver.Delivery.projection initial)
+    |> Option.get )
 
 let make_action_workload runtime =
   let machine =
@@ -140,9 +231,7 @@ let int_map_find key map =
 
 type assoc_setup = {
   driver :
-    (((int Int_map.t * int Int_map.t Crux.Endpoint.t)
-      * (int * int) Int_map.t)
-     Crux.Driver.t);
+    Crux.Driver.t;
   endpoint : int Int_map.t Crux.Endpoint.t;
   mutable input : int Int_map.t;
   mutable output : (int * int) Int_map.t;
@@ -185,7 +274,11 @@ let change_assoc runtime setup =
   let changed = Int_map.set key (previous + 1) setup.input in
   send runtime setup.endpoint changed;
   let delivery = poll_delivery runtime setup.driver in
-  let (_, _), output = Crux.Driver.Delivery.output delivery in
+  let (_, _), output =
+    opaque_delivery_value
+      (Crux.Driver.Delivery.projection delivery)
+    |> Option.get
+  in
   answer_delivery runtime delivery;
   let comparisons = Counting_order.count () in
   let visits = !(setup.child_visits) - before_visits in
@@ -205,19 +298,6 @@ let make_assoc_workload runtime size =
   fun () -> ignore (change_assoc runtime setup)
 
 let bench_eta_crux_assoc = make_assoc_workload
-
-let changed_rows left right =
-  Int_map.fold_symmetric_diff left right ~init:0
-    ~f:(fun count _key _change -> count + 1)
-
-let make_reconciliation_workload runtime size =
-  let setup = setup_assoc runtime size in
-  fun () ->
-    let before, after = change_assoc runtime setup in
-    let mutations = changed_rows before after in
-    if mutations <> 1 then
-      failf "persistent reconciliation: expected 1 mutation, got %d"
-        mutations
 
 let make_lifecycle_overlap_workload runtime =
   let cleanup_releases = Eta.Queue.unbounded () in
@@ -277,16 +357,19 @@ let output_codec =
             "benchmark output decoding is not used";
         })
 
+let serialized_projection =
+  projection ~name:"benchmark.serialized" output_codec
+
 let output_result ~seq ~reply_to =
-  Crux.Wire.Frame.Output_result
+  Crux.Wire.Frame.Projection_result
     { seq; reply_to; result = `Accepted }
   |> Eta_crux_json.Format.encode
 
 let output_sequence bytes =
   match Eta_crux_json.Format.decode bytes with
-  | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) -> seq
+  | Ok (Crux.Wire.Frame.Projection_deliver { seq; _ }) -> seq
   | Ok _ | Error _ ->
-      failwith "benchmark expected output.deliver frame"
+      failwith "benchmark expected projection.deliver frame"
 
 let poll_outgoing runtime peer =
   match
@@ -302,7 +385,7 @@ let acknowledge runtime peer ~seq ~reply_to =
          (output_result ~seq ~reply_to))
   with
   | Ok () -> ()
-  | Error _ -> failwith "benchmark output acknowledgment failed"
+  | Error _ -> failwith "benchmark projection acknowledgment failed"
 
 let make_serialized_workload runtime payload_size =
   let session, peer =
@@ -311,7 +394,7 @@ let make_serialized_workload runtime payload_size =
       ~format:(module Counting_format)
   in
   let binding, _ =
-    Crux.Driver.Binding.serialized ~output:output_codec
+    Crux.Driver.Binding.serialized
       ~operations:[] ~session
   in
   let payload = Bytes.make payload_size 'x' in
@@ -328,8 +411,8 @@ let make_serialized_workload runtime payload_size =
         { payload; endpoint })
   in
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
-      description
+    projection_root serialized_projection ~ingress_capacity:2
+      ~request_capacity:1 description
   in
   let driver = Crux.Driver.create binding root in
   ignore (run_ok runtime (Crux.Driver.poll driver));
@@ -388,13 +471,12 @@ let make_capacity_workload runtime capacity =
       ~codec
   in
   let root =
-    Crux.Root.create ~ingress_capacity:capacity
-      ~request_capacity:1 exported
+    opaque_root ~ingress_capacity:capacity ~request_capacity:1 exported
   in
   let export, post_commit =
     match run_ok runtime (Crux.Root.advance root) with
-    | Ok (Crux.Root.Committed { output; post_commit }) ->
-        (output, post_commit)
+    | Ok (Crux.Root.Committed { commit; post_commit }) ->
+        (opaque_commit_value commit |> Option.get, post_commit)
     | _ -> failwith "capacity benchmark failed to start"
   in
   ignore
@@ -439,7 +521,7 @@ let make_request_capacity_workload runtime capacity =
       [ Crux.Host_operation.Pack operation ]
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:capacity
+    opaque_root ~ingress_capacity:1 ~request_capacity:capacity
       (Crux.return ())
   in
   let driver = Crux.Driver.create binding root in
@@ -588,17 +670,20 @@ let make_serialized_handle_retention_workload runtime =
               "handle-retention output is encode-only";
           })
   in
+  let handle_projection =
+    projection ~name:"benchmark.handle-retention" codec
+  in
   let candidate, initial_peer =
     Crux.Serialized_session.candidate ~max_frame_bytes:2_048
       ~format:(module Counting_format)
   in
   let binding, admin =
-    Crux.Driver.Binding.serialized ~output:codec
+    Crux.Driver.Binding.serialized
       ~operations:[] ~session:candidate
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
-      description
+    projection_root handle_projection ~ingress_capacity:1
+      ~request_capacity:1 description
   in
   let driver = Crux.Driver.create binding root in
   ignore (run_ok runtime (Crux.Driver.poll driver));
@@ -606,9 +691,11 @@ let make_serialized_handle_retention_workload runtime =
   let first_sequence = output_sequence first in
   let first_handle =
     match Eta_crux_json.Format.decode first with
-    | Ok (Crux.Wire.Frame.Output_deliver { output; _ })
-      when Bytes.length output > 0 ->
-        output
+    | Ok (Crux.Wire.Frame.Projection_deliver { content; _ })
+      when
+        let output = projection_content_value content in
+        Bytes.length output > 0 ->
+        projection_content_value content
     | Ok _ | Error _ ->
         failwith
           "handle-retention benchmark emitted no initial handle"
@@ -630,12 +717,12 @@ let make_serialized_handle_retention_workload runtime =
     let bytes = poll_outgoing runtime peer in
     match Eta_crux_json.Format.decode bytes with
     | Ok
-        (Crux.Wire.Frame.Output_deliver
-          { seq; output; _ }) ->
-        (seq, output)
+        (Crux.Wire.Frame.Projection_deliver
+          { seq; content; _ }) ->
+        (seq, projection_content_value content)
     | Ok _ | Error _ ->
         failwith
-          "handle-retention benchmark expected output delivery"
+          "handle-retention benchmark expected projection delivery"
   in
   register_cleanup (fun () -> stop_driver runtime driver);
   fun () ->
@@ -646,7 +733,7 @@ let make_serialized_handle_retention_workload runtime =
     in
     if Bytes.length removed_output <> 0 then
       failwith
-        "removed export remained in serialized output";
+        "removed export remained in serialized projection";
     acknowledge runtime !peer ~seq:!incoming_sequence
       ~reply_to:remove_sequence;
     incoming_sequence :=
@@ -686,16 +773,16 @@ let make_serialized_handle_retention_workload runtime =
       let sequence, output =
         match Eta_crux_json.Format.decode bytes with
         | Ok
-            (Crux.Wire.Frame.Output_deliver
+            (Crux.Wire.Frame.Projection_deliver
               {
                 seq;
                 reason = `Session_replacement;
-                output;
+                content;
               }) ->
-            (seq, output)
+            (seq, projection_content_value content)
         | Ok _ | Error _ ->
             failwith
-              "handle-retention replacement output malformed"
+              "handle-retention replacement projection malformed"
       in
       if Bytes.length output <> 0 then
         failwith
@@ -998,12 +1085,6 @@ let () =
         ~counters:[ ("child_visits", 1.) ]
         "assoc.changed_child.100000"
         (fun () -> bench_eta_crux_assoc runtime 100_000)
-    @ selected ~counters:[ ("mutated_rows", 1.) ]
-        "adapter.persistent_output.10000"
-        (fun () -> make_reconciliation_workload runtime 10_000)
-    @ selected ~counters:[ ("mutated_rows", 1.) ]
-        "adapter.persistent_output.100000"
-        (fun () -> make_reconciliation_workload runtime 100_000)
     @ selected
         ~counters:
           [ ("new_starts", 1.); ("cleanup_releases", 1.) ]

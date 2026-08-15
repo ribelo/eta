@@ -102,14 +102,57 @@ let callback_of_protocol = function
   | Protocol.Callback_accepted -> `Accepted
   | Callback_failed message -> `Failed message
 
+let projection_entry_to_protocol (entry : Frame.projection_entry) =
+  {
+    Protocol.kind = entry.kind;
+    key = bytes_to_string entry.key;
+    incarnation = entry.incarnation;
+    value = bytes_to_string entry.value;
+  }
+
+let projection_entry_of_protocol (entry : Protocol.projection_entry) =
+  {
+    Frame.kind = entry.kind;
+    key = string_to_bytes entry.key;
+    incarnation = entry.incarnation;
+    value = string_to_bytes entry.value;
+  }
+
+let projection_update_to_protocol = function
+  | Frame.Attached entry ->
+      Protocol.Projection_attached (projection_entry_to_protocol entry)
+  | Frame.Changed entry ->
+      Protocol.Projection_changed (projection_entry_to_protocol entry)
+  | Frame.Removed { kind; key; incarnation } ->
+      Protocol.Projection_removed
+        { kind; key = bytes_to_string key; incarnation }
+
+let projection_update_of_protocol = function
+  | Protocol.Projection_attached entry ->
+      Frame.Attached (projection_entry_of_protocol entry)
+  | Protocol.Projection_changed entry ->
+      Frame.Changed (projection_entry_of_protocol entry)
+  | Protocol.Projection_removed { kind; key; incarnation } ->
+      Frame.Removed
+        { kind; key = string_to_bytes key; incarnation }
+
 let to_protocol = function
-  | Frame.Output_deliver { seq; reason; output } ->
+  | Frame.Projection_deliver { seq; reason; content } ->
+      let content =
+        match content with
+        | Frame.Updates updates ->
+            Protocol.Projection_updates
+              (List.map projection_update_to_protocol updates)
+        | Frame.Bootstrap entries ->
+            Protocol.Projection_bootstrap
+              (List.map projection_entry_to_protocol entries)
+      in
       { Protocol.seq = seq_to_int seq;
-        body = Deliver_output {
+        body = Deliver_projection {
           reason = (match reason with `Advancement -> Advancement | `Session_replacement -> Session_replacement);
-          payload = bytes_to_string output } }
-  | Output_result { seq; reply_to; result } ->
-      { seq = seq_to_int seq; body = Output_result { reply_to = seq_to_int reply_to; outcome = callback_to_protocol result } }
+          content } }
+  | Projection_result { seq; reply_to; result } ->
+      { seq = seq_to_int seq; body = Projection_result { reply_to = seq_to_int reply_to; outcome = callback_to_protocol result } }
   | Crash_notify { seq; failure } ->
       { seq = seq_to_int seq;
         body =
@@ -150,8 +193,28 @@ let to_protocol = function
 let of_protocol frame =
   let seq = int_to_seq frame.Protocol.seq in
   match frame.body with
-  | Protocol.Deliver_output { reason; payload } -> Ok (Frame.Output_deliver { seq; reason = (match reason with Advancement -> `Advancement | Session_replacement -> `Session_replacement); output = string_to_bytes payload })
-  | Output_result { reply_to; outcome } -> Ok (Output_result { seq; reply_to = int_to_seq reply_to; result = callback_of_protocol outcome })
+  | Protocol.Deliver_projection { reason; content } ->
+      let content =
+        match content with
+        | Protocol.Projection_updates updates ->
+            Frame.Updates
+              (List.map projection_update_of_protocol updates)
+        | Protocol.Projection_bootstrap entries ->
+            Frame.Bootstrap
+              (List.map projection_entry_of_protocol entries)
+      in
+      Ok
+        (Frame.Projection_deliver
+           {
+             seq;
+             reason =
+               (match reason with
+               | Advancement -> `Advancement
+               | Session_replacement -> `Session_replacement);
+             content;
+           })
+  | Projection_result { reply_to; outcome } ->
+      Ok (Projection_result { seq; reply_to = int_to_seq reply_to; result = callback_of_protocol outcome })
   | Notify_crash { failure } ->
       (match
          Eta_crux.Failure.decode_portable

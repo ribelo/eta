@@ -60,9 +60,23 @@ let portable_failure : Eta_crux.Failure.portable =
 
 let frames =
   [
-    Frame.Output_deliver
-      { seq = 0l; reason = `Advancement; output = Bytes.of_string "out" };
-    Output_result { seq = 1l; reply_to = 0l; result = `Accepted };
+    Frame.Projection_deliver
+      {
+        seq = 0l;
+        reason = `Advancement;
+        content =
+          Updates
+            [
+              Attached
+                {
+                  kind = "counter";
+                  key = Bytes.empty;
+                  incarnation = 1L;
+                  value = Bytes.of_string "out";
+                };
+            ];
+      };
+    Projection_result { seq = 1l; reply_to = 0l; result = `Accepted };
     Crash_notify { seq = 2l; failure = portable_failure };
     Crash_result
       { seq = 2l; reply_to = 1l; result = `Failed "adapter" };
@@ -164,12 +178,15 @@ let test_json_rejects_duplicate_field () =
 
 let test_exact_frame_boundary () =
   let output =
-    Frame.Output_deliver
-      { seq = 0l; reason = `Advancement; output = Bytes.empty }
+    Frame.Projection_deliver
+      { seq = 0l; reason = `Advancement; content = Updates [] }
   in
-  Alcotest.(check string) "JSON output field"
-    {|{"seq":0,"tag":"output.deliver","reason":"advancement","output":""}|}
+  Alcotest.(check string) "JSON projection fields"
+    {|{"seq":0,"tag":"projection.deliver","reason":"advancement","content":"updates","entries":[]}|}
     (Eta_crux_json.Format.encode output |> Bytes.to_string);
+  Alcotest.(check string) "S-expression projection fields"
+    "(0 projection.deliver advancement updates 0)"
+    (Eta_crux_sexp.Format.encode output |> Bytes.to_string);
   let dispatch =
     Frame.Request_dispatch_result
       { seq = 0l; reply_to = 1l; accepted = true }

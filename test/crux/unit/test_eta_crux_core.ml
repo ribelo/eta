@@ -1,4 +1,43 @@
 module Crux = Eta_crux
+module Projection = Eta_crux_test.Projection_harness.Opaque
+module Typed_projection = Eta_crux_test.Projection_harness
+
+let output_of_delivery delivery =
+  Eta_crux_test.Projection_harness.Opaque.delivery_value
+    (Crux.Driver.Delivery.projection delivery)
+  |> Option.get
+
+let output_of_commit commit =
+  Eta_crux_test.Projection_harness.Opaque.commit_value commit
+  |> Option.get
+
+let latest_committed_snapshot driver =
+  Option.bind (Crux.Driver.latest_committed_snapshot driver)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let handle_latest_committed_snapshot handle =
+  Option.bind (Eta_crux_test.Handle.latest_committed_snapshot handle)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let handle_latest_delivered_snapshot handle =
+  Option.bind (Eta_crux_test.Handle.latest_delivered_snapshot handle)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let projection_content_value = function
+  | Crux.Wire.Frame.Bootstrap (entry :: _) -> entry.value
+  | Crux.Wire.Frame.Updates updates ->
+      let rec latest = function
+        | [] -> None
+        | Crux.Wire.Frame.Attached entry :: rest
+        | Crux.Wire.Frame.Changed entry :: rest -> (
+            match latest rest with
+            | Some _ as value -> value
+            | None -> Some entry.value)
+        | Crux.Wire.Frame.Removed _ :: rest -> latest rest
+      in
+      latest updates |> Option.get
+  | Crux.Wire.Frame.Bootstrap [] ->
+      invalid_arg "expected a nonempty projection frame"
 
 let test_clock = Eta_test.Test_clock.create ()
 let test_clock_capability = Eta_test.Test_clock.as_capability test_clock
@@ -17,7 +56,7 @@ let run_runtime_ok runtime eff =
 
 let committed = function
   | Ok (Crux.Root.Committed committed) ->
-      (committed.output, committed.post_commit)
+      (output_of_commit committed.commit, committed.post_commit)
   | Ok Crux.Root.Idle -> Alcotest.fail "expected commit, got idle"
   | Ok (Crux.Root.Rejected _) -> Alcotest.fail "expected commit, got rejection"
   | Ok (Crux.Root.Stopped _) -> Alcotest.fail "expected commit, got stop"
@@ -43,7 +82,7 @@ let test_description_is_inert () =
   Alcotest.(check int) "construction did not start lifecycle" 0
     !lifecycle_starts;
   let root =
-    Crux.Root.create ~ingress_capacity:4 ~request_capacity:2 description
+    Projection.root ~projection_capacity:1 ~ingress_capacity:4 ~request_capacity:2 description
   in
   Alcotest.(check int) "root creation did not transition" 0 !transitions;
   Alcotest.(check int) "root creation did not start lifecycle" 0
@@ -62,10 +101,10 @@ let test_roots_are_isolated () =
         (model + action, None))
   in
   let left =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 machine
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1 machine
   in
   let right =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 machine
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1 machine
   in
   let left_output, left_start = committed (run_ok (Crux.Root.advance left)) in
   let right_output, right_start = committed (run_ok (Crux.Root.advance right)) in
@@ -94,7 +133,7 @@ let test_endpoint_acceptance_boundary () =
         (model + action, None))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 machine
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1 machine
   in
   let output, start = committed (run_ok (Crux.Root.advance root)) in
   let _, endpoint = output in
@@ -116,7 +155,7 @@ let test_transition_effect_is_staged () =
           Some (Eta.Effect.sync (fun () -> incr effect_starts)) ))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 machine
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1 machine
   in
   let output, start = committed (run_ok (Crux.Root.advance root)) in
   let _, endpoint = output in
@@ -137,7 +176,7 @@ let test_driver_delivers_before_post_commit () =
             (Eta.Effect.sync (fun () -> lifecycle_started := true))))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 description
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1 description
   in
   let driver =
     Crux.Driver.create (Crux.Driver.Binding.identity []) root
@@ -148,7 +187,7 @@ let test_driver_delivers_before_post_commit () =
     | _ -> Alcotest.fail "expected initial delivery"
   in
   Alcotest.(check int) "complete output" 7
-    (fst (Crux.Driver.Delivery.output delivery));
+    (fst (output_of_delivery delivery));
   Alcotest.(check bool) "lifecycle remains gated" false !lifecycle_started;
   Alcotest.(check bool) "delivery accepted" true
     (run_runtime_ok runtime (Crux.Driver.Delivery.delivered delivery) = Ok ());
@@ -199,7 +238,7 @@ let test_outbound_request_round_trip () =
       (Crux.lifecycle (Crux.return request_effect))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 description
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1 description
   in
   let driver = Crux.Driver.create binding root in
   let delivery =
@@ -378,7 +417,7 @@ let test_cutoff_suppresses_only_dependent_recomputation () =
   in
   let description = Crux.both machine parity in
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 description
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1 description
   in
   let output, start = committed (run_ok (Crux.Root.advance root)) in
   let (model, endpoint), parity = output in
@@ -396,7 +435,7 @@ let test_cutoff_suppresses_only_dependent_recomputation () =
 
 let test_post_commit_starts_exactly_once () =
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return ())
   in
   let _, batch = committed (run_ok (Crux.Root.advance root)) in
@@ -415,7 +454,7 @@ let test_idle_is_inert () =
         value)
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 description
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1 description
   in
   let _, start = committed (run_ok (Crux.Root.advance root)) in
   ignore (run_ok (Crux.Post_commit.start start));
@@ -441,7 +480,7 @@ let test_transition_rollback () =
         (model, endpoint))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 description
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1 description
   in
   let (_, endpoint), start = committed (run_ok (Crux.Root.advance root)) in
   ignore (run_ok (Crux.Post_commit.start start));
@@ -475,7 +514,7 @@ let test_stale_endpoint_rejection () =
         if value then present else absent)
   in
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
       (Crux.both selector selected)
   in
   let ((_, selector_endpoint), (_, old_endpoint)), start =
@@ -502,7 +541,7 @@ let test_lifecycle_resource_cleanup () =
          (Eta.Effect.sync (fun () -> finalized := true))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.lifecycle (Crux.return program))
   in
   let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -576,7 +615,7 @@ let test_structural_scope_settlement () =
            if present then old_subtree else replacement))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 description
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1 description
   in
   let start post_commit =
     Crux.Post_commit.start post_commit
@@ -669,7 +708,7 @@ let test_cleanup_overlap () =
         else Crux.lifecycle (Crux.return new_program))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.both selector selected)
   in
   let start post_commit =
@@ -764,7 +803,7 @@ let test_concurrent_source_opening () =
     Crux.both machine (Crux.both (source 1) (source 2))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:4 ~request_capacity:1 description
+    Projection.root ~projection_capacity:1 ~ingress_capacity:4 ~request_capacity:1 description
   in
   let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
   let start post_commit =
@@ -863,7 +902,7 @@ let test_source_opening_barrier () =
           Eta.Effect.never))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.both machine (Crux.both source sibling))
   in
   let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -938,7 +977,7 @@ let test_source_argument_work_starts_once () =
         (Crux.return (fun (_ : string Crux.Source.terminal) -> ()))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.both machine source)
   in
   let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -973,7 +1012,7 @@ let test_source_argument_work_starts_once () =
 let test_crash_latch () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.lifecycle
          (Crux.return (Eta.Effect.die_message "owned lifecycle crashed")))
   in
@@ -1010,7 +1049,7 @@ let test_driver_await_wakes_on_fatal () =
     Eta.Effect.die_message "await wake defect"
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.lifecycle (Crux.return program))
   in
   let driver =
@@ -1072,7 +1111,7 @@ let test_cleanup_failure_precedence () =
     |> Eta.Effect.finally (Eta.Effect.die_message "cleanup failed")
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.lifecycle (Crux.return program))
   in
   let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -1132,7 +1171,7 @@ let test_source_opening_defect () =
          source)
   in
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 description
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1 description
   in
   let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
   match run_runtime_ok runtime (Crux.Post_commit.start initial_post) with
@@ -1189,7 +1228,7 @@ let test_source_opening_failures_do_not_block_admission () =
           | Crux.Source.Failed (_ : string) -> 1))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.both sink (Crux.both (source ()) (source ())))
   in
   let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -1203,9 +1242,8 @@ let test_source_opening_failures_do_not_block_admission () =
       Alcotest.fail "source terminals did not reach ingress"
     else
       match run_ok (Crux.Root.advance root) with
-      | Ok
-          (Crux.Root.Committed
-            { output = ((model, _), _); post_commit }) ->
+      | Ok (Crux.Root.Committed { commit; post_commit }) ->
+          let ((model, _), _) = output_of_commit commit in
           ignore
             (run_runtime_ok runtime
                (Crux.Post_commit.start post_commit));
@@ -1257,7 +1295,7 @@ let test_stop_cancels_source_opening () =
           | Crux.Source.Failed (_ : string) -> ()))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.both machine source)
   in
   let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -1322,7 +1360,7 @@ let test_post_commit_phase_order () =
           | Crux.Source.Failed (_ : string) -> 0))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
       (Crux.both machine source)
   in
   let ((_, endpoint), _), initial_post =
@@ -1399,7 +1437,7 @@ let test_diagnostic_hook_failure () =
         (model + action, None))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1 machine
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1 machine
   in
   let (_, endpoint), initial_post = committed (run_ok (Crux.Root.advance root)) in
   ignore (run_ok (Crux.Post_commit.start initial_post));
@@ -1470,7 +1508,7 @@ let test_self_disposing_effect () =
           | Crux.Source.Failed (_ : string) -> 2))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
       (Crux.both machine source)
   in
   let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -1487,9 +1525,8 @@ let test_self_disposing_effect () =
     if attempts = 0 then Alcotest.fail "source terminal action did not arrive"
     else
       match run_ok (Crux.Root.advance root) with
-      | Ok
-          (Crux.Root.Committed
-            { output = ((model, _), _); post_commit }) ->
+      | Ok (Crux.Root.Committed { commit; post_commit }) ->
+          let ((model, _), _) = output_of_commit commit in
           (model, post_commit)
       | Ok Crux.Root.Idle ->
           Eio.Fiber.yield ();
@@ -1532,7 +1569,7 @@ let test_export_callback_defect () =
       (Crux.Exported_endpoint.create target ~codec)
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 description
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1 description
   in
   let _, export, initial_post =
     match committed (run_ok (Crux.Root.advance root)) with
@@ -1571,7 +1608,7 @@ let observe_adapter_delivery_failure runtime =
             (Eta.Effect.sync (fun () -> lifecycle_started := true))))
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 description
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1 description
   in
   let driver =
     Crux.Driver.create (Crux.Driver.Binding.identity []) root
@@ -1579,7 +1616,7 @@ let observe_adapter_delivery_failure runtime =
   let delivery =
     match run_runtime_ok runtime (Crux.Driver.poll driver) with
     | Some (Crux.Driver.Deliver delivery) -> delivery
-    | _ -> Alcotest.fail "expected committed output delivery"
+    | _ -> Alcotest.fail "expected committed projection delivery"
   in
   let cause =
     Crux.Failure.Packed_cause.make
@@ -1614,8 +1651,8 @@ let test_adapter_delivery_failure () =
   in
   Alcotest.(check bool) "adapter origin" true
     (detected.primary.origin = Crux.Failure.Adapter_delivery);
-  Alcotest.(check bool) "output-delivery trigger" true
-    (detected.primary.trigger = Crux.Failure.Output_delivery);
+  Alcotest.(check bool) "projection-delivery trigger" true
+    (detected.primary.trigger = Crux.Failure.Projection_delivery);
   Alcotest.(check bool) "commit retained through teardown" false
     lifecycle_started;
   Alcotest.(check bool) "teardown settled" true
@@ -1668,7 +1705,7 @@ let test_request_dispatch_fence () =
          | Crux.Requester.Closed _ -> Failure "request closed")
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.lifecycle (Crux.return request_program))
   in
   let driver = Crux.Driver.create binding root in
@@ -1739,7 +1776,7 @@ let test_request_dispatch_fence () =
 let test_stop_from_each_driver_phase () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let dormant_root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return 1)
   in
   let dormant_driver =
@@ -1757,7 +1794,7 @@ let test_stop_from_each_driver_phase () =
         (model + action, None))
   in
   let pending_root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
       (Crux.both pending_machine
          (Crux.lifecycle
             (Crux.return
@@ -1773,7 +1810,7 @@ let test_stop_from_each_driver_phase () =
     | _ -> Alcotest.fail "pending-phase driver did not deliver"
   in
   let (pending_model, pending_endpoint), _ =
-    Crux.Driver.Delivery.output pending_delivery
+    output_of_delivery pending_delivery
   in
   Alcotest.(check int) "pending output retained" 0 pending_model;
   ignore
@@ -1815,7 +1852,7 @@ let test_stop_from_each_driver_phase () =
         (model + action, None))
   in
   let active_root =
-    Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
       (Crux.both active_machine
          (Crux.lifecycle (Crux.return active_program)))
   in
@@ -1828,7 +1865,7 @@ let test_stop_from_each_driver_phase () =
     | _ -> Alcotest.fail "active-phase driver did not deliver"
   in
   let (_, active_endpoint), _ =
-    Crux.Driver.Delivery.output active_delivery
+    output_of_delivery active_delivery
   in
   ignore
     (run_runtime_ok runtime
@@ -1866,7 +1903,7 @@ let pp_hosted_error formatter = function
 
 let hosted_root () =
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return ())
   in
   let driver =
@@ -1934,7 +1971,7 @@ let test_hosted_resource_boundary () =
       Alcotest.fail "release error escaped as a root/body failure"
   | Eta.Exit.Ok _ ->
       Alcotest.fail "hosted release unexpectedly succeeded");
-  Alcotest.(check bool) "adapter received committed output" true !delivered;
+  Alcotest.(check bool) "adapter received committed projection" true !delivered;
   Alcotest.(check bool) "binding release ran" true !released;
   Alcotest.(check bool) "release failure left root settled" true
     (run_ok (Crux.Root.advance release_root) = Error Crux.Root.Driver_attached);
@@ -1997,7 +2034,7 @@ let test_request_terminal_handoff_fence () =
     |> Eta.Effect.map (fun _ -> ())
   in
   let root =
-    Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.lifecycle (Crux.return program))
   in
   let driver = Crux.Driver.create binding root in
@@ -2086,7 +2123,7 @@ let test_request_export_closes_on_owner_and_root_termination () =
           else Crux.return None)
     in
     let root =
-      Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+      Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
         (Crux.both machine (Crux.both selector export))
     in
     let initial, post_commit = committed (run_ok (Crux.Root.advance root)) in
@@ -2241,11 +2278,11 @@ let ack_output peer driver =
       match outgoing with
       | Some bytes -> (
           match Eta_crux_json.Format.decode bytes with
-          | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) ->
+          | Ok (Crux.Wire.Frame.Projection_deliver { seq; _ }) ->
               let* () =
                 Crux.Serialized_session.receive peer
                   (Eta_crux_json.Format.encode
-                     (Crux.Wire.Frame.Output_result
+                     (Crux.Wire.Frame.Projection_result
                         { seq = 0l; reply_to = seq; result = `Accepted }))
                 |> Eta.Effect.map (fun _ -> ())
               in
@@ -2285,7 +2322,7 @@ let test_requester_encode_failed () =
       ~format:(module Eta_crux_json.Format)
   in
   let binding, _admin =
-    Crux.Driver.Binding.serialized ~output:unit_bytes_codec
+    Crux.Driver.Binding.serialized
       ~operations:[ Crux.Host_operation.Pack operation ]
       ~session:candidate
   in
@@ -2307,7 +2344,7 @@ let test_requester_encode_failed () =
             request 1 second))
     in
     let root =
-      Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 description
+      Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1 description
     in
     let driver = Crux.Driver.create binding root in
     let rec note_events leftover =
@@ -2392,7 +2429,7 @@ let test_requester_decode_failed () =
       ~format:(module Eta_crux_json.Format)
   in
   let binding, _admin =
-    Crux.Driver.Binding.serialized ~output:unit_bytes_codec
+    Crux.Driver.Binding.serialized
       ~operations:[ Crux.Host_operation.Pack operation ]
       ~session:candidate
   in
@@ -2407,7 +2444,7 @@ let test_requester_decode_failed () =
       |> Eta.Effect.map (fun result -> cell := Some result)
     in
     let root =
-      Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+      Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
         (Crux.lifecycle
            (Crux.return
               (let* () = request 7 first_result in
@@ -2423,11 +2460,11 @@ let test_requester_decode_failed () =
         match outgoing with
         | Some bytes -> (
             match Eta_crux_json.Format.decode bytes with
-            | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) ->
+            | Ok (Crux.Wire.Frame.Projection_deliver { seq; _ }) ->
                 let* () =
                   Crux.Serialized_session.receive peer
                     (Eta_crux_json.Format.encode
-                       (Crux.Wire.Frame.Output_result
+                       (Crux.Wire.Frame.Projection_result
                           {
                             seq = 0l;
                             reply_to = seq;
@@ -2551,18 +2588,24 @@ let test_responder_encode_failed () =
         Error
           { Crux.Codec.message = "request export output is encode-only" })
   in
+  let projection =
+    Typed_projection.create ~name:"responder"
+      ~codec:output_codec ~value_equal:( == )
+      ~cutoff:Crux.Cutoff.never
+  in
   let candidate, peer =
     Crux.Serialized_session.candidate ~max_frame_bytes:1024
       ~format:(module Eta_crux_json.Format)
   in
   let binding, _admin =
-    Crux.Driver.Binding.serialized ~output:output_codec ~operations:[]
+    Crux.Driver.Binding.serialized ~operations:[]
       ~session:candidate
   in
   let program =
     let open Eta.Syntax in
     let root =
-      Crux.Root.create ~ingress_capacity:1 ~request_capacity:1 export
+      Typed_projection.root projection ~projection_capacity:1
+        ~ingress_capacity:1 ~request_capacity:1 export
     in
     let driver = Crux.Driver.create binding root in
     let rec await_output attempts =
@@ -2574,7 +2617,8 @@ let test_responder_encode_failed () =
         match outgoing with
         | Some bytes -> (
             match Eta_crux_json.Format.decode bytes with
-            | Ok (Crux.Wire.Frame.Output_deliver { seq; output; _ }) ->
+            | Ok (Crux.Wire.Frame.Projection_deliver { seq; content; _ }) ->
+                let output = projection_content_value content in
                 Eta.Effect.pure (seq, output)
             | Ok _ | Error _ ->
                 Eta.Effect.sync (fun () ->
@@ -2588,7 +2632,7 @@ let test_responder_encode_failed () =
     let* () =
       Crux.Serialized_session.receive peer
         (Eta_crux_json.Format.encode
-           (Crux.Wire.Frame.Output_result
+           (Crux.Wire.Frame.Projection_result
               {
                 seq = 0l;
                 reply_to = initial_sequence;
@@ -2623,11 +2667,11 @@ let test_responder_encode_failed () =
                 (Crux.Wire.Frame.Request_start_result
                   { result = `Started _; _ }) ->
                 Eta.Effect.unit
-            | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) ->
+            | Ok (Crux.Wire.Frame.Projection_deliver { seq; _ }) ->
                 let* () =
                   Crux.Serialized_session.receive peer
                     (Eta_crux_json.Format.encode
-                       (Crux.Wire.Frame.Output_result
+                       (Crux.Wire.Frame.Projection_result
                           {
                             seq = Int32.add seq 10l;
                             reply_to = seq;
@@ -2687,11 +2731,11 @@ let test_responder_encode_failed () =
                           result = `Identity `Accepted;
                         }))
                 |> Eta.Effect.map (fun _ -> ())
-            | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) ->
+            | Ok (Crux.Wire.Frame.Projection_deliver { seq; _ }) ->
                 let* () =
                   Crux.Serialized_session.receive peer
                     (Eta_crux_json.Format.encode
-                       (Crux.Wire.Frame.Output_result
+                       (Crux.Wire.Frame.Projection_result
                           {
                             seq = Int32.add seq 20l;
                             reply_to = seq;

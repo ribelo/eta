@@ -69,23 +69,6 @@ incarnation.
 A structurally owned producer whose items and terminal outcome become actions.
 Its specification defines producer continuity.
 
-## Root output
-
-The complete application value that current Eta Crux V1 publishes from one
-successful commit. The typed projection target keeps the root result local.
-
-## Latest committed output
-
-The current Eta Crux V1 Root output from the greatest completed commit. The
-typed projection target replaces this term with the latest committed projection
-state.
-
-## Latest delivered output
-
-The current Eta Crux V1 Root output whose delivery token the host last accepted.
-The typed projection target replaces this term with the latest delivered
-projection state.
-
 ## Projection
 
 A structural computation occurrence that produces one typed, complete derived
@@ -141,12 +124,13 @@ and projection value, or `Absent`.
 
 ## Latest committed projection state
 
-The projection state after the latest completed commit.
+The complete `Projection.Snapshot.t` from the latest completed commit. The
+driver retains this snapshot.
 
 ## Latest delivered projection state
 
-The projection state after the latest projection delivery that the host
-accepted.
+The complete projection state after the latest delivery that the recipient
+accepted. Production code has no query for this state.
 
 ## Changed projection value
 
@@ -328,12 +312,12 @@ queued its handoff. It does not mean that the peer consumed the response.
 ## Advancement
 
 One atomic attempt to process one selected ingress item or internal control
-event and produce a committed application output.
+event and produce a committed projection image.
 
 ## Post-commit batch
 
 Opaque work that belongs to one committed advancement. Starting it acknowledges
-output delivery and admits the owned work from that advancement.
+projection delivery and admits the owned work from that advancement.
 
 ## Test handle
 
@@ -342,8 +326,8 @@ protocol. The handle has exclusive protocol ownership during its lifetime.
 
 ## Test frame
 
-One test operation that performs at most one root advancement through output
-delivery and complete post-commit admission.
+One test operation that performs at most one root advancement through
+projection delivery and complete post-commit admission.
 
 ## Active child
 
@@ -399,9 +383,10 @@ Eta owns effect execution, scheduling, interruption, scopes, finalizers,
 clocks, and sleeps. Eta Crux owns graph time, active deadlines, clock
 sampling, driver wakes, actions, ingress, structural reset, Poll run order,
 commit publication, shell requests, handler claims, and request settlement.
-`Driver` owns the latest committed `Projection.Snapshot.t` in the typed
-projection target. Adapters own
-successful-delivery state, host reconciliation, registration, operation
+Eta Crux owns projection identity, incarnation allocation, classification,
+capacity, and canonical order. `Driver` owns the latest committed
+`Projection.Snapshot.t`. Adapters own successful-delivery state, host
+reconciliation, registration, operation
 routing, buffers, retries, and provider diagnostics. `Eta_crux.Testing` owns
 the post-commit observation types and observer attachment. `eta_crux_test`
 owns the observer controller and destructive reads. Applications own models,

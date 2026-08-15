@@ -27,6 +27,10 @@ module Assoc = Crux_engine.Assoc.Make
 module Source = Crux_source
 
 module Codec = Crux_boundary.Codec
+module Projection = struct
+  include Crux_projection
+  let publish = Crux_engine.projection_publish
+end
 module Exported_endpoint = Crux_boundary.Exported_endpoint
 module Host_operation = Crux_boundary.Host_operation
 module Request = Crux_boundary.Request

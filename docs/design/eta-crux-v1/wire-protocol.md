@@ -4,124 +4,69 @@
 
 This file defines the data contract for a serialized driver binding.
 [Semantic laws](semantic-laws.md) defines sequencing, rejection, session, and
-equivalence behavior.
+equivalence.
 
-A frame contains an unsigned 32-bit `seq`, one tag, and the fields for that tag.
-Bytes are raw bytes in the semantic frame. A request token and an export handle
-contain at most 64 bytes.
+The protocol has one projection profile. It sends changed complete-value
+batches for advancements and complete snapshots for session replacement.
 
-## Shared data
+The protocol has no profile negotiation, fallback profile, catalog exchange,
+catalog fingerprint, codec metadata, pull cursor, or paging.
+
+Each direction has an independent unsigned 32-bit sequence. Each command and
+result consumes one sequence.
+
+## Shared projection data
 
 ```ocaml
 type delivery_reason =
-  | Advancement
-  | Session_replacement
+  [ `Advancement | `Session_replacement ]
 
 type delivery_result =
-  | Accepted
-  | Failed of string
+  [ `Accepted | `Failed of string ]
 
-type closure_reason =
-  | Initiator_cancelled
-  | Owner_disposed
-  | Root_stopped
-  | Root_crashed
-  | Session_closed
+type projection_entry = {
+  kind : string;
+  key : bytes;
+  incarnation : int64;
+  value : bytes;
+}
 
-type endpoint_result =
-  | Accepted
-  | Full
-  | Ingress_closed
-  | Malformed_handle
-  | Unknown_handle
-  | Stale_handle
-  | Revoked_handle
-  | Malformed_payload
+type projection_update =
+  | Attached of projection_entry
+  | Changed of projection_entry
+  | Removed of {
+      kind : string;
+      key : bytes;
+      incarnation : int64;
+    }
 
-type request_start_result =
-  | Started of bytes
-  | Request_capacity_full
-  | Ingress_capacity_full
-  | Ingress_closed
-  | Malformed_handle
-  | Unknown_handle
-  | Stale_handle
-  | Revoked_handle
-  | Malformed_payload
-  | Closed of closure_reason
-
-type request_identity_result =
-  | Accepted
-  | Not_pending
-  | Malformed_request
-  | Unknown_request
-  | Stale_request
-
-type request_resolve_result =
-  | Identity of request_identity_result
-  | Malformed_payload
+type projection_content =
+  | Updates of projection_update list
+  | Bootstrap of projection_entry list
 ```
 
-`Failure.portable` is the portable crash payload. Application codecs supply the
-root-output, request, response, and endpoint payload bytes.
+`Advancement` requires `Updates`. `Session_replacement` requires `Bootstrap`.
+Another pair is an invalid application payload.
 
-## Portable failure encoding
+An entry uses a positive unsigned 64-bit incarnation. The OCaml semantic type
+is `int64`. Encoding and comparison use unsigned semantics.
 
-`Failure.encode_portable` produces the `ECF1` magic, one primary record, and
-the length-prefixed secondary record list. Each record contains the portable
-cause, one origin byte, one trigger byte, and the position as a signed 64-bit
-big-endian integer.
+`Removed` contains no value. `Attached` and `Changed` contain the complete new
+value.
 
-| Origin | Tag |
-|---|---|
-| `Transition` | 0 |
-| `Owned_work` | 1 |
-| `Adapter_delivery` | 2 |
-| `Request_dispatch` | 3 |
-| `Export_dispatch` | 4 |
-| `Cleanup` | 5 |
-| `Crash_handler` | 6 |
-| `Graph_clock` | 7 |
-
-| Trigger | Tag |
-|---|---|
-| `Initial_start` | 0 |
-| `Endpoint_action` | 1 |
-| `Transition_effect` | 2 |
-| `Lifecycle_program` | 3 |
-| `Source_opening` | 4 |
-| `Source_producer` | 5 |
-| `Local_export_invocation` | 6 |
-| `Serialized_export_invocation` | 7 |
-| `Outbound_request` | 8 |
-| `Inbound_response` | 9 |
-| `Request_cancellation` | 10 |
-| `Output_delivery` | 11 |
-| `Stop_teardown` | 12 |
-| `Crash_teardown` | 13 |
-| `Application_crash_handler` | 14 |
-| `Clock_sample` | 15 |
-| `Clock_due` | 16 |
-| `Structural_reset` | 17 |
-| `Poll_effect` | 18 |
-
-`Endpoint_action` occupies the tag that the previous contract named
-`Endpoint_message`. The wire fixtures exercise the new tags in the
-`Crash_notify` payload (`test/crux/wire/test_eta_crux_wire.ml`): the primary
-record uses origin `Graph_clock` (7) with trigger `Clock_sample` (15), and the
-secondary records cover `Clock_due` (16), `Structural_reset` (17),
-`Poll_effect` (18), and `Endpoint_action` (1) at fixture positions 19L-22L.
+Items use catalog declaration order and then the kind key order. A recipient
+rejects another order.
 
 ## Frames
 
 ```ocaml
 type frame =
-  | Output_deliver of {
+  | Projection_deliver of {
       seq : int32;
       reason : delivery_reason;
-      output : bytes;
+      content : projection_content;
     }
-  | Output_result of {
+  | Projection_result of {
       seq : int32;
       reply_to : int32;
       result : delivery_result;
@@ -197,23 +142,15 @@ type frame =
     }
 ```
 
-`Request_resolved` and `Request_closed` are terminal notifications for an
-inbound request. They have no result frame.
-
-Graph time, `Reset`, `Poll`, and the post-commit effect observer add no
-wire-frame family. `Wire.Frame` and its tag table are unchanged by the
-capability surface. The portable failure payload above is the only encoding
-that gained variants.
-
-The operation name grammar is `[a-z][a-z0-9._-]*`. Its maximum UTF-8 length is
-128 bytes. Names are unique in one adapter binding.
+`Request_resolved` and `Request_closed` are terminal notifications. They have
+no result frame.
 
 ## Tags
 
 | Constructor | Tag |
 |---|---|
-| `Output_deliver` | `output.deliver` |
-| `Output_result` | `output.result` |
+| `Projection_deliver` | `projection.deliver` |
+| `Projection_result` | `projection.result` |
 | `Crash_notify` | `crash.notify` |
 | `Crash_result` | `crash.result` |
 | `Endpoint_invoke` | `endpoint.invoke` |
@@ -231,37 +168,130 @@ The operation name grammar is `[a-z][a-z0-9._-]*`. Its maximum UTF-8 length is
 
 ## JSON encoding
 
-One JSON object represents one frame. `seq` and `tag` are the first encoded
-fields. The remaining fields follow the record order above. Result variants use
-a required `outcome` string and only the payload field for that outcome.
+One closed JSON object represents one frame. `seq` and `tag` are the first
+fields.
 
-Unsigned 32-bit values use JSON integers. Bytes use unpadded base64url strings.
-Text uses JSON strings. Booleans use JSON booleans.
+A projection delivery uses `reason`, `content`, and `entries`. `content` is
+`updates` or `bootstrap`.
+
+A projection entry uses this field order:
+
+1. `kind`
+2. `key`
+3. `incarnation`
+4. `value`
+
+A projection update adds `update` before these fields. A `removed` update omits
+`value`.
+
+An accepted result uses `seq`, `tag`, `reply_to`, and `outcome`. A failed result
+adds `message`.
+
+Unsigned 32-bit values use JSON integers. Incarnations use canonical unsigned
+decimal strings.
+
+Bytes use unpadded base64url strings. A decoder rejects noncanonical bytes.
 
 ## S-expression encoding
 
 One flat list represents one frame. The first two atoms are `seq` and `tag`.
-The remaining atoms follow the record order above. A result variant starts with
-its outcome atom and then its optional payload atom.
 
-Unsigned 32-bit values use decimal atoms. Booleans use `true` and `false`.
-Bytes and arbitrary diagnostic text use unpadded base64url atoms. Closed
-category values use their lowercase snake-case names.
+A projection delivery has this form:
 
-## Protocol errors
+```text
+(seq projection.deliver reason content count item-fields...)
+```
 
-`Wire.protocol_error` has these cases:
+The count uses canonical unsigned decimal. It equals the number of entries or
+updates.
 
-- `Frame_too_large`
-- `Malformed_frame`
-- `Unknown_tag`
-- `Invalid_field`
-- `Noncanonical_bytes`
-- `Invalid_operation_name`
-- `Bad_sequence`
-- `Unknown_reply`
-- `Wrong_result_family`
-- `Sequence_exhausted`
+An update starts with its update tag. Its remaining fields use semantic order.
+A removed update has no value atom.
 
-Local payload decoder messages never enter a frame. A failed delivery carries
-one adapter-owned, bounded, redacted diagnostic string.
+Projection results have these forms:
+
+```text
+(seq projection.result reply-to accepted)
+(seq projection.result reply-to failed message-bytes)
+```
+
+Bytes and diagnostic text use unpadded base64url atoms.
+
+## Recipient checks
+
+The recipient decodes the complete projection payload before host mutation. It
+rejects these payload conditions:
+
+- an unknown kind
+- an invalid or noncanonical key
+- a zero incarnation
+- noncanonical item order
+- a duplicate snapshot identity
+- an invalid update transition
+- a codec error
+- a capacity excess
+
+These conditions produce one failed `projection.result`. They keep the session
+open and preserve the prior delivered state.
+
+The recipient decodes and re-encodes each key. It requires byte equality. It
+uses the kind comparator for identity and duplicate detection.
+
+Installation replaces the complete host-visible state in one transaction. The
+recipient advances delivered state before it sends `accepted`.
+
+## Structural errors and bounds
+
+These errors close the session:
+
+- a malformed envelope
+- an invalid frame sequence
+- an invalid result correlation
+- an invalid result diagnostic
+- a frame that exceeds `max_frame_bytes`
+
+`max_frame_bytes` must be positive. The session applies it before decode and
+after encode.
+
+The driver does not split or truncate an oversize projection. The delivery
+fails with trigger `Projection_delivery`.
+
+A failed projection result contains redacted valid UTF-8. The limit is 1,024
+bytes. The protocol does not truncate a longer diagnostic.
+
+## Session replacement
+
+The first delivery on a replacement session is `Bootstrap`. It contains the
+driver-retained committed snapshot and the active incarnation values.
+
+The replacement sequence is:
+
+1. Run replacement preflight.
+2. Create the fresh export registry.
+3. Encode the bootstrap with that registry.
+4. Close the old session.
+5. Send the bootstrap.
+6. Settle old-session permits.
+7. Wait for the result and lift the advancement fence.
+
+Initial session attachment has no bootstrap. The first commit sends
+`Attached` advancement updates.
+
+## Portable failure encoding
+
+`Failure.encode_portable` uses the `ECF1` magic. It encodes one primary record
+and a length-prefixed secondary-record list.
+
+Each record contains a portable cause, one origin byte, one trigger byte, and a
+signed 64-bit big-endian observation position.
+
+Portable trigger byte 11 is `Projection_delivery`. `Projection_preflight` is a
+local transition trigger and does not add a transport profile.
+
+## Operation names
+
+An operation name starts with a lowercase ASCII letter. Later bytes can be
+lowercase ASCII letters, digits, periods, underscores, or hyphens.
+
+The maximum operation-name length is 128 bytes. Names are unique in one
+binding.

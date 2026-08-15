@@ -240,10 +240,10 @@ and contribution = {
   added_scopes : scope_state contribution_items;
   commit_hooks : (unit -> unit) contribution_items;
   added_revokers : (int * (unit -> unit)) contribution_items;
+  projections : Crux_projection.candidate contribution_items;
 }
 
-and 'output frame = {
-  output : 'output;
+and frame = {
   contribution : contribution;
 }
 
@@ -308,6 +308,7 @@ let contribution_empty =
     added_scopes = Items_empty;
     commit_hooks = Items_empty;
     added_revokers = Items_empty;
+    projections = Items_empty;
   }
 
 let contribution_items_prepend item items =
@@ -341,6 +342,8 @@ let contribution_append (left : contribution) (right : contribution) :
       contribution_items_append left.commit_hooks right.commit_hooks;
     added_revokers =
       contribution_items_append left.added_revokers right.added_revokers;
+    projections =
+      contribution_items_append left.projections right.projections;
   }
 
 (* Pure combining nodes rebuild a fresh contribution record on every publish
@@ -399,6 +402,8 @@ let contribution_equal (left : contribution) (right : contribution) =
        (left : contribution).commit_hooks right.commit_hooks
   && same_by ( == )
        (left : contribution).added_revokers right.added_revokers
+  && same_by ( == )
+       (left : contribution).projections right.projections
 
 let failure_record root ?cell ?endpoint ~origin ~trigger cause =
   ignore root;
@@ -726,6 +731,29 @@ let cutoff input ~cutoff =
     (S.map2
        (fun value contribution -> (value, contribution))
        value contribution)
+
+let projection_publish kind ~key input =
+  let input = use input in
+  make @@ fun ctx ->
+  let (module S) = unpack_package ctx in
+  let signal : ('value * contribution) S.signal =
+    unpack_signal (input.compile ctx)
+  in
+  let occurrence = Crux_projection.occurrence () in
+  pack_signal
+    (S.map
+       (fun (value, contribution) ->
+         let projection =
+           Crux_projection.candidate ~occurrence kind ~key value
+         in
+         ( value,
+           {
+             contribution with
+             projections =
+               contribution_items_prepend projection
+                 contribution.projections;
+           } ))
+       signal)
 
 (* A bind branch allocates one fresh Crux scope per incarnation. Signal
    rebuilds the branch when the selector publishes, which closes the previous
@@ -1802,15 +1830,15 @@ let pp_staging_error fmt (error : staging_error) =
 (* Root integration. Construction is synchronous (graph construction); the
    private output observer is created lazily inside the first effectful
    advancement because observer registration is an Eta effect. *)
-type 'output signal_root = {
+type signal_root = {
   sig_ensure_observer : (unit, staging_error) Eta.Effect.t;
   sig_stabilize : (unit, staging_error) Eta.Effect.t;
-  sig_read_frame : ('output frame, staging_error) Eta.Effect.t;
+  sig_read_frame : (frame, staging_error) Eta.Effect.t;
   sig_dispose_observer : unit -> (unit, staging_error) Eta.Effect.t;
 }
 
 let create_signal_root (root : root_core) (description : 'output t) :
-    'output signal_root =
+    signal_root =
   let module S = Eta_signal.Make (Eta_signal.No_observer_error) () in
   let ctx =
     { ctx_root = root; ctx_scope = 0; ctx_package = Pkg (module S) }
@@ -1820,7 +1848,7 @@ let create_signal_root (root : root_core) (description : 'output t) :
   in
   let frame_signal =
     S.map ~cutoff:Eta_signal.Cutoff.never
-      (fun (output, (contribution : contribution)) -> { output; contribution })
+      (fun (_output, (contribution : contribution)) -> { contribution })
       compiled
   in
   (* Signal operations are synchronous results; defer them behind [E.sync]

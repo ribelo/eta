@@ -1,4 +1,43 @@
 module Crux = Eta_crux
+module Projection = Eta_crux_test.Projection_harness.Opaque
+module Typed_projection = Eta_crux_test.Projection_harness
+
+let output_of_delivery delivery =
+  Eta_crux_test.Projection_harness.Opaque.delivery_value
+    (Crux.Driver.Delivery.projection delivery)
+  |> Option.get
+
+let output_of_commit commit =
+  Eta_crux_test.Projection_harness.Opaque.commit_value commit
+  |> Option.get
+
+let latest_committed_snapshot driver =
+  Option.bind (Crux.Driver.latest_committed_snapshot driver)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let handle_latest_committed_snapshot handle =
+  Option.bind (Eta_crux_test.Handle.latest_committed_snapshot handle)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let handle_latest_delivered_snapshot handle =
+  Option.bind (Eta_crux_test.Handle.latest_delivered_snapshot handle)
+    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+
+let projection_content_value = function
+  | Crux.Wire.Frame.Bootstrap (entry :: _) -> entry.value
+  | Crux.Wire.Frame.Updates updates ->
+      let rec latest = function
+        | [] -> None
+        | Crux.Wire.Frame.Attached entry :: rest
+        | Crux.Wire.Frame.Changed entry :: rest -> (
+            match latest rest with
+            | Some _ as value -> value
+            | None -> Some entry.value)
+        | Crux.Wire.Frame.Removed _ :: rest -> latest rest
+      in
+      latest updates |> Option.get
+  | Crux.Wire.Frame.Bootstrap [] ->
+      invalid_arg "expected a nonempty projection frame"
 module Int_map = Eta_signal_map.Map.Make (Int)
 
 let int_map_find key map =
@@ -21,7 +60,8 @@ let law_clock () =
   | None -> failwith "law clock is not installed"
 
 let committed = function
-  | Ok (Crux.Root.Committed { output; post_commit }) ->
+  | Ok (Crux.Root.Committed { commit; post_commit }) ->
+      let output = output_of_commit commit in
       (output, post_commit)
   | _ -> failwith "expected a committed advancement"
 
@@ -75,7 +115,7 @@ let small_actions =
       observes apply arguments, output, and post-commit effect eligibility.
     - [qcheck_one_event_advancement] generates nonempty action lists and stop
       priority. It observes each prefix or zero transition calls.
-    - [qcheck_complete_output_per_commit] generates action lists with an equal
+    - [qcheck_projection_image_per_commit] generates action lists with an equal
       model action. It observes exact output count and values.
     - [qcheck_lifecycle_once_per_interval] generates active-state changes. It
       observes lifecycle starts for each structural interval.
@@ -145,7 +185,7 @@ let qcheck_description_identity =
             (model + action, None))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:32 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:32 ~request_capacity:1
           (Crux.both machine machine)
       in
       let initial_output, initial_post_commit =
@@ -228,7 +268,7 @@ let qcheck_cutoff_boundary =
         |> Crux.cutoff ~cutoff:Crux.Cutoff.always
       in
       let root =
-        Crux.Root.create ~ingress_capacity:32 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:32 ~request_capacity:1
           (Crux.map
              (Crux.both machine
                 (Crux.both probes (Crux.both asymmetric structural)))
@@ -319,7 +359,7 @@ let qcheck_cutoff_boundary =
                value)
       in
       let ref_root =
-        Crux.Root.create ~ingress_capacity:32 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:32 ~request_capacity:1
           (Crux.map
              (Crux.both ref_machine
                 (Crux.both
@@ -396,7 +436,7 @@ let qcheck_assoc_key_order =
           Int_map.empty bindings
       in
       let root =
-        Crux.Root.create ~ingress_capacity:8 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:8 ~request_capacity:1
           (assoc_description input)
       in
       let ((_parent, children), post_commit) =
@@ -421,7 +461,7 @@ let qcheck_assoc_continuous_presence =
     (fun (key, data, _, delta) ->
       let initial = Int_map.singleton key data in
       let root =
-        Crux.Root.create ~ingress_capacity:8 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:8 ~request_capacity:1
           (assoc_description initial)
       in
       let (((_, parent_endpoint), children), first_post) =
@@ -449,7 +489,7 @@ let qcheck_assoc_data_update =
             candidate = published + 1)
       in
       let root =
-        Crux.Root.create ~ingress_capacity:8 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:8 ~request_capacity:1
           (assoc_description ~data_cutoff ~builds
              (Int_map.singleton key first))
       in
@@ -493,7 +533,7 @@ let qcheck_assoc_remove_reenter =
   QCheck.Test.make ~name:"qcheck_assoc_remove_reenter" ~count:200 assoc_sample
     (fun (key, data, _, delta) ->
       let root =
-        Crux.Root.create ~ingress_capacity:8 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:8 ~request_capacity:1
           (assoc_description (Int_map.singleton key data))
       in
       let (((_, parent_endpoint), children), first_post) =
@@ -539,7 +579,7 @@ type source_output =
   * ((source_observation list * source_observation Crux.Endpoint.t) * unit)
 
 type source_harness = {
-  root : source_output Crux.Root.t;
+  root : Crux.Root.t;
   commands : (source_command, Crux.never) Eta.Queue.t;
   openings : int ref;
   opened_specs : int list ref;
@@ -623,7 +663,7 @@ let make_source_harness
             ())
   in
   let root =
-    Crux.Root.create ~ingress_capacity:16 ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:16 ~request_capacity:1
       (Crux.both config (Crux.both sink source))
   in
   let output, post_commit = committed (run_ok (Crux.Root.advance root)) in
@@ -650,7 +690,8 @@ let rec await_source_commit harness attempts =
   if attempts = 0 then failwith "source action did not reach ingress"
   else
     match run_ok (Crux.Root.advance harness.root) with
-    | Ok (Crux.Root.Committed { output; post_commit }) ->
+    | Ok (Crux.Root.Committed { commit; post_commit }) ->
+        let output = output_of_commit commit in
         start post_commit;
         output
     | Ok Crux.Root.Idle ->
@@ -804,7 +845,7 @@ let qcheck_transition_snapshot =
               Some (Eta.Effect.sync (fun () -> effect_started := true)) ))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
           (Crux.both input machine)
       in
       let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -848,7 +889,7 @@ let qcheck_one_event_advancement =
             ((model * 31) + action, None))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:12 ~request_capacity:1 machine
+        Projection.root ~projection_capacity:1 ~ingress_capacity:12 ~request_capacity:1 machine
       in
       let (_, endpoint), initial_post = committed (run_ok (Crux.Root.advance root)) in
       start initial_post;
@@ -879,7 +920,7 @@ let qcheck_one_event_advancement =
         stop_root root;
         one_per_step && !calls = List.length actions && idle)
 
-let qcheck_complete_output_per_commit =
+let qcheck_projection_image_per_commit =
   (* Generated class: nonempty bounded action lists forced to contain an
      equal-model action. Observation boundary: exact committed-output
      cardinality and value sequence, including the unchanged first output. *)
@@ -887,7 +928,7 @@ let qcheck_complete_output_per_commit =
     let open QCheck.Gen in
     map (fun rest -> 0 :: rest) (list_size (0 -- 11) (-2 -- 2))
   in
-  QCheck.Test.make ~name:"qcheck_complete_output_per_commit" ~count:100
+  QCheck.Test.make ~name:"qcheck_projection_image_per_commit" ~count:100
     (QCheck.make ~print:QCheck.Print.(list int) sample)
     (fun actions ->
       let calls = ref 0 in
@@ -898,7 +939,7 @@ let qcheck_complete_output_per_commit =
             (model + action, None))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:12 ~request_capacity:1 machine
+        Projection.root ~projection_capacity:1 ~ingress_capacity:12 ~request_capacity:1 machine
       in
       let (_, endpoint), initial_post = committed (run_ok (Crux.Root.advance root)) in
       start initial_post;
@@ -949,7 +990,7 @@ let qcheck_lifecycle_once_per_interval =
             if active then lifecycle else Crux.return ())
       in
       let root =
-        Crux.Root.create ~ingress_capacity:32 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:32 ~request_capacity:1
           (Crux.both selector selected)
       in
       let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -1003,7 +1044,7 @@ let exported_counter ~capacity =
       ~codec:int_codec
   in
   let root =
-    Crux.Root.create ~ingress_capacity:capacity ~request_capacity:1
+    Projection.root ~projection_capacity:1 ~ingress_capacity:capacity ~request_capacity:1
       (Crux.both machine export)
   in
   let output, post_commit = committed (run_ok (Crux.Root.advance root)) in
@@ -1043,9 +1084,8 @@ let qcheck_ingress_fifo_admission =
         let* first_model, post_commit =
           Eta.Effect.sync (fun () ->
               match run_ok (Crux.Root.advance root) with
-              | Ok
-                  (Crux.Root.Committed
-                    { output = ((model, _), _); post_commit }) ->
+                | Ok (Crux.Root.Committed { commit; post_commit }) ->
+                    let ((model, _), _) = output_of_commit commit in
                   (model, post_commit)
               | _ -> failwith "first queued action did not commit")
         in
@@ -1125,7 +1165,7 @@ let qcheck_endpoint_contramap =
             (model + action, None))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:32 ~request_capacity:1 machine
+        Projection.root ~projection_capacity:1 ~ingress_capacity:32 ~request_capacity:1 machine
       in
       let (initial_model, endpoint), initial_post =
         committed (run_ok (Crux.Root.advance root))
@@ -1181,7 +1221,7 @@ let qcheck_bind_child_identity =
     (QCheck.make ~print:print_bind_commands bind_commands)
     (fun commands ->
       let root =
-        Crux.Root.create ~ingress_capacity:32 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:32 ~request_capacity:1
           (bind_description ())
       in
       let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -1230,7 +1270,7 @@ let qcheck_active_disposed_states =
     (QCheck.make ~print:QCheck.Print.(list int) deltas)
     (fun deltas ->
       let root =
-        Crux.Root.create ~ingress_capacity:32 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:32 ~request_capacity:1
           (bind_description ())
       in
       let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -1312,7 +1352,7 @@ let qcheck_committed_dependencies_only =
             (Crux.both (Crux.both mapped bound) checked)
         in
         let root =
-          Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+          Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
             description
         in
         let driver =
@@ -1326,7 +1366,7 @@ let qcheck_committed_dependencies_only =
         in
         let (initial_model, endpoint),
             ((initial_mapped, initial_bound), initial_checked) =
-          Crux.Driver.Delivery.output initial_delivery
+          output_of_delivery initial_delivery
         in
         ignore
           (run_ok
@@ -1340,7 +1380,7 @@ let qcheck_committed_dependencies_only =
                 (model, _),
                 ((mapped, bound), checked)
               =
-                Crux.Driver.Delivery.output delivery
+                output_of_delivery delivery
               in
               ignore
                 (run_ok
@@ -1387,7 +1427,7 @@ let qcheck_post_commit_fence =
             (model + action, None))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:32 ~request_capacity:1 machine
+        Projection.root ~projection_capacity:1 ~ingress_capacity:32 ~request_capacity:1 machine
       in
       let (_, endpoint), initial_post =
         committed (run_ok (Crux.Root.advance root))
@@ -1449,7 +1489,7 @@ let qcheck_assoc_rollback =
                    export))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:4 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:4 ~request_capacity:1
           (Crux.both parent children)
       in
       let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -1522,7 +1562,7 @@ let qcheck_assoc_lifecycle_order =
               ~codec:int_codec)
       in
       let root =
-        Crux.Root.create ~ingress_capacity:added_count ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:added_count ~request_capacity:1
           (Crux.both parent children)
       in
       let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -1565,7 +1605,7 @@ let qcheck_cause_classification =
         else Eta.Effect.never
       in
       let root =
-        Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
           (Crux.lifecycle (Crux.return program))
       in
       let _, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -1631,7 +1671,7 @@ let qcheck_export_generation =
             if enabled then active else Crux.return None)
       in
       let root =
-        Crux.Root.create ~ingress_capacity:4 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:4 ~request_capacity:1
           (Crux.both selector selected)
       in
       let initial, initial_post = committed (run_ok (Crux.Root.advance root)) in
@@ -1667,12 +1707,13 @@ let qcheck_export_generation =
       in
       let child_model, action_post =
         match run_ok (Crux.Root.advance root) with
-        | Ok
-            (Crux.Root.Committed
-              {
-                output = (_, Some (model, _));
-                post_commit;
-              }) ->
+        | Ok (Crux.Root.Committed { commit; post_commit }) ->
+            let model =
+              match output_of_commit commit with
+              | _, Some (model, _) -> model
+              | _, None ->
+                  failwith "fresh export disappeared before invocation"
+            in
             (model, post_commit)
         | _ -> failwith "fresh export invocation did not commit"
       in
@@ -1726,7 +1767,7 @@ let qcheck_export_rebinding =
       in
       let export = Crux.Exported_endpoint.create target ~codec in
       let root =
-        Crux.Root.create ~ingress_capacity:4 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:4 ~request_capacity:1
           (Crux.both selector
              (Crux.both left (Crux.both right export)))
       in
@@ -1775,7 +1816,7 @@ let prepare_request_driver ~request_capacity =
       [ Crux.Host_operation.Pack request_operation ]
   in
   let root =
-    Crux.Root.create ~ingress_capacity:8 ~request_capacity
+    Projection.root ~projection_capacity:1 ~ingress_capacity:8 ~request_capacity
       (Crux.return ())
   in
   let driver = Crux.Driver.create binding root in
@@ -1965,7 +2006,7 @@ let qcheck_driver_one_advancement =
             else Crux.return None)
       in
       let root =
-        Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
           (Crux.both selector selected)
       in
       let driver =
@@ -1977,7 +2018,7 @@ let qcheck_driver_one_advancement =
         | _ -> failwith "driver did not deliver initial output"
       in
       let ((_, selector_endpoint), selected_output) =
-        Crux.Driver.Delivery.output initial_delivery
+        output_of_delivery initial_delivery
       in
       let _, child_endpoint = Option.get selected_output in
       ignore
@@ -1998,7 +2039,7 @@ let qcheck_driver_one_advancement =
         | _ -> failwith "driver did not report structural advancement"
       in
       let (_, selected_after_one) =
-        Crux.Driver.Delivery.output structural_delivery
+        output_of_delivery structural_delivery
       in
       ignore
         (run_ok
@@ -2030,7 +2071,7 @@ let qcheck_delivery_token =
                      lifecycle_started := true))))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
           description
       in
       let driver =
@@ -2042,7 +2083,7 @@ let qcheck_delivery_token =
         | _ -> failwith "driver did not produce delivery token"
       in
       let complete_output =
-        fst (Crux.Driver.Delivery.output delivery) = expected
+        fst (output_of_delivery delivery) = expected
       in
       let gated_before = not !lifecycle_started in
       let first =
@@ -2109,7 +2150,7 @@ let qcheck_request_closure_reasons =
             else Crux.return None)
       in
       let root =
-        Crux.Root.create ~ingress_capacity:2 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
           (Crux.both selector selected)
       in
       let driver = Crux.Driver.create binding root in
@@ -2119,7 +2160,7 @@ let qcheck_request_closure_reasons =
         | _ -> failwith "closure-reason driver did not start"
       in
       let ((_, selector_endpoint), _) =
-        Crux.Driver.Delivery.output initial
+        output_of_delivery initial
       in
       ignore (run_ok (Crux.Driver.Delivery.delivered initial));
       let event = run_ok (await_request_event driver) in
@@ -2218,10 +2259,24 @@ let wire_frame family seq =
   let bytes = Bytes.of_string "x" in
   match family mod 16 with
   | 0 ->
-      Crux.Wire.Frame.Output_deliver
-        { seq; reason = `Advancement; output = bytes }
+      Crux.Wire.Frame.Projection_deliver
+        {
+          seq;
+          reason = `Advancement;
+          content =
+            Updates
+              [
+                Attached
+                  {
+                    kind = "generated";
+                    key = Bytes.empty;
+                    incarnation = 1L;
+                    value = bytes;
+                  };
+              ];
+        }
   | 1 ->
-      Output_result { seq; reply_to = 0l; result = `Accepted }
+      Projection_result { seq; reply_to = 0l; result = `Accepted }
   | 2 -> Crash_notify { seq; failure = wire_failure }
   | 3 ->
       Crash_result { seq; reply_to = 0l; result = `Accepted }
@@ -2437,11 +2492,11 @@ let qcheck_wire_reply_correlation =
           ~format:(module Eta_crux_json.Format)
       in
       let binding, _admin =
-        Crux.Driver.Binding.serialized ~output:int_codec
+        Crux.Driver.Binding.serialized
           ~operations:[] ~session:candidate
       in
       let root =
-        Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
           (Crux.return output)
       in
       let driver = Crux.Driver.create binding root in
@@ -2457,20 +2512,20 @@ let qcheck_wire_reply_correlation =
       in
       let command_sequence =
         match command with
-        | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) -> seq
+        | Ok (Crux.Wire.Frame.Projection_deliver { seq; _ }) -> seq
         | Ok _ | Error _ -> Int32.minus_one
       in
       let response =
         match case with
         | Exact_reply ->
-            Crux.Wire.Frame.Output_result
+            Crux.Wire.Frame.Projection_result
               {
                 seq = 0l;
                 reply_to = command_sequence;
                 result = `Accepted;
               }
         | Unknown_reply ->
-            Crux.Wire.Frame.Output_result
+            Crux.Wire.Frame.Projection_result
               {
                 seq = 0l;
                 reply_to = Int32.add command_sequence 1l;
@@ -2555,11 +2610,11 @@ let qcheck_malformed_frame_isolation =
           ~format:(module Eta_crux_json.Format)
       in
       let binding, _admin =
-        Crux.Driver.Binding.serialized ~output:int_codec
+        Crux.Driver.Binding.serialized
           ~operations:[] ~session:candidate
       in
       let root =
-        Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
           (Crux.return model)
       in
       let driver = Crux.Driver.create binding root in
@@ -2571,7 +2626,7 @@ let qcheck_malformed_frame_isolation =
         match case with
         | Malformed_envelope -> Bytes.of_string "{}"
         | Bad_incoming_sequence ->
-            Crux.Wire.Frame.Output_result
+            Crux.Wire.Frame.Projection_result
               {
                 seq = 1l;
                 reply_to = 0l;
@@ -2579,7 +2634,7 @@ let qcheck_malformed_frame_isolation =
               }
             |> Eta_crux_json.Format.encode
         | Unknown_result_reply ->
-            Crux.Wire.Frame.Output_result
+            Crux.Wire.Frame.Projection_result
               {
                 seq = 0l;
                 reply_to = 1l;
@@ -2641,11 +2696,11 @@ let qcheck_wire_closed_outcomes =
           ~format:(module Eta_crux_json.Format)
       in
       let binding, _admin =
-        Crux.Driver.Binding.serialized ~output:int_codec
+        Crux.Driver.Binding.serialized
           ~operations:[] ~session:candidate
       in
       let root =
-        Crux.Root.create ~ingress_capacity:1 ~request_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
           (Crux.return payload)
       in
       let driver = Crux.Driver.create binding root in
@@ -2656,7 +2711,7 @@ let qcheck_wire_closed_outcomes =
         with
         | Some bytes -> (
             match Eta_crux_json.Format.decode bytes with
-            | Ok (Crux.Wire.Frame.Output_deliver { seq; _ }) -> seq
+            | Ok (Crux.Wire.Frame.Projection_deliver { seq; _ }) -> seq
             | Ok _ | Error _ -> Int32.minus_one)
         | None -> Int32.minus_one
       in
@@ -2717,7 +2772,7 @@ let qcheck_wire_closed_outcomes =
             | _ -> false)
       in
       let acknowledgment =
-        Crux.Wire.Frame.Output_result
+        Crux.Wire.Frame.Projection_result
           {
             seq = 1l;
             reply_to = output_sequence;
@@ -2837,16 +2892,16 @@ let qcheck_wire_bounds =
             Crux.Serialized_session.candidate ~max_frame_bytes:size
               ~format:(module Eta_crux_json.Format)
           in
-          let bytes_codec =
+          let _bytes_codec =
             Crux.Codec.make ~encode:(fun bytes -> Ok bytes)
               ~decode:(fun bytes -> Ok bytes)
           in
           let binding, _admin =
-            Crux.Driver.Binding.serialized ~output:bytes_codec
+            Crux.Driver.Binding.serialized
               ~operations:[] ~session:candidate
           in
           let root =
-            Crux.Root.create ~ingress_capacity:1
+            Projection.root ~projection_capacity:1 ~ingress_capacity:1
               ~request_capacity:1
               (Crux.return (Bytes.make size 'x'))
           in
@@ -2928,18 +2983,23 @@ let qcheck_wire_redaction =
                   "redaction test output is encode-only";
               })
       in
+      let projection =
+        Typed_projection.create ~name:"wire-redaction"
+          ~codec:output_codec ~value_equal:( == )
+          ~cutoff:Crux.Cutoff.never
+      in
       let candidate, peer =
         Crux.Serialized_session.candidate
           ~max_frame_bytes:2048
           ~format:(module Eta_crux_json.Format)
       in
       let binding, _admin =
-        Crux.Driver.Binding.serialized ~output:output_codec
+        Crux.Driver.Binding.serialized
           ~operations:[] ~session:candidate
       in
       let root =
-        Crux.Root.create ~ingress_capacity:1
-          ~request_capacity:1 description
+        Typed_projection.root projection ~projection_capacity:1
+          ~ingress_capacity:1 ~request_capacity:1 description
       in
       let driver = Crux.Driver.create binding root in
       ignore (run_ok (Crux.Driver.poll driver));
@@ -2951,8 +3011,9 @@ let qcheck_wire_redaction =
         | Some bytes -> (
             match Eta_crux_json.Format.decode bytes with
             | Ok
-                (Crux.Wire.Frame.Output_deliver
-                  { seq; output; _ }) ->
+                (Crux.Wire.Frame.Projection_deliver
+                  { seq; content; _ }) ->
+                let output = projection_content_value content in
                 let separator =
                   Bytes.index output '\000'
                 in
@@ -2964,7 +3025,7 @@ let qcheck_wire_redaction =
         | None -> failwith "redaction output frame missing"
       in
       let acknowledgment =
-        Crux.Wire.Frame.Output_result
+        Crux.Wire.Frame.Projection_result
           {
             seq = 0l;
             reply_to = output_sequence;
@@ -3044,7 +3105,7 @@ let qcheck_bounded_drain =
                |> Eta.Effect.ignore_errors))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:4
+        Projection.root ~projection_capacity:1 ~ingress_capacity:4
           ~request_capacity:1
           (Crux.map (Crux.both machine seed) ~f:fst)
       in
@@ -3111,7 +3172,7 @@ let controlled_source_root controlled =
       ~on_terminal:
         (Crux.return (fun _ -> Controlled_terminal))
   in
-  Crux.Root.create ~ingress_capacity:16 ~request_capacity:1
+  Projection.root ~projection_capacity:1 ~ingress_capacity:16 ~request_capacity:1
     (Crux.map (Crux.both machine source) ~f:fst)
 
 let start_controlled_source root controlled =
@@ -3151,7 +3212,8 @@ let rec await_controlled_commit root attempts =
     failwith "controlled source action did not reach ingress"
   else
     match run_ok (Crux.Root.advance root) with
-    | Ok (Crux.Root.Committed { output; post_commit }) ->
+    | Ok (Crux.Root.Committed { commit; post_commit }) ->
+        let output = output_of_commit commit in
         start post_commit;
         output
     | Ok Crux.Root.Idle ->
@@ -3314,7 +3376,7 @@ let qcheck_controlled_dependencies =
       observe_controlled_effects inputs
       && observe_controlled_source inputs)
 
-let qcheck_latest_committed_output =
+let qcheck_latest_committed_snapshot =
   let actions =
     let open QCheck.Gen in
     list_size (0 -- 20) (-3 -- 3)
@@ -3322,7 +3384,7 @@ let qcheck_latest_committed_output =
   (* Generated class: bounded integer action traces, including output-equal
      zero actions. Observation boundary: the synchronous pull query, driver
      delivery events, and delivery-token completion. *)
-  QCheck.Test.make ~name:"qcheck_latest_committed_output"
+  QCheck.Test.make ~name:"qcheck_latest_committed_snapshot"
     ~count:100
     (QCheck.make ~print:QCheck.Print.(list int) actions)
     (fun actions ->
@@ -3333,7 +3395,7 @@ let qcheck_latest_committed_output =
             (model + action, None))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:2
+        Projection.root ~projection_capacity:1 ~ingress_capacity:2
           ~request_capacity:1 machine
       in
       let driver =
@@ -3344,7 +3406,7 @@ let qcheck_latest_committed_output =
         match run_ok (Crux.Driver.poll driver) with
         | Some (Crux.Driver.Deliver delivery) ->
             let pulled =
-              Crux.Driver.latest_committed_output driver
+              latest_committed_snapshot driver
             in
             let still_delivering =
               run_ok (Crux.Driver.poll driver) = None
@@ -3357,17 +3419,17 @@ let qcheck_latest_committed_output =
             (match pulled with
             | Some (model, _) -> model = expected
             | None -> false)
-            && fst (Crux.Driver.Delivery.output delivery) = expected
+            && fst (output_of_delivery delivery) = expected
             && still_delivering && delivered
         | Some _ | None -> false
       in
       let before =
-        Crux.Driver.latest_committed_output driver = None
+        latest_committed_snapshot driver = None
       in
       let initial = observe 0 in
       let _, endpoint =
         Option.get
-          (Crux.Driver.latest_committed_output driver)
+          (latest_committed_snapshot driver)
       in
       let _, all_observed =
         List.fold_left
@@ -3394,7 +3456,7 @@ let observer_driver ?observer apply_action =
       ~default_model:0 ~apply_action
   in
   let root =
-    Crux.Root.create ?post_commit_effect_observer:observer
+    Projection.root ~projection_capacity:1 ?post_commit_effect_observer:observer
       ~ingress_capacity:2 ~request_capacity:1 machine
   in
   let driver =
@@ -3433,7 +3495,7 @@ let qcheck_post_commit_effect_observer_inventory =
       let initial =
         observer_delivery (run_ok (Crux.Driver.poll driver))
       in
-      let _, endpoint = Crux.Driver.Delivery.output initial in
+      let _, endpoint = output_of_delivery initial in
       let initial_valid =
         match Post_commit_observer.poll observer with
         | Some
@@ -3533,7 +3595,7 @@ let qcheck_post_commit_effect_observer_fifo =
             (model + action, None))
       in
       let root =
-        Crux.Root.create
+        Projection.root ~projection_capacity:1
           ~post_commit_effect_observer:
             (Post_commit_observer.attachment observer)
           ~ingress_capacity:2 ~request_capacity:1 machine
@@ -3605,7 +3667,7 @@ let qcheck_post_commit_effect_observer_lifecycle =
       let initial =
         observer_delivery (run_ok (Crux.Driver.poll driver))
       in
-      let _, endpoint = Crux.Driver.Delivery.output initial in
+      let _, endpoint = output_of_delivery initial in
       complete_observer_delivery initial;
       ignore (Post_commit_observer.drain observer);
       ignore
@@ -3703,7 +3765,7 @@ let qcheck_post_commit_effect_observer_order =
       let initial =
         observer_delivery (run_ok (Crux.Driver.poll driver))
       in
-      let _, endpoint = Crux.Driver.Delivery.output initial in
+      let _, endpoint = output_of_delivery initial in
       complete_observer_delivery initial;
       ignore (Post_commit_observer.drain observer);
       let admit action =
@@ -3791,7 +3853,7 @@ let qcheck_post_commit_effect_observer_transparency =
         let initial =
           observer_delivery (run_ok (Crux.Driver.poll driver))
         in
-        let model, endpoint = Crux.Driver.Delivery.output initial in
+        let model, endpoint = output_of_delivery initial in
         complete_observer_delivery initial;
         let outputs, admitted =
           List.fold_left
@@ -3804,7 +3866,7 @@ let qcheck_post_commit_effect_observer_transparency =
               let delivery =
                 observer_delivery (run_ok (Crux.Driver.poll driver))
               in
-              let output, _ = Crux.Driver.Delivery.output delivery in
+              let output, _ = output_of_delivery delivery in
               complete_observer_delivery delivery;
               (output :: outputs, admitted && sent = Ok ()))
             ([ model ], true) actions
@@ -3887,7 +3949,7 @@ let qcheck_reset_default_custom =
             Crux.both reset machine)
       in
       let root =
-        Crux.Root.create
+        Projection.root ~projection_capacity:1
           ~ingress_capacity:(max 1 (List.length operations))
           ~request_capacity:1 description
       in
@@ -3960,7 +4022,7 @@ let qcheck_reset_snapshot_atomicity =
                  (machine right_seen 10_000)))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:3
+        Projection.root ~projection_capacity:1 ~ingress_capacity:3
           ~request_capacity:1 description
       in
       let reset, ((_, left_endpoint), (_, right_endpoint)) =
@@ -4013,7 +4075,7 @@ let qcheck_reset_ingress_order =
             Crux.both reset machine)
       in
       let root =
-        Crux.Root.create
+        Projection.root ~projection_capacity:1
           ~ingress_capacity:(List.length operations)
           ~request_capacity:1 description
       in
@@ -4081,7 +4143,7 @@ let qcheck_reset_scope_boundary =
             Crux.both outer_reset (Crux.both outer inner))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:3
+        Projection.root ~projection_capacity:1 ~ingress_capacity:3
           ~request_capacity:1 description
       in
       let outer_reset,
@@ -4140,7 +4202,7 @@ let qcheck_reset_dynamic_children =
             Crux.both reset (Crux.both selector child))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:1
           ~request_capacity:1 description
       in
       let authority,
@@ -4200,7 +4262,7 @@ let qcheck_reset_dynamic_children =
             Crux.both reset (Crux.both parent children))
       in
       let assoc_root =
-        Crux.Root.create ~ingress_capacity:1
+        Projection.root ~projection_capacity:1 ~ingress_capacity:1
           ~request_capacity:1 assoc_description
       in
       let assoc_reset, (_, children) =
@@ -4260,7 +4322,7 @@ let qcheck_reset_effect_lifecycle =
             Crux.both reset machines)
       in
       let root =
-        Crux.Root.create
+        Projection.root ~projection_capacity:1
           ~post_commit_effect_observer:
             (Post_commit_observer.attachment observer)
           ~ingress_capacity:1 ~request_capacity:1 description
@@ -4330,7 +4392,7 @@ let qcheck_reset_authority_incarnation =
             else Crux.return (endpoint, None))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:2
+        Projection.root ~projection_capacity:1 ~ingress_capacity:2
           ~request_capacity:1 description
       in
       let endpoint, reset = reset_advance root in
@@ -4360,7 +4422,9 @@ let qcheck_reset_authority_incarnation =
       in
       loop cycles (Option.get reset))
 
-let invoke_poll_refresh refresh =
+let invoke_poll_refresh
+    (refresh :
+      (unit, Crux.Endpoint.admission_error) Eta.Effect.t) =
   run_ok
     (refresh
     |> Eta.Effect.or_die (fun _ ->
@@ -4399,7 +4463,7 @@ let qcheck_poll_committed_run_order =
           ()
       in
       let root =
-        Crux.Root.create ~ingress_capacity:(count + 1)
+        Projection.root ~projection_capacity:1 ~ingress_capacity:(count + 1)
           ~request_capacity:1 (Crux.both result refresh)
       in
       let _, refresh = reset_advance root in
@@ -4448,7 +4512,7 @@ let qcheck_poll_manual_refresh_admission =
           ()
       in
       let root =
-        Crux.Root.create ~ingress_capacity:count
+        Projection.root ~projection_capacity:1 ~ingress_capacity:count
           ~request_capacity:1 (Crux.both result refresh)
       in
       let _, refresh = reset_advance root in
@@ -4506,7 +4570,7 @@ let qcheck_poll_input_cutoff =
           ()
       in
       let root =
-        Crux.Root.create ~ingress_capacity:2
+        Projection.root ~projection_capacity:1 ~ingress_capacity:2
           ~request_capacity:1 (Crux.both input polled)
       in
       let (_, endpoint), _ = reset_advance root in
@@ -4575,7 +4639,7 @@ let qcheck_poll_starting_incarnation =
                   (endpoint, Some (result, refresh))))
       in
       let root =
-        Crux.Root.create ~ingress_capacity:2
+        Projection.root ~projection_capacity:1 ~ingress_capacity:2
           ~request_capacity:1 description
       in
       let endpoint, active = reset_advance root in
@@ -4625,7 +4689,7 @@ let qcheck_poll_run_order_overflow =
           ()
       in
       let root =
-        Crux.Root.create
+        Projection.root ~projection_capacity:1
           ~post_commit_effect_observer:
             (Post_commit_observer.attachment observer)
           ~ingress_capacity:1 ~request_capacity:1
@@ -4691,7 +4755,7 @@ let qcheck_poll_provider_sampling =
           ()
       in
       let root =
-        Crux.Root.create ~ingress_capacity:2
+        Projection.root ~projection_capacity:1 ~ingress_capacity:2
           ~request_capacity:1
           (Crux.both input (Crux.both provider polled))
       in
@@ -4785,7 +4849,7 @@ let qcheck_poll_activation_and_coalescing =
             Crux.both reset polled)
       in
       let root =
-        Crux.Root.create
+        Projection.root ~projection_capacity:1
           ~post_commit_effect_observer:
             (Post_commit_observer.attachment observer)
           ~ingress_capacity:1 ~request_capacity:1 description
@@ -4846,7 +4910,7 @@ let qcheck_poll_result_cutoff_order_fence =
           ()
       in
       let root =
-        Crux.Root.create ~ingress_capacity:4
+        Projection.root ~projection_capacity:1 ~ingress_capacity:4
           ~request_capacity:1 (Crux.both result refresh)
       in
       let _, refresh = reset_advance root in
@@ -4901,7 +4965,7 @@ let qcheck_poll_failure_attribution =
           ~input:(Crux.return ()) ~effect:(Crux.return provider) ()
       in
       let root =
-        Crux.Root.create
+        Projection.root ~projection_capacity:1
           ~post_commit_effect_observer:
             (Post_commit_observer.attachment observer)
           ~ingress_capacity:1 ~request_capacity:1 polled
@@ -4962,7 +5026,7 @@ let qcheck_poll_clock_priority =
           ()
       in
       let root =
-        Crux.Root.create ~ingress_capacity:2
+        Projection.root ~projection_capacity:1 ~ingress_capacity:2
           ~request_capacity:1 (Crux.both machine polled)
       in
       let (_, endpoint), _ = reset_advance root in
@@ -5005,7 +5069,7 @@ let qcheck_poll_completion_fifo =
           ~effect:(Crux.return (Eta.Effect.pure 9)) ()
       in
       let root =
-        Crux.Root.create ~ingress_capacity:2
+        Projection.root ~projection_capacity:1 ~ingress_capacity:2
           ~request_capacity:1
           (Crux.both machine (Crux.both result refresh))
       in
@@ -5067,7 +5131,7 @@ let qcheck_poll_run_order =
           ()
       in
       let root =
-        Crux.Root.create ~ingress_capacity:(count + 1)
+        Projection.root ~projection_capacity:1 ~ingress_capacity:(count + 1)
           ~request_capacity:1 (Crux.both result refresh)
       in
       let _, refresh = reset_advance root in
@@ -5108,7 +5172,7 @@ let qcheck_post_commit_effect_observer_poll_lifecycle =
           ~effect:(Crux.return (Eta.Effect.pure 1)) ()
       in
       let root =
-        Crux.Root.create
+        Projection.root ~projection_capacity:1
           ~post_commit_effect_observer:
             (Post_commit_observer.attachment observer)
           ~ingress_capacity:1 ~request_capacity:1
@@ -5163,19 +5227,19 @@ let law_switch () =
 let driver_output driver =
   match run_ok (Crux.Driver.poll driver) with
   | Some (Crux.Driver.Deliver delivery) ->
-      let output = Crux.Driver.Delivery.output delivery in
+      let output = output_of_delivery delivery in
       (match run_ok (Crux.Driver.Delivery.delivered delivery) with
       | Ok () -> ()
       | Error Crux.Driver.Delivery.Already_completed ->
           failwith "delivery completed twice");
       output
-  | _ -> failwith "expected output delivery"
+  | _ -> failwith "expected projection delivery"
 
 let identity_driver root =
   Crux.Driver.create (Crux.Driver.Binding.identity []) root
 
 let time_root description =
-  Crux.Root.create ~ingress_capacity:4 ~request_capacity:1 description
+  Projection.root ~projection_capacity:1 ~ingress_capacity:4 ~request_capacity:1 description
 
 let counting_clock clock =
   let reads = ref 0 in
@@ -5264,7 +5328,7 @@ let qcheck_graph_time_shared_sample =
         match advance () with
         | Ok (Crux.Root.Committed committed) ->
             start committed.post_commit;
-            committed.output
+            output_of_commit committed.commit
         | _ -> failwith "initial time commit failed"
       in
       let reads_initial = !reads in
@@ -5274,7 +5338,7 @@ let qcheck_graph_time_shared_sample =
         match advance () with
         | Ok (Crux.Root.Committed committed) ->
             start committed.post_commit;
-            committed.output
+            output_of_commit committed.commit
         | _ -> failwith "due time commit failed"
       in
       let reads_due = !reads in
@@ -5326,7 +5390,7 @@ let qcheck_graph_time_structural_ownership =
         match run_ok (Crux.Root.advance control) with
         | Ok (Crux.Root.Committed committed) ->
             start committed.post_commit;
-            committed.output
+            output_of_commit committed.commit
         | _ -> false
       in
       disposed_idle && control_fired)
@@ -5366,7 +5430,7 @@ let qcheck_graph_time_deadline_wake =
       let due_await =
         match event with
         | Crux.Driver.Deliver delivery ->
-            let output = Crux.Driver.Delivery.output delivery in
+            let output = output_of_delivery delivery in
             ignore
               (run_ok (Crux.Driver.Delivery.delivered delivery));
             output
@@ -5419,7 +5483,7 @@ let qcheck_graph_time_await_race =
       let first =
         match event with
         | Crux.Driver.Deliver delivery ->
-            let output = Crux.Driver.Delivery.output delivery in
+            let output = output_of_delivery delivery in
             ignore
               (run_ok (Crux.Driver.Delivery.delivered delivery));
             output
@@ -5437,7 +5501,7 @@ let qcheck_graph_time_await_race =
       let second =
         match event with
         | Crux.Driver.Deliver delivery ->
-            let output = Crux.Driver.Delivery.output delivery in
+            let output = output_of_delivery delivery in
             ignore
               (run_ok (Crux.Driver.Delivery.delivered delivery));
             output
@@ -5712,7 +5776,7 @@ let qcheck_graph_time_after_activation =
         match run_ok (Crux.Root.advance root) with
         | Ok (Crux.Root.Committed committed) ->
             start committed.post_commit;
-            snd committed.output
+            snd (output_of_commit committed.commit)
         | _ -> false
       in
       original_deadline_idle && reactivation_fired)
@@ -5754,7 +5818,7 @@ let qcheck_graph_time_interval_catch_up =
       let initial =
         match run_ok (under (Crux.Driver.poll saturated_driver)) with
         | Some (Crux.Driver.Deliver delivery) ->
-            let output = Crux.Driver.Delivery.output delivery in
+            let output = output_of_delivery delivery in
             ignore
               (run_ok
                  (under (Crux.Driver.Delivery.delivered delivery)));
@@ -5765,7 +5829,7 @@ let qcheck_graph_time_interval_catch_up =
       let saturated =
         match run_ok (under (Crux.Driver.poll saturated_driver)) with
         | Some (Crux.Driver.Deliver delivery) ->
-            let output = Crux.Driver.Delivery.output delivery in
+            let output = output_of_delivery delivery in
             ignore
               (run_ok
                  (under (Crux.Driver.Delivery.delivered delivery)));
@@ -5852,6 +5916,11 @@ let qcheck_graph_time_transport_equivalence =
     ~count:20 (QCheck.map (fun x -> 5 + x) (QCheck.int_range 0 10))
     (fun p ->
       let clock = law_clock () in
+      let projection =
+        Typed_projection.create ~name:"graph-time-equivalence"
+          ~codec:int_codec ~value_equal:Int.equal
+          ~cutoff:Crux.Cutoff.never
+      in
       let identity_root =
         time_root (Crux.Time.interval (Eta.Duration.ms p))
       in
@@ -5861,11 +5930,13 @@ let qcheck_graph_time_transport_equivalence =
           ~format:(module Eta_crux_json.Format)
       in
       let binding, _admin =
-        Crux.Driver.Binding.serialized ~output:int_codec
+        Crux.Driver.Binding.serialized
           ~operations:[] ~session:candidate
       in
       let serialized_root =
-        time_root (Crux.Time.interval (Eta.Duration.ms p))
+        Typed_projection.root projection ~projection_capacity:1
+          ~ingress_capacity:4 ~request_capacity:1
+          (Crux.Time.interval (Eta.Duration.ms p))
       in
       let serialized = Crux.Driver.create binding serialized_root in
       let ack_sequence = ref 0l in
@@ -5887,7 +5958,8 @@ let qcheck_graph_time_transport_equivalence =
         let frame = drain 8 in
         let sequence, output =
           match frame with
-          | Ok (Crux.Wire.Frame.Output_deliver { seq; output; _ }) -> (
+          | Ok (Crux.Wire.Frame.Projection_deliver { seq; content; _ }) -> (
+              let output = projection_content_value content in
               seq,
               match Crux.Codec.decode int_codec output with
               | Ok value -> value
@@ -5895,7 +5967,7 @@ let qcheck_graph_time_transport_equivalence =
           | _ -> failwith "serialized binding emitted the wrong frame"
         in
         let response =
-          Crux.Wire.Frame.Output_result
+          Crux.Wire.Frame.Projection_result
             {
               seq = !ack_sequence;
               reply_to = sequence;
@@ -5955,15 +6027,24 @@ let qcheck_poll_transport_equivalence =
                   "poll transport codec is encode-only";
               })
       in
+      let projection =
+        Typed_projection.create ~name:"poll-equivalence"
+          ~codec:pair_codec ~value_equal:(fun (left, _) (right, _) ->
+            Int.equal left right)
+          ~cutoff:Crux.Cutoff.never
+      in
       let candidate, peer =
         Crux.Serialized_session.candidate ~max_frame_bytes:1024
           ~format:(module Eta_crux_json.Format)
       in
       let binding, _admin =
-        Crux.Driver.Binding.serialized ~output:pair_codec
+        Crux.Driver.Binding.serialized
           ~operations:[] ~session:candidate
       in
-      let serialized_root = time_root (description ()) in
+      let serialized_root =
+        Typed_projection.root projection ~projection_capacity:1
+          ~ingress_capacity:4 ~request_capacity:1 (description ())
+      in
       let serialized = Crux.Driver.create binding serialized_root in
       let ack_sequence = ref 0l in
       let serialized_output () =
@@ -5984,7 +6065,8 @@ let qcheck_poll_transport_equivalence =
         let frame = drain 8 in
         let sequence, output =
           match frame with
-          | Ok (Crux.Wire.Frame.Output_deliver { seq; output; _ }) -> (
+          | Ok (Crux.Wire.Frame.Projection_deliver { seq; content; _ }) -> (
+              let output = projection_content_value content in
               seq,
               match Crux.Codec.decode int_codec output with
               | Ok decoded -> decoded
@@ -5992,7 +6074,7 @@ let qcheck_poll_transport_equivalence =
           | _ -> failwith "serialized binding emitted the wrong frame"
         in
         let response =
-          Crux.Wire.Frame.Output_result
+          Crux.Wire.Frame.Projection_result
             {
               seq = !ack_sequence;
               reply_to = sequence;
@@ -6009,19 +6091,27 @@ let qcheck_poll_transport_equivalence =
         output
       in
       let committed_int driver =
-        match Crux.Driver.latest_committed_output driver with
+        match latest_committed_snapshot driver with
         | Some (result, _) -> result
         | None -> failwith "poll commit was not retained"
       in
       let refresh_of driver =
-        match Crux.Driver.latest_committed_output driver with
+        match latest_committed_snapshot driver with
         | Some (_, refresh) -> refresh
         | None -> failwith "poll refresh was not retained"
+      in
+      let serialized_latest () =
+        Option.bind
+          (Crux.Driver.latest_committed_snapshot serialized)
+          (Typed_projection.snapshot_value projection)
       in
       let initial_identity, _ = driver_output identity in
       let initial_serialized = serialized_output () in
       invoke_poll_refresh (refresh_of identity);
-      invoke_poll_refresh (refresh_of serialized);
+      invoke_poll_refresh
+        (match serialized_latest () with
+        | Some (_, refresh) -> refresh
+        | None -> failwith "serialized poll refresh was not retained");
       let refresh_identity, _ = driver_output identity in
       let refresh_serialized = serialized_output () in
       for _ = 1 to 3 do
@@ -6036,7 +6126,10 @@ let qcheck_poll_transport_equivalence =
       && completion_identity = value
       && completion_serialized = value
       && committed_int identity = value
-      && committed_int serialized = value)
+      &&
+      (match serialized_latest () with
+      | Some (result, _) -> result = value
+      | None -> false))
 
 let () =
   Eta_test.with_test_clock @@ fun switch clock runtime ->
@@ -6058,7 +6151,7 @@ let () =
         qcheck_source_terminal_outcome;
         qcheck_transition_snapshot;
         qcheck_one_event_advancement;
-        qcheck_complete_output_per_commit;
+        qcheck_projection_image_per_commit;
         qcheck_lifecycle_once_per_interval;
         qcheck_ingress_fifo_admission;
         qcheck_capacity_bounds;
@@ -6086,7 +6179,7 @@ let () =
         qcheck_wire_redaction;
         qcheck_bounded_drain;
         qcheck_controlled_dependencies;
-        qcheck_latest_committed_output;
+        qcheck_latest_committed_snapshot;
         qcheck_post_commit_effect_observer_inventory;
         qcheck_post_commit_effect_observer_lifecycle;
         qcheck_post_commit_effect_observer_order;

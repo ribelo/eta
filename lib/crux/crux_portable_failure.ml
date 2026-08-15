@@ -257,7 +257,7 @@ let write_trigger writer = function
   | Outbound_request -> Writer.byte writer 8
   | Inbound_response -> Writer.byte writer 9
   | Request_cancellation -> Writer.byte writer 10
-  | Output_delivery -> Writer.byte writer 11
+  | Projection_delivery -> Writer.byte writer 11
   | Stop_teardown -> Writer.byte writer 12
   | Crash_teardown -> Writer.byte writer 13
   | Application_crash_handler -> Writer.byte writer 14
@@ -265,6 +265,7 @@ let write_trigger writer = function
   | Clock_due -> Writer.byte writer 16
   | Structural_reset -> Writer.byte writer 17
   | Poll_effect -> Writer.byte writer 18
+  | Projection_preflight -> Writer.byte writer 19
 
 let read_trigger reader =
   match Reader.byte reader with
@@ -279,7 +280,7 @@ let read_trigger reader =
   | 8 -> Outbound_request
   | 9 -> Inbound_response
   | 10 -> Request_cancellation
-  | 11 -> Output_delivery
+  | 11 -> Projection_delivery
   | 12 -> Stop_teardown
   | 13 -> Crash_teardown
   | 14 -> Application_crash_handler
@@ -287,6 +288,7 @@ let read_trigger reader =
   | 16 -> Clock_due
   | 17 -> Structural_reset
   | 18 -> Poll_effect
+  | 19 -> Projection_preflight
   | _ -> raise (Reader.Invalid "invalid failure trigger")
 
 let write_record writer (record : Failure.portable_record) =

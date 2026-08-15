@@ -9,7 +9,7 @@ module Wire = Crux_wire.Wire
 module Serialized_session = Crux_wire.Serialized_session
 module Remote_registry = Crux_remote_registry
 
-let serialized_incoming (driver : _ t) =
+let serialized_incoming (driver : t) =
   match driver.binding.mode with
   | Identity -> `Empty
   | Serialized serialized -> (
@@ -27,7 +27,7 @@ let serialized_incoming (driver : _ t) =
           if first then `Closed else `Empty
       | result -> result)
 
-let fresh_request_token (driver : _ t) =
+let fresh_request_token (driver : t) =
   Eta.Sync_lock.use driver.lock @@ fun () ->
   if driver.next_request_token = Int64.max_int then
     invalid_arg "Eta_crux.Driver: request token overflow";
@@ -38,7 +38,7 @@ let fresh_request_token (driver : _ t) =
     Int64.add driver.next_request_token 1L;
   token
 
-let close_remote_request (driver : _ t) token =
+let close_remote_request (driver : t) token =
   Eta.Sync_lock.use driver.lock @@ fun () ->
   let event =
     String_map.find_opt token driver.remote_requests
@@ -47,7 +47,7 @@ let close_remote_request (driver : _ t) token =
     String_map.remove token driver.remote_requests;
   event
 
-let take_request_command (driver : _ t) sequence =
+let take_request_command (driver : t) sequence =
   Eta.Sync_lock.use driver.lock @@ fun () ->
   let command =
     Seq_map.find_opt sequence driver.request_commands
@@ -56,7 +56,7 @@ let take_request_command (driver : _ t) sequence =
     Seq_map.remove sequence driver.request_commands;
   command
 
-let close_session_requests (driver : _ t) =
+let close_session_requests (driver : t) =
   let events, inbound =
     Eta.Sync_lock.use driver.lock @@ fun () ->
     let events =
@@ -96,15 +96,15 @@ let adapter_delivery_cause message =
     ~pp_error:Format.pp_print_string
     (Eta.Cause.fail message)
 
-let latch_adapter_delivery_failure (driver : _ t) cause =
+let latch_adapter_delivery_failure (driver : t) cause =
   latch_failure_record driver.root.core
     (failure_record driver.root.core
        ~origin:Failure.Adapter_delivery
-       ~trigger:Failure.Output_delivery cause);
+       ~trigger:Failure.Projection_delivery cause);
   Eta.Sync_lock.use driver.root.core.lock @@ fun () ->
   Option.get (Atomic.get driver.root.core.failure)
 
-let handle_session_closed (driver : _ t) =
+let handle_session_closed (driver : t) =
   let open Eta.Syntax in
   let* () = close_session_requests driver in
   let* () =
@@ -112,7 +112,7 @@ let handle_session_closed (driver : _ t) =
     | Delivering (delivery, _) ->
         Delivery.failed delivery
           (adapter_delivery_cause
-             "serialized session closed during output delivery")
+             "serialized session closed during projection delivery")
         |> Eta.Effect.map_error absurd
         |> Eta.Effect.map (fun _ -> ())
     | Replacement_delivering (_, completion) ->
@@ -136,15 +136,15 @@ let handle_session_closed (driver : _ t) =
     | Crash_settled_notifying (settlement, _) ->
         set_state driver (Crash_closed_pending settlement);
         Eta.Effect.unit
-    | Running | Crash_detected_pending _ | Crash_teardown _
+    | Running | Advancing | Crash_detected_pending _ | Crash_teardown _
     | Crash_settled_pending _ | Crash_closed_pending _
     | Stopped_closed_pending | Closed_done ->
         Eta.Effect.unit
   in
   Eta.Effect.sync (fun () -> wake driver)
 
-let send_request_cancellation (driver : _ t)
-    (serialized : _ serialized_binding) token =
+let send_request_cancellation (driver : t)
+    (serialized : serialized_binding) token =
   match
     Serialized_session.send serialized.candidate
       (fun seq ->
@@ -160,8 +160,8 @@ let send_request_cancellation (driver : _ t)
           (Request_cancel_command token)
           driver.request_commands
 
-let dispatch_serialized_request (driver : _ t)
-    (serialized : _ serialized_binding)
+let dispatch_serialized_request (driver : t)
+    (serialized : serialized_binding)
     ((Request.Driver_event.Event state as event) :
       Request.Driver_event.t) =
   let token = fresh_request_token driver in
@@ -227,7 +227,7 @@ let dispatch_serialized_request (driver : _ t)
                 send_request_cancellation driver serialized token;
               Eta.Effect.pure None)
 
-let send_serialized_result (driver : _ t) make_frame =
+let send_serialized_result (driver : t) make_frame =
   match driver.binding.mode with
   | Identity -> Eta.Effect.pure None
   | Serialized serialized ->
@@ -244,12 +244,12 @@ let request_closure_frame = function
   | Boundary_root_crashed -> Request.Root_crashed
   | Boundary_session_closed -> Request.Session_closed
 
-let remove_inbound_request (driver : _ t) token =
+let remove_inbound_request (driver : t) token =
   Eta.Sync_lock.use driver.lock @@ fun () ->
   driver.inbound_requests <-
     String_map.remove token driver.inbound_requests
 
-let monitor_inbound_request (driver : _ t) candidate token request =
+let monitor_inbound_request (driver : t) candidate token request =
   let open Eta.Syntax in
   let* completion = request.completion in
   match completion with
@@ -289,9 +289,9 @@ let monitor_inbound_request (driver : _ t) candidate token request =
                   (Inbound_resolve_command token)
                   driver.request_commands)
 
-let handle_serialized_frame (driver : _ t) frame =
+let handle_serialized_frame (driver : t) frame =
   match frame with
-  | Wire.Frame.Output_result { reply_to; result; _ } -> (
+  | Wire.Frame.Projection_result { reply_to; result; _ } -> (
       match state driver with
       | Replacement_delivering (expected, completion)
         when expected = reply_to ->
@@ -314,18 +314,19 @@ let handle_serialized_frame (driver : _ t) frame =
                 latch_failure_record driver.root.core
                   (failure_record driver.root.core
                      ~origin:Failure.Adapter_delivery
-                     ~trigger:Failure.Output_delivery cause);
+                     ~trigger:Failure.Projection_delivery cause);
                 let failure =
                   Eta.Sync_lock.use driver.root.core.lock @@ fun () ->
                   Option.get (Atomic.get driver.root.core.failure)
                 in
                 Serialized_session.Crashed failure
           in
-          (match driver.binding.mode with
-          | Identity -> ()
-          | Serialized serialized ->
-              serialized.replacement_pending <- false);
-          set_state driver Running;
+          Eta.Sync_lock.use driver.lock (fun () ->
+              (match driver.binding.mode with
+              | Identity -> ()
+              | Serialized serialized ->
+                  serialized.replacement_pending <- false);
+              driver.state <- Running);
           Eta.Promise.resolve completion (Eta.Exit.Ok outcome)
           |> Eta.Effect.map (fun _ -> None)
       | Delivering (delivery, Some expected) when expected = reply_to ->
@@ -343,7 +344,7 @@ let handle_serialized_frame (driver : _ t) frame =
           answer
           |> Eta.Effect.map_error absurd
           |> Eta.Effect.map (fun _ -> None)
-      | Running | Delivering _ | Replacement_delivering _
+      | Running | Advancing | Delivering _ | Replacement_delivering _
       | Crash_detected_pending _ | Crash_notifying _
       | Crash_teardown _ | Crash_settled_pending _
       | Crash_settled_notifying _
@@ -360,7 +361,7 @@ let handle_serialized_frame (driver : _ t) frame =
         latch_failure_record driver.root.core
           (failure_record driver.root.core
              ~origin:Failure.Adapter_delivery
-             ~trigger:Failure.Output_delivery cause)
+             ~trigger:Failure.Projection_delivery cause)
       in
       (match state driver with
       | Crash_notifying (failure, post_commit, expected)
@@ -379,7 +380,7 @@ let handle_serialized_frame (driver : _ t) frame =
               record_delivery_failure message);
           set_state driver (Crash_closed_pending settlement);
           Eta.Effect.pure None
-      | Running | Delivering _ | Replacement_delivering _
+      | Running | Advancing | Delivering _ | Replacement_delivering _
       | Crash_detected_pending _ | Crash_notifying _
       | Crash_teardown _ | Crash_settled_pending _
       | Crash_settled_notifying _
@@ -641,5 +642,5 @@ let handle_serialized_frame (driver : _ t) frame =
   | Endpoint_result _
   | Request_start_result _
   | Request_dispatch _
-  | Output_deliver _ | Crash_notify _ ->
+  | Projection_deliver _ | Crash_notify _ ->
       Eta.Effect.pure None

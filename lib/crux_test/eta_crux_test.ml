@@ -4,3 +4,4 @@ module Handle = Crux_test_handle.Handle
 module Controlled_source = Crux_controlled_source
 module Recording_adapter = Crux_recording_adapter
 module Post_commit_effect_observer = Crux_post_commit_effect_observer
+module Projection_harness = Crux_projection_harness

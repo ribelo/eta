@@ -146,7 +146,8 @@ let trigger = function
   | Crux_failure.Failure.Inbound_response -> "inbound_response"
   | Crux_failure.Failure.Request_cancellation ->
       "request_cancellation"
-  | Crux_failure.Failure.Output_delivery -> "output_delivery"
+  | Crux_failure.Failure.Projection_preflight -> "projection_preflight"
+  | Crux_failure.Failure.Projection_delivery -> "projection_delivery"
   | Crux_failure.Failure.Stop_teardown -> "stop_teardown"
   | Crux_failure.Failure.Crash_teardown -> "crash_teardown"
   | Crux_failure.Failure.Application_crash_handler ->

@@ -3,27 +3,28 @@ open Crux_engine
 module Failure = Crux_failure.Failure
 module Request = Crux_boundary.Request
 module Driver = Crux_driver.Driver
+module Projection = Crux_projection
 
 module Adapter = struct
-  type 'output delivery = {
-    output : 'output;
+  type delivery = {
+    projection : Projection.delivery;
     reason : Driver.Delivery.reason;
   }
 
-  type ('output, 'error) resource =
+  type 'error resource =
     | Resource : {
         pp_error : Format.formatter -> 'error -> unit;
         acquire : ('binding, 'error) Eta.Effect.t;
         release : 'binding -> (unit, 'error) Eta.Effect.t;
         deliver :
-          'binding -> 'output delivery -> (unit, 'error) Eta.Effect.t;
+          'binding -> delivery -> (unit, 'error) Eta.Effect.t;
         request_event :
           'binding ->
           Request.Driver_event.t ->
           (unit, 'error) Eta.Effect.t;
         crash_detected :
           'binding -> Failure.t -> (unit, 'error) Eta.Effect.t;
-      } -> ('output, 'error) resource
+      } -> 'error resource
 
   let resource ~pp_error ~acquire ~release ~deliver ~request_event
       ~crash_detected =
@@ -82,7 +83,7 @@ module Hosted = struct
           pending_delivery := Some delivery;
           let delivered =
             {
-              Adapter.output = Driver.Delivery.output delivery;
+              Adapter.projection = Driver.Delivery.projection delivery;
               reason = Driver.Delivery.reason delivery;
             }
           in

@@ -2,6 +2,20 @@
  (name test_eta_crux_wire)
  (libraries eta_crux eta_crux_json eta_crux_sexp alcotest))
 
+(test
+ (name test_eta_crux_projection_wire)
+ (libraries eta eta_crux eta_crux_json eta_crux_test eta_eio eta_test alcotest eio_main)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))
+
+(test
+ (name test_eta_crux_projection_bootstrap)
+ (libraries eta eta_crux eta_crux_json eta_crux_test eta_eio eta_test alcotest eio_main)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))
+
 (copy_files ../../../lib/crux/crux_sha256.ml)
 
 (test

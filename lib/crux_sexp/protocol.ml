@@ -6,8 +6,56 @@ let list values = "(" ^ String.concat " " values ^ ")"
 let encode_sexp frame =
   let fields =
     match frame.body with
-    | Deliver_output { reason; payload } ->
-        [ atom (delivery_reason_to_string reason); atom (encode_bytes payload) ]
+    | Deliver_projection { reason; content } ->
+        let content_name, count, items =
+          match content with
+          | Projection_updates updates ->
+              let fields =
+                List.concat_map
+                  (function
+                    | Projection_attached entry ->
+                        [
+                          "attached";
+                          entry.kind;
+                          encode_bytes entry.key;
+                          uint64_to_string entry.incarnation;
+                          encode_bytes entry.value;
+                        ]
+                    | Projection_changed entry ->
+                        [
+                          "changed";
+                          entry.kind;
+                          encode_bytes entry.key;
+                          uint64_to_string entry.incarnation;
+                          encode_bytes entry.value;
+                        ]
+                    | Projection_removed { kind; key; incarnation } ->
+                        [
+                          "removed";
+                          kind;
+                          encode_bytes key;
+                          uint64_to_string incarnation;
+                        ])
+                  updates
+              in
+              ("updates", List.length updates, fields)
+          | Projection_bootstrap entries ->
+              let fields =
+                List.concat_map
+                  (fun entry ->
+                    [
+                      entry.kind;
+                      encode_bytes entry.key;
+                      uint64_to_string entry.incarnation;
+                      encode_bytes entry.value;
+                    ])
+                  entries
+              in
+              ("bootstrap", List.length entries, fields)
+        in
+        List.map atom
+          (delivery_reason_to_string reason :: content_name
+         :: string_of_int count :: items)
     | Notify_crash { failure } -> [ atom (encode_bytes failure) ]
     | Invoke_endpoint { handle; payload }
     | Start_request { handle; payload } ->
@@ -33,7 +81,7 @@ let encode_sexp frame =
         [ atom (string_of_int reply_to); atom (resolve_outcome_to_string outcome) ]
     | Request_cancel_result { reply_to; outcome } ->
         [ atom (string_of_int reply_to); atom (cancel_outcome_to_string outcome) ]
-    | Output_result { reply_to; outcome }
+    | Projection_result { reply_to; outcome }
     | Crash_result { reply_to; outcome } ->
         let outcome, message = callback_outcome_to_fields outcome in
         [ atom (string_of_int reply_to); atom outcome ]
@@ -70,15 +118,99 @@ let decode_sexp ~max_frame_bytes input =
     let bytes value =
       decode_bytes (if String.equal value "\"\"" then "" else value)
     in
+    let parse_count value =
+      if
+        String.equal value ""
+        || (String.length value > 1 && value.[0] = '0')
+        || not
+             (String.for_all
+                (function '0' .. '9' -> true | _ -> false)
+                value)
+      then Error "count must be a canonical unsigned decimal"
+      else
+        match int_of_string_opt value with
+        | Some count when count >= 0 -> Ok count
+        | _ -> Error "count exceeds the supported range"
+    in
+    let parse_incarnation value =
+      if
+        String.equal value ""
+        || String.equal value "0"
+        || (String.length value > 1 && value.[0] = '0')
+        || not
+             (String.for_all
+                (function '0' .. '9' -> true | _ -> false)
+                value)
+      then Error "incarnation must be a nonzero canonical unsigned decimal"
+      else
+        try Ok (Int64.of_string ("0u" ^ value))
+        with Failure _ ->
+          Error "incarnation exceeds unsigned 64-bit range"
+    in
+    let rec bootstrap_items count reversed = function
+      | rest when count = 0 ->
+          if rest = [] then Ok (List.rev reversed)
+          else Error "projection bootstrap item count mismatch"
+      | kind :: key :: incarnation :: value :: rest ->
+          let* key = bytes key in
+          let* incarnation = parse_incarnation incarnation in
+          let* value = bytes value in
+          bootstrap_items (count - 1)
+            ({ kind; key; incarnation; value } :: reversed)
+            rest
+      | _ -> Error "projection bootstrap item count mismatch"
+    in
+    let rec update_items count reversed = function
+      | rest when count = 0 ->
+          if rest = [] then Ok (List.rev reversed)
+          else Error "projection update item count mismatch"
+      | ("attached" | "changed" as update)
+        :: kind :: key :: incarnation :: value :: rest ->
+          let* key = bytes key in
+          let* incarnation = parse_incarnation incarnation in
+          let* value = bytes value in
+          let entry = { kind; key; incarnation; value } in
+          let update =
+            if String.equal update "attached" then
+              Projection_attached entry
+            else Projection_changed entry
+          in
+          update_items (count - 1) (update :: reversed) rest
+      | "removed" :: kind :: key :: incarnation :: rest ->
+          let* key = bytes key in
+          let* incarnation = parse_incarnation incarnation in
+          update_items (count - 1)
+            (Projection_removed { kind; key; incarnation } :: reversed)
+            rest
+      | _ -> Error "projection update item count mismatch"
+    in
     match parse_flat_sexp input with
       | Ok (raw_seq :: frame_tag :: args) ->
           let* seq = parse_seq raw_seq in
           let make body = Ok { seq; body } in
           (match frame_tag, args with
-          | "output.deliver", [ reason; payload ] ->
+          | "projection.deliver",
+            reason :: content_name :: raw_count :: items ->
               let* reason = delivery_reason_of_string reason in
-              let* payload = bytes payload in
-              make (Deliver_output { reason; payload })
+              let* count = parse_count raw_count in
+              (match reason, content_name with
+              | Advancement, "updates" ->
+                  let* updates = update_items count [] items in
+                  make
+                    (Deliver_projection
+                       {
+                         reason;
+                         content = Projection_updates updates;
+                       })
+              | Session_replacement, "bootstrap" ->
+                  let* entries = bootstrap_items count [] items in
+                  make
+                    (Deliver_projection
+                       {
+                         reason;
+                         content = Projection_bootstrap entries;
+                       })
+              | _ -> Error "invalid projection reason and content pairing")
           | "crash.notify", [ failure ] ->
               let* failure = bytes failure in
               make (Notify_crash { failure })
@@ -161,28 +293,28 @@ let decode_sexp ~max_frame_bytes input =
               let* reply_to = parse_seq raw_reply_to in
               let* outcome = cancel_outcome_of_string outcome in
               make (Request_cancel_result { reply_to; outcome })
-          | ("output.result" | "crash.result") as result_tag,
+          | ("projection.result" | "crash.result") as result_tag,
             [ raw_reply_to; "accepted" ] ->
               let* reply_to = parse_seq raw_reply_to in
-              make (if String.equal result_tag "output.result" then
-                Output_result { reply_to; outcome = Callback_accepted }
+              make (if String.equal result_tag "projection.result" then
+                Projection_result { reply_to; outcome = Callback_accepted }
               else Crash_result { reply_to; outcome = Callback_accepted })
-          | ("output.result" | "crash.result") as result_tag,
+          | ("projection.result" | "crash.result") as result_tag,
             [ raw_reply_to; "failed";
               message ] ->
               let* reply_to = parse_seq raw_reply_to in
               let* message = bytes message in
-              make (if String.equal result_tag "output.result" then
-                Output_result { reply_to; outcome = Callback_failed message }
+              make (if String.equal result_tag "projection.result" then
+                Projection_result { reply_to; outcome = Callback_failed message }
               else Crash_result { reply_to; outcome = Callback_failed message })
           | value, _ when List.mem value
-              [ "output.deliver"; "crash.notify"; "endpoint.invoke";
+              [ "projection.deliver"; "crash.notify"; "endpoint.invoke";
                 "request.start"; "request.dispatch";
                 "request.resolve"; "request.cancel"; "request.resolved";
                 "request.closed"; "endpoint.result";
                 "request.start_result"; "request.dispatch_result";
                 "request.resolve_result"; "request.cancel_result";
-                "output.result"; "crash.result" ] ->
+                "projection.result"; "crash.result" ] ->
               Error ("invalid fields for frame tag: " ^ value)
           | value, _ -> Error ("unknown frame tag: " ^ value))
       | Ok _ -> Error "frame must contain a sequence and tag"

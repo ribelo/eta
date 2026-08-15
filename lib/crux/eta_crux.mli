@@ -180,6 +180,140 @@ module Codec : sig
   val decode : 'a t -> bytes -> ('a, decode_error) result
 end
 
+module Projection : sig
+  (** A projection is the only outward value of a root commit.
+
+      A projection key must be independent of a serialized session. A key must
+      not contain an [Exported_endpoint.t] or a [Request_export.t]. *)
+
+  module Incarnation : sig
+    type t
+    val equal : t -> t -> bool
+    val compare : t -> t -> int
+  end
+
+  module Kind : sig
+    type ('key, 'value) t
+    type packed = Pack : ('key, 'value) t -> packed
+
+    val define :
+      name:string ->
+      key_compare:('key -> 'key -> int) ->
+      key_codec:'key Codec.t ->
+      value_codec:'value Codec.t ->
+      value_equal:('value -> 'value -> bool) ->
+      cutoff:'value Cutoff.t ->
+      ('key, 'value) t
+    (** Each call creates a distinct kind.
+
+        [key_compare] must be a stable total order. Equivalent keys must have
+        equal successful encodings or equal encode failure. Non-equivalent keys
+        must have different successful encodings.
+
+        Decoding an encoded key must return an equivalent key. Decoding an
+        encoded value must return a value that is equal under [value_equal].
+        These obligations stay fixed for the lifetime of the kind. *)
+  end
+
+  module Catalog : sig
+    type t
+    val create : Kind.packed list -> t
+    (** [create kinds] fixes catalog order.
+
+        It accepts an empty list. It raises [Invalid_argument] for a repeated
+        descriptor, a repeated wire name, or an invalid wire name. A wire name
+        starts with a lowercase ASCII letter. Later bytes are lowercase ASCII
+        letters, digits, periods, underscores, or hyphens. The limit is 128
+        bytes. *)
+  end
+
+  type preflight_error =
+    | Unknown_kind
+    | Identity_collision
+    | Projection_capacity_exceeded
+    | Incarnation_exhausted
+  (** This is the complete projection preflight error family. *)
+
+  type ('key, 'value) entry = {
+    key : 'key;
+    incarnation : Incarnation.t;
+    value : 'value;
+  }
+
+  type ('key, 'value) update =
+    | Attached of ('key, 'value) entry
+    | Changed of ('key, 'value) entry
+    | Removed of {
+        key : 'key;
+        incarnation : Incarnation.t;
+      }
+
+  module Snapshot : sig
+    type t
+
+    val find_opt :
+      ('key, 'value) Kind.t ->
+      key:'key ->
+      t ->
+      ('key, 'value) entry option
+
+    type packed_entry =
+      | Pack :
+          ('key, 'value) Kind.t * ('key, 'value) entry ->
+          packed_entry
+
+    val fold :
+      t ->
+      init:'acc ->
+      f:('acc -> packed_entry -> 'acc) ->
+      'acc
+    (** Lookup uses [key_compare]. The fold uses catalog order and then key
+        order. *)
+  end
+
+  module Batch : sig
+    type t
+
+    val find_opt :
+      ('key, 'value) Kind.t ->
+      key:'key ->
+      t ->
+      ('key, 'value) update list
+
+    type packed_update =
+      | Pack :
+          ('key, 'value) Kind.t * ('key, 'value) update ->
+          packed_update
+
+    val fold :
+      t ->
+      init:'acc ->
+      f:('acc -> packed_update -> 'acc) ->
+      'acc
+    (** Lookup returns all updates for one identity in delivery order. The fold
+        uses catalog order and then key order. *)
+  end
+
+  module Commit : sig
+    type t
+    val snapshot : t -> Snapshot.t
+    val batch : t -> Batch.t
+    (** A commit exposes only its complete snapshot and ordered update batch. *)
+  end
+
+  type delivery =
+    | Updates of Batch.t
+    | Bootstrap of Snapshot.t
+
+  val publish :
+    ('key, 'value) Kind.t ->
+    key:'key ->
+    'value t ->
+    'value t
+  (** [publish kind ~key value] returns [value] to the local computation. The
+      kind cutoff changes only the outward projection image. *)
+end
+
 module Exported_endpoint : sig
   type 'a computation := 'a t
   type 'payload t
@@ -215,6 +349,7 @@ module Failure : sig
       t
 
     val portable : t -> string Eta.Cause.Portable.t
+    val projection_preflight : t -> Projection.preflight_error option
     val pp : Format.formatter -> t -> unit
   end
 
@@ -260,7 +395,8 @@ module Failure : sig
     | Outbound_request
     | Inbound_response
     | Request_cancellation
-    | Output_delivery
+    | Projection_preflight
+    | Projection_delivery
     | Stop_teardown
     | Crash_teardown
     | Application_crash_handler
@@ -488,13 +624,33 @@ module Wire : sig
     type request_resolve_result =
       [ `Identity of request_identity_result | `Malformed_payload ]
 
+    type projection_entry = {
+      kind : string;
+      key : bytes;
+      incarnation : int64;
+      value : bytes;
+    }
+
+    type projection_update =
+      | Attached of projection_entry
+      | Changed of projection_entry
+      | Removed of {
+          kind : string;
+          key : bytes;
+          incarnation : int64;
+        }
+
+    type projection_content =
+      | Updates of projection_update list
+      | Bootstrap of projection_entry list
+
     type t =
-      | Output_deliver of {
+      | Projection_deliver of {
           seq : int32;
           reason : delivery_reason;
-          output : bytes;
+          content : projection_content;
         }
-      | Output_result of {
+      | Projection_result of {
           seq : int32;
           reply_to : int32;
           result : delivery_result;
@@ -648,8 +804,8 @@ module Post_commit : sig
 end
 
 module Root : sig
-  type 'output description := 'output t
-  type 'output t
+  type 'a computation := 'a t
+  type t
 
   type delivery_error =
     | Stale_endpoint
@@ -661,11 +817,11 @@ module Root : sig
     | Closed
     | Driver_attached
 
-  type 'output outcome =
+  type outcome =
     | Idle
     | Rejected of delivery_error
     | Committed of {
-        output : 'output;
+        commit : Projection.Commit.t;
         post_commit : Post_commit.t;
       }
     | Stopped of {
@@ -678,38 +834,39 @@ module Root : sig
 
   val create :
     ?post_commit_effect_observer:Testing.post_commit_effect_observer ->
+    catalog:Projection.Catalog.t ->
+    projection_capacity:int ->
     ingress_capacity:int ->
     request_capacity:int ->
-    'output description ->
-    'output t
+    _ computation ->
+    t
 
   val advance :
-    'output t ->
-    (('output outcome, advance_error) result, never) Eta.Effect.t
+    t ->
+    ((outcome, advance_error) result, never) Eta.Effect.t
   (** Select one ingress event, run one stabilization of the root's private
       signal graph, and install the committed frame. The effect is
       synchronous work on the caller's fiber; it never blocks. *)
-  val request_stop : 'output t -> unit
+  val request_stop : t -> unit
 end
 
 module Driver : sig
-  type 'output t
+  type t
 
   module Binding : sig
-    type 'output t
+    type t
 
     val identity :
       Host_operation.packed list ->
-      'output t
+      t
 
     val serialized :
-      output:'output Codec.t ->
       operations:Host_operation.packed list ->
       session:Serialized_session.candidate ->
-      'output t * Serialized_session.admin
+      t * Serialized_session.admin
 
     val requester :
-      'output t ->
+      t ->
       ('request, 'response) Host_operation.t ->
       ('request, 'response) Requester.t
   end
@@ -723,42 +880,42 @@ module Driver : sig
       | Advancement
       | Session_replacement
 
-    type 'output t
+    type t
     type completion_error = Already_completed
 
-    val output : 'output t -> 'output
-    val reason : 'output t -> reason
+    val projection : t -> Projection.delivery
+    val reason : t -> reason
 
     val delivered :
-      'output t ->
+      t ->
       ((unit, completion_error) result, never) Eta.Effect.t
 
     val failed :
-      'output t ->
+      t ->
       Failure.Packed_cause.t ->
       ((unit, completion_error) result, never) Eta.Effect.t
   end
 
-  type 'output event =
-    | Deliver of 'output Delivery.t
+  type event =
+    | Deliver of Delivery.t
     | Request of Request.Driver_event.t
     | Rejected of Root.delivery_error
     | Crash_detected of Failure.t
     | Closed of terminal
 
-  val create : 'output Binding.t -> 'output Root.t -> 'output t
+  val create : Binding.t -> Root.t -> t
 
-  val poll : 'output t -> ('output event option, never) Eta.Effect.t
-  val await : 'output t -> ('output event, never) Eta.Effect.t
-  val latest_committed_output : 'output t -> 'output option
-  val request_stop : 'output t -> unit
+  val poll : t -> (event option, never) Eta.Effect.t
+  val await : t -> (event, never) Eta.Effect.t
+  val latest_committed_snapshot : t -> Projection.Snapshot.t option
+  val request_stop : t -> unit
 end
 
 module Adapter : sig
-  type ('output, 'error) resource
+  type 'error resource
 
-  type 'output delivery = {
-    output : 'output;
+  type delivery = {
+    projection : Projection.delivery;
     reason : Driver.Delivery.reason;
   }
 
@@ -768,7 +925,7 @@ module Adapter : sig
     release:('binding -> (unit, 'error) Eta.Effect.t) ->
     deliver:
       ('binding ->
-       'output delivery ->
+       delivery ->
        (unit, 'error) Eta.Effect.t) ->
     request_event:
       ('binding ->
@@ -778,7 +935,7 @@ module Adapter : sig
       ('binding ->
        Failure.t ->
        (unit, 'error) Eta.Effect.t) ->
-    ('output, 'error) resource
+    'error resource
 end
 
 module Hosted : sig
@@ -788,7 +945,7 @@ module Hosted : sig
   end
 
   val run :
-    'output Driver.t ->
-    adapter:(Control.t -> ('output, 'error) Adapter.resource) ->
+    Driver.t ->
+    adapter:(Control.t -> 'error Adapter.resource) ->
     (Driver.terminal, 'error) Eta.Effect.t
 end

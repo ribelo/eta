@@ -6,9 +6,63 @@ let json_fields frame =
   let common = [ ("seq", `Int frame.seq); ("tag", `String (tag frame.body)) ] in
   let fields =
     match frame.body with
-    | Deliver_output { reason; payload } ->
-        [ ("reason", `String (delivery_reason_to_string reason));
-          ("output", `String (encode_bytes payload)) ]
+    | Deliver_projection { reason; content } ->
+        let content_name, entries =
+          match content with
+          | Projection_updates updates ->
+              ( "updates",
+                List.map
+                  (function
+                    | (Projection_attached entry as update)
+                    | (Projection_changed entry as update) ->
+                        let update =
+                          match update with
+                          | Projection_attached _ -> "attached"
+                          | Projection_changed _ -> "changed"
+                          | Projection_removed _ -> assert false
+                        in
+                        `Assoc
+                          [
+                            ("update", `String update);
+                            ("kind", `String entry.kind);
+                            ("key", `String (encode_bytes entry.key));
+                            ( "incarnation",
+                              `String
+                                (uint64_to_string
+                                   entry.incarnation) );
+                            ("value", `String (encode_bytes entry.value));
+                          ]
+                    | Projection_removed { kind; key; incarnation } ->
+                        `Assoc
+                          [
+                            ("update", `String "removed");
+                            ("kind", `String kind);
+                            ("key", `String (encode_bytes key));
+                            ( "incarnation",
+                              `String
+                                (uint64_to_string incarnation) );
+                          ])
+                  updates )
+          | Projection_bootstrap entries ->
+              ( "bootstrap",
+                List.map
+                  (fun entry ->
+                    `Assoc
+                      [
+                        ("kind", `String entry.kind);
+                        ("key", `String (encode_bytes entry.key));
+                        ( "incarnation",
+                          `String
+                            (uint64_to_string entry.incarnation) );
+                        ("value", `String (encode_bytes entry.value));
+                      ])
+                  entries )
+        in
+        [
+          ("reason", `String (delivery_reason_to_string reason));
+          ("content", `String content_name);
+          ("entries", `List entries);
+        ]
     | Notify_crash { failure } ->
         [ ("failure", `String (encode_bytes failure)) ]
     | Invoke_endpoint { handle; payload }
@@ -44,7 +98,7 @@ let json_fields frame =
     | Request_cancel_result { reply_to; outcome } ->
         [ ("reply_to", `Int reply_to);
           ("outcome", `String (cancel_outcome_to_string outcome)) ]
-    | Output_result { reply_to; outcome }
+    | Projection_result { reply_to; outcome }
     | Crash_result { reply_to; outcome } ->
         let outcome, message = callback_outcome_to_fields outcome in
         [ ("reply_to", `Int reply_to); ("outcome", `String outcome) ]
@@ -101,6 +155,73 @@ let bytes_member name fields =
   | Error _ as error -> error
   | Ok value -> decode_bytes value
 
+let unsigned_int64_member name fields =
+  let* value = string_member name fields in
+  if
+    String.equal value ""
+    || String.equal value "0"
+    || (String.length value > 1 && value.[0] = '0')
+    || not
+         (String.for_all
+            (function '0' .. '9' -> true | _ -> false)
+            value)
+  then Error (name ^ " must be a nonzero canonical unsigned 64-bit decimal")
+  else
+    try Ok (Int64.of_string ("0u" ^ value))
+    with Failure _ ->
+      Error (name ^ " must be a nonzero canonical unsigned 64-bit decimal")
+
+let projection_entry fields =
+  let* () =
+    exact_fields [ "kind"; "key"; "incarnation"; "value" ] fields
+  in
+  let* kind = string_member "kind" fields in
+  let* key = bytes_member "key" fields in
+  let* incarnation = unsigned_int64_member "incarnation" fields in
+  let* value = bytes_member "value" fields in
+  Ok { kind; key; incarnation; value }
+
+let projection_update fields =
+  let* update = string_member "update" fields in
+  match update with
+  | "attached" | "changed" ->
+      let* () =
+        exact_fields
+          [ "update"; "kind"; "key"; "incarnation"; "value" ]
+          fields
+      in
+      let* kind = string_member "kind" fields in
+      let* key = bytes_member "key" fields in
+      let* incarnation = unsigned_int64_member "incarnation" fields in
+      let* value = bytes_member "value" fields in
+      let entry = { kind; key; incarnation; value } in
+      Ok
+        (if String.equal update "attached" then
+           Projection_attached entry
+         else Projection_changed entry)
+  | "removed" ->
+      let* () =
+        exact_fields [ "update"; "kind"; "key"; "incarnation" ] fields
+      in
+      let* kind = string_member "kind" fields in
+      let* key = bytes_member "key" fields in
+      let* incarnation = unsigned_int64_member "incarnation" fields in
+      Ok (Projection_removed { kind; key; incarnation })
+  | value -> Error ("unknown projection update: " ^ value)
+
+let projection_items parse fields =
+  match member "entries" fields with
+  | `List values ->
+      let rec loop reversed = function
+        | [] -> Ok (List.rev reversed)
+        | `Assoc fields :: rest ->
+            let* value = parse fields in
+            loop (value :: reversed) rest
+        | _ :: _ -> Error "projection entry must be an object"
+      in
+      loop [] values
+  | _ -> Error "entries must be an array"
+
 let decode_json ~max_frame_bytes input =
   if max_frame_bytes <= 0 then invalid_arg "max_frame_bytes must be positive";
   if String.length input > max_frame_bytes then Error "frame exceeds max_frame_bytes"
@@ -125,12 +246,29 @@ let decode_json ~max_frame_bytes input =
             Ok { seq; body }
           in
           (match frame_tag with
-          | "output.deliver" ->
-              finish [ "reason"; "output" ] (fun () ->
+          | "projection.deliver" ->
+              finish [ "reason"; "content"; "entries" ] (fun () ->
                 let* raw_reason = string_member "reason" fields in
                 let* reason = delivery_reason_of_string raw_reason in
-                let* payload = bytes_member "output" fields in
-                Ok (Deliver_output { reason; payload }))
+                let* content_name = string_member "content" fields in
+                match reason, content_name with
+                | Advancement, "updates" ->
+                    let* updates = projection_items projection_update fields in
+                    Ok
+                      (Deliver_projection
+                         {
+                           reason;
+                           content = Projection_updates updates;
+                         })
+                | Session_replacement, "bootstrap" ->
+                    let* entries = projection_items projection_entry fields in
+                    Ok
+                      (Deliver_projection
+                         {
+                           reason;
+                           content = Projection_bootstrap entries;
+                         })
+                | _ -> Error "invalid projection reason and content pairing")
           | "crash.notify" ->
               finish [ "failure" ] (fun () ->
                 let* failure = bytes_member "failure" fields in
@@ -229,13 +367,13 @@ let decode_json ~max_frame_bytes input =
                 let* raw_outcome = string_member "outcome" fields in
                 let* outcome = cancel_outcome_of_string raw_outcome in
                 Ok (Request_cancel_result { reply_to; outcome }))
-          | ("output.result" | "crash.result") as result_tag ->
+          | ("projection.result" | "crash.result") as result_tag ->
               let* raw_outcome = string_member "outcome" fields in
               let finish_result expected outcome =
                 finish expected (fun () ->
                   let* reply_to = int_member "reply_to" fields in
-                  Ok (if String.equal result_tag "output.result" then
-                    Output_result { reply_to; outcome }
+                  Ok (if String.equal result_tag "projection.result" then
+                    Projection_result { reply_to; outcome }
                   else Crash_result { reply_to; outcome }))
               in
               (match raw_outcome with

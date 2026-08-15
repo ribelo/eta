@@ -2,277 +2,194 @@
 
 ## Required test surfaces
 
-Every law in [Semantic laws](semantic-laws.md) names its executable gate. The
-implementation is not complete until all named gates exist and pass.
+Each law in [Semantic laws](semantic-laws.md) names its executable gate. The
+implementation is complete only when all named gates pass.
 
 The test tree has these groups:
 
 ```text
 test/crux/unit/          focused deterministic cases
 test/crux/laws/          generated bounded laws
-test/crux/races/         private two-winner race gates
+test/crux/races/         controlled two-winner races
 test/crux/conformance/   identity and serialized shared scenarios
-test/crux/wire/          frame matrices and malformed input
+test/crux/wire/          frame, replacement, and malformed-input cases
 test/crux/telemetry/     fixed observation contract
+test/crux/negative/      compile-time opacity gates
 lib/crux/bench/          production benchmark executable
 ```
 
-Private race barriers can stop a contender before a real linearization point.
-No barrier callback can run while the root lock is held. Race hooks are not
-part of `eta_crux_test`.
+Use the Nix development shell for every gate:
+
+```sh
+nix develop -c dune build @install
+nix develop -c dune build @bench
+nix develop -c dune runtest test/crux/negative --force
+nix develop -c dune runtest --force
+nix develop -c eta-oxcaml-test-shipped
+```
+
+## Projection gates
+
+The projection implementation has three gate groups.
+
+### Core
+
+The core gates cover:
+
+- kind generativity and catalog rejection
+- identity equivalence and collision
+- key and value codec obligations
+- incarnation continuity, allocation, opacity, and exhaustion
+- cutoff retention and defects
+- independent capacity bounds
+- typed preflight causes
+- immutable commits and canonical order
+- typed lookup and existential folds
+- committed and delivered observation
+- one delivery and one answer for each commit
+
+The generated core gates are in
+`test/crux/laws/test_eta_crux_projection_laws.ml`.
+
+The deterministic core gates are in
+`test/crux/unit/test_eta_crux_projection.ml` and
+`test/crux/unit/test_eta_crux_test_surface.ml`.
+
+### Wire
+
+The wire gates cover:
+
+- exact JSON and S-expression item structure
+- item order and S-expression item count
+- canonical keys, bytes, and incarnations
+- payload rejection and atomic installation
+- transition checks against delivered state
+- frame-size boundaries
+- codec encode errors and codec defects
+- the committed export-registry fence
+- identity delivery with zero codec work
+- reason and content pairing
+
+The generated wire gates are in
+`test/crux/laws/test_eta_crux_projection_wire_laws.ml`.
+
+The deterministic wire gates are in
+`test/crux/wire/test_eta_crux_projection_wire.ml`.
+
+### Bootstrap and replacement
+
+The bootstrap gates cover:
+
+- committed-snapshot source and incarnation continuity
+- atomic complete replacement
+- replacement step order
+- the five replacement preflight errors
+- empty bootstraps
+- session-loss recovery
+- failed bootstrap results
+- the advancement fence
+- frame-size failure
+- initial attachment without a bootstrap
+
+These gates are in
+`test/crux/wire/test_eta_crux_projection_bootstrap.ml`.
+
+The two-winner replacement gate is
+`race_replacement_vs_commit_both_winners`.
+
+## Property requirements
+
+Each generated gate states its generated class and observation boundary in the
+test source.
+
+Projection generators include the discriminating case for each claim. Examples
+include equivalent keys, collisions, replacements, suppressed values,
+capacity-plus-one populations, item permutations, and malformed payloads.
+
+A property executes each side of an equation. It prints the counterexample when
+it fails.
+
+## Race requirements
+
+These projection race gates control both legal winners:
+
+- `race_commit_atomicity`
+- `race_commit_vs_crash_both_winners`
+- `race_terminal_vs_delivery`
+- `race_pull_vs_commit_both_winners`
+- `race_session_replacement`
+- `race_replacement_vs_commit_both_winners`
+
+A race must settle the root and all owned work. A race that uses
+`Eta_test.Run.run` must call `Eta_test.Run.expect_no_pending_fibers`.
+
+Private barriers can stop a contender before a real linearization point. A
+barrier callback does not run while the root lock is held.
 
 ## Public test API
 
+`Eta_crux_test.Handle` uses the production identity driver.
+
 ```ocaml
-module Eta_crux_test : sig
-  module Incoming : sig
-    type ('output, 'incoming) t
+module Handle : sig
+  type 'incoming t
+  type operation_error = Busy
+  type inject_error = No_projection | Ingress_closed
 
-    val create :
-      send:
-        ('output ->
-         'incoming ->
-         (unit, Eta_crux.Endpoint.admission_error) Eta.Effect.t) ->
-      ('output, 'incoming) t
+  val latest_committed_snapshot :
+    'incoming t ->
+    Eta_crux.Projection.Snapshot.t option
 
-    val none : ('output, Eta_crux.never) t
-  end
+  val latest_delivered_snapshot :
+    'incoming t ->
+    Eta_crux.Projection.Snapshot.t option
 
-  module Test_shell : sig
-    type ('output, 'error) t = {
-      pp_error : Format.formatter -> 'error -> unit;
-      deliver :
-        'output Eta_crux.Adapter.delivery ->
-        (unit, 'error) Eta.Effect.t;
-      request_event :
-        Eta_crux.Request.Driver_event.t ->
-        (unit, 'error) Eta.Effect.t;
-      crash_detected :
-        Eta_crux.Failure.t ->
-        (unit, 'error) Eta.Effect.t;
-    }
-  end
+  val delivery_delivered :
+    'incoming t ->
+    Eta_crux.Driver.Delivery.t ->
+    ((unit, Eta_crux.Driver.Delivery.completion_error) result,
+     Eta_crux.never) Eta.Effect.t
 
-  module Handle : sig
-    type ('output, 'incoming) t
-    type operation_error = Busy
-    type inject_error = No_output | Ingress_closed
-
-    type 'output frame_outcome =
-      | Idle
-      | Rejected of Eta_crux.Root.delivery_error
-      | Committed of 'output
-      | Stopped
-      | Crashed of Eta_crux.Failure.settlement
-
-    type 'output frame = {
-      outcome : 'output frame_outcome;
-      events : 'output Eta_crux.Driver.event list;
-    }
-
-    type drain_status =
-      | Idle
-      | Limit_reached
-      | Closed of Eta_crux.Driver.terminal
-
-    type 'output drain = {
-      status : drain_status;
-      events : 'output Eta_crux.Driver.event list;
-    }
-
-    val create :
-      clock:Eta_test.Test_clock.t ->
-      incoming:('output, 'incoming) Incoming.t ->
-      shell:('output, 'shell_error) Test_shell.t ->
-      'output Eta_crux.Root.t ->
-      ('output, 'incoming) t
-
-    val use :
-      clock:Eta_test.Test_clock.t ->
-      incoming:('output, 'incoming) Incoming.t ->
-      shell:('output, 'shell_error) Test_shell.t ->
-      'output Eta_crux.Root.t ->
-      f:
-        (('output, 'incoming) t ->
-         ('result, 'body_error) Eta.Effect.t) ->
-      ('result, 'body_error) Eta.Effect.t
-
-    val latest_committed_output :
-      ('output, 'incoming) t -> 'output option
-
-    val latest_delivered_output :
-      ('output, 'incoming) t -> 'output option
-
-    val advance_time_by :
-      ('output, 'incoming) t -> Eta.Duration.t -> unit
-
-    val advance_time_to :
-      ('output, 'incoming) t -> int -> unit
-
-    val inject :
-      ('output, 'incoming) t ->
-      'incoming ->
-      (unit, inject_error) Eta.Effect.t
-
-    val frame :
-      ('output, 'incoming) t ->
-      (('output frame, operation_error) result, Eta_crux.never) Eta.Effect.t
-
-    val drain :
-      ('output, 'incoming) t ->
-      max_steps:int ->
-      (('output drain, operation_error) result, Eta_crux.never) Eta.Effect.t
-
-    val stop :
-      ('output, 'incoming) t ->
-      ((Eta_crux.Driver.terminal, operation_error) result, Eta_crux.never)
-        Eta.Effect.t
-
-    val poll :
-      ('output, 'incoming) t ->
-      (('output Eta_crux.Driver.event option, operation_error) result,
-       Eta_crux.never) Eta.Effect.t
-
-    val await :
-      ('output, 'incoming) t ->
-      (('output Eta_crux.Driver.event, operation_error) result,
-       Eta_crux.never) Eta.Effect.t
-
-    val delivery_delivered :
-      ('output, 'incoming) t ->
-      'output Eta_crux.Driver.Delivery.t ->
-      ((unit, Eta_crux.Driver.Delivery.completion_error) result,
-       Eta_crux.never) Eta.Effect.t
-
-    val delivery_failed :
-      ('output, 'incoming) t ->
-      'output Eta_crux.Driver.Delivery.t ->
-      Eta_crux.Failure.Packed_cause.t ->
-      ((unit, Eta_crux.Driver.Delivery.completion_error) result,
-       Eta_crux.never) Eta.Effect.t
-
-    val request_stop : ('output, 'incoming) t -> unit
-  end
-
-  module Post_commit_effect_observer : sig
-    module Effect_id = Eta_crux.Testing.Effect_id
-    module Commit_index = Eta_crux.Testing.Commit_index
-    module Event_position = Eta_crux.Testing.Event_position
-
-    type settlement = Eta_crux.Testing.settlement =
-      | Succeeded
-      | Interrupted
-      | Failed
-
-    type event = Eta_crux.Testing.event =
-      | Staged of {
-          position : Event_position.t;
-          commit : Commit_index.t;
-          effects : Effect_id.t list;
-        }
-      | Started of {
-          position : Event_position.t;
-          effect : Effect_id.t;
-        }
-      | Settled of {
-          position : Event_position.t;
-          effect : Effect_id.t;
-          settlement : settlement;
-        }
-      | Discarded_before_start of {
-          position : Event_position.t;
-          effect : Effect_id.t;
-        }
-
-    type t
-
-    val create : unit -> t
-    val attachment : t -> Eta_crux.Testing.post_commit_effect_observer
-    val poll : t -> event option
-    val drain : t -> event list
-    val expect_empty : t -> unit
-  end
-
-  module Controlled_source : sig
-    type ('spec, 'item, 'error) t
-    type ('spec, 'item, 'error) incarnation
-
-    type state =
-      | Opening
-      | Running
-      | Completed
-      | Failed
-      | Cancelled
-
-    type control_error = Wrong_state of state
-
-    type emit_error =
-      | Control of control_error
-      | Admission of Eta_crux.Endpoint.admission_error
-
-    val create : unit -> ('spec, 'item, 'error) t
-
-    val producer :
-      ('spec, 'item, 'error) t ->
-      'spec ->
-      ('item, 'error) Eta_crux.Source.producer
-
-    val poll_incarnation :
-      ('spec, 'item, 'error) t ->
-      ('spec, 'item, 'error) incarnation option
-
-    val await_incarnation :
-      ('spec, 'item, 'error) t ->
-      (('spec, 'item, 'error) incarnation, Eta_crux.never) Eta.Effect.t
-
-    val spec : ('spec, 'item, 'error) incarnation -> 'spec
-    val state : ('spec, 'item, 'error) incarnation -> state
-
-    val open_ :
-      ('spec, 'item, 'error) incarnation ->
-      (unit, control_error) result
-
-    val fail_open :
-      ('spec, 'item, 'error) incarnation ->
-      'error ->
-      (unit, control_error) result
-
-    val emit :
-      ('spec, 'item, 'error) incarnation ->
-      'item ->
-      (unit, emit_error) Eta.Effect.t
-
-    val complete :
-      ('spec, 'item, 'error) incarnation ->
-      (unit, control_error) result
-
-    val fail :
-      ('spec, 'item, 'error) incarnation ->
-      'error ->
-      (unit, control_error) result
-
-    val captured_emitter :
-      ('spec, 'item, 'error) incarnation ->
-      'item Eta_crux.Source.emit option
-
-    val expect_no_pending : ('spec, 'item, 'error) t -> unit
-  end
+  val delivery_failed :
+    'incoming t ->
+    Eta_crux.Driver.Delivery.t ->
+    Eta_crux.Failure.Packed_cause.t ->
+    ((unit, Eta_crux.Driver.Delivery.completion_error) result,
+     Eta_crux.never) Eta.Effect.t
 end
 ```
 
-The package also exports a recording `Adapter.resource`. General controlled
-effects belong to `Eta_test.Controlled`, not `eta_crux_test`.
+The committed snapshot comes from `Driver.latest_committed_snapshot`. The
+delivered snapshot is a test-only shadow.
 
-The handle stores one capability from the supplied test clock. Driver operations
-run under that capability. Time movement changes only the clock. A later driver
-operation observes due work.
+The handle installs the delivered shadow before successful acknowledgment. A
+failed or pending delivery keeps the prior shadow.
 
-`Eta.Duration.t` is nonnegative. Its constructors clamp a negative source value
-to zero before `advance_time_by` receives it. The handle treats that value as
-zero. `advance_time_to` rejects a target before the current test time.
+`Projection_harness` supplies these controls:
 
-The observer controller has one consumer-operation claim. Concurrent `poll`,
-`drain`, or `expect_empty` calls have one winner.
+- unit-key and keyed projection descriptors
+- snapshot and batch lookup helpers
+- an incarnation-counter seed
+- exact capacity configuration
+- an atomic wire recipient
+- one-shot installation failure
+
+The existing session peer supplies raw-frame input, write failure through
+session closure, replacement, and session-loss control. Application codecs
+supply returned errors and raised defects at selected calls.
+
+The recording adapter records each accepted `Adapter.delivery`.
+
+## Negative gates
+
+The negative suite compiles against the installed `.cmi` files.
+
+It confirms these projection opacity boundaries:
+
+- `Projection.Incarnation.t` has no constructor or wire conversion.
+- `Projection.Snapshot.t`, `Projection.Batch.t`, and
+  `Projection.Commit.t` are abstract.
+- Production code has no delivered-state query.
 
 ## Operational telemetry
 
@@ -284,8 +201,14 @@ The fixed logs are:
 | `eta_crux.root.stopped` | `Info` |
 | `eta_crux.root.crashed` | `Error` |
 
-The crash log can contain `eta_crux.failure.origin`,
-`eta_crux.failure.trigger`, and `eta_crux.observation.position`.
+The crash log can contain:
+
+- `eta_crux.failure.origin`
+- `eta_crux.failure.trigger`
+- `eta_crux.observation.position`
+
+The trigger values include `projection_preflight` and
+`projection_delivery`. There is no output-delivery trigger.
 
 The fixed metrics are:
 
@@ -308,65 +231,20 @@ The fixed spans are:
 - `eta_crux.session.replace`
 - `eta_crux.root.teardown`
 
-Telemetry contains no application payload or runtime identity. Idle polls and
-driver waits create no telemetry.
+Telemetry contains no application payload, projection key, projection value, or
+runtime identity. Idle polls and driver waits create no telemetry.
 
 ## Performance gates
 
-Performance compares fresh baseline and candidate runs in the same environment.
-Generated measurements remain local. Checked-in numbers never control a gate.
+This ticket keeps benchmark compilation green. Projection performance workloads
+belong to the next ticket.
 
-Use these commands:
+Use these commands for a local snapshot:
 
 ```sh
 nix develop -c bash bench/run.sh --quick --filter '^eta_crux\.'
 nix develop -c bash bench/run.sh --filter '^eta_crux\.'
 ```
 
-Run three complete baseline and candidate pairs through the benchmark gate:
-
-```sh
-nix develop -c dune exec bench/compare.exe -- --gate \
-  baseline-1.json candidate-1.json \
-  baseline-2.json candidate-2.json \
-  baseline-3.json candidate-3.json
-```
-
-A full row uses five warm-up samples and 31 measured samples. Each measured
-sample lasts at least 50 ms. Reports include the mean, standard deviation,
-median, p95, allocation classes, deterministic counters, environment, revision,
-and dirty state.
-
-A wall-time row fails when its median increases by more than 15% in two of three
-complete comparisons. An allocation row fails when allocated words increase by
-more than 5% and by more than one word per operation.
-
-The suite contains these rows:
-
-1. One complete admitted action.
-2. One equal-model action with dependent-projection counters.
-3. One changed keyed child at 10,000 and 100,000 children.
-4. One persistent-output reconciliation at 10,000 and 100,000 rows.
-5. One removal with blocked cleanup and overlapping new work.
-6. One common identity-binding scenario.
-7. The same serialized scenario with 0 B, 64 B, and 4 KiB payloads.
-8. One disabled-telemetry advancement and its absent-telemetry control.
-9. One feature-absent observer advancement.
-10. One graph without reset.
-11. One graph without Poll.
-12. Ingress and request-capacity saturation at 1, 64, and 1,024 entries.
-13. Serialized-handle replacement, stale lookup, and collection.
-
-Setup is outside each measured operation. Deterministic counters fail on their
-first violation. The identity row requires zero wire operations. Disabled
-telemetry requires equal allocation and at most 5% extra median time.
-
-The observer, reset, and Poll disabled-path rows compare baseline and candidate
-revisions with the same threshold. These rows implement
-`post_commit_effect_observer_disabled_allocation`,
-`structural_reset_disabled_allocation`, and `poll_disabled_allocation`.
-
-Ingress entries never exceed ingress capacity. Pending requests never exceed
-request capacity. Serialized handles never exceed live serialized exports.
-After session replacement and a full major collection, no old-session handle or
-removed export remains.
+The pre-projection full baseline is
+`bench/results/20260815T184109Z-b5c4e3d6.json`.

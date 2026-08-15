@@ -1,6 +1,7 @@
 open Crux_engine
 
 module Failure = Crux_failure.Failure
+module Projection = Crux_projection
 
 type post_kind =
   | Normal
@@ -425,13 +426,11 @@ module Post_commit = struct
 end
 
 module Root = struct
-  type 'output description = 'output t
-
-  type 'output t = {
+  type t = {
     core : root_core;
-    description : 'output description;
-    signal : 'output signal_root;
-    mutable committed_frame : 'output frame option;
+    signal : signal_root;
+    mutable committed_frame : frame option;
+    projection : Projection.State.t;
   }
 
   type delivery_error =
@@ -444,11 +443,11 @@ module Root = struct
     | Closed
     | Driver_attached
 
-  type 'output outcome =
+  type outcome =
     | Idle
     | Rejected of delivery_error
     | Committed of {
-        output : 'output;
+        commit : Projection.Commit.t;
         post_commit : Post_commit.t;
       }
     | Stopped of {
@@ -459,12 +458,15 @@ module Root = struct
         post_commit : Post_commit.t;
       }
 
-  let create ?post_commit_effect_observer ~ingress_capacity
-      ~request_capacity description =
+  let create ?post_commit_effect_observer ~catalog ~projection_capacity
+      ~ingress_capacity ~request_capacity description =
     if ingress_capacity <= 0 then
       invalid_arg "Eta_crux.Root.create: ingress_capacity must be positive";
     if request_capacity <= 0 then
       invalid_arg "Eta_crux.Root.create: request_capacity must be positive";
+    let projection =
+      Projection.State.create ~catalog ~capacity:projection_capacity
+    in
     Option.iter Crux_testing.claim post_commit_effect_observer;
     let id = next_global "root identity" in
     let root_scope =
@@ -511,9 +513,12 @@ module Root = struct
     in
     let signal = create_signal_root core description in
     core.dispose_signal <- Some signal.sig_dispose_observer;
-    { core; description; signal; committed_frame = None }
+    { core; signal; committed_frame = None; projection }
 
-  let request_stop (root : 'output t) =
+  let set_projection_incarnation_for_test root next =
+    Projection.State.set_next_incarnation_for_test root.projection next
+
+  let request_stop (root : t) =
     let core = root.core in
     let close =
       Eta.Sync_lock.use core.lock @@ fun () ->
@@ -569,6 +574,27 @@ module Root = struct
         post_commit = make_batch core Crash [] [];
       }
 
+  let fail_from_preflight (core : root_core) error =
+    let packed =
+      Failure.Packed_cause.make_projection_preflight error
+    in
+    latch_failure_record core
+      (failure_record core ~origin:Failure.Transition
+         ~trigger:Failure.Projection_preflight packed);
+    let failure =
+      match Atomic.get core.failure with
+      | Some failure -> failure
+      | None -> assert false
+    in
+    Eta.Sync_lock.use core.lock @@ fun () ->
+    Atomic.set core.failure_reported true;
+    Atomic.set core.phase Awaiting_post_commit;
+    Failed
+      {
+        failure;
+        post_commit = make_batch core Crash [] [];
+      }
+
   (* Apply one candidate frame under the root lock. Mirrors the domain
      lifecycle of the old commit: close scopes whose branch left the frame
      (running their revokers and collecting their jobs), deactivate their
@@ -578,12 +604,12 @@ module Root = struct
      physical identity against the previously installed frame; scopes diff
      by scope id. Returns the works and job cancellations for the
      post-commit batch. *)
-  let install_frame (core : root_core) ~previous ~(frame : 'output frame) =
+  let install_frame (core : root_core) ~previous ~(frame : frame) =
     let contribution = frame.contribution in
     let previous_contribution =
       match previous with
       | None -> contribution_empty
-      | Some (previous : 'output frame) -> previous.contribution
+      | Some previous -> previous.contribution
     in
     if contribution_equal previous_contribution contribution then ([], [])
     else
@@ -728,7 +754,8 @@ module Root = struct
     | Failure.Outbound_request
     | Failure.Inbound_response
     | Failure.Request_cancellation
-    | Failure.Output_delivery
+    | Failure.Projection_preflight
+    | Failure.Projection_delivery
     | Failure.Stop_teardown
     | Failure.Crash_teardown
     | Failure.Application_crash_handler ->
@@ -786,77 +813,68 @@ module Root = struct
         | Eta.Exit.Error cause ->
             List.iter (fun undo -> undo ()) staging.undos;
             Ok (fail_from_cause core trigger cause)
-        | Eta.Exit.Ok frame -> (
-            (* Steady-state fast path: with no latched failure and an
-               unchanged structural contribution, installation is an
-               early-out with no scope, endpoint, or job side effects, and
-               [committed_frame] is single-advancer state gated by the phase
-               CAS, so the commit needs no critical section. A failure
-               latched in the window between the check and the install
-               settles on the next advance through [terminal_claimed] -
-               exactly the outcome the locked gate produced when the same
-               latch landed immediately after its section. *)
-            let previous_contribution =
-              match root.committed_frame with
-              | None -> contribution_empty
-              | Some (previous : 'output frame) -> previous.contribution
+        | Eta.Exit.Ok frame ->
+            let prepared =
+              try
+                match
+                  Projection.State.prepare root.projection
+                    (contribution_items_to_list
+                       frame.contribution.projections)
+                with
+                | Ok prepared -> `Prepared prepared
+                | Error error -> `Preflight error
+              with exn -> `Raised exn
             in
-            match Atomic.get core.failure with
-            | None
-              when contribution_equal previous_contribution
-                     frame.contribution ->
-                let works = List.rev staging.works in
-                root.committed_frame <- Some frame;
-                record_staged_effects core works;
-                Atomic.set core.phase Awaiting_post_commit;
-                Ok
-                  (Committed
-                     {
-                       output = frame.output;
-                       post_commit =
-                         make_batch core Normal works [];
-                     })
-            | failure -> (
-            (* A failure latched during staging or stabilization wins over the
-               candidate frame: roll back and report instead of installing.
-               The latch check and the installation share one critical section
-               so no latch can land between them, while rollback stays outside
-               the lock. *)
-            match
-              Eta.Sync_lock.use core.lock @@ fun () ->
-              match failure, Atomic.get core.failure with
-              | Some failure, _ -> Either.Left failure
-              | None, Some failure -> Either.Left failure
-              | None, None ->
-                  let works, cancellations =
-                    install_frame core ~previous:root.committed_frame ~frame
-                  in
-                  let works =
-                    List.rev_append (List.rev staging.works) works
-                  in
-                  root.committed_frame <- Some frame;
-                  record_staged_effects core works;
-                  Atomic.set core.phase Awaiting_post_commit;
-                  Either.Right
-                    (Committed
-                       {
-                         output = frame.output;
-                         post_commit =
-                           make_batch core Normal works cancellations;
-                       })
-            with
-            | Either.Right committed -> Ok committed
-            | Either.Left failure ->
+            (match prepared with
+            | `Preflight error ->
+                List.iter (fun undo -> undo ()) staging.undos;
+                Ok (fail_from_preflight core error)
+            | `Raised exn ->
                 List.iter (fun undo -> undo ()) staging.undos;
                 Ok
-                  (Eta.Sync_lock.use core.lock @@ fun () ->
-                   Atomic.set core.failure_reported true;
-                   Atomic.set core.phase Awaiting_post_commit;
-                   Failed
-                     {
-                       failure;
-                       post_commit = make_batch core Crash [] [];
-                     }))))
+                  (fail_from_exception core
+                     Failure.Projection_preflight exn)
+            | `Prepared prepared -> (
+                match
+                  Eta.Sync_lock.use core.lock @@ fun () ->
+                  match Atomic.get core.failure with
+                  | Some failure -> Either.Left failure
+                  | None ->
+                      let works, cancellations =
+                        install_frame core
+                          ~previous:root.committed_frame ~frame
+                      in
+                      let works =
+                        List.rev_append (List.rev staging.works)
+                          works
+                      in
+                      root.committed_frame <- Some frame;
+                      Projection.State.install root.projection prepared;
+                      record_staged_effects core works;
+                      Atomic.set core.phase Awaiting_post_commit;
+                      Either.Right
+                        (Committed
+                           {
+                             commit =
+                               Projection.State.commit prepared;
+                             post_commit =
+                               make_batch core Normal works
+                                 cancellations;
+                           })
+                with
+                | Either.Right committed -> Ok committed
+                | Either.Left failure ->
+                    List.iter (fun undo -> undo ()) staging.undos;
+                    Ok
+                      (Eta.Sync_lock.use core.lock @@ fun () ->
+                       Atomic.set core.failure_reported true;
+                       Atomic.set core.phase Awaiting_post_commit;
+                       Failed
+                         {
+                           failure;
+                           post_commit =
+                             make_batch core Crash [] [];
+                         }))))
       graph_step
 
   (* Lock-free phase gate: the [Ready -> Advancing] claim is one CAS, so the
@@ -1250,15 +1268,15 @@ module Root = struct
         in
         (match sample with
         | Error exn ->
-            ignore (fail_clock core exn : _ outcome)
+            ignore (fail_clock core exn : outcome)
         | Ok sample -> (
             match accept_clock_sample core sample with
             | Error Clock_runtime_mismatch ->
                 ignore
-                  (fail_clock core Runtime_mismatch : _ outcome)
+                  (fail_clock core Runtime_mismatch : outcome)
             | Error Clock_moved_backward ->
                 ignore
-                  (fail_clock core Clock_regression : _ outcome)
+                  (fail_clock core Clock_regression : outcome)
             | Ok () ->
                 if sample.sample_ms < deadline then
                   Eta.Spi.Expert.Clock.sleep active

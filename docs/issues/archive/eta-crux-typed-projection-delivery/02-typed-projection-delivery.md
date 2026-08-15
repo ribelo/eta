@@ -1,6 +1,6 @@
 ---
 kind: issue
-status: ready-for-agent
+status: change-2-complete
 requirements:
   - crxprj-iczc
   - crxprj-oohc

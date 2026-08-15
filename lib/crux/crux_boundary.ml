@@ -2,18 +2,7 @@ open Crux_engine
 
 module Failure = Crux_failure.Failure
 
-module Codec = struct
-  type encode_error = { message : string }
-  type decode_error = { message : string }
-  type 'a t = {
-    encode : 'a -> (bytes, encode_error) result;
-    decode : bytes -> ('a, decode_error) result;
-  }
-
-  let make ~encode ~decode = { encode; decode }
-  let encode codec value = codec.encode value
-  let decode codec bytes = codec.decode bytes
-end
+module Codec = Crux_codec
 
 let remote_handles :
     (int -> bytes option) option Domain.DLS.key =
@@ -64,7 +53,7 @@ module Exported_endpoint = struct
     | Some handle -> handle
     | None ->
         invalid_arg
-          "Eta_crux.Exported_endpoint.remote_handle: not encoding serialized output"
+          "Eta_crux.Exported_endpoint.remote_handle: not encoding a serialized projection value"
 
   let serialized_invoke export payload =
     let target =
@@ -669,7 +658,7 @@ module Request_export = struct
     | Some handle -> handle
     | None ->
         invalid_arg
-          "Eta_crux.Request_export.remote_handle: not encoding serialized output"
+          "Eta_crux.Request_export.remote_handle: not encoding a serialized projection value"
 
   let remove_pending export identity =
     Eta.Sync_lock.use export.lock @@ fun () ->

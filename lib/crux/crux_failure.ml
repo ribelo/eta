@@ -18,16 +18,40 @@ module Failure = struct
       | Pack : {
           cause : 'error Eta.Cause.t;
           pp_error : Format.formatter -> 'error -> unit;
+          projection_preflight :
+            Crux_projection.preflight_error option;
         } -> t
 
-    let make ~pp_error cause = Pack { cause; pp_error }
+    let make ~pp_error cause =
+      Pack { cause; pp_error; projection_preflight = None }
 
-    let portable (Pack { cause; pp_error }) =
+    let pp_projection_preflight formatter = function
+      | Crux_projection.Unknown_kind ->
+          Format.pp_print_string formatter "unknown projection kind"
+      | Identity_collision ->
+          Format.pp_print_string formatter "projection identity collision"
+      | Projection_capacity_exceeded ->
+          Format.pp_print_string formatter "projection capacity exceeded"
+      | Incarnation_exhausted ->
+          Format.pp_print_string formatter "projection incarnation exhausted"
+
+    let make_projection_preflight error =
+      Pack
+        {
+          cause = Eta.Cause.fail error;
+          pp_error = pp_projection_preflight;
+          projection_preflight = Some error;
+        }
+
+    let projection_preflight (Pack packed) =
+      packed.projection_preflight
+
+    let portable (Pack { cause; pp_error; _ }) =
       Eta.Cause.Portable.of_cause
         (fun error -> Format.asprintf "%a" pp_error error)
         cause
 
-    let pp formatter (Pack { cause; pp_error }) =
+    let pp formatter (Pack { cause; pp_error; _ }) =
       Eta.Cause.pp pp_error formatter cause
   end
 
@@ -73,7 +97,8 @@ module Failure = struct
     | Outbound_request
     | Inbound_response
     | Request_cancellation
-    | Output_delivery
+    | Projection_preflight
+    | Projection_delivery
     | Stop_teardown
     | Crash_teardown
     | Application_crash_handler
@@ -115,7 +140,11 @@ module Failure = struct
 
   let portable_record (record : record) =
     {
-      cause = Packed_cause.portable record.cause;
+      cause =
+        (match record.origin, record.trigger with
+        | Adapter_delivery, Projection_delivery ->
+            Eta.Cause.Portable.Fail "projection delivery failed"
+        | _ -> Packed_cause.portable record.cause);
       origin = record.origin;
       trigger = record.trigger;
       position = Observation_position.to_int64 record.position;

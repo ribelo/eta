@@ -200,7 +200,7 @@ end
 
 ## Exports and requests
 
-`Codec` is shared by exports, requests, host operations, and root output.
+`Codec` is shared by projection kinds, exports, requests, and host operations.
 
 ```ocaml
 module Codec : sig
@@ -217,6 +217,141 @@ module Codec : sig
   val decode : 'a t -> bytes -> ('a, decode_error) result
 end
 ```
+
+## Typed projections
+
+A projection is the only outward value of a root commit. The local result of
+the root computation does not enter the commit.
+
+```ocaml
+module Projection : sig
+  module Incarnation : sig
+    type t
+    val equal : t -> t -> bool
+    val compare : t -> t -> int
+  end
+
+  module Kind : sig
+    type ('key, 'value) t
+    type packed = Pack : ('key, 'value) t -> packed
+
+    val define :
+      name:string ->
+      key_compare:('key -> 'key -> int) ->
+      key_codec:'key Codec.t ->
+      value_codec:'value Codec.t ->
+      value_equal:('value -> 'value -> bool) ->
+      cutoff:'value Cutoff.t ->
+      ('key, 'value) t
+  end
+
+  module Catalog : sig
+    type t
+    val create : Kind.packed list -> t
+  end
+
+  type preflight_error =
+    | Unknown_kind
+    | Identity_collision
+    | Projection_capacity_exceeded
+    | Incarnation_exhausted
+
+  type ('key, 'value) entry = {
+    key : 'key;
+    incarnation : Incarnation.t;
+    value : 'value;
+  }
+
+  type ('key, 'value) update =
+    | Attached of ('key, 'value) entry
+    | Changed of ('key, 'value) entry
+    | Removed of {
+        key : 'key;
+        incarnation : Incarnation.t;
+      }
+
+  module Snapshot : sig
+    type t
+
+    val find_opt :
+      ('key, 'value) Kind.t ->
+      key:'key ->
+      t ->
+      ('key, 'value) entry option
+
+    type packed_entry =
+      | Pack :
+          ('key, 'value) Kind.t * ('key, 'value) entry ->
+          packed_entry
+
+    val fold :
+      t ->
+      init:'acc ->
+      f:('acc -> packed_entry -> 'acc) ->
+      'acc
+  end
+
+  module Batch : sig
+    type t
+
+    val find_opt :
+      ('key, 'value) Kind.t ->
+      key:'key ->
+      t ->
+      ('key, 'value) update list
+
+    type packed_update =
+      | Pack :
+          ('key, 'value) Kind.t * ('key, 'value) update ->
+          packed_update
+
+    val fold :
+      t ->
+      init:'acc ->
+      f:('acc -> packed_update -> 'acc) ->
+      'acc
+  end
+
+  module Commit : sig
+    type t
+    val snapshot : t -> Snapshot.t
+    val batch : t -> Batch.t
+  end
+
+  type delivery =
+    | Updates of Batch.t
+    | Bootstrap of Snapshot.t
+
+  val publish :
+    ('key, 'value) Kind.t ->
+    key:'key ->
+    'value t ->
+    'value t
+end
+```
+
+Each `Kind.define` call creates a distinct kind. `Catalog.create` fixes the
+canonical kind order for all roots that use the catalog.
+
+A kind name starts with a lowercase ASCII letter. Later bytes can be lowercase
+ASCII letters, digits, periods, underscores, or hyphens. The limit is 128
+bytes.
+
+The `key_compare` function defines identity, lookup, collision, and key order.
+It must be a stable total order.
+
+A projection key must be independent of a serialized session. A key must not
+contain an `Exported_endpoint.t` or a `Request_export.t`.
+
+Equivalent keys must have equal successful encodings or equal encode failure.
+Non-equivalent keys must have different successful encodings. Key decode must
+return an equivalent key.
+
+Value decode must return a value that is equal under `value_equal`. The
+publication cutoff changes only the outward image.
+
+`Snapshot.t`, `Batch.t`, `Commit.t`, and `Incarnation.t` are abstract. A
+commit exposes only its complete snapshot and ordered batch.
 
 ```ocaml
 module Exported_endpoint : sig
@@ -245,8 +380,8 @@ module Exported_endpoint : sig
 end
 ```
 
-`remote_handle` is valid only while a serialized binding calls its output
-codec. It raises `Invalid_argument` outside that encoding boundary.
+`remote_handle` is valid only while a serialized binding calls a projection
+value codec. It raises `Invalid_argument` outside that encoding boundary.
 
 ```ocaml
 module Request : sig
@@ -409,6 +544,7 @@ module Failure : sig
       t
 
     val portable : t -> string Eta.Cause.Portable.t
+    val projection_preflight : t -> Projection.preflight_error option
     val pp : Format.formatter -> t -> unit
   end
 
@@ -454,7 +590,8 @@ module Failure : sig
     | Outbound_request
     | Inbound_response
     | Request_cancellation
-    | Output_delivery
+    | Projection_preflight
+    | Projection_delivery
     | Stop_teardown
     | Crash_teardown
     | Application_crash_handler
@@ -561,8 +698,8 @@ module Post_commit : sig
 end
 
 module Root : sig
-  type 'output description := 'output t
-  type 'output t
+  type 'a computation := 'a t
+  type t
 
   type delivery_error =
     | Stale_endpoint
@@ -574,11 +711,11 @@ module Root : sig
     | Closed
     | Driver_attached
 
-  type 'output outcome =
+  type outcome =
     | Idle
     | Rejected of delivery_error
     | Committed of {
-        output : 'output;
+        commit : Projection.Commit.t;
         post_commit : Post_commit.t;
       }
     | Stopped of {
@@ -591,39 +728,48 @@ module Root : sig
 
   val create :
     ?post_commit_effect_observer:Testing.post_commit_effect_observer ->
+    catalog:Projection.Catalog.t ->
+    projection_capacity:int ->
     ingress_capacity:int ->
     request_capacity:int ->
-    'output description ->
-    'output t
+    _ computation ->
+    t
 
   val advance :
-    'output t ->
-    (('output outcome, advance_error) result, never) Eta.Effect.t
-  val request_stop : 'output t -> unit
+    t ->
+    ((outcome, advance_error) result, never) Eta.Effect.t
+  val request_stop : t -> unit
 end
 ```
+
+`Root.create` fixes one catalog and one positive projection capacity. The root
+uses separate state and incarnation allocation when another root uses the same
+catalog.
+
+`Root.advance` computes projection preflight before it installs the root frame.
+A preflight error returns `Failed`. The packed cause exposes the exact
+`Projection.preflight_error`.
 
 ## Driver and adapter
 
 ```ocaml
 module Driver : sig
-  type 'output t
+  type t
 
   module Binding : sig
-    type 'output t
+    type t
 
     val identity :
       Host_operation.packed list ->
-      'output t
+      t
 
     val serialized :
-      output:'output Codec.t ->
       operations:Host_operation.packed list ->
       session:Serialized_session.candidate ->
-      'output t * Serialized_session.admin
+      t * Serialized_session.admin
 
     val requester :
-      'output t ->
+      t ->
       ('request, 'response) Host_operation.t ->
       ('request, 'response) Requester.t
   end
@@ -637,35 +783,35 @@ module Driver : sig
       | Advancement
       | Session_replacement
 
-    type 'output t
+    type t
     type completion_error = Already_completed
 
-    val output : 'output t -> 'output
-    val reason : 'output t -> reason
+    val projection : t -> Projection.delivery
+    val reason : t -> reason
 
     val delivered :
-      'output t ->
+      t ->
       ((unit, completion_error) result, never) Eta.Effect.t
 
     val failed :
-      'output t ->
+      t ->
       Failure.Packed_cause.t ->
       ((unit, completion_error) result, never) Eta.Effect.t
   end
 
-  type 'output event =
-    | Deliver of 'output Delivery.t
+  type event =
+    | Deliver of Delivery.t
     | Request of Request.Driver_event.t
     | Rejected of Root.delivery_error
     | Crash_detected of Failure.t
     | Closed of terminal
 
-  val create : 'output Binding.t -> 'output Root.t -> 'output t
+  val create : Binding.t -> Root.t -> t
 
-  val poll : 'output t -> ('output event option, never) Eta.Effect.t
-  val await : 'output t -> ('output event, never) Eta.Effect.t
-  val latest_committed_output : 'output t -> 'output option
-  val request_stop : 'output t -> unit
+  val poll : t -> (event option, never) Eta.Effect.t
+  val await : t -> (event, never) Eta.Effect.t
+  val latest_committed_snapshot : t -> Projection.Snapshot.t option
+  val request_stop : t -> unit
 end
 ```
 
@@ -673,15 +819,19 @@ end
 root, or a reused binding, raises `Invalid_argument`. A rejected attachment
 claim leaves each otherwise-unused argument available for a later attachment.
 Direct `Root.advance` on a driver-owned root returns `Error Driver_attached`.
-`latest_committed_output` is a synchronous pull that returns `'output option`.
-It retains no commit identity, delivery state, or terminal state.
+`latest_committed_snapshot` is a synchronous pull. It returns `None` before the
+first commit.
+
+Each commit publishes the snapshot before delivery. Delivery failure and
+terminal state do not clear the snapshot. The pull performs no delivery or
+post-commit work.
 
 ```ocaml
 module Adapter : sig
-  type ('output, 'error) resource
+  type 'error resource
 
-  type 'output delivery = {
-    output : 'output;
+  type delivery = {
+    projection : Projection.delivery;
     reason : Driver.Delivery.reason;
   }
 
@@ -693,7 +843,7 @@ module Adapter : sig
        (unit, 'error) Eta.Effect.t) ->
     deliver:
       ('binding ->
-       'output delivery ->
+       delivery ->
        (unit, 'error) Eta.Effect.t) ->
     request_event:
       ('binding ->
@@ -703,7 +853,7 @@ module Adapter : sig
       ('binding ->
        Failure.t ->
        (unit, 'error) Eta.Effect.t) ->
-    ('output, 'error) resource
+    'error resource
 end
 ```
 
@@ -715,11 +865,21 @@ module Hosted : sig
   end
 
   val run :
-    'output Driver.t ->
-    adapter:(Control.t -> ('output, 'error) Adapter.resource) ->
+    Driver.t ->
+    adapter:(Control.t -> 'error Adapter.resource) ->
     (Driver.terminal, 'error) Eta.Effect.t
 end
 ```
+
+An adapter receives `Updates` for an advancement. A replacement session
+receives `Bootstrap`.
+
+One delivery token accepts one answer. Successful acknowledgment admits the
+owned post-commit work.
+
+Delivery failure keeps the commit published. It latches `Adapter_delivery`
+with trigger `Projection_delivery`, discards ordinary post-commit work, and
+does not retry.
 
 Session replacement is absent from `Hosted.Control`. The separate serialized
 administration capability prevents an identity driver from returning a
@@ -812,17 +972,24 @@ two codec packages.
 `Eta_crux_test` exports:
 
 - `Incoming`, `Test_shell`, and `Handle`
+- `Projection_harness`
 - `Controlled_source`
 - `Post_commit_effect_observer`
 - a recording `Adapter.resource`
 
 `Handle.create` and `Handle.use` require an explicit `clock:Eta_test.Test_clock.t`.
-`Handle` exposes `advance_time_by` and `advance_time_to` for deterministic test
-time movement and the two output boundaries `latest_committed_output` and
-`latest_delivered_output`. The former `last_output` is gone.
-`latest_committed_output` reads the production driver query, and
-`latest_delivered_output` reads the successful-delivery boundary. Test
-injection uses the latest delivered output.
+`Handle` exposes `advance_time_by` and `advance_time_to` for deterministic time
+movement. It also exposes `latest_committed_snapshot` and the test-only
+`latest_delivered_snapshot`.
+
+The committed query reads the production driver. The delivered query reads the
+successful-delivery shadow. Test injection uses the delivered shadow.
+
+`Projection_harness` supplies unit-key and keyed kind helpers. It also supplies
+the wire recipient, an incarnation-counter seed, and capacity controls.
+
+The wire recipient decodes and checks one complete delivery before
+installation. A failed check or installation keeps the prior delivered state.
 
 ```ocaml
 module Post_commit_effect_observer : sig

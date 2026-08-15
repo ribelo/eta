@@ -25,28 +25,33 @@ It is generic application-computation infrastructure. It is not a UI framework.
 
 An application builds an immutable `'a Eta_crux.t` description. A root
 instantiates that description in a private Eta Signal graph. The root advances
-one action at a time and produces one complete typed output. Graph time can
-change that output through the driver: `Time` provides graph monotonic time,
-deadlines, and timers whose deadlines wake the blocking driver. `Reset` scopes
-atomic structural resets, and `Poll` runs graph-owned change-driven and manual
-effect runs.
+one action at a time and commits one typed projection image. `Projection.publish`
+marks the typed state that can leave the root.
+
+Graph time can change the image through the driver. `Time` provides monotonic
+graph time, deadlines, and timers. A due deadline wakes the blocking driver.
+
+`Reset` scopes atomic structural resets. `Poll` runs graph-owned automatic and
+manual effect runs.
 
 Eta owns effects, scopes, cancellation, resources, supervision, causes,
 clocks, and sleeps. Eta Crux owns computation structure, identity,
 advancement, graph time, deadlines, driver wakes, actions, ingress, reset,
-Poll run order, commit publication, typed output, shell requests, and handler
-claims. The driver retains the latest committed output for pull observation.
+Poll run order, commit publication, projection identity, shell requests, and
+handler claims. The driver retains the latest committed projection snapshot.
 
 ## Architecture
 
 The design has four layers:
 
 1. The computation layer describes values, state machines, dynamic structure,
-   keyed children, lifecycle programs, sources, exports, and request exports.
+   keyed children, lifecycle programs, sources, exports, requests, and
+   projection publications.
 2. The root layer instantiates one description and performs atomic advancement.
-3. The driver layer delivers output and shell requests through one-shot tokens
-   and retains the latest committed output for pull observation.
-4. A host adapter reconciles output and performs host-owned work.
+3. The driver delivers projection updates and shell requests through one-shot
+   tokens. It retains the latest committed snapshot.
+4. A host adapter installs the complete delivered image and performs host-owned
+   work.
 
 One unstarted root accepts one exclusive driver attachment, and graph deadlines
 can wake the blocking driver. The application cannot observe whether the shell
@@ -75,7 +80,7 @@ Each root creates one private `Eta_signal.Make` graph. It adapts that graph with
 `Keyed(Order).mapi`.
 
 Private Signal variables own state-machine models. One committed root-frame
-signal owns output and structural manifests. Eta supervision and
+signal owns the projection image and structural manifests. Eta supervision and
 `Supervisor.Scope.request_cancel` own long-lived work. Eta Crux uses no private
 cross-package hook.
 
@@ -84,6 +89,7 @@ cross-package hook.
 `Eta_crux` exports these modules:
 
 - `Syntax`, `Endpoint`, `Diagnostic`, `State_machine`, `Assoc`, and `Source`
+- `Projection` — typed outward state, identity, snapshots, batches, and commits
 - `Time`, `Reset`, and `Poll` — graph time, structural reset, and graph-owned
   effect runs
 - `Testing` — the post-commit effect observation SPI types
@@ -94,7 +100,13 @@ cross-package hook.
 `Eta_crux.lifecycle` is a top-level constructor. Internal graph, scope,
 registry, transaction, and binding modules remain private.
 
-`Driver.latest_committed_output` provides pull observation of the root output.
+`Driver.latest_committed_snapshot` provides pull observation of committed
+projection state.
+
+Identity bindings deliver typed values. Serialized bindings use one changed
+complete-value batch profile. A replacement session receives one complete
+bootstrap snapshot before later advancement batches.
+
 One unstarted root accepts one exclusive driver attachment. The post-commit
 effect observer is a test-only surface: `Eta_crux.Testing` carries the SPI
 types, and the `eta_crux_test` controller owns queue access.
@@ -102,8 +114,11 @@ types, and the `eta_crux_test` controller owns queue access.
 ## Deliberate exclusions
 
 V1 has no renderer, widget model, command algebra, subscription algebra,
-fragment tree, typed observation plan, middleware chain, graph inspection,
-action history, replay, or compatibility protocol.
+fragment tree, middleware chain, graph inspection, action history, replay, or
+compatibility protocol.
+
+The wire contract has no snapshot-push advancement profile, pull notification,
+cursor, paging, profile negotiation, or fallback.
 
 V1 also has no detached work, retained inactive child, unbounded capacity,
 default timeout, default clock, streaming request, protocol negotiation, or

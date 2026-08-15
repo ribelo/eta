@@ -3,9 +3,9 @@ module Crux = Eta_crux
 let absurd (value : Crux.never) = match value with _ -> .
 
 module Incoming = struct
-  type ('output, 'incoming) t = {
+  type 'incoming t = {
     send :
-      'output ->
+      Crux.Projection.Snapshot.t ->
       'incoming ->
       (unit, Crux.Endpoint.admission_error) Eta.Effect.t;
   }
@@ -21,10 +21,10 @@ module Incoming = struct
 end
 
 module Test_shell = struct
-  type ('output, 'error) t = {
+  type 'error t = {
     pp_error : Format.formatter -> 'error -> unit;
     deliver :
-      'output Crux.Adapter.delivery ->
+      Crux.Adapter.delivery ->
       (unit, 'error) Eta.Effect.t;
     request_event :
       Crux.Request.Driver_event.t ->
@@ -37,18 +37,18 @@ end
 
 module Handle = struct
   type operation_error = Busy
-  type inject_error = No_output | Ingress_closed
+  type inject_error = No_projection | Ingress_closed
 
-  type 'output frame_outcome =
+  type frame_outcome =
     | Idle
     | Rejected of Crux.Root.delivery_error
-    | Committed of 'output
+    | Committed of Crux.Projection.Snapshot.t
     | Stopped
     | Crashed of Crux.Failure.settlement
 
-  type 'output frame = {
-    outcome : 'output frame_outcome;
-    events : 'output Crux.Driver.event list;
+  type frame = {
+    outcome : frame_outcome;
+    events : Crux.Driver.event list;
   }
 
   type drain_status =
@@ -56,23 +56,24 @@ module Handle = struct
     | Limit_reached
     | Closed of Crux.Driver.terminal
 
-  type 'output drain = {
+  type drain = {
     status : drain_status;
-    events : 'output Crux.Driver.event list;
+    events : Crux.Driver.event list;
   }
 
-  type 'output shell =
-    | Shell : ('output, 'error) Test_shell.t -> 'output shell
+  type shell =
+    | Shell : 'error Test_shell.t -> shell
 
-  type ('output, 'incoming) t = {
-    driver : 'output Crux.Driver.t;
+  type 'incoming t = {
+    driver : Crux.Driver.t;
     clock : Eta_test.Test_clock.t;
     clock_capability : Eta.Capabilities.clock;
-    incoming : ('output, 'incoming) Incoming.t;
-    shell : 'output shell;
+    incoming : 'incoming Incoming.t;
+    shell : shell;
     lock : Eta.Sync_lock.t;
     mutable busy : bool;
-    mutable output : 'output option;
+    mutable delivered_snapshot : Crux.Projection.Snapshot.t option;
+    mutable answered_deliveries : Crux.Driver.Delivery.t list;
     mutable terminal : Crux.Driver.terminal option;
   }
 
@@ -86,15 +87,16 @@ module Handle = struct
       shell = Shell shell;
       lock = Eta.Sync_lock.create ();
       busy = false;
-      output = None;
+      delivered_snapshot = None;
+      answered_deliveries = [];
       terminal = None;
     }
 
-  let latest_delivered_output handle =
-    Eta.Sync_lock.use handle.lock @@ fun () -> handle.output
+  let latest_delivered_snapshot handle =
+    Eta.Sync_lock.use handle.lock @@ fun () -> handle.delivered_snapshot
 
-  let latest_committed_output handle =
-    Crux.Driver.latest_committed_output handle.driver
+  let latest_committed_snapshot handle =
+    Crux.Driver.latest_committed_snapshot handle.driver
 
   let advance_time_by handle duration =
     if Eta.Duration.is_zero duration then ()
@@ -131,34 +133,51 @@ module Handle = struct
     handle.terminal <- Some terminal
 
   let inject handle incoming =
-    match latest_delivered_output handle with
-    | None -> Eta.Effect.fail No_output
-    | Some output ->
-        handle.incoming.send output incoming
+    match latest_delivered_snapshot handle with
+    | None -> Eta.Effect.fail No_projection
+    | Some snapshot ->
+        handle.incoming.send snapshot incoming
         |> Eta.Effect.map_error (function
              | Crux.Endpoint.Ingress_closed -> Ingress_closed)
 
+  let claim_delivery_answer handle delivery =
+    Eta.Sync_lock.use handle.lock @@ fun () ->
+    if List.memq delivery handle.answered_deliveries then false
+    else (
+      handle.answered_deliveries <-
+        delivery :: handle.answered_deliveries;
+      true)
+
   let answer_delivery handle shell delivery =
     let open Eta.Syntax in
+    if not (claim_delivery_answer handle delivery) then
+      invalid_arg
+        "Eta_crux_test.Handle: delivery was already answered";
     let delivered =
       {
-        Crux.Adapter.output =
-          Crux.Driver.Delivery.output delivery;
+        Crux.Adapter.projection =
+          Crux.Driver.Delivery.projection delivery;
         reason = Crux.Driver.Delivery.reason delivery;
       }
     in
     let* exit = Eta.Effect.to_exit (shell.Test_shell.deliver delivered) in
     match exit with
     | Eta.Exit.Ok () ->
+        let snapshot =
+          match delivered.projection with
+          | Crux.Projection.Updates _ ->
+              Crux.Driver.latest_committed_snapshot handle.driver
+          | Bootstrap snapshot -> Some snapshot
+        in
+        Option.iter
+          (fun snapshot ->
+            Eta.Sync_lock.use handle.lock @@ fun () ->
+            handle.delivered_snapshot <- Some snapshot)
+          snapshot;
         let+ result =
           Crux.Driver.Delivery.delivered delivery
           |> Eta.Effect.map_error absurd
         in
-        (match result with
-        | Ok () ->
-            Eta.Sync_lock.use handle.lock @@ fun () ->
-            handle.output <- Some delivered.output
-        | Error Crux.Driver.Delivery.Already_completed -> ());
         `Delivered
     | Eta.Exit.Error cause ->
         let packed =
@@ -215,7 +234,11 @@ module Handle = struct
               {
                 outcome =
                   Committed
-                    (Crux.Driver.Delivery.output delivery);
+                    (match latest_delivered_snapshot handle with
+                    | Some snapshot -> snapshot
+                    | None ->
+                        invalid_arg
+                          "Eta_crux_test.Handle: accepted delivery has no snapshot");
                 events = List.rev (event :: events);
               }
         | `Failed -> run_frame handle (event :: events))
@@ -332,23 +355,34 @@ module Handle = struct
 
   let delivery_delivered handle delivery =
     let open Eta.Syntax in
-    (let+ result =
-       Crux.Driver.Delivery.delivered delivery
-       |> Eta.Effect.map_error absurd
-     in
-     (match result with
-     | Ok () ->
-         Eta.Sync_lock.use handle.lock @@ fun () ->
-         handle.output <-
-           Some (Crux.Driver.Delivery.output delivery)
-     | Error Crux.Driver.Delivery.Already_completed -> ());
-     result)
-    |> under_clock handle
+    if not (claim_delivery_answer handle delivery) then
+      Eta.Effect.pure
+        (Error Crux.Driver.Delivery.Already_completed)
+    else
+      let* () =
+        Eta.Effect.sync (fun () ->
+            match
+              Crux.Driver.latest_committed_snapshot handle.driver
+            with
+            | None ->
+                invalid_arg
+                  "Eta_crux_test.Handle: delivery has no committed snapshot"
+            | Some snapshot ->
+                Eta.Sync_lock.use handle.lock @@ fun () ->
+                handle.delivered_snapshot <- Some snapshot)
+      in
+      Crux.Driver.Delivery.delivered delivery
+      |> Eta.Effect.map_error absurd
+      |> under_clock handle
 
   let delivery_failed handle delivery cause =
-    Crux.Driver.Delivery.failed delivery cause
-    |> Eta.Effect.map_error absurd
-    |> under_clock handle
+    if not (claim_delivery_answer handle delivery) then
+      Eta.Effect.pure
+        (Error Crux.Driver.Delivery.Already_completed)
+    else
+      Crux.Driver.Delivery.failed delivery cause
+      |> Eta.Effect.map_error absurd
+      |> under_clock handle
 
   let request_stop handle =
     Crux.Driver.request_stop handle.driver
