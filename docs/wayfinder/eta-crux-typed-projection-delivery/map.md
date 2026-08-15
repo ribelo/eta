@@ -112,6 +112,10 @@ gates, and all affected Eta packages and modules.
   `Committed` with the commit; `Delivery.projection` and the adapter record
   expose the typed delivery; wire frames carry `int64` incarnations and reuse
   `delivery_reason` and `delivery_result`.
+- [Design package approval](issues/17-design-package-approval.md)
+  — The user approved the package for implementation without changes. The five
+  unresolved risks are accepted as standing policy. The destination is reached
+  and the map closes.
 
 ## Not yet specified
 
