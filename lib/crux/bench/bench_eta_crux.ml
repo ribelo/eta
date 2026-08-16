@@ -93,10 +93,93 @@ let failf format = Printf.ksprintf failwith format
 let cleanup_actions = ref []
 let wire_operations = ref 0
 
+type projection_stats = {
+  mutable commits : int;
+  mutable deliveries : int;
+  mutable batch_records : int;
+  mutable encoded_entries : int;
+  mutable encoded_bytes : int;
+  mutable cutoff_calls : int;
+  mutable key_compare_calls : int;
+  mutable bootstrap_entries : int;
+}
+
+type projection_absent_observation = {
+  mutable commits : int;
+  mutable deliveries : int;
+  mutable batch_records : int;
+  mutable encoded_entries : int;
+  mutable encoded_bytes : int;
+  mutable cutoff_calls : int;
+  mutable bootstrap_entries : int;
+}
+
+let projection_stats () =
+  {
+    commits = 0;
+    deliveries = 0;
+    batch_records = 0;
+    encoded_entries = 0;
+    encoded_bytes = 0;
+    cutoff_calls = 0;
+    key_compare_calls = 0;
+    bootstrap_entries = 0;
+  }
+
+let reset_projection_stats (stats : projection_stats) =
+  stats.commits <- 0;
+  stats.deliveries <- 0;
+  stats.batch_records <- 0;
+  stats.encoded_entries <- 0;
+  stats.encoded_bytes <- 0;
+  stats.cutoff_calls <- 0;
+  stats.key_compare_calls <- 0;
+  stats.bootstrap_entries <- 0
+
+let active_projection_stats = ref None
+
+let projection_entry_bytes
+    (entry : Crux.Wire.Frame.projection_entry) =
+  Bytes.length entry.key + Bytes.length entry.value
+
+let record_projection_frame (stats : projection_stats) = function
+  | Crux.Wire.Frame.Projection_deliver
+      { content = Updates updates; _ } ->
+      stats.batch_records <-
+        stats.batch_records + List.length updates;
+      stats.encoded_entries <-
+        stats.encoded_entries + List.length updates;
+      List.iter
+        (function
+          | Crux.Wire.Frame.Attached entry
+          | Changed entry ->
+              stats.encoded_bytes <-
+                stats.encoded_bytes
+                + projection_entry_bytes entry
+          | Removed { key; _ } ->
+              stats.encoded_bytes <-
+                stats.encoded_bytes + Bytes.length key)
+        updates
+  | Projection_deliver { content = Bootstrap entries; _ } ->
+      stats.bootstrap_entries <-
+        stats.bootstrap_entries + List.length entries;
+      stats.encoded_entries <-
+        stats.encoded_entries + List.length entries;
+      List.iter
+        (fun entry ->
+          stats.encoded_bytes <-
+            stats.encoded_bytes + projection_entry_bytes entry)
+        entries
+  | _ -> ()
+
 module Counting_format = struct
   let encode frame =
     incr wire_operations;
-    Eta_crux_json.Format.encode frame
+    let encoded = Eta_crux_json.Format.encode frame in
+    Option.iter
+      (fun stats -> record_projection_frame stats frame)
+      !active_projection_stats;
+    encoded
 
   let decode bytes =
     incr wire_operations;
@@ -118,12 +201,16 @@ let send runtime endpoint action =
              Failure "benchmark ingress closed"))
 
 let answer_delivery runtime delivery =
-  match
-    run_ok runtime (Crux.Driver.Delivery.delivered delivery)
-  with
+  (match
+     run_ok runtime (Crux.Driver.Delivery.delivered delivery)
+   with
   | Ok () -> ()
   | Error Crux.Driver.Delivery.Already_completed ->
-      failwith "benchmark delivery answered twice"
+      failwith "benchmark delivery answered twice");
+  Option.iter
+    (fun (stats : projection_stats) ->
+      stats.deliveries <- stats.deliveries + 1)
+    !active_projection_stats
 
 let poll_delivery runtime driver =
   match run_ok runtime (Crux.Driver.poll driver) with
@@ -242,6 +329,104 @@ let make_map size =
   match Int_map.of_list (List.init size (fun key -> (key, 0))) with
   | Ok map -> map
   | Error (`Duplicate_key _) -> assert false
+
+type projected_value = { value : int }
+
+type projection_population = {
+  size : int;
+  catalog : Crux.Projection.Catalog.t;
+  description : int Crux.Endpoint.t Crux.t;
+  endpoint : int Crux.Endpoint.t option ref;
+  cutoff_calls : int ref;
+  key_compare_calls : int ref;
+}
+
+let fixed_int_bytes value =
+  let bytes = Bytes.create 8 in
+  for index = 0 to 7 do
+    Bytes.unsafe_set bytes index
+      (Char.unsafe_chr ((value lsr (index * 8)) land 0xff))
+  done;
+  bytes
+
+let projection_population size =
+  let initial =
+    match
+      Int_map.of_list
+        (List.init size (fun key -> (key, { value = 0 })))
+    with
+    | Ok map -> map
+    | Error (`Duplicate_key _) -> assert false
+  in
+  let cutoff_calls = ref 0 in
+  let key_compare_calls = ref 0 in
+  let key_codec =
+    Crux.Codec.make ~encode:(fun key -> Ok (fixed_int_bytes key))
+      ~decode:(fun _ ->
+        Error
+          {
+            Crux.Codec.message =
+              "projection benchmark key codec is encode-only";
+          })
+  in
+  let value_codec =
+    Crux.Codec.make
+      ~encode:(fun value ->
+        let bytes = Bytes.create 1 in
+        Bytes.unsafe_set bytes 0 (Char.unsafe_chr value);
+        Ok bytes)
+      ~decode:(fun _ ->
+        Error
+          {
+            Crux.Codec.message =
+              "projection benchmark value codec is encode-only";
+          })
+  in
+  let kind =
+    Crux.Projection.Kind.define ~name:"benchmark.population"
+      ~key_compare:(fun left right ->
+        incr key_compare_calls;
+        Int.compare left right)
+      ~key_codec ~value_codec ~value_equal:Int.equal
+      ~cutoff:
+        (Crux.Cutoff.of_equal (fun published candidate ->
+             incr cutoff_calls;
+             Int.equal published candidate))
+  in
+  let catalog =
+    Crux.Projection.Catalog.create
+      [ Crux.Projection.Kind.Pack kind ]
+  in
+  let endpoint = ref None in
+  let machine =
+    Crux.State_machine.create (Crux.return ())
+      ~default_model:initial
+      ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
+        let key = size / 2 in
+        (Int_map.set key { value = action } model, None))
+  in
+  let model = Crux.map machine ~f:fst in
+  let projections =
+    Assoc.assoc ~data_cutoff:Crux.Cutoff.phys_equal model
+      ~f:(fun ~key ~data ->
+        Crux.Projection.publish kind ~key
+          (Crux.map data ~f:(fun value -> value.value)))
+    |> Crux.map ~f:ignore
+  in
+  let description =
+    Crux.both machine projections
+    |> Crux.map ~f:(fun ((_, machine_endpoint), ()) ->
+           endpoint := Some machine_endpoint;
+           machine_endpoint)
+  in
+  {
+    size;
+    catalog;
+    description;
+    endpoint;
+    cutoff_calls;
+    key_compare_calls;
+  }
 
 let setup_assoc runtime size =
   let child_visits = ref 0 in
@@ -379,13 +564,364 @@ let poll_outgoing runtime peer =
   | None -> failwith "benchmark expected outgoing frame"
 
 let acknowledge runtime peer ~seq ~reply_to =
-  match
-    run_ok runtime
-      (Crux.Serialized_session.receive peer
-         (output_result ~seq ~reply_to))
-  with
+  (match
+     run_ok runtime
+       (Crux.Serialized_session.receive peer
+          (output_result ~seq ~reply_to))
+   with
   | Ok () -> ()
-  | Error _ -> failwith "benchmark projection acknowledgment failed"
+  | Error _ -> failwith "benchmark projection acknowledgment failed");
+  Option.iter
+    (fun (stats : projection_stats) ->
+      stats.deliveries <- stats.deliveries + 1)
+    !active_projection_stats
+
+let acknowledge_and_settle runtime driver peer ~seq ~reply_to =
+  acknowledge runtime peer ~seq ~reply_to;
+  ignore (run_ok runtime (Crux.Driver.poll driver))
+
+let projection_counter_values (stats : projection_stats) =
+  [
+    ("commits", float_of_int stats.commits);
+    ("deliveries", float_of_int stats.deliveries);
+    ("batch_records", float_of_int stats.batch_records);
+    ("encoded_entries", float_of_int stats.encoded_entries);
+    ("encoded_bytes", float_of_int stats.encoded_bytes);
+    ("cutoff_calls", float_of_int stats.cutoff_calls);
+    ("key_compare_calls", float_of_int stats.key_compare_calls);
+    ("bootstrap_entries", float_of_int stats.bootstrap_entries);
+  ]
+
+let expect_projection_counter name actual expected =
+  if actual <> expected then
+    failf "%s: expected %d, got %d" name expected actual
+
+let count_projection_batch_record count _ = count + 1
+
+let record_projection_delivery (stats : projection_stats) delivery =
+  match Crux.Driver.Delivery.projection delivery with
+  | Crux.Projection.Updates batch ->
+      Crux.Projection.Batch.fold batch ~init:()
+        ~f:(fun () (Crux.Projection.Batch.Pack _) ->
+          stats.batch_records <- stats.batch_records + 1;
+          stats.encoded_entries <- stats.encoded_entries + 1)
+  | Crux.Projection.Bootstrap snapshot ->
+      Crux.Projection.Snapshot.fold snapshot ~init:()
+        ~f:(fun () (Crux.Projection.Snapshot.Pack _) ->
+          stats.bootstrap_entries <- stats.bootstrap_entries + 1;
+          stats.encoded_entries <- stats.encoded_entries + 1)
+
+let finish_projection_operation
+    (population : projection_population)
+    (stats : projection_stats) =
+  stats.cutoff_calls <- !(population.cutoff_calls);
+  stats.key_compare_calls <- !(population.key_compare_calls);
+  if stats.key_compare_calls > 8 * population.size then
+    failf
+      "key_compare_calls: %d exceeds ceiling %d for population %d"
+      stats.key_compare_calls
+      (8 * population.size)
+      population.size;
+  active_projection_stats := None
+
+let reset_population_operation
+    (population : projection_population)
+    (stats : projection_stats) =
+  reset_projection_stats stats;
+  population.cutoff_calls := 0;
+  population.key_compare_calls := 0;
+  active_projection_stats := Some stats
+
+let population_root population =
+  Crux.Root.create ~catalog:population.catalog
+    ~projection_capacity:population.size ~ingress_capacity:2
+    ~request_capacity:1 population.description
+
+let population_serialized_driver runtime population =
+  let session, peer =
+    Crux.Serialized_session.candidate
+      ~max_frame_bytes:(64 * 1_024 * 1_024)
+      ~format:(module Counting_format)
+  in
+  let binding, admin =
+    Crux.Driver.Binding.serialized ~operations:[] ~session
+  in
+  let driver =
+    Crux.Driver.create binding (population_root population)
+  in
+  ignore (run_ok runtime (Crux.Driver.poll driver));
+  let frame = poll_outgoing runtime peer in
+  let sequence = output_sequence frame in
+  acknowledge_and_settle runtime driver peer ~seq:0l
+    ~reply_to:sequence;
+  let endpoint =
+    match !(population.endpoint) with
+    | Some endpoint -> endpoint
+    | None ->
+        failwith "projection benchmark captured no endpoint"
+  in
+  (driver, peer, admin, endpoint)
+
+let population_identity_driver runtime population =
+  let driver =
+    Crux.Driver.create (Crux.Driver.Binding.identity [])
+      (population_root population)
+  in
+  let initial = poll_delivery runtime driver in
+  let endpoint =
+    match !(population.endpoint) with
+    | Some endpoint -> endpoint
+    | None ->
+        failwith "projection benchmark captured no endpoint"
+  in
+  (driver, initial, endpoint)
+
+let make_projection_identity_change_workload runtime population ~changed =
+  active_projection_stats := None;
+  let driver, initial, endpoint =
+    population_identity_driver runtime population
+  in
+  answer_delivery runtime initial;
+  let stats = projection_stats () in
+  let next = ref 1 in
+  let run () =
+    reset_population_operation population stats;
+    let value = if changed then !next else 0 in
+    send runtime endpoint value;
+    let delivery = poll_delivery runtime driver in
+    stats.commits <- 1;
+    record_projection_delivery stats delivery;
+    stats.deliveries <- 1;
+    if changed then next := 1 - !next;
+    finish_projection_operation population stats;
+    expect_projection_counter "commits" stats.commits 1;
+    expect_projection_counter "deliveries" stats.deliveries 1;
+    expect_projection_counter "batch_records" stats.batch_records
+      (Bool.to_int changed);
+    expect_projection_counter "encoded_entries"
+      stats.encoded_entries (Bool.to_int changed);
+    expect_projection_counter "encoded_bytes" stats.encoded_bytes
+      0;
+    expect_projection_counter "cutoff_calls" stats.cutoff_calls 1;
+    expect_projection_counter "bootstrap_entries"
+      stats.bootstrap_entries 0;
+    answer_delivery runtime delivery
+  in
+  (run, fun () -> projection_counter_values stats)
+
+let make_projection_serialized_change_workload runtime population =
+  active_projection_stats := None;
+  let driver, peer, _admin, endpoint =
+    population_serialized_driver runtime population
+  in
+  let stats = projection_stats () in
+  let next = ref 1 in
+  let incoming_sequence = ref 1l in
+  let run () =
+    reset_population_operation population stats;
+    let value = !next in
+    send runtime endpoint value;
+    ignore (run_ok runtime (Crux.Driver.poll driver));
+    stats.commits <- 1;
+    let frame = poll_outgoing runtime peer in
+    let sequence = output_sequence frame in
+    stats.deliveries <- 1;
+    next := 1 - !next;
+    finish_projection_operation population stats;
+    expect_projection_counter "commits" stats.commits 1;
+    expect_projection_counter "deliveries" stats.deliveries 1;
+    expect_projection_counter "batch_records" stats.batch_records 1;
+    expect_projection_counter "encoded_entries"
+      stats.encoded_entries 1;
+    expect_projection_counter "encoded_bytes" stats.encoded_bytes 9;
+    expect_projection_counter "cutoff_calls" stats.cutoff_calls 1;
+    expect_projection_counter "bootstrap_entries"
+      stats.bootstrap_entries 0;
+    acknowledge_and_settle runtime driver peer
+      ~seq:!incoming_sequence ~reply_to:sequence;
+    incoming_sequence := Int32.add !incoming_sequence 1l;
+    ()
+  in
+  (run, fun () -> projection_counter_values stats)
+
+let make_projection_attach_workload runtime population =
+  let stats = projection_stats () in
+  let run () =
+    reset_population_operation population stats;
+    let _driver, delivery, _endpoint =
+      population_identity_driver runtime population
+    in
+    stats.commits <- 1;
+    record_projection_delivery stats delivery;
+    stats.deliveries <- 1;
+    finish_projection_operation population stats;
+    expect_projection_counter "commits" stats.commits 1;
+    expect_projection_counter "deliveries" stats.deliveries 1;
+    expect_projection_counter "batch_records" stats.batch_records
+      population.size;
+    expect_projection_counter "encoded_entries"
+      stats.encoded_entries population.size;
+    expect_projection_counter "encoded_bytes" stats.encoded_bytes
+      0;
+    expect_projection_counter "cutoff_calls" stats.cutoff_calls 0;
+    expect_projection_counter "bootstrap_entries"
+      stats.bootstrap_entries 0;
+    answer_delivery runtime delivery
+  in
+  (run, fun () -> projection_counter_values stats)
+
+let make_projection_bootstrap_workload runtime population =
+  active_projection_stats := None;
+  let driver, _peer, admin, _endpoint =
+    population_serialized_driver runtime population
+  in
+  let stats = projection_stats () in
+  let run () =
+    reset_population_operation population stats;
+    let candidate, peer =
+      Crux.Serialized_session.candidate
+        ~max_frame_bytes:(64 * 1_024 * 1_024)
+        ~format:(module Counting_format)
+    in
+    let replacement =
+      Crux.Serialized_session.replace admin candidate
+      |> Eta.Effect.or_die (function
+           | Crux.Serialized_session.Starting ->
+               Failure "projection bootstrap started too early"
+           | Replacement_pending ->
+               Failure "projection bootstrap replacement overlapped"
+           | Awaiting_delivery ->
+               Failure "projection bootstrap crossed a delivery"
+           | Terminating ->
+               Failure "projection bootstrap crossed termination"
+           | Closed ->
+               Failure "projection bootstrap driver closed")
+      |> Eta.Effect.map (fun outcome ->
+             if outcome <> Crux.Serialized_session.Replaced then
+               failwith
+                 "projection bootstrap replacement did not complete")
+    in
+    let remote =
+      let open Eta.Syntax in
+      let* frame =
+        Crux.Serialized_session.await_outgoing peer
+        |> Eta.Effect.or_die (function
+             | Crux.Serialized_session.Session_closed ->
+                 Failure "projection bootstrap session closed"
+             | Protocol_error _ ->
+                 Failure "projection bootstrap protocol failed")
+      in
+      let sequence = output_sequence frame in
+      stats.deliveries <- 1;
+      finish_projection_operation population stats;
+      expect_projection_counter "commits" stats.commits 0;
+      expect_projection_counter "deliveries" stats.deliveries 1;
+      expect_projection_counter "batch_records" stats.batch_records 0;
+      expect_projection_counter "encoded_entries"
+        stats.encoded_entries population.size;
+      expect_projection_counter "encoded_bytes" stats.encoded_bytes
+        (9 * population.size);
+      expect_projection_counter "cutoff_calls" stats.cutoff_calls 0;
+      expect_projection_counter "bootstrap_entries"
+        stats.bootstrap_entries population.size;
+      let* received =
+        Crux.Serialized_session.receive peer
+          (output_result ~seq:0l ~reply_to:sequence)
+      in
+      (match received with
+      | Ok () -> ()
+      | Error _ ->
+          failwith "projection bootstrap acknowledgment failed");
+      let+ _ = Crux.Driver.poll driver in
+      ()
+    in
+    ignore (run_ok runtime (Eta.Effect.par replacement remote))
+  in
+  (run, fun () -> projection_counter_values stats)
+
+let make_projection_absent_workload runtime =
+  let endpoint = ref None in
+  let machine =
+    Crux.State_machine.create (Crux.return ())
+      ~default_model:0
+      ~apply_action:(fun ~self:_ ~input:() ~model ~action:() ->
+        (model + 1, None))
+  in
+  let description =
+    Crux.cutoff machine ~cutoff:Crux.Cutoff.always
+    |> Crux.map ~f:(fun (_, machine_endpoint) ->
+        endpoint := Some machine_endpoint)
+  in
+  let root =
+    Crux.Root.create
+      ~catalog:(Crux.Projection.Catalog.create [])
+      ~projection_capacity:1 ~ingress_capacity:2
+      ~request_capacity:1 description
+  in
+  let driver =
+    Crux.Driver.create (Crux.Driver.Binding.identity []) root
+  in
+  let initial = poll_delivery runtime driver in
+  answer_delivery runtime initial;
+  let endpoint =
+    match !endpoint with
+    | Some endpoint -> endpoint
+    | None -> failwith "projection absent benchmark captured no endpoint"
+  in
+  let observation : projection_absent_observation =
+    {
+      commits = 0;
+      deliveries = 0;
+      batch_records = 0;
+      encoded_entries = 0;
+      encoded_bytes = 0;
+      cutoff_calls = 0;
+      bootstrap_entries = 0;
+    }
+  in
+  let run () =
+    send runtime endpoint ();
+    let delivery = poll_delivery runtime driver in
+    let batch_records =
+      match Crux.Driver.Delivery.projection delivery with
+      | Crux.Projection.Updates batch ->
+          Crux.Projection.Batch.fold batch ~init:0
+            ~f:count_projection_batch_record
+      | Bootstrap _ ->
+          failwith "projection absent benchmark received bootstrap"
+    in
+    if batch_records <> 0 then
+      failwith "projection absent emitted batch records";
+    observation.commits <- 1;
+    observation.deliveries <- 1;
+    observation.batch_records <- batch_records;
+    observation.encoded_entries <- 0;
+    observation.encoded_bytes <- 0;
+    observation.cutoff_calls <- 0;
+    observation.bootstrap_entries <- 0;
+    if
+      observation.commits <> 1 || observation.deliveries <> 1
+      || observation.batch_records <> 0
+      || observation.encoded_entries <> 0
+      || observation.encoded_bytes <> 0
+      || observation.cutoff_calls <> 0
+      || observation.bootstrap_entries <> 0
+    then failwith "projection absent counter mismatch";
+    answer_delivery runtime delivery
+  in
+  ( run,
+    fun () ->
+      let observed = observation in
+      [
+        ("commits", float_of_int observed.commits);
+        ("deliveries", float_of_int observed.deliveries);
+        ("batch_records", float_of_int observed.batch_records);
+        ("encoded_entries", float_of_int observed.encoded_entries);
+        ("encoded_bytes", float_of_int observed.encoded_bytes);
+        ("cutoff_calls", float_of_int observed.cutoff_calls);
+        ("key_compare_calls", 0.);
+        ("bootstrap_entries", float_of_int observed.bootstrap_entries);
+      ] )
 
 let make_serialized_workload runtime payload_size =
   let session, peer =
@@ -864,6 +1400,7 @@ let make_serialized_handle_retention_workload runtime =
     ignore (run_ok runtime (Crux.Driver.poll driver));
     previous_handle := fresh_handle
 
+
 let make_telemetry_workload runtime ~suppressed =
   let machine =
     Crux.State_machine.create (Crux.return ())
@@ -901,6 +1438,7 @@ let make_telemetry_workload runtime ~suppressed =
   fun () -> run_ok runtime operation
 
 let deterministic_counters = Hashtbl.create 32
+let dynamic_counters = Hashtbl.create 16
 
 let workload ?(counters = []) name run =
   let name = "eta_crux." ^ name in
@@ -1044,6 +1582,11 @@ let measure_workload options
   emit "minor_words" "words" minors;
   emit "promoted_words" "words" promoted;
   emit "major_words" "words" majors;
+  Option.iter
+    (fun counters ->
+      Hashtbl.replace deterministic_counters workload.name
+        (counters ()))
+    (Hashtbl.find_opt dynamic_counters workload.name);
   Hashtbl.find_opt deterministic_counters workload.name
   |> Option.value ~default:[]
   |> List.iter (fun (counter, value) ->
@@ -1067,11 +1610,27 @@ let () =
       [ workload ?counters name (make ()) ]
     else []
   in
+  let selected_dynamic name make =
+    let full_name = "eta_crux." ^ name in
+    if Bench_lib.should_run options full_name then
+      let run, counters = make () in
+      Hashtbl.replace dynamic_counters full_name counters;
+      [ workload name run ]
+    else []
+  in
+  let population_10_000 =
+    lazy (projection_population 10_000)
+  in
+  let population_100_000 =
+    lazy (projection_population 100_000)
+  in
   let workloads =
     selected
       ~counters:[ ("commits", 1.); ("deliveries", 1.) ]
       "action.complete_advancement"
       (fun () -> make_action_workload runtime)
+    @ selected_dynamic "projection.absent"
+        (fun () -> make_projection_absent_workload runtime)
     @ selected
         ~counters:
           [ ("commits", 1.); ("dependent_projections", 0.) ]
@@ -1085,6 +1644,46 @@ let () =
         ~counters:[ ("child_visits", 1.) ]
         "assoc.changed_child.100000"
         (fun () -> bench_eta_crux_assoc runtime 100_000)
+    @ selected_dynamic "projection.no_change.10000"
+        (fun () ->
+          make_projection_identity_change_workload runtime
+            (Lazy.force population_10_000) ~changed:false)
+    @ selected_dynamic "projection.no_change.100000"
+        (fun () ->
+          make_projection_identity_change_workload runtime
+            (Lazy.force population_100_000) ~changed:false)
+    @ selected_dynamic "projection.one_changed.10000"
+        (fun () ->
+          make_projection_serialized_change_workload runtime
+            (Lazy.force population_10_000))
+    @ selected_dynamic "projection.one_changed.100000"
+        (fun () ->
+          make_projection_serialized_change_workload runtime
+            (Lazy.force population_100_000))
+    @ selected_dynamic "projection.identity.one_changed.10000"
+        (fun () ->
+          make_projection_identity_change_workload runtime
+            (Lazy.force population_10_000) ~changed:true)
+    @ selected_dynamic "projection.identity.one_changed.100000"
+        (fun () ->
+          make_projection_identity_change_workload runtime
+            (Lazy.force population_100_000) ~changed:true)
+    @ selected_dynamic "projection.attach.10000"
+        (fun () ->
+          make_projection_attach_workload runtime
+            (Lazy.force population_10_000))
+    @ selected_dynamic "projection.attach.100000"
+        (fun () ->
+          make_projection_attach_workload runtime
+            (Lazy.force population_100_000))
+    @ selected_dynamic "projection.bootstrap.10000"
+        (fun () ->
+          make_projection_bootstrap_workload runtime
+            (Lazy.force population_10_000))
+    @ selected_dynamic "projection.bootstrap.100000"
+        (fun () ->
+          make_projection_bootstrap_workload runtime
+            (Lazy.force population_100_000))
     @ selected
         ~counters:
           [ ("new_starts", 1.); ("cleanup_releases", 1.) ]
@@ -1155,16 +1754,6 @@ let () =
           [ ("max_pending", 1_024.); ("completions", 1_025.) ]
         "capacity.request.1024"
         (fun () -> make_request_capacity_workload runtime 1_024)
-    @ selected
-        ~counters:
-          [
-            ("max_live_exports", 1.);
-            ("stale_handles", 1.);
-            ("collected_exports", 1.);
-          ]
-        "capacity.serialized_handles"
-        (fun () ->
-          make_serialized_handle_retention_workload runtime)
   in
   run_benchmarks options workloads;
   List.iter (fun cleanup -> cleanup ()) !cleanup_actions

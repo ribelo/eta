@@ -611,7 +611,11 @@ module Root = struct
       | None -> contribution_empty
       | Some previous -> previous.contribution
     in
-    if contribution_equal previous_contribution contribution then ([], [])
+    if
+      contribution_equal previous_contribution contribution
+      || contribution_equal_except_projections
+           previous_contribution contribution
+    then ([], [])
     else
     let works = contribution_items_to_list contribution.works in
     let previous_works =
@@ -814,12 +818,16 @@ module Root = struct
             List.iter (fun undo -> undo ()) staging.undos;
             Ok (fail_from_cause core trigger cause)
         | Eta.Exit.Ok frame ->
+            let previous_contribution =
+              match root.committed_frame with
+              | None -> contribution_empty
+              | Some previous -> previous.contribution
+            in
             let prepared =
               try
                 match
                   Projection.State.prepare root.projection
-                    (contribution_items_to_list
-                       frame.contribution.projections)
+                    frame.contribution.projections
                 with
                 | Ok prepared -> `Prepared prepared
                 | Error error -> `Preflight error
@@ -834,19 +842,28 @@ module Root = struct
                 Ok
                   (fail_from_exception core
                      Failure.Projection_preflight exn)
-            | `Prepared prepared -> (
-                match
+            | `Prepared prepared ->
+                (match
                   Eta.Sync_lock.use core.lock @@ fun () ->
                   match Atomic.get core.failure with
                   | Some failure -> Either.Left failure
                   | None ->
-                      let works, cancellations =
-                        install_frame core
-                          ~previous:root.committed_frame ~frame
+                      let contribution_unchanged =
+                        contribution_equal previous_contribution
+                          frame.contribution
                       in
-                      let works =
-                        List.rev_append (List.rev staging.works)
-                          works
+                      let works, cancellations =
+                        if contribution_unchanged then
+                          (List.rev staging.works, [])
+                        else
+                          let works, cancellations =
+                            install_frame core
+                              ~previous:root.committed_frame ~frame
+                          in
+                          ( List.rev_append
+                              (List.rev staging.works)
+                              works,
+                            cancellations )
                       in
                       root.committed_frame <- Some frame;
                       Projection.State.install root.projection prepared;

@@ -384,6 +384,72 @@ let test_projection_replacement () =
   | _ -> Alcotest.fail "replacement was not adjacent Removed/Attached");
   start runtime replacement.post_commit
 
+let test_projection_remove_last_identity () =
+  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  let endpoint = ref None in
+  let kind = int_kind "remove-last" in
+  let catalog =
+    Crux.Projection.Catalog.create [ Crux.Projection.Kind.Pack kind ]
+  in
+  let selector =
+    Crux.State_machine.create (Crux.return ()) ~default_model:true
+      ~apply_action:(fun ~self:_ ~input:() ~model:_ ~action ->
+        (action, None))
+  in
+  let selected =
+    Crux.map selector ~f:(fun (active, machine_endpoint) ->
+        endpoint := Some machine_endpoint;
+        active)
+  in
+  let description =
+    Crux.bind selected ~f:(fun active ->
+        if active then
+          Crux.Projection.publish kind ~key:() (Crux.return 1)
+          |> Crux.map ~f:ignore
+        else Crux.return ())
+  in
+  let root =
+    Crux.Root.create ~catalog ~projection_capacity:1
+      ~ingress_capacity:1 ~request_capacity:1 description
+  in
+  let initial = committed runtime root in
+  let initial_entry =
+    Crux.Projection.Snapshot.find_opt kind ~key:()
+      (Crux.Projection.Commit.snapshot initial.commit)
+    |> Option.get
+  in
+  start runtime initial.post_commit;
+  send runtime (Option.get !endpoint) false;
+  let removed = committed runtime root in
+  (match
+     Crux.Projection.Batch.find_opt kind ~key:()
+       (Crux.Projection.Commit.batch removed.commit)
+   with
+  | [ Crux.Projection.Removed { incarnation; _ } ] ->
+      Alcotest.(check bool) "removed incarnation matches old" true
+        (Crux.Projection.Incarnation.equal incarnation
+           initial_entry.incarnation)
+  | _ -> Alcotest.fail "removing the final identity emitted no removal");
+  Alcotest.(check bool) "target snapshot is empty" true
+    (Crux.Projection.Snapshot.find_opt kind ~key:()
+       (Crux.Projection.Commit.snapshot removed.commit)
+    = None);
+  start runtime removed.post_commit;
+  send runtime (Option.get !endpoint) false;
+  let unchanged_empty = committed runtime root in
+  start runtime unchanged_empty.post_commit;
+  send runtime (Option.get !endpoint) true;
+  let reattached = committed runtime root in
+  let reattached_entry =
+    Crux.Projection.Snapshot.find_opt kind ~key:()
+      (Crux.Projection.Commit.snapshot reattached.commit)
+    |> Option.get
+  in
+  Alcotest.(check bool) "reattachment has a fresh incarnation" false
+    (Crux.Projection.Incarnation.equal initial_entry.incarnation
+       reattached_entry.incarnation);
+  start runtime reattached.post_commit
+
 let test_projection_capacity_one_replacement () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let endpoint = ref None in
@@ -655,6 +721,8 @@ let () =
             test_projection_identity_collision;
           Alcotest.test_case "replacement" `Quick
             test_projection_replacement;
+          Alcotest.test_case "remove last identity" `Quick
+            test_projection_remove_last_identity;
           Alcotest.test_case "replacement capacity" `Quick
             test_projection_capacity_one_replacement;
           Alcotest.test_case "unknown kind" `Quick

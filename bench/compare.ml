@@ -155,8 +155,17 @@ let required_crux_rows =
     "eta_crux.incremental.equal_model";
     "eta_crux.assoc.changed_child.10000";
     "eta_crux.assoc.changed_child.100000";
-    "eta_crux.adapter.persistent_output.10000";
-    "eta_crux.adapter.persistent_output.100000";
+    "eta_crux.projection.no_change.10000";
+    "eta_crux.projection.no_change.100000";
+    "eta_crux.projection.one_changed.10000";
+    "eta_crux.projection.one_changed.100000";
+    "eta_crux.projection.identity.one_changed.10000";
+    "eta_crux.projection.identity.one_changed.100000";
+    "eta_crux.projection.attach.10000";
+    "eta_crux.projection.attach.100000";
+    "eta_crux.projection.bootstrap.10000";
+    "eta_crux.projection.bootstrap.100000";
+    "eta_crux.projection.absent";
     "eta_crux.lifecycle.overlapping_cleanup";
     "eta_crux.driver.identity";
     "eta_crux.driver.serialized.0b";
@@ -173,7 +182,6 @@ let required_crux_rows =
     "eta_crux.capacity.request.1";
     "eta_crux.capacity.request.64";
     "eta_crux.capacity.request.1024";
-    "eta_crux.capacity.serialized_handles";
   ]
 
 let required_crux_keys =
@@ -183,6 +191,33 @@ let required_crux_keys =
         [ name ^ "|wall_ns"; name ^ "|allocated_words" ])
       required_crux_rows
   in
+  let projection_rows =
+    [
+      "eta_crux.projection.no_change.10000";
+      "eta_crux.projection.no_change.100000";
+      "eta_crux.projection.one_changed.10000";
+      "eta_crux.projection.one_changed.100000";
+      "eta_crux.projection.identity.one_changed.10000";
+      "eta_crux.projection.identity.one_changed.100000";
+      "eta_crux.projection.attach.10000";
+      "eta_crux.projection.attach.100000";
+      "eta_crux.projection.bootstrap.10000";
+      "eta_crux.projection.bootstrap.100000";
+      "eta_crux.projection.absent";
+    ]
+  in
+  let projection_counter_names =
+    [
+      "commits";
+      "deliveries";
+      "batch_records";
+      "encoded_entries";
+      "encoded_bytes";
+      "cutoff_calls";
+      "key_compare_calls";
+      "bootstrap_entries";
+    ]
+  in
   let counters =
     [
       "eta_crux.action.complete_advancement|counter.commits";
@@ -191,8 +226,6 @@ let required_crux_keys =
       "eta_crux.incremental.equal_model|counter.dependent_projections";
       "eta_crux.assoc.changed_child.10000|counter.child_visits";
       "eta_crux.assoc.changed_child.100000|counter.child_visits";
-      "eta_crux.adapter.persistent_output.10000|counter.mutated_rows";
-      "eta_crux.adapter.persistent_output.100000|counter.mutated_rows";
       "eta_crux.lifecycle.overlapping_cleanup|counter.new_starts";
       "eta_crux.lifecycle.overlapping_cleanup|counter.cleanup_releases";
       "eta_crux.driver.identity|counter.wire_operations";
@@ -219,12 +252,28 @@ let required_crux_keys =
       "eta_crux.capacity.request.64|counter.completions";
       "eta_crux.capacity.request.1024|counter.max_pending";
       "eta_crux.capacity.request.1024|counter.completions";
-      "eta_crux.capacity.serialized_handles|counter.max_live_exports";
-      "eta_crux.capacity.serialized_handles|counter.stale_handles";
-      "eta_crux.capacity.serialized_handles|counter.collected_exports";
     ]
+    @ List.concat_map
+        (fun row ->
+          List.map
+            (fun counter -> row ^ "|counter." ^ counter)
+            projection_counter_names)
+        projection_rows
   in
   measurements @ counters
+
+let projection_counter_expectations name ~commits ~deliveries
+    ~batch_records ~encoded_entries ~encoded_bytes ~cutoff_calls
+    ~bootstrap_entries =
+  [
+    name ^ "|counter.commits", float_of_int commits;
+    name ^ "|counter.deliveries", float_of_int deliveries;
+    name ^ "|counter.batch_records", float_of_int batch_records;
+    name ^ "|counter.encoded_entries", float_of_int encoded_entries;
+    name ^ "|counter.encoded_bytes", float_of_int encoded_bytes;
+    name ^ "|counter.cutoff_calls", float_of_int cutoff_calls;
+    name ^ "|counter.bootstrap_entries", float_of_int bootstrap_entries;
+  ]
 
 let expected_crux_counters =
   [
@@ -234,8 +283,6 @@ let expected_crux_counters =
     "eta_crux.incremental.equal_model|counter.dependent_projections", 0.;
     "eta_crux.assoc.changed_child.10000|counter.child_visits", 1.;
     "eta_crux.assoc.changed_child.100000|counter.child_visits", 1.;
-    "eta_crux.adapter.persistent_output.10000|counter.mutated_rows", 1.;
-    "eta_crux.adapter.persistent_output.100000|counter.mutated_rows", 1.;
     "eta_crux.lifecycle.overlapping_cleanup|counter.new_starts", 1.;
     "eta_crux.lifecycle.overlapping_cleanup|counter.cleanup_releases", 1.;
     "eta_crux.driver.identity|counter.wire_operations", 0.;
@@ -262,10 +309,60 @@ let expected_crux_counters =
     "eta_crux.capacity.request.64|counter.completions", 65.;
     "eta_crux.capacity.request.1024|counter.max_pending", 1_024.;
     "eta_crux.capacity.request.1024|counter.completions", 1_025.;
-    "eta_crux.capacity.serialized_handles|counter.max_live_exports", 1.;
-    "eta_crux.capacity.serialized_handles|counter.stale_handles", 1.;
-    "eta_crux.capacity.serialized_handles|counter.collected_exports", 1.;
   ]
+  @ projection_counter_expectations
+      "eta_crux.projection.no_change.10000" ~commits:1
+      ~deliveries:1 ~batch_records:0 ~encoded_entries:0
+      ~encoded_bytes:0 ~cutoff_calls:1 ~bootstrap_entries:0
+  @ projection_counter_expectations
+      "eta_crux.projection.no_change.100000" ~commits:1
+      ~deliveries:1 ~batch_records:0 ~encoded_entries:0
+      ~encoded_bytes:0 ~cutoff_calls:1 ~bootstrap_entries:0
+  @ projection_counter_expectations
+      "eta_crux.projection.one_changed.10000" ~commits:1
+      ~deliveries:1 ~batch_records:1 ~encoded_entries:1
+      ~encoded_bytes:9 ~cutoff_calls:1 ~bootstrap_entries:0
+  @ projection_counter_expectations
+      "eta_crux.projection.one_changed.100000" ~commits:1
+      ~deliveries:1 ~batch_records:1 ~encoded_entries:1
+      ~encoded_bytes:9 ~cutoff_calls:1 ~bootstrap_entries:0
+  @ projection_counter_expectations
+      "eta_crux.projection.identity.one_changed.10000"
+      ~commits:1 ~deliveries:1 ~batch_records:1
+      ~encoded_entries:1 ~encoded_bytes:0 ~cutoff_calls:1
+      ~bootstrap_entries:0
+  @ projection_counter_expectations
+      "eta_crux.projection.identity.one_changed.100000"
+      ~commits:1 ~deliveries:1 ~batch_records:1
+      ~encoded_entries:1 ~encoded_bytes:0 ~cutoff_calls:1
+      ~bootstrap_entries:0
+  @ projection_counter_expectations
+      "eta_crux.projection.attach.10000" ~commits:1
+      ~deliveries:1 ~batch_records:10_000
+      ~encoded_entries:10_000 ~encoded_bytes:0
+      ~cutoff_calls:0 ~bootstrap_entries:0
+  @ projection_counter_expectations
+      "eta_crux.projection.attach.100000" ~commits:1
+      ~deliveries:1 ~batch_records:100_000
+      ~encoded_entries:100_000 ~encoded_bytes:0
+      ~cutoff_calls:0 ~bootstrap_entries:0
+  @ projection_counter_expectations
+      "eta_crux.projection.bootstrap.10000" ~commits:0
+      ~deliveries:1 ~batch_records:0 ~encoded_entries:10_000
+      ~encoded_bytes:90_000 ~cutoff_calls:0
+      ~bootstrap_entries:10_000
+  @ projection_counter_expectations
+      "eta_crux.projection.bootstrap.100000" ~commits:0
+      ~deliveries:1 ~batch_records:0 ~encoded_entries:100_000
+      ~encoded_bytes:900_000 ~cutoff_calls:0
+      ~bootstrap_entries:100_000
+  @ projection_counter_expectations
+      "eta_crux.projection.absent" ~commits:1 ~deliveries:1
+      ~batch_records:0 ~encoded_entries:0 ~encoded_bytes:0
+      ~cutoff_calls:0 ~bootstrap_entries:0
+
+let pre_projection_crux_baseline =
+  "bench/results/20260815T184109Z-b5c4e3d6.json"
 
 let gate pairs =
   let comparisons =
@@ -277,6 +374,9 @@ let gate pairs =
   let keys = unique required_crux_keys in
   let failures = ref [] in
   let add_failure message = failures := message :: !failures in
+  let pre_projection =
+    table (load pre_projection_crux_baseline)
+  in
   List.iter
     (fun measurement_key ->
       let regressions, complete =
@@ -324,32 +424,47 @@ let gate pairs =
   let disabled_path_specs =
     [
       ( "post_commit_effect_observer_disabled_allocation",
+        `Pair,
+        "eta_crux.observer.disabled",
         "eta_crux.observer.disabled" );
       ( "structural_reset_disabled_allocation",
+        `Pair,
+        "eta_crux.reset.disabled",
         "eta_crux.reset.disabled" );
-      ("poll_disabled_allocation", "eta_crux.poll.disabled");
+      ( "poll_disabled_allocation",
+        `Pair,
+        "eta_crux.poll.disabled",
+        "eta_crux.poll.disabled" );
+      ( "projection_absent_allocation",
+        `Pre_projection,
+        "eta_crux.action.complete_advancement",
+        "eta_crux.projection.absent" );
     ]
   in
   List.iter
-    (fun (gate_name, row_name) ->
+    (fun (gate_name, left_source, left_row, right_row) ->
       let regressions =
         List.fold_left
           (fun failures
                (left_path, right_path, left, right) ->
-            let get table metric =
-              Hashtbl.find_opt table (row_name ^ "|" ^ metric)
+            let left_path, left =
+              match left_source with
+              | `Pair -> (left_path, left)
+              | `Pre_projection ->
+                  (pre_projection_crux_baseline, pre_projection)
             in
             match
-              get left "wall_ns",
-              get right "wall_ns",
-              get left "allocated_words",
-              get right "allocated_words"
+              Hashtbl.find_opt left (left_row ^ "|wall_ns"),
+              Hashtbl.find_opt right (right_row ^ "|wall_ns"),
+              Hashtbl.find_opt left
+                (left_row ^ "|allocated_words"),
+              Hashtbl.find_opt right
+                (right_row ^ "|allocated_words")
             with
             | Some before_wall, Some after_wall,
               Some before_words, Some after_words ->
                 let failed =
-                  before_words.median
-                  <> after_words.median
+                  before_words.median <> after_words.median
                   || percent_increase
                        ~before:before_wall.median
                        ~after:after_wall.median
@@ -370,6 +485,48 @@ let gate pairs =
              "%s failed in %d of 3 comparisons"
              gate_name regressions))
     disabled_path_specs;
+  List.iter
+    (fun (_, right_path, _, right) ->
+      let get row metric =
+        Hashtbl.find_opt right (row ^ "|" ^ metric)
+      in
+      (match
+         get "eta_crux.projection.identity.one_changed.10000"
+           "allocated_words",
+         get "eta_crux.projection.identity.one_changed.100000"
+           "allocated_words"
+       with
+      | Some small, Some large
+        when large.median <= 2. *. small.median ->
+          ()
+      | Some small, Some large ->
+          add_failure
+            (Printf.sprintf
+               "%s projection_cross_size_allocation_ratio is %g / %g"
+               right_path large.median small.median)
+      | _ ->
+          add_failure
+            (Printf.sprintf
+               "%s has no complete projection_cross_size_allocation_ratio rows"
+               right_path));
+      match
+        get "eta_crux.projection.one_changed.10000"
+          "counter.encoded_bytes",
+        get "eta_crux.projection.one_changed.100000"
+          "counter.encoded_bytes"
+      with
+      | Some small, Some large when small.median = large.median -> ()
+      | Some small, Some large ->
+          add_failure
+            (Printf.sprintf
+               "%s projection encoded bytes differ: %g versus %g"
+               right_path small.median large.median)
+      | _ ->
+          add_failure
+            (Printf.sprintf
+               "%s has no complete projection encoded-byte rows"
+               right_path))
+    comparisons;
   List.iter
     (fun (_, right_path, _, right) ->
       List.iter

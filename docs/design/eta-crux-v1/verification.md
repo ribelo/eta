@@ -237,8 +237,20 @@ runtime identity. Idle polls and driver waits create no telemetry.
 
 ## Performance gates
 
-This ticket keeps benchmark compilation green. Projection performance workloads
-belong to the next ticket.
+The projection workloads use exact counters for semantic complexity. The
+counters measure batch records, encoded entries, encoded bytes, cutoff calls,
+key comparisons, bootstrap entries, commits, and deliveries.
+
+The workloads cover no change, one changed identity, initial attachment, session
+bootstrap, and an absent projection capability. The scaled workloads use 10,000
+and 100,000 active projections.
+
+The identity one-change rows carry the cutoff, batch, and allocation laws. The
+serialized one-change rows carry the format-boundary byte law.
+
+`bench/compare.exe --gate` checks the allocation ratio between the scaled
+one-change workloads. It also checks the absent-capability baseline and the
+recorded regression budgets.
 
 Use these commands for a local snapshot:
 

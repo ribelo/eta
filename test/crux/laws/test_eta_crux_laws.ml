@@ -3429,7 +3429,17 @@ let qcheck_latest_committed_snapshot =
             (match pulled with
             | Some (model, _) -> model = expected
             | None -> false)
-            && fst (output_of_delivery witness delivery) = expected
+            &&
+            (match
+               Eta_crux_test.Projection_harness.Opaque.delivery_value
+                 witness
+                 (Crux.Driver.Delivery.projection delivery)
+             with
+            | Some (model, _) -> model = expected
+            | None -> (
+                match pulled with
+                | Some (model, _) -> model = expected
+                | None -> false))
             && still_delivering && delivered
         | Some _ | None -> false
       in
@@ -3876,7 +3886,20 @@ let qcheck_post_commit_effect_observer_transparency =
               let delivery =
                 observer_delivery (run_ok (Crux.Driver.poll driver))
               in
-              let output, _ = output_of_delivery witness delivery in
+              let output =
+                match
+                  Eta_crux_test.Projection_harness.Opaque.delivery_value
+                    witness
+                    (Crux.Driver.Delivery.projection delivery)
+                with
+                | Some (output, _) -> output
+                | None -> (
+                    match latest_committed_snapshot witness driver with
+                    | Some (output, _) -> output
+                    | None ->
+                        failwith
+                          "observer transparency commit was not retained")
+              in
               complete_observer_delivery delivery;
               (output :: outputs, admitted && sent = Ok ()))
             ([ model ], true) actions
@@ -5237,7 +5260,16 @@ let law_switch () =
 let driver_output witness driver =
   match run_ok (Crux.Driver.poll driver) with
   | Some (Crux.Driver.Deliver delivery) ->
-      let output = output_of_delivery witness delivery in
+      let output =
+        match
+          Eta_crux_test.Projection_harness.Opaque.delivery_value
+            witness
+            (Crux.Driver.Delivery.projection delivery)
+        with
+        | Some output -> output
+        | None ->
+            Option.get (latest_committed_snapshot witness driver)
+      in
       (match run_ok (Crux.Driver.Delivery.delivered delivery) with
       | Ok () -> ()
       | Error Crux.Driver.Delivery.Already_completed ->
@@ -6067,6 +6099,7 @@ let qcheck_poll_transport_equivalence =
       in
       let serialized = Crux.Driver.create binding serialized_root in
       let ack_sequence = ref 0l in
+      let last_serialized = ref None in
       let serialized_output () =
         let rec drain attempts =
           match
@@ -6085,11 +6118,20 @@ let qcheck_poll_transport_equivalence =
         let frame = drain 8 in
         let sequence, output =
           match frame with
+          | Ok
+              (Crux.Wire.Frame.Projection_deliver
+                {
+                  seq;
+                  content = Crux.Wire.Frame.Updates [];
+                  _;
+                }) ->
+              (seq, Option.get !last_serialized)
           | Ok (Crux.Wire.Frame.Projection_deliver { seq; content; _ }) -> (
               let output = projection_content_value content in
-              seq,
               match Crux.Codec.decode int_codec output with
-              | Ok decoded -> decoded
+              | Ok decoded ->
+                  last_serialized := Some decoded;
+                  (seq, decoded)
               | Error _ -> failwith "serialized poll did not decode")
           | _ -> failwith "serialized binding emitted the wrong frame"
         in

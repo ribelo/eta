@@ -89,6 +89,10 @@ module Batch : sig
   val target_snapshot : t -> Snapshot.t
 end
 
+type delivery =
+  | Updates of Batch.t
+  | Bootstrap of Snapshot.t
+
 module Commit : sig
   type t
 
@@ -96,18 +100,17 @@ module Commit : sig
   val batch : t -> Batch.t
 end
 
-type delivery =
-  | Updates of Batch.t
-  | Bootstrap of Snapshot.t
-
 type occurrence
 type candidate =
   | Candidate : {
+      stamp : int;
       occurrence : occurrence;
       kind : ('key, 'value) Kind.t;
       key : 'key;
       value : 'value;
     } -> candidate
+
+type candidates
 
 val occurrence : unit -> occurrence
 
@@ -118,6 +121,16 @@ val candidate :
   'value ->
   candidate
 
+val candidates_empty : candidates
+val candidates_prepend : candidate -> candidates -> candidates
+val candidates_append : candidates -> candidates -> candidates
+val candidates_equal : candidates -> candidates -> bool
+val candidates_replace :
+  previous:candidates ->
+  current:candidates ->
+  candidates ->
+  candidates
+
 module State : sig
   type t
   type prepared
@@ -126,7 +139,7 @@ module State : sig
 
   val prepare :
     t ->
-    candidate list ->
+    candidates ->
     (prepared, preflight_error) result
 
   val commit : prepared -> Commit.t

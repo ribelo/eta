@@ -240,7 +240,7 @@ and contribution = {
   added_scopes : scope_state contribution_items;
   commit_hooks : (unit -> unit) contribution_items;
   added_revokers : (int * (unit -> unit)) contribution_items;
-  projections : Crux_projection.candidate contribution_items;
+  projections : Crux_projection.candidates;
 }
 
 and frame = {
@@ -308,7 +308,7 @@ let contribution_empty =
     added_scopes = Items_empty;
     commit_hooks = Items_empty;
     added_revokers = Items_empty;
-    projections = Items_empty;
+    projections = Crux_projection.candidates_empty;
   }
 
 let contribution_items_prepend item items =
@@ -343,7 +343,7 @@ let contribution_append (left : contribution) (right : contribution) :
     added_revokers =
       contribution_items_append left.added_revokers right.added_revokers;
     projections =
-      contribution_items_append left.projections right.projections;
+      Crux_projection.candidates_append left.projections right.projections;
   }
 
 (* Pure combining nodes rebuild a fresh contribution record on every publish
@@ -368,6 +368,9 @@ let contribution_equal (left : contribution) (right : contribution) =
      steady state short-circuits without allocating the same_by closures. *)
   left == right
   ||
+  Crux_projection.candidates_equal
+    (left : contribution).projections right.projections
+  &&
   let same_by same left right =
     (* Cons chains are the common manifest shape and compare with no pending
        stack at all; only append trees need the general zipper. *)
@@ -402,8 +405,14 @@ let contribution_equal (left : contribution) (right : contribution) =
        (left : contribution).commit_hooks right.commit_hooks
   && same_by ( == )
        (left : contribution).added_revokers right.added_revokers
-  && same_by ( == )
-       (left : contribution).projections right.projections
+
+let contribution_equal_except_projections
+    (left : contribution) (right : contribution) =
+  left.endpoints == right.endpoints
+  && left.works == right.works
+  && left.added_scopes == right.added_scopes
+  && left.commit_hooks == right.commit_hooks
+  && left.added_revokers == right.added_revokers
 
 let failure_record root ?cell ?endpoint ~origin ~trigger cause =
   ignore root;
@@ -699,6 +708,27 @@ let both left right =
            | Some (l, r, cached)
              when l == left_contribution && r == right_contribution ->
                cached
+           | Some (l, r, cached)
+             when
+               contribution_equal_except_projections
+                 l left_contribution
+               && contribution_equal_except_projections
+                    r right_contribution ->
+               let combined =
+                 {
+                   cached with
+                   projections =
+                     Crux_projection.candidates_append
+                       left_contribution.projections
+                       right_contribution.projections;
+                 }
+               in
+               contribution_cache :=
+                 Some
+                   ( left_contribution,
+                     right_contribution,
+                     combined );
+               combined
            | _ ->
                let combined =
                  contribution_append left_contribution right_contribution
@@ -750,7 +780,7 @@ let projection_publish kind ~key input =
            {
              contribution with
              projections =
-               contribution_items_prepend projection
+               Crux_projection.candidates_prepend projection
                  contribution.projections;
            } ))
        signal)
@@ -1715,6 +1745,9 @@ module Assoc = struct
          actually changes. The engine restores this accumulator when a
          stabilization rolls back, which is why the contribution channel does
          not need to be re-derived from a stale baseline diff. *)
+      let previous_contributions = ref M.empty in
+      let previous_aggregate = ref contribution_empty in
+      let projection_patch = ref None in
       let children =
         Keyed.mapi_fold_project
           ~data_cutoff:(Cutoff.to_signal data_cutoff)
@@ -1739,6 +1772,18 @@ module Assoc = struct
                   | Some (previous, scoped)
                     when contribution_equal previous contribution ->
                       scoped
+                  | Some (previous, scoped)
+                    when
+                      contribution_equal_except_projections
+                        previous contribution ->
+                      let scoped =
+                        {
+                          scoped with
+                          projections = contribution.projections;
+                        }
+                      in
+                      previous_contribution := Some (contribution, scoped);
+                      scoped
                   | Some _ | None ->
                       let scoped =
                         {
@@ -1755,21 +1800,55 @@ module Assoc = struct
               child)
           ~empty:(M.empty, M.empty)
           ~add:(fun key (value, contribution) (output, contributions) ->
-            ( M.set key value output,
-              match M.find_opt key contributions with
+            let previous = M.find_opt key contributions in
+            let base =
+              match !projection_patch with
+              | Some (patched, aggregate)
+                when patched == contributions ->
+                  Some aggregate
+              | Some _ | None
+                when contributions == !previous_contributions ->
+                  Some !previous_aggregate
+              | Some _ | None -> None
+            in
+            let contributions =
+              match previous with
               | Some current when current == contribution ->
-                  (* A value-only child change reuses the scoped contribution
-                     physically, so the slot already holds it. *)
                   contributions
-              | Some _ | None -> M.set key contribution contributions ))
+              | Some _ | None -> M.set key contribution contributions
+            in
+            projection_patch :=
+              (match previous, base with
+              | Some previous, Some aggregate
+                when
+                  contribution_equal_except_projections
+                    previous contribution ->
+                  Some
+                    ( contributions,
+                      {
+                        aggregate with
+                        projections =
+                          Crux_projection.candidates_replace
+                            ~previous:previous.projections
+                            ~current:contribution.projections
+                            aggregate.projections;
+                      } )
+              | Some _, Some _ | None, _ | _, None -> None);
+            (M.set key value output, contributions))
           ~remove:(fun key (output, contributions) ->
+            projection_patch := None;
             (M.remove key output, M.remove key contributions))
       in
-      let previous_contributions = ref M.empty in
-      let previous_aggregate = ref contribution_empty in
       let aggregate contributions =
         if contributions == !previous_contributions then !previous_aggregate
-        else begin
+        else
+          match !projection_patch with
+          | Some (patched, aggregate) when patched == contributions ->
+              previous_contributions := contributions;
+              previous_aggregate := aggregate;
+              projection_patch := None;
+              aggregate
+          | Some _ | None ->
           let aggregate =
             M.fold
               (fun _key contribution acc -> contribution_append acc contribution)
@@ -1777,8 +1856,8 @@ module Assoc = struct
           in
           previous_contributions := contributions;
           previous_aggregate := aggregate;
+          projection_patch := None;
           aggregate
-        end
       in
       (* The output contribution is a pure function of the input contribution
          and the aggregate; in the steady state both are physically stable, so
@@ -1790,6 +1869,24 @@ module Assoc = struct
         | Some (input, agg, cached)
           when input == input_contribution && agg == aggregate ->
             cached
+        | Some (input, previous_aggregate, cached)
+          when
+            contribution_equal_except_projections
+              input input_contribution
+            && contribution_equal_except_projections
+                 previous_aggregate aggregate ->
+            let combined =
+              {
+                cached with
+                projections =
+                  Crux_projection.candidates_append
+                    input_contribution.projections
+                    aggregate.projections;
+              }
+            in
+            previous_output_contribution :=
+              Some (input_contribution, aggregate, combined);
+            combined
         | _ ->
             let combined =
               contribution_append input_contribution aggregate

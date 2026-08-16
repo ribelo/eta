@@ -296,6 +296,22 @@ law. A property gate must state its generated class and observation boundary.
 | PRB-18 | An oversize bootstrap closes the new session, latches `Adapter_delivery`, and returns `Crashed`. | `test_projection_bootstrap_frame_too_large` |
 | PRB-19 | Initial session attachment has no bootstrap. The first commit sends `Attached` advancement updates. | `test_projection_initial_attach_no_bootstrap` |
 
+## Projection performance
+
+The registered executable suite is `bench_eta_crux.exe` with
+`bench/compare.exe --gate`.
+
+| ID | Law | Gate | Observation boundary | Binding |
+|---|---|---|---|---|
+| PRF-01 | A commit with no changed projection values emits no batch record and encodes no entry, independent of the active population. | `bench_projection_no_change` | The counters after one acknowledged delivery at 10,000 and 100,000 active projections. | `identity-only` |
+| PRF-02 | Projection cutoff work is proportional to the recomputed candidates. Each scaled change operation recomputes one candidate and calls one cutoff. | `bench_projection_no_change` and `bench_projection_identity_one_changed` | The `cutoff_calls` counter after one acknowledged identity delivery at each population size. | `identity-only` |
+| PRF-03 | Preflight identity validation allocates no words in its own walk. It uses at most eight key comparisons for each active projection. | `bench_projection_no_change` and the `[@zero_alloc]` compile gate | The checked walk, with catalog lookup and the caller's comparator as trusted indirect callees, and the `key_compare_calls` counter at each population size. | `identity-only` |
+| PRF-04 | Batch records and encoded entries are proportional to changed identities. One changed identity emits one of each. An initial attachment emits N of each. | `bench_projection_identity_one_changed` and `bench_projection_attach` | The batch and format counters after one acknowledged identity delivery. | `identity-only` |
+| PRF-05 | The retained snapshot is persistent. The 100,000-row one-change operation allocates at most twice the words of the 10,000-row operation. | `projection_cross_size_allocation_ratio` | The median `allocated_words` values of the identity one-change rows in one recorded result file. | `identity-only` |
+| PRF-06 | Encoded bytes are proportional to delivered batch entries. One changed entry has the same encoded-byte count at both population sizes. | `bench_projection_one_changed` | The byte counter at the format boundary after one acknowledged batch delivery. | `serialized-only` |
+| PRF-07 | A bootstrap uses one delivery, one entry for each active projection, and one acknowledgment. | `bench_projection_bootstrap` | The delivery and bootstrap counters after one session replacement. | `serialized-only` |
+| PRF-08 | An empty-catalog root with no publication allocates the same words as the recorded pre-projection advance-and-delivery baseline. | `projection_absent_allocation` and the `[@zero_alloc]` compile gates | The median words and wall time across three recorded run pairs. | `identity-only` |
+
 ## Observation and telemetry
 
 | ID | Law | Gate |
