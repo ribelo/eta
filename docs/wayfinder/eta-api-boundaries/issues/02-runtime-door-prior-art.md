@@ -1,7 +1,7 @@
 # Runtime-door prior art
 
 Type: research
-Status: claimed
+Status: resolved
 Blocked by:
 
 ## Question
@@ -22,3 +22,15 @@ Sources are primary only: `.reference/zio` and `.reference/effect-smol`.
 Cite file paths and lines for every claim.
 
 Write one cited report under `.scratch/research/eta-api-boundaries/`.
+
+## Answer
+
+Both libraries give the application door one root fiber, full structured
+cause rendering, and a lossy squash only at throwing boundaries. Effect-ts
+adds a distinct interrupt exit code (130); ZIO uses coarse 0 and 1. Both
+steer users to one shared runtime: ZIO documents a top-level runtime plus
+custom runtimes, and effect-ts ships `ManagedRuntime` with lazy, cached
+layer construction. Neither documents a numeric runtime-per-call cost. The
+report ends with eight "worth stealing" ideas for Eta's doors.
+
+See [the cited report](../../../../.scratch/research/eta-api-boundaries/02-runtime-door-prior-art.md).

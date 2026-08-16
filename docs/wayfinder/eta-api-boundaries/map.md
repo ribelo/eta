@@ -63,6 +63,8 @@ ordinary build work.
 
 ## Decisions so far
 
+- [Runtime-door prior art](issues/02-runtime-door-prior-art.md) — ZIO and effect-ts run one root-fiber door with full cause rendering and a distinct interrupt exit code, and both steer users to one shared runtime ([report](../../../../.scratch/research/eta-api-boundaries/02-runtime-door-prior-art.md)).
+
 ## Not yet specified
 
 - The real-I/O test story if [eta_test scope and real I/O](issues/05-eta-test-scope-and-real-io.md)
