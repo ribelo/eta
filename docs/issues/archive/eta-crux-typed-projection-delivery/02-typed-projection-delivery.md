@@ -598,10 +598,10 @@ re-run negative suite.
 **Race discipline.** `race_commit_atomicity`,
 `race_commit_vs_crash_both_winners`, `race_terminal_vs_delivery`,
 `race_pull_vs_commit_both_winners`, and `race_session_replacement` are amended;
-`race_replacement_vs_commit_both_winners` is new. Each controls both legal
-winners and finishes with an empty fiber census. Deterministic outcomes stay
-ordinary gates: replacement during a pending delivery, a commit with no live
-session, and replacement in the loss window.
+`race_terminal_vs_bootstrap` and `race_replacement_vs_commit_both_winners` are
+new. Each controls both legal winners and finishes with an empty fiber census.
+Deterministic outcomes stay ordinary gates: replacement during a pending
+delivery, a commit with no live session, and replacement in the loss window.
 
 **Inherited gaps closed here.** Three D-07 terminal pull gates, the five
 `test_replace_error_*` gates, and `test_session_replacement_permit_wait`.

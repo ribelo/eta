@@ -115,8 +115,9 @@ Ordered bottom-up; each item lands with its executable gates.
    (new, shared; serves W-01 and H-11); `race_commit_atomicity`,
    `race_commit_vs_crash_both_winners`, `race_terminal_vs_delivery`,
    `race_pull_vs_commit_both_winners`, and `race_session_replacement` amended
-   in place; `race_replacement_vs_commit_both_winners` new. Every race gate controls
-   both legal winners and finishes with an empty fiber census.
+   in place; `race_terminal_vs_bootstrap` and
+   `race_replacement_vs_commit_both_winners` new. Every race gate controls both
+   legal winners and finishes with an empty fiber census.
 9. **Registry** (`docs/design/eta-crux-v1/semantic-laws.md`): add PRJ-01 to
    PRJ-30, PRW-01 to PRW-20 plus PRW-22, PRB-01 to PRB-19, and H-09 to H-11;
    amend T-03, T-04, D-02, D-03, D-07, D-08, D-09, O-01, O-02, F-04, F-05,
@@ -331,7 +332,9 @@ seam](14-select-public-interface-and-seam.md).
   serves H-11)
 - T-04 and PRJ-23 — `race_commit_atomicity` (amended)
 - F-04 — `race_commit_vs_crash_both_winners` (amended)
-- D-03 and PRB-14 — `race_terminal_vs_delivery` (amended)
+- D-03 — `race_terminal_vs_delivery` (amended) and
+  `race_terminal_vs_bootstrap` (new)
+- PRB-14 — `race_terminal_vs_bootstrap` (new)
 - D-08 — `race_pull_vs_commit_both_winners` (amended)
 - W-08 — `race_session_replacement` (amended)
 - PRB-15 — `race_replacement_vs_commit_both_winners` (new)

@@ -287,23 +287,28 @@ module Projection_harness : sig
   end
 
   module Opaque : sig
+    type 'value t
+
     val root :
       ?post_commit_effect_observer:Eta_crux.Testing.post_commit_effect_observer ->
       projection_capacity:int ->
       ingress_capacity:int ->
       request_capacity:int ->
       'value Eta_crux.t ->
-      Eta_crux.Root.t
+      Eta_crux.Root.t * 'value t
 
     val snapshot_value :
+      'value t ->
       Eta_crux.Projection.Snapshot.t ->
       'value option
 
     val commit_value :
+      'value t ->
       Eta_crux.Projection.Commit.t ->
       'value option
 
     val delivery_value :
+      'value t ->
       Eta_crux.Projection.delivery ->
       'value option
   end

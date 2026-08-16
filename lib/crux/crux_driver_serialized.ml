@@ -7,25 +7,39 @@ module Host_operation = Crux_boundary.Host_operation
 module Request = Crux_boundary.Request
 module Wire = Crux_wire.Wire
 module Serialized_session = Crux_wire.Serialized_session
+module Projection = Crux_projection
 module Remote_registry = Crux_remote_registry
 
 let serialized_incoming (driver : t) =
   match driver.binding.mode with
   | Identity -> `Empty
-  | Serialized serialized -> (
-      match
-        Serialized_session.poll_incoming serialized.candidate
-      with
-      | `Closed ->
-          let first =
-            Eta.Sync_lock.use driver.lock @@ fun () ->
-            if serialized.closure_observed then false
+  | Serialized serialized ->
+      Eta.Sync_lock.use driver.lock @@ fun () ->
+      if serialized.replacement_installing || serialized.incoming_claimed then
+        `Empty
+      else
+        match
+          Serialized_session.poll_incoming serialized.candidate
+        with
+        | `Item _ as result ->
+            serialized.incoming_claimed <- true;
+            result
+        | `Closed ->
+            if serialized.closure_observed then `Empty
             else (
               serialized.closure_observed <- true;
-              true)
-          in
-          if first then `Closed else `Empty
-      | result -> result)
+              serialized.incoming_claimed <- true;
+              `Closed)
+        | (`Closed_with_error _ | `Empty) as result -> result
+
+let release_serialized_incoming (driver : t) =
+  Eta.Effect.sync (fun () ->
+      match driver.binding.mode with
+      | Identity -> ()
+      | Serialized serialized ->
+          Eta.Sync_lock.use driver.lock (fun () ->
+              serialized.incoming_claimed <- false);
+          wake driver)
 
 let fresh_request_token (driver : t) =
   Eta.Sync_lock.use driver.lock @@ fun () ->
@@ -56,24 +70,23 @@ let take_request_command (driver : t) sequence =
     Seq_map.remove sequence driver.request_commands;
   command
 
-let close_session_requests (driver : t) =
-  let events, inbound =
-    Eta.Sync_lock.use driver.lock @@ fun () ->
-    let events =
-      driver.remote_requests
-      |> String_map.bindings
-      |> List.map snd
-    in
-    driver.remote_requests <- String_map.empty;
-    let inbound =
-      driver.inbound_requests
-      |> String_map.bindings
-      |> List.map snd
-    in
-    driver.inbound_requests <- String_map.empty;
-    driver.request_commands <- Seq_map.empty;
-    (events, inbound)
+let take_session_requests_locked (driver : t) =
+  let events =
+    driver.remote_requests
+    |> String_map.bindings
+    |> List.map snd
   in
+  driver.remote_requests <- String_map.empty;
+  let inbound =
+    driver.inbound_requests
+    |> String_map.bindings
+    |> List.map snd
+  in
+  driver.inbound_requests <- String_map.empty;
+  driver.request_commands <- Seq_map.empty;
+  (events, inbound)
+
+let close_requests events inbound =
   let outbound =
     events
     |> List.map
@@ -91,6 +104,13 @@ let close_session_requests (driver : t) =
   |> Eta.Effect.concat
   |> Eta.Effect.map (fun () -> ())
 
+let close_session_requests (driver : t) =
+  let events, inbound =
+    Eta.Sync_lock.use driver.lock @@ fun () ->
+    take_session_requests_locked driver
+  in
+  close_requests events inbound
+
 let adapter_delivery_cause message =
   Failure.Packed_cause.make
     ~pp_error:Format.pp_print_string
@@ -103,6 +123,271 @@ let latch_adapter_delivery_failure (driver : t) cause =
        ~trigger:Failure.Projection_delivery cause);
   Eta.Sync_lock.use driver.root.core.lock @@ fun () ->
   Option.get (Atomic.get driver.root.core.failure)
+
+let prepare_remote_handles (driver : t)
+    (serialized : serialized_binding) registry =
+  let exports =
+    Eta.Sync_lock.use driver.root.core.lock @@ fun () ->
+    driver.root.core.boundary_exports
+  in
+  Eta.Sync_lock.use serialized.registry_lock @@ fun () ->
+  Remote_registry.synchronize registry exports;
+  Remote_registry.handles registry
+
+let remote_handles driver serialized registry =
+  let handles = prepare_remote_handles driver serialized registry in
+  fun f ->
+    with_remote_handles
+      (fun identity -> Int_map.find_opt identity handles)
+      f
+
+let encode_entry with_handles kind
+    (entry : (_, _) Projection.entry) =
+  match Codec.encode (Projection.Kind.key_codec kind) entry.key with
+  | Error (error : Codec.encode_error) -> Error error.message
+  | Ok key -> (
+      match
+        with_handles (fun () ->
+            Codec.encode
+              (Projection.Kind.value_codec kind)
+              entry.value)
+      with
+      | Error (error : Codec.encode_error) -> Error error.message
+      | Ok value ->
+          Ok
+            {
+              Wire.Frame.kind = Projection.Kind.name kind;
+              key;
+              incarnation =
+                Projection.Incarnation.to_int64 entry.incarnation;
+              value;
+            })
+
+let encode_snapshot driver serialized registry snapshot =
+  let with_handles = remote_handles driver serialized registry in
+  Projection.Snapshot.fold snapshot ~init:(Ok [])
+    ~f:(fun encoded (Projection.Snapshot.Pack (kind, entry)) ->
+      match encoded with
+      | Error _ as error -> error
+      | Ok reversed -> (
+          match encode_entry with_handles kind entry with
+          | Error _ as error -> error
+          | Ok entry -> Ok (entry :: reversed)))
+  |> Result.map List.rev
+
+let encode_batch driver serialized registry batch =
+  let with_handles = remote_handles driver serialized registry in
+  Projection.Batch.fold batch ~init:(Ok [])
+    ~f:(fun encoded (Projection.Batch.Pack (kind, update)) ->
+      match encoded with
+      | Error _ as error -> error
+      | Ok reversed -> (
+          match update with
+          | Projection.Attached entry -> (
+              match encode_entry with_handles kind entry with
+              | Error _ as error -> error
+              | Ok entry ->
+                  Ok (Wire.Frame.Attached entry :: reversed))
+          | Projection.Changed entry -> (
+              match encode_entry with_handles kind entry with
+              | Error _ as error -> error
+              | Ok entry ->
+                  Ok (Wire.Frame.Changed entry :: reversed))
+          | Projection.Removed { key; incarnation } -> (
+              match Codec.encode (Projection.Kind.key_codec kind) key with
+              | Error (error : Codec.encode_error) -> Error error.message
+              | Ok key ->
+                  Ok
+                    (Wire.Frame.Removed
+                       {
+                         kind = Projection.Kind.name kind;
+                         key;
+                         incarnation =
+                           Projection.Incarnation.to_int64 incarnation;
+                       }
+                    :: reversed))))
+  |> Result.map List.rev
+
+let encode_projection driver serialized registry = function
+  | Projection.Updates batch ->
+      encode_batch driver serialized registry batch
+      |> Result.map (fun updates -> Wire.Frame.Updates updates)
+  | Projection.Bootstrap snapshot ->
+      encode_snapshot driver serialized registry snapshot
+      |> Result.map (fun entries -> Wire.Frame.Bootstrap entries)
+
+let encoded_projection_or_delivery_cause driver serialized registry projection =
+  match encode_projection driver serialized registry projection with
+  | Ok content -> Ok content
+  | Error message -> Error (adapter_delivery_cause message)
+
+let send_advancement driver serialized projection =
+  try
+    match
+      encoded_projection_or_delivery_cause driver serialized
+        serialized.registry projection
+    with
+    | Error cause -> Error cause
+    | Ok content -> (
+        match
+          Serialized_session.send serialized.candidate (fun seq ->
+              Wire.Frame.Projection_deliver
+                {
+                  seq;
+                  reason = `Advancement;
+                  content;
+                })
+        with
+        | Ok reply_to -> Ok reply_to
+        | Error _ ->
+            Error
+              (adapter_delivery_cause
+                 "serialized session closed during projection delivery"))
+  with exn ->
+    Error
+      (Failure.Packed_cause.make
+         ~pp_error:(fun _ (value : never) -> absurd value)
+         (Eta.Cause.die exn))
+
+let replace_session (driver : t) (serialized : serialized_binding)
+    candidate =
+  let open Eta.Syntax in
+  let initiate =
+    let rec claim_snapshot () =
+      let* claim =
+        Eta.Effect.sync (fun () ->
+            Eta.Sync_lock.use driver.lock @@ fun () ->
+            if serialized.replacement_pending then
+              `Error Serialized_session.Replacement_pending
+            else if serialized.incoming_claimed then `Retry
+            else
+              match driver.state, driver.last_snapshot with
+              | Advancing, _ -> `Retry
+              | Closed_done, _ -> `Error Serialized_session.Closed
+              | (Crash_detected_pending _ | Crash_notifying _
+                | Crash_teardown _ | Crash_settled_pending _
+                | Crash_settled_notifying _ | Crash_closed_pending _
+                | Stopped_closed_pending),
+                _ ->
+                  `Error Serialized_session.Terminating
+              | Delivering _, _ | Replacement_delivering _, _ ->
+                  `Error Serialized_session.Awaiting_delivery
+              | Running, None -> `Error Serialized_session.Starting
+              | Running, Some snapshot ->
+                  serialized.replacement_pending <- true;
+                  serialized.replacement_installing <- true;
+                  `Snapshot snapshot)
+      in
+      match claim with
+      | `Snapshot snapshot -> Eta.Effect.pure snapshot
+      | `Error error -> Eta.Effect.fail error
+      | `Retry ->
+          let* () = Eta.Effect.yield in
+          claim_snapshot ()
+    in
+    let* snapshot = claim_snapshot () in
+    let candidate_claimed = ref false in
+    let body =
+      let* registry =
+        Eta.Effect.sync (fun () ->
+            Eta.Sync_lock.use driver.lock @@ fun () ->
+            if serialized.next_session = Int64.max_int then
+              invalid_arg
+                "Eta_crux.Driver: serialized session identity exhausted";
+            let registry =
+              Remote_registry.create
+                ~session:serialized.next_session
+                ~authentication_key:serialized.authentication_key
+            in
+            serialized.next_session <-
+              Int64.add serialized.next_session 1L;
+            registry)
+      in
+      let* () =
+        Eta.Effect.sync (fun () ->
+            if not (Serialized_session.claim candidate) then
+              invalid_arg
+                "Eta_crux.Serialized_session.replace: candidate claimed";
+            candidate_claimed := true;
+            Serialized_session.set_wake candidate (fun () ->
+                wake driver))
+      in
+      let failed_completion cause =
+        let failure = latch_adapter_delivery_failure driver cause in
+        Serialized_session.close candidate;
+        Eta.Sync_lock.use driver.lock (fun () ->
+            serialized.replacement_pending <- false;
+            serialized.replacement_installing <- false);
+        let completion = Eta.Promise.create () in
+        let+ _ =
+          Eta.Promise.resolve completion
+            (Eta.Exit.Ok (Serialized_session.Crashed failure))
+        in
+        completion
+      in
+      let* encoded =
+        Eta.Effect.sync (fun () ->
+            try
+              encoded_projection_or_delivery_cause driver serialized
+                registry (Projection.Bootstrap snapshot)
+            with exn ->
+              Error
+                (Failure.Packed_cause.make
+                   ~pp_error:(fun _ (value : never) -> absurd value)
+                   (Eta.Cause.die exn)))
+      in
+      match encoded with
+      | Error cause -> failed_completion cause
+      | Ok encoded ->
+          let* installed =
+            Eta.Effect.sync (fun () ->
+                let completion = Eta.Promise.create () in
+                Eta.Sync_lock.use driver.lock (fun () ->
+                    Serialized_session.close serialized.candidate;
+                    match
+                      Serialized_session.send candidate (fun seq ->
+                          Wire.Frame.Projection_deliver
+                            {
+                              seq;
+                              reason = `Session_replacement;
+                              content = encoded;
+                            })
+                    with
+                    | Error _ -> Error ()
+                    | Ok reply_to ->
+                        let requests, inbound =
+                          take_session_requests_locked driver
+                        in
+                        serialized.candidate <- candidate;
+                        serialized.registry <- registry;
+                        serialized.closure_observed <- false;
+                        serialized.replacement_installing <- false;
+                        driver.state <-
+                          Replacement_delivering
+                            (reply_to, completion);
+                        Ok (completion, requests, inbound)))
+          in
+          (match installed with
+          | Error () ->
+              failed_completion
+                (adapter_delivery_cause
+                   "serialized replacement projection delivery failed")
+          | Ok (completion, requests, inbound) ->
+              let+ () = close_requests requests inbound in
+              completion)
+    in
+    body
+    |> Eta.Effect.map_error (fun (value : never) -> absurd value)
+    |> Eta.Effect.on_error (fun _ ->
+           Eta.Effect.sync (fun () ->
+               if !candidate_claimed then
+                 Serialized_session.close candidate;
+               Eta.Sync_lock.use driver.lock (fun () ->
+                   serialized.replacement_pending <- false;
+                   serialized.replacement_installing <- false)))
+  in
+  let* completion = Eta.Effect.uninterruptible initiate in
+  Eta.Promise.await completion |> Eta.Effect.map_error absurd
 
 let handle_session_closed (driver : t) =
   let open Eta.Syntax in

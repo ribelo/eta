@@ -21,6 +21,8 @@ type request_command =
 type serialized_binding = {
   mutable candidate : Serialized_session.candidate;
   mutable replacement_pending : bool;
+  mutable replacement_installing : bool;
+  mutable incoming_claimed : bool;
   authentication_key : string;
   mutable next_session : int64;
   mutable registry : Remote_registry.t;

@@ -2,26 +2,27 @@ module Crux = Eta_crux
 module Projection = Eta_crux_test.Projection_harness.Opaque
 module Typed_projection = Eta_crux_test.Projection_harness
 
-let output_of_delivery delivery =
+let output_of_delivery witness delivery =
   Eta_crux_test.Projection_harness.Opaque.delivery_value
+    witness
     (Crux.Driver.Delivery.projection delivery)
   |> Option.get
 
-let output_of_commit commit =
-  Eta_crux_test.Projection_harness.Opaque.commit_value commit
+let output_of_commit witness commit =
+  Eta_crux_test.Projection_harness.Opaque.commit_value witness commit
   |> Option.get
 
-let latest_committed_snapshot driver =
+let latest_committed_snapshot witness driver =
   Option.bind (Crux.Driver.latest_committed_snapshot driver)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
-let handle_latest_committed_snapshot handle =
+let handle_latest_committed_snapshot witness handle =
   Option.bind (Eta_crux_test.Handle.latest_committed_snapshot handle)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
-let handle_latest_delivered_snapshot handle =
+let handle_latest_delivered_snapshot witness handle =
   Option.bind (Eta_crux_test.Handle.latest_delivered_snapshot handle)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
 let projection_content_value = function
   | Crux.Wire.Frame.Bootstrap (entry :: _) -> entry.value
@@ -42,9 +43,9 @@ let projection_content_value = function
 let run_ok runtime eff =
   Eta.Runtime.run runtime eff |> Eta_test.Expect.expect_ok
 
-let committed = function
+let committed witness = function
   | Ok (Crux.Root.Committed { commit; post_commit }) ->
-      let output = output_of_commit commit in
+      let output = output_of_commit witness commit in
       (output, post_commit)
   | _ -> Alcotest.fail "expected committed advancement"
 
@@ -85,9 +86,10 @@ let stop_driver runtime driver =
 
 let race_ingress_close_vs_send_both_winners () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
-  let send_winner_root = counter_root () in
+  let send_winner_root, send_winner_witness = counter_root () in
   let (_, send_winner_endpoint), initial_post =
-    committed (run_ok runtime (Crux.Root.advance send_winner_root))
+    committed send_winner_witness
+      (run_ok runtime (Crux.Root.advance send_winner_root))
   in
   start runtime initial_post;
   let admitted = Eta.Promise.create () in
@@ -114,9 +116,10 @@ let race_ingress_close_vs_send_both_winners () =
   | Ok (Crux.Root.Stopped { post_commit }) -> start runtime post_commit
   | _ -> Alcotest.fail "send-winner root did not stop");
 
-  let close_winner_root = counter_root () in
+  let close_winner_root, close_winner_witness = counter_root () in
   let (_, close_winner_endpoint), initial_post =
-    committed (run_ok runtime (Crux.Root.advance close_winner_root))
+    committed close_winner_witness
+      (run_ok runtime (Crux.Root.advance close_winner_root))
   in
   start runtime initial_post;
   let closed = Eta.Promise.create () in
@@ -146,11 +149,11 @@ let race_ingress_close_vs_send_both_winners () =
 
 let race_batch_start_exactly_once () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return ())
   in
-  let _, post_commit = committed (run_ok runtime (Crux.Root.advance root)) in
+  let _, post_commit = committed witness (run_ok runtime (Crux.Root.advance root)) in
   let attempt = Eta.Effect.to_result (Crux.Post_commit.start post_commit) in
   let left, right = run_ok runtime (Eta.Effect.par attempt attempt) in
   let admitted =
@@ -199,10 +202,10 @@ let race_failure_observation_order () =
          (Crux.return
             (failing_program second_entered second_finished "second child")))
   in
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1 description
   in
-  let _, initial_post = committed (run_ok runtime (Crux.Root.advance root)) in
+  let _, initial_post = committed witness (run_ok runtime (Crux.Root.advance root)) in
   start runtime initial_post;
   let release_both =
     let open Eta.Syntax in
@@ -253,15 +256,15 @@ let race_commit_vs_crash_both_winners () =
     let export =
       Crux.Exported_endpoint.create crashing_endpoint ~codec:unit_codec
     in
-    let root =
+    let root, witness =
       Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
         (Crux.both machine export)
     in
     let ((_, endpoint), crashing_export), initial_post =
-      committed (run_ok runtime (Crux.Root.advance root))
+      committed witness (run_ok runtime (Crux.Root.advance root))
     in
     start runtime initial_post;
-    (root, endpoint, crashing_export, before_apply)
+    (root, witness, endpoint, crashing_export, before_apply)
   in
   let trigger_crash export =
     match Crux.Exported_endpoint.try_invoke export () with
@@ -272,7 +275,7 @@ let race_commit_vs_crash_both_winners () =
           (Printexc.to_string exn)
   in
 
-  let fatal_root, fatal_endpoint, fatal_export, before_apply =
+  let fatal_root, _fatal_witness, fatal_endpoint, fatal_export, before_apply =
     make_root ()
   in
   before_apply := (fun () -> trigger_crash fatal_export);
@@ -289,7 +292,7 @@ let race_commit_vs_crash_both_winners () =
   | Crux.Post_commit.Crash_settled _ -> ()
   | _ -> Alcotest.fail "fatal winner did not settle as crash");
 
-  let commit_root, commit_endpoint, commit_export, _ =
+  let commit_root, commit_witness, commit_endpoint, commit_export, _ =
     make_root ()
   in
   run_ok runtime
@@ -297,7 +300,8 @@ let race_commit_vs_crash_both_winners () =
     |> Eta.Effect.or_die (function
          | Crux.Endpoint.Ingress_closed -> Failure "ingress closed"));
   let committed_output, committed_post =
-    committed (run_ok runtime (Crux.Root.advance commit_root))
+    committed commit_witness
+      (run_ok runtime (Crux.Root.advance commit_root))
   in
   let (committed_model, _), _ = committed_output in
   trigger_crash commit_export;
@@ -343,11 +347,11 @@ let race_commit_atomicity () =
                    (Failure
                       "provisional graph failed before atomic commit")))
   in
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
       (Crux.both selector selected)
   in
-  let initial, initial_post = committed (run_ok runtime (Crux.Root.advance root)) in
+  let initial, initial_post = committed witness (run_ok runtime (Crux.Root.advance root)) in
   start runtime initial_post;
   let (_, selector_endpoint), selected_output = initial in
   Alcotest.(check bool) "initial retained branch" true
@@ -413,20 +417,21 @@ let race_export_permit_vs_commit_both_winners () =
       Crux.bind (Crux.map selector ~f:fst) ~f:(fun enabled ->
           if enabled then active else Crux.return None)
     in
-    let root =
+    let root, witness =
       Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
         (Crux.both selector selected)
     in
-    let initial, initial_post = committed (run_ok runtime (Crux.Root.advance root)) in
+    let initial, initial_post = committed witness (run_ok runtime (Crux.Root.advance root)) in
     start runtime initial_post;
     let ((_, selector_endpoint), export) = initial in
     ( root,
+      witness,
       selector_endpoint,
       Option.get export,
       during_encode )
   in
 
-  let invoke_root, selector_endpoint, export, during_encode =
+  let invoke_root, _invoke_witness, selector_endpoint, export, during_encode =
     make_root ()
   in
   run_ok runtime
@@ -452,12 +457,17 @@ let race_export_permit_vs_commit_both_winners () =
   | _ -> Alcotest.fail "pinned old binding did not retain old incarnation");
   stop runtime invoke_root;
 
-  let commit_root, selector_endpoint, export, _ = make_root () in
+  let commit_root, commit_witness, selector_endpoint, export, _ =
+    make_root ()
+  in
   run_ok runtime
     (Crux.Endpoint.send selector_endpoint false
     |> Eta.Effect.or_die (function
          | Crux.Endpoint.Ingress_closed -> Failure "ingress closed"));
-  let _, removal_post = committed (run_ok runtime (Crux.Root.advance commit_root)) in
+  let _, removal_post =
+    committed commit_witness
+      (run_ok runtime (Crux.Root.advance commit_root))
+  in
   start runtime removal_post;
   Alcotest.(check bool) "commit winner revokes export" true
     (Crux.Exported_endpoint.try_invoke export 3
@@ -481,7 +491,7 @@ let request_race_fixture runtime =
     Crux.Driver.Binding.identity
       [ Crux.Host_operation.Pack operation ]
   in
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return ())
   in
@@ -731,9 +741,9 @@ let race_resolve_vs_cancel_both_winners () =
     (cancellation = Some Crux.Request.Initiator_cancelled)
 
 let race_terminal_vs_delivery () =
-  Eta_test.with_test_clock @@ fun _switch _clock runtime ->
+  Eta_test.with_test_clock @@ fun switch _clock runtime ->
   let stop_work_started = ref false in
-  let stop_root =
+  let stop_root, stop_witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.both (Crux.return 7)
          (Crux.lifecycle
@@ -753,7 +763,7 @@ let race_terminal_vs_delivery () =
   Alcotest.(check bool) "stop preserves pending delivery" true
     (run_ok runtime (Crux.Driver.poll stop_driver) = None);
   Alcotest.(check int) "committed stop output preserved" 7
-    (fst (output_of_delivery stop_delivery));
+    (fst (output_of_delivery stop_witness stop_delivery));
   Alcotest.(check bool) "stop answer accepted" true
     (run_ok runtime
        (Crux.Driver.Delivery.delivered stop_delivery)
@@ -792,7 +802,7 @@ let race_terminal_vs_delivery () =
                (Eta.Effect.sync (fun () ->
                     crash_work_started := true)))))
   in
-  let crash_root =
+  let crash_root, crash_witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1 description
   in
   let crash_driver =
@@ -804,7 +814,7 @@ let race_terminal_vs_delivery () =
     | _ -> Alcotest.fail "crash case did not produce delivery"
   in
   let (committed_model, _), (export, _) =
-    output_of_delivery crash_delivery
+    output_of_delivery crash_witness crash_delivery
   in
   (match Crux.Exported_endpoint.try_invoke export 1 with
   | _ -> Alcotest.fail "export crash callback did not raise"
@@ -833,6 +843,297 @@ let race_terminal_vs_delivery () =
         (Crux.Driver.Crashed { teardown_settled = true; _ })) ->
       ()
   | _ -> Alcotest.fail "crash did not settle after delivery answer");
+  let run_answer_first terminal =
+    let codec =
+      Crux.Codec.make
+        ~encode:(fun value -> Ok (Bytes.of_string (string_of_int value)))
+        ~decode:(fun bytes ->
+          match int_of_string_opt (Bytes.to_string bytes) with
+          | Some value -> Ok value
+          | None -> Error { Crux.Codec.message = "invalid integer" })
+    in
+    let machine =
+      Crux.State_machine.create (Crux.return ()) ~default_model:0
+        ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
+          (model + action, None))
+    in
+    let crashing =
+      Crux.Exported_endpoint.create
+        (Crux.map machine ~f:(fun (_, endpoint) ->
+             Crux.Endpoint.contramap endpoint ~f:(fun (_ : int) ->
+                 raise (Failure "answer-first crash"))))
+        ~codec
+    in
+    let root, witness =
+      Projection.root ~projection_capacity:1 ~ingress_capacity:1
+        ~request_capacity:1
+        (Crux.both machine
+           (Crux.both crashing
+              (Crux.lifecycle (Crux.return Eta.Effect.never))))
+    in
+    let driver =
+      Crux.Driver.create (Crux.Driver.Binding.identity []) root
+    in
+    let delivery =
+      match run_ok runtime (Crux.Driver.poll driver) with
+      | Some (Crux.Driver.Deliver delivery) -> delivery
+      | _ -> Alcotest.fail "answer-first fixture did not deliver"
+    in
+    let (_, _), (export, _) = output_of_delivery witness delivery in
+    let answering =
+      Eta_test.Async.fork_run switch runtime
+        (Crux.Driver.Delivery.delivered delivery)
+    in
+    let answer = Eta_test.Async.await answering in
+    (match terminal with
+    | `Stop -> Crux.Driver.request_stop driver
+    | `Crash -> (
+        match Crux.Exported_endpoint.try_invoke export 1 with
+        | _ -> Alcotest.fail "answer-first crash callback did not raise"
+        | exception Failure _ -> ()
+        | exception exn ->
+            Alcotest.failf "unexpected answer-first exception: %s"
+              (Printexc.to_string exn)));
+    Alcotest.(check bool) "answer-first delivery completed" true
+      (answer = Eta.Exit.Ok (Ok ()));
+    match terminal with
+    | `Stop -> (
+        match run_ok runtime (Crux.Driver.poll driver) with
+        | Some (Crux.Driver.Closed Crux.Driver.Stopped) -> ()
+        | _ -> Alcotest.fail "answer-first stop did not settle")
+    | `Crash ->
+        (match run_ok runtime (Crux.Driver.poll driver) with
+        | Some (Crux.Driver.Crash_detected _) -> ()
+        | _ -> Alcotest.fail "answer-first crash was not detected");
+        (match run_ok runtime (Crux.Driver.poll driver) with
+        | Some
+            (Crux.Driver.Closed
+              (Crux.Driver.Crashed { teardown_settled = true; _ })) ->
+            ()
+        | _ -> Alcotest.fail "answer-first crash did not settle")
+  in
+  run_answer_first `Stop;
+  run_answer_first `Crash;
+  Eta.Runtime.drain runtime
+
+let race_terminal_vs_bootstrap () =
+  Eta_test.with_test_clock @@ fun switch _clock runtime ->
+  let codec =
+    Crux.Codec.make
+      ~encode:(fun value -> Ok (Bytes.of_string (string_of_int value)))
+      ~decode:(fun bytes ->
+        match int_of_string_opt (Bytes.to_string bytes) with
+        | Some value -> Ok value
+        | None -> Error { Crux.Codec.message = "invalid integer" })
+  in
+  let rec outgoing peer attempts =
+    match run_ok runtime (Crux.Serialized_session.poll_outgoing peer) with
+    | Some bytes -> (
+        match Eta_crux_json.Format.decode bytes with
+        | Ok frame -> frame
+        | Error _ -> Alcotest.fail "bootstrap race frame did not decode")
+    | None when attempts = 0 ->
+        Alcotest.fail "bootstrap race frame did not arrive"
+    | None ->
+        Eio.Fiber.yield ();
+        outgoing peer (attempts - 1)
+  in
+  let receive peer frame =
+    run_ok runtime
+      (Crux.Serialized_session.receive peer
+         (Eta_crux_json.Format.encode frame))
+  in
+  let run_case ~terminal_first terminal =
+    let started = ref false in
+    let finalized = ref false in
+    let export = ref None in
+    let lifecycle =
+      (let open Eta.Syntax in
+       let* () = Eta.Effect.sync (fun () -> started := true) in
+       Eta.Effect.never)
+      |> Eta.Effect.finally
+           (Eta.Effect.sync (fun () -> finalized := true))
+    in
+    let machine =
+      Crux.State_machine.create (Crux.return ()) ~default_model:0
+        ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
+          (model + action, None))
+    in
+    let crashing =
+      Crux.Exported_endpoint.create
+        (Crux.map machine ~f:(fun (_, endpoint) ->
+             Crux.Endpoint.contramap endpoint ~f:(fun (_ : int) ->
+                 raise (Failure "bootstrap race crash"))))
+        ~codec
+    in
+    let description =
+      Crux.map
+        (Crux.both machine
+           (Crux.both crashing
+              (Crux.lifecycle (Crux.return lifecycle))))
+        ~f:(fun ((model, _), (crashing, ())) ->
+          export := Some crashing;
+          model)
+    in
+    let projection =
+      Typed_projection.create ~name:"terminal-bootstrap"
+        ~codec ~value_equal:Int.equal ~cutoff:Crux.Cutoff.never
+    in
+    let old_candidate, old_peer =
+      Crux.Serialized_session.candidate ~max_frame_bytes:8_192
+        ~format:(module Eta_crux_json.Format)
+    in
+    let binding, admin =
+      Crux.Driver.Binding.serialized ~operations:[]
+        ~session:old_candidate
+    in
+    let root =
+      Typed_projection.root projection ~projection_capacity:1
+        ~ingress_capacity:1 ~request_capacity:1 description
+    in
+    let driver = Crux.Driver.create binding root in
+    ignore (run_ok runtime (Crux.Driver.poll driver));
+    let initial_sequence =
+      match outgoing old_peer 100 with
+      | Crux.Wire.Frame.Projection_deliver
+          { seq; reason = `Advancement; _ } ->
+          seq
+      | _ -> Alcotest.fail "bootstrap race initial delivery was malformed"
+    in
+    Alcotest.(check bool) "initial result accepted" true
+      (receive old_peer
+         (Crux.Wire.Frame.Projection_result
+            {
+              seq = 0l;
+              reply_to = initial_sequence;
+              result = `Accepted;
+            })
+      = Ok ());
+    ignore (run_ok runtime (Crux.Driver.poll driver));
+    let rec await_started attempts =
+      if !started then ()
+      else if attempts = 0 then
+        Alcotest.fail "bootstrap race lifecycle did not start"
+      else (
+        Eio.Fiber.yield ();
+        await_started (attempts - 1))
+    in
+    await_started 100;
+    let candidate, peer =
+      Crux.Serialized_session.candidate ~max_frame_bytes:8_192
+        ~format:(module Eta_crux_json.Format)
+    in
+    let replacement =
+      Eta_test.Async.fork_run switch runtime
+        (Crux.Serialized_session.replace admin candidate
+        |> Eta.Effect.or_die (fun _ ->
+               Failure "bootstrap race replacement was rejected"))
+    in
+    let bootstrap_sequence =
+      match outgoing peer 100 with
+      | Crux.Wire.Frame.Projection_deliver
+          {
+            seq;
+            reason = `Session_replacement;
+            content = Bootstrap _;
+          } ->
+          seq
+      | _ -> Alcotest.fail "bootstrap race did not reach the result wait"
+    in
+    Alcotest.(check bool) "bootstrap wait installed before publication" true
+      (run_ok runtime (Crux.Driver.poll driver) = None);
+    let trigger_terminal () =
+      match terminal with
+      | `Stop -> Crux.Driver.request_stop driver
+      | `Crash -> (
+          match
+            Crux.Exported_endpoint.try_invoke
+              (Option.get !export) 1
+          with
+          | _ -> Alcotest.fail "bootstrap race crash callback did not raise"
+          | exception Failure _ -> ()
+          | exception exn ->
+              Alcotest.failf "unexpected bootstrap race exception: %s"
+                (Printexc.to_string exn))
+    in
+    let answer () =
+      Alcotest.(check bool) "bootstrap result accepted" true
+        (receive peer
+           (Crux.Wire.Frame.Projection_result
+              {
+                seq = 0l;
+                reply_to = bootstrap_sequence;
+                result = `Accepted;
+              })
+        = Ok ())
+    in
+    let replacement_outcome =
+      if terminal_first then (
+        trigger_terminal ();
+        Alcotest.(check bool) "terminal waits behind bootstrap answer" true
+          (run_ok runtime (Crux.Driver.poll driver) = None);
+        Alcotest.(check bool) "terminal cleanup has not started" false
+          !finalized;
+        answer ();
+        ignore (run_ok runtime (Crux.Driver.poll driver));
+        Eta_test.Async.await replacement)
+      else (
+        answer ();
+        Alcotest.(check bool) "answer-first bootstrap poll stayed internal" true
+          (run_ok runtime (Crux.Driver.poll driver) = None);
+        let outcome = Eta_test.Async.await replacement in
+        Alcotest.(check bool) "answer-first replacement completed" true
+          (outcome = Eta.Exit.Ok Crux.Serialized_session.Replaced);
+        trigger_terminal ();
+        Alcotest.(check bool) "answer-first cleanup has not started" false
+          !finalized;
+        outcome)
+    in
+    (match terminal_first, terminal, replacement_outcome with
+    | true, `Stop, Eta.Exit.Ok Crux.Serialized_session.Stopped -> ()
+    | true, `Crash, Eta.Exit.Ok (Crux.Serialized_session.Crashed failure) ->
+        Alcotest.(check bool) "replacement retained root crash" true
+          (failure.primary.origin = Crux.Failure.Export_dispatch)
+    | false, (`Stop | `Crash), Eta.Exit.Ok Crux.Serialized_session.Replaced ->
+        ()
+    | _ -> Alcotest.fail "replacement returned the wrong terminal outcome");
+    (match terminal with
+    | `Stop -> (
+        match run_ok runtime (Crux.Driver.poll driver) with
+        | Some (Crux.Driver.Closed Crux.Driver.Stopped) -> ()
+        | _ -> Alcotest.fail "stopped bootstrap replacement did not close")
+    | `Crash ->
+        ignore (run_ok runtime (Crux.Driver.poll driver));
+        let crash_sequence =
+          match outgoing peer 100 with
+          | Crux.Wire.Frame.Crash_notify { seq; _ } -> seq
+          | _ ->
+              Alcotest.fail
+                "bootstrap replacement did not report its crash"
+        in
+        Alcotest.(check bool) "crash result accepted" true
+          (receive peer
+             (Crux.Wire.Frame.Crash_result
+                {
+                  seq = 1l;
+                  reply_to = crash_sequence;
+                  result = `Accepted;
+                })
+          = Ok ());
+        ignore (run_ok runtime (Crux.Driver.poll driver));
+        (match run_ok runtime (Crux.Driver.poll driver) with
+        | Some
+            (Crux.Driver.Closed
+              (Crux.Driver.Crashed { teardown_settled = true; _ })) ->
+            ()
+        | _ -> Alcotest.fail "crashed bootstrap replacement did not close"));
+    Alcotest.(check bool) "terminal cleanup completed after answer" true
+      !finalized
+  in
+  run_case ~terminal_first:true `Stop;
+  run_case ~terminal_first:true `Crash;
+  run_case ~terminal_first:false `Stop;
+  run_case ~terminal_first:false `Crash;
   Eta.Runtime.drain runtime
 
 let race_session_replacement () =
@@ -1288,8 +1589,9 @@ let race_test_clock_movement_both_winners () =
 let race_driver_attachment_both_winners () =
   Eta_test.with_test_clock @@ fun switch _clock _runtime ->
   let make_root value =
-    Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
-      (Crux.return value)
+    fst
+      (Projection.root ~projection_capacity:1 ~ingress_capacity:1
+         ~request_capacity:1 (Crux.return value))
   in
   let attach binding root =
     try
@@ -1379,12 +1681,13 @@ let race_handle_shared_clock_movement_both_winners () =
     }
   in
   let make_handle clock =
-    let root =
+    let root, witness =
       Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
         (Crux.return ())
     in
-    Eta_crux_test.Handle.create ~clock
-      ~incoming:Eta_crux_test.Incoming.none ~shell root
+    ( Eta_crux_test.Handle.create ~clock
+        ~incoming:Eta_crux_test.Incoming.none ~shell root,
+      witness )
   in
   let move handle kind ~winner =
     match kind with
@@ -1396,7 +1699,7 @@ let race_handle_shared_clock_movement_both_winners () =
           (if winner then 20 else 30)
   in
   let expected_time = function `By -> 10 | `To -> 20 in
-  let expect_initial_frame handle =
+  let expect_initial_frame witness handle =
     match run_ok runtime (Eta_crux_test.Handle.frame handle) with
     | Ok
         {
@@ -1404,14 +1707,14 @@ let race_handle_shared_clock_movement_both_winners () =
             Eta_crux_test.Handle.Committed snapshot;
           _;
         }
-      when Projection.snapshot_value snapshot = Some () ->
+      when Projection.snapshot_value witness snapshot = Some () ->
         ()
     | _ -> Alcotest.fail "handle did not advance after clock movement"
   in
   let run_case ~winner_on_left ~winner_kind ~loser_kind =
     let clock = Eta_test.Test_clock.create () in
-    let left = make_handle clock in
-    let right = make_handle clock in
+    let left, left_witness = make_handle clock in
+    let right, right_witness = make_handle clock in
     let winner = if winner_on_left then left else right in
     let loser = if winner_on_left then right else left in
     let winner_entered, entered_resolver = Eio.Promise.create () in
@@ -1448,11 +1751,11 @@ let race_handle_shared_clock_movement_both_winners () =
       (expected_time winner_kind)
       (Eta_test.Test_clock.now_ms clock);
     Alcotest.(check (option unit)) "movement did not advance left root"
-      None (handle_latest_committed_snapshot left);
+      None (handle_latest_committed_snapshot left_witness left);
     Alcotest.(check (option unit)) "movement did not advance right root"
-      None (handle_latest_committed_snapshot right);
-    expect_initial_frame left;
-    expect_initial_frame right;
+      None (handle_latest_committed_snapshot right_witness right);
+    expect_initial_frame left_witness left;
+    expect_initial_frame right_witness right;
     ignore (run_ok runtime (Eta_crux_test.Handle.stop left));
     ignore (run_ok runtime (Eta_crux_test.Handle.stop right))
   in
@@ -1477,7 +1780,7 @@ let race_pull_vs_commit_both_winners () =
         ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
           (model + action, None))
     in
-    let root =
+    let root, witness =
       Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
         machine
     in
@@ -1492,7 +1795,7 @@ let race_pull_vs_commit_both_winners () =
     ignore
       (run_ok runtime
          (Crux.Driver.Delivery.delivered initial));
-    let _, endpoint = output_of_delivery initial in
+    let _, endpoint = output_of_delivery witness initial in
     ignore
       (run_ok runtime
          (Crux.Endpoint.send endpoint 1
@@ -1518,7 +1821,7 @@ let race_pull_vs_commit_both_winners () =
     in
     Eio.Promise.await entered;
     let pulled =
-      latest_committed_snapshot driver
+      latest_committed_snapshot witness driver
       |> Option.map fst
     in
     Eio.Promise.resolve release_resolver ();
@@ -1541,7 +1844,7 @@ let race_pull_vs_commit_both_winners () =
     Alcotest.(check (option int)) "atomic pull result"
       (Some expected) pulled;
     Alcotest.(check int) "complete delivered output" 1
-      (fst (output_of_delivery delivery));
+      (fst (output_of_delivery witness delivery));
     ignore
       (run_ok runtime
          (Crux.Driver.Delivery.delivered delivery));
@@ -1565,7 +1868,7 @@ let race_post_commit_effect_observer_read_both_winners () =
   let run_case ~nonempty ~winner ~loser =
     let observer = Observer.create () in
     if nonempty then (
-      let root =
+      let root, witness =
         Projection.root ~projection_capacity:1
           ~post_commit_effect_observer:(Observer.attachment observer)
           ~ingress_capacity:1 ~request_capacity:1
@@ -1661,12 +1964,12 @@ let race_reset_vs_disposal_both_winners () =
                   ~f:(fun (reset, _) ->
                     (selector_endpoint, Some reset))))
     in
-    let root =
+    let root, witness =
       Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
         description
     in
     let (selector_endpoint, reset), post =
-      committed (run_ok runtime (Crux.Root.advance root))
+      committed witness (run_ok runtime (Crux.Root.advance root))
     in
     start runtime post;
     (root, selector_endpoint, Option.get reset, resets)
@@ -1763,12 +2066,12 @@ let race_poll_completion_vs_disposal_both_winners () =
               ~f:(fun (result, refresh) ->
                 (selector_endpoint, Some (result, refresh))))
     in
-    let root =
+    let root, witness =
       Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
         description
     in
     let (selector, poll), initial_post =
-      committed (run_ok runtime (Crux.Root.advance root))
+      committed witness (run_ok runtime (Crux.Root.advance root))
     in
     start runtime initial_post;
     let _, refresh = Option.get poll in
@@ -1778,25 +2081,25 @@ let race_poll_completion_vs_disposal_both_winners () =
          |> Eta.Effect.or_die (fun _ ->
                 Invalid_argument "refresh ingress closed")));
     let _, trigger_post =
-      committed (run_ok runtime (Crux.Root.advance root))
+      committed witness (run_ok runtime (Crux.Root.advance root))
     in
     start runtime trigger_post;
     let call =
       run_ok runtime (Eta_test.Controlled.await_call controlled)
     in
-    (root, selector, call)
+    (root, witness, selector, call)
   in
-  let commit root =
+  let commit witness root =
     match run_ok runtime (Crux.Root.advance root) with
     | Ok (Crux.Root.Committed { commit; post_commit }) ->
-        let output = output_of_commit commit in
+        let output = output_of_commit witness commit in
         start runtime post_commit;
         `Committed output
     | Ok (Crux.Root.Rejected Crux.Root.Stale_endpoint) -> `Stale
     | _ -> Alcotest.fail "unexpected Poll disposal outcome"
   in
   let run_case ~completion_first result =
-    let root, selector, call = make_fixture () in
+    let root, witness, selector, call = make_fixture () in
     let entered, entered_resolver = Eio.Promise.create () in
     let release, release_resolver = Eio.Promise.create () in
     let admitted, admitted_resolver = Eio.Promise.create () in
@@ -1835,20 +2138,20 @@ let race_poll_completion_vs_disposal_both_winners () =
       .set_after_completion_admission previous_after
     in
     if completion_first then (
-      (match commit root with
+      (match commit witness root with
       | `Committed (_, Some (Some selected, _))
         when selected = result ->
           ()
       | _ -> Alcotest.fail "completion did not win before disposal");
-      match commit root with
+      match commit witness root with
       | `Committed (_, None) -> ()
       | _ -> Alcotest.fail "disposal did not follow completion")
     else (
-      (match commit root with
+      (match commit witness root with
       | `Committed (_, None) -> ()
       | _ -> Alcotest.fail "disposal did not win");
       Alcotest.(check bool) "old completion fenced" true
-        (commit root = `Stale))
+        (commit witness root = `Stale))
   in
   run_case ~completion_first:true 10;
   run_case ~completion_first:false 20
@@ -1876,6 +2179,8 @@ let () =
             race_resolve_vs_cancel_both_winners;
           Alcotest.test_case "terminal vs delivery" `Quick
             race_terminal_vs_delivery;
+          Alcotest.test_case "terminal vs bootstrap" `Quick
+            race_terminal_vs_bootstrap;
           Alcotest.test_case "session replacement" `Quick
             race_session_replacement;
           Alcotest.test_case "session replacement permit wait" `Quick

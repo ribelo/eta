@@ -1,26 +1,27 @@
 module Crux = Eta_crux
 module Projection = Eta_crux_test.Projection_harness.Opaque
 
-let output_of_delivery delivery =
+let output_of_delivery witness delivery =
   Eta_crux_test.Projection_harness.Opaque.delivery_value
+    witness
     (Crux.Driver.Delivery.projection delivery)
   |> Option.get
 
-let output_of_commit commit =
-  Eta_crux_test.Projection_harness.Opaque.commit_value commit
+let output_of_commit witness commit =
+  Eta_crux_test.Projection_harness.Opaque.commit_value witness commit
   |> Option.get
 
-let latest_committed_snapshot driver =
+let latest_committed_snapshot witness driver =
   Option.bind (Crux.Driver.latest_committed_snapshot driver)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
-let handle_latest_committed_snapshot handle =
+let handle_latest_committed_snapshot witness handle =
   Option.bind (Eta_crux_test.Handle.latest_committed_snapshot handle)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
-let handle_latest_delivered_snapshot handle =
+let handle_latest_delivered_snapshot witness handle =
   Option.bind (Eta_crux_test.Handle.latest_delivered_snapshot handle)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 module Observer = Eta_crux_test.Post_commit_effect_observer
 
 let run_ok runtime effect =
@@ -33,11 +34,11 @@ let start runtime post_commit =
        |> Eta.Effect.or_die (fun Crux.Post_commit.Already_started ->
               Invalid_argument "post-commit already started")))
 
-let committed runtime root =
+let committed runtime witness root =
   match run_ok runtime (Crux.Root.advance root) with
   | Ok (Crux.Root.Committed committed) ->
       start runtime committed.post_commit;
-      output_of_commit committed.commit
+      output_of_commit witness committed.commit
   | _ -> Alcotest.fail "expected committed reset advancement"
 
 let send runtime endpoint action =
@@ -91,26 +92,26 @@ let test_reset_snapshot_atomicity_and_effect_inventory () =
         and+ (left, right) = Crux.both left right in
         (authority, left, right))
   in
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1
       ~post_commit_effect_observer:(Observer.attachment observer)
       ~ingress_capacity:4 ~request_capacity:1 description
   in
   let authority, (left_model, left_endpoint),
       (right_model, right_endpoint) =
-    committed runtime root
+    committed runtime witness root
   in
   Alcotest.(check (pair int int)) "initial models" (1, 10)
     (left_model, right_model);
   ignore (Observer.drain observer);
   send runtime left_endpoint 3;
-  ignore (committed runtime root);
+  ignore (committed runtime witness root);
   send runtime right_endpoint 30;
-  ignore (committed runtime root);
+  ignore (committed runtime witness root);
   ignore (Observer.drain observer);
   reset runtime authority;
   let _, (left_model, _), (right_model, _) =
-    committed runtime root
+    committed runtime witness root
   in
   Alcotest.(check (pair int int)) "one atomic reset output"
     (103, 1_030) (left_model, right_model);
@@ -157,31 +158,31 @@ let test_nested_reset_scope_boundary () =
         and+ inner = inner in
         (outer_reset, outer, inner))
   in
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:4 ~request_capacity:1
       description
   in
   let outer_reset, (outer_model, outer_endpoint),
       (inner_reset, (inner_model, inner_endpoint)) =
-    committed runtime root
+    committed runtime witness root
   in
   Alcotest.(check (pair int int)) "nested initial" (1, 10)
     (outer_model, inner_model);
   send runtime outer_endpoint 2;
-  ignore (committed runtime root);
+  ignore (committed runtime witness root);
   send runtime inner_endpoint 20;
-  ignore (committed runtime root);
+  ignore (committed runtime witness root);
   reset runtime inner_reset;
   let _, (outer_model, _), (_, (inner_model, _)) =
-    committed runtime root
+    committed runtime witness root
   in
   Alcotest.(check (pair int int)) "inner reset stayed inside"
     (2, 10) (outer_model, inner_model);
   send runtime inner_endpoint 30;
-  ignore (committed runtime root);
+  ignore (committed runtime witness root);
   reset runtime outer_reset;
   let _, (outer_model, _), (_, (inner_model, _)) =
-    committed runtime root
+    committed runtime witness root
   in
   Alcotest.(check (pair int int)) "outer reset reached nested scope"
     (1, 10) (outer_model, inner_model)
@@ -202,16 +203,16 @@ let test_stale_reset_is_rejected_after_disposal () =
                   (selector_endpoint, Some reset)))
         else Crux.return (selector_endpoint, None))
   in
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
       description
   in
   let selector_endpoint, authority =
-    committed runtime root
+    committed runtime witness root
   in
   let authority = Option.get authority in
   send runtime selector_endpoint false;
-  ignore (committed runtime root);
+  ignore (committed runtime witness root);
   reset runtime authority;
   match run_ok runtime (Crux.Root.advance root) with
   | Ok (Crux.Root.Rejected Crux.Root.Stale_reset) -> ()
@@ -249,7 +250,7 @@ let test_reset_callback_rollback () =
         in
         Crux.both reset machine)
   in
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1
       ~post_commit_effect_observer:(Observer.attachment observer)
       ~ingress_capacity:2 ~request_capacity:1 description
@@ -260,7 +261,7 @@ let test_reset_callback_rollback () =
   let deliver () =
     match run_ok runtime (Crux.Driver.poll driver) with
     | Some (Crux.Driver.Deliver delivery) ->
-        let output = output_of_delivery delivery in
+        let output = output_of_delivery witness delivery in
         ignore
           (run_ok runtime
              (Crux.Driver.Delivery.delivered delivery));
@@ -291,7 +292,7 @@ let test_reset_callback_rollback () =
            record.model_snapshot);
       Alcotest.(check (option int)) "prior committed frame retained"
         (Some 7)
-        (latest_committed_snapshot driver
+        (latest_committed_snapshot witness driver
         |> Option.map (fun (_, (model, _)) -> model));
       Observer.expect_empty observer
   | _ -> Alcotest.fail "reset callback failure did not fail root"
@@ -328,12 +329,12 @@ let test_reset_effect_discarded_with_owner () =
         in
         Crux.both reset (Crux.both selector child))
   in
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1
       ~post_commit_effect_observer:(Observer.attachment observer)
       ~ingress_capacity:1 ~request_capacity:1 description
   in
-  let authority, _ = committed runtime root in
+  let authority, _ = committed runtime witness root in
   ignore (Observer.drain observer);
   reset runtime authority;
   let post_commit =

@@ -188,7 +188,7 @@ law. A property gate must state its generated class and observation boundary.
 | F-08 | Diagnostic hooks run only during fatal record construction. Hook failure appends `Crash_handler` evidence and leaves that snapshot absent. | `test_diagnostic_hook_failure` |
 | D-01 | One driver operation performs at most one advancement and reports every stale rejection. | `qcheck_driver_one_advancement` |
 | D-02 | Projection delivery completes before post-commit admission. A delivery token accepts one answer. | `qcheck_delivery_token` |
-| D-03 | Stop or crash preserves a pending projection delivery or bootstrap. Terminal work starts after its answer. | `race_terminal_vs_delivery` |
+| D-03 | Stop or crash preserves a pending projection delivery or bootstrap. Terminal work starts after its answer. | `race_terminal_vs_delivery` and `race_terminal_vs_bootstrap` |
 | D-04 | Hosted acquisition and release errors stay outside root failure. Hosted interruption settles the root and releases the binding. | `test_hosted_resource_boundary` |
 | D-05 | Attachment atomically claims an unstarted root and an unused binding. Each conflicting race has one winner. A loser raises `Invalid_argument` and leaves each otherwise-unused argument available. | `race_driver_attachment_both_winners` |
 | D-06 | After attachment, direct `Root.advance` returns `Error Driver_attached`. It consumes no ingress, reads no clock, records no observer event, and changes no projection image. | `test_driver_attachment_fence` |
@@ -289,7 +289,7 @@ law. A property gate must state its generated class and observation boundary.
 | PRB-11 | A replacement can recover the interval after session loss and before the next commit. | `test_projection_replace_in_loss_window` |
 | PRB-12 | Replacement does not wait for an in-flight post-commit effect. A bootstrap admits no post-commit work. | `test_projection_bootstrap_no_post_commit` |
 | PRB-13 | Bootstrap rejection or new-session loss latches `Adapter_delivery`, returns `Crashed`, and does not retry. | `test_projection_bootstrap_failure_crashes` and `test_projection_bootstrap_session_loss` |
-| PRB-14 | Stop or crash during the bootstrap wait preserves the pending answer fence. | `race_terminal_vs_delivery` |
+| PRB-14 | Stop or crash during the bootstrap wait preserves the pending answer fence. | `race_terminal_vs_bootstrap` |
 | PRB-15 | Commit and replacement use first-winner arbitration. A bootstrap contains the prior or new complete committed snapshot. | `race_replacement_vs_commit_both_winners` |
 | PRB-16 | Advancement runs only in `Running`. It does not run while replacement delivery is pending. | `test_projection_advancement_fence` |
 | PRB-17 | Bootstrap entry count cannot exceed `projection_capacity`. Replacement adds no new preflight family. | `qcheck_projection_capacity_bounds` |

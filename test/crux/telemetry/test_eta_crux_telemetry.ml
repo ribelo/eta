@@ -1,26 +1,27 @@
 module Crux = Eta_crux
 module Projection = Eta_crux_test.Projection_harness.Opaque
 
-let output_of_delivery delivery =
+let output_of_delivery witness delivery =
   Eta_crux_test.Projection_harness.Opaque.delivery_value
+    witness
     (Crux.Driver.Delivery.projection delivery)
   |> Option.get
 
-let output_of_commit commit =
-  Eta_crux_test.Projection_harness.Opaque.commit_value commit
+let output_of_commit witness commit =
+  Eta_crux_test.Projection_harness.Opaque.commit_value witness commit
   |> Option.get
 
-let latest_committed_snapshot driver =
+let latest_committed_snapshot witness driver =
   Option.bind (Crux.Driver.latest_committed_snapshot driver)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
-let handle_latest_committed_snapshot handle =
+let handle_latest_committed_snapshot witness handle =
   Option.bind (Eta_crux_test.Handle.latest_committed_snapshot handle)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
-let handle_latest_delivered_snapshot handle =
+let handle_latest_delivered_snapshot witness handle =
   Option.bind (Eta_crux_test.Handle.latest_delivered_snapshot handle)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 module Observability = Eta_observability
 
 let rec poll_closed driver =
@@ -43,7 +44,7 @@ let rec poll_closed driver =
 
 let normal_program () =
   let open Eta.Syntax in
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return 5)
   in
@@ -54,7 +55,7 @@ let normal_program () =
   let output, delivery =
     match event with
     | Some (Crux.Driver.Deliver delivery) ->
-        (output_of_delivery delivery, delivery)
+        (output_of_delivery witness delivery, delivery)
     | Some _ | None ->
         failwith "expected initial projection delivery"
   in
@@ -104,7 +105,7 @@ let request_program () =
            response := Some value)
     |> Eta.Effect.ignore_errors
   in
-  let root =
+  let root, _witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.both (Crux.return ())
          (Crux.lifecycle (Crux.return request)))
@@ -165,7 +166,7 @@ let replacement_attempt () =
     Crux.Driver.Binding.serialized
       ~operations:[] ~session:first
   in
-  let root =
+  let root, _witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return "replacement-output")
   in
@@ -318,7 +319,7 @@ let test_crash_redaction () =
   in
   let program =
     let open Eta.Syntax in
-    let root =
+    let root, _witness =
       Projection.root ~projection_capacity:1 ~ingress_capacity:1
         ~request_capacity:1 crashing
     in
@@ -370,7 +371,7 @@ let test_span_boundaries () =
   in
   let program =
     let open Eta.Syntax in
-    let root =
+    let root, _witness =
       Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
         description
     in

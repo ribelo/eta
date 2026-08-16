@@ -48,6 +48,16 @@ module Hosted = struct
   let packed_cause pp_error cause =
     Failure.Packed_cause.make ~pp_error cause
 
+  let interruption_cause = function
+    | Some interrupt_id ->
+        Failure.Packed_cause.make
+          ~pp_error:(fun _ (value : never) -> absurd value)
+          (Eta.Cause.interrupt_with_id interrupt_id)
+    | None ->
+        Failure.Packed_cause.make
+          ~pp_error:(fun _ (value : never) -> absurd value)
+          Eta.Cause.interrupt
+
   let rec settle driver =
     let open Eta.Syntax in
     Driver.request_stop driver;
@@ -167,13 +177,14 @@ module Hosted = struct
         @@ fun binding ->
         let pending_delivery = ref None in
         loop binding pending_delivery ()
-        |> Eta.Effect.on_interrupt (fun _ ->
+        |> Eta.Effect.on_interrupt (fun interrupt_id ->
                let open Eta.Syntax in
                let* () =
                  match !pending_delivery with
                  | None -> Eta.Effect.unit
                  | Some delivery ->
-                     Driver.Delivery.delivered delivery
+                     Driver.Delivery.failed delivery
+                       (interruption_cause interrupt_id)
                      |> Eta.Effect.map_error absurd
                      |> Eta.Effect.map (fun _ -> ())
                in

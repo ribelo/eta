@@ -116,6 +116,7 @@ These projection race gates control both legal winners:
 - `race_commit_atomicity`
 - `race_commit_vs_crash_both_winners`
 - `race_terminal_vs_delivery`
+- `race_terminal_vs_bootstrap`
 - `race_pull_vs_commit_both_winners`
 - `race_session_replacement`
 - `race_replacement_vs_commit_both_winners`

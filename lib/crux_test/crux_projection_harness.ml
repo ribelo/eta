@@ -366,7 +366,9 @@ module Wire_recipient = struct
 end
 
 module Opaque = struct
-  let codec =
+  type 'value t = (unit, 'value) keyed
+
+  let codec () =
     Crux.Codec.make
       ~encode:(fun _ -> Ok Bytes.empty)
       ~decode:(fun _ ->
@@ -376,22 +378,22 @@ module Opaque = struct
               "opaque identity-binding projection cannot be decoded";
           })
 
-  let harness =
-    create ~name:"eta_crux_test.opaque" ~codec
-      ~value_equal:(fun _ _ -> false) ~cutoff:Crux.Cutoff.never
-
   let root ?post_commit_effect_observer ~projection_capacity
       ~ingress_capacity ~request_capacity description =
-    let description = Crux.map description ~f:Obj.repr in
-    root ?post_commit_effect_observer harness ~projection_capacity
-      ~ingress_capacity ~request_capacity description
+    let witness =
+      create ~name:"eta_crux_test.opaque" ~codec:(codec ())
+        ~value_equal:(fun _ _ -> false) ~cutoff:Crux.Cutoff.never
+    in
+    ( root ?post_commit_effect_observer witness ~projection_capacity
+        ~ingress_capacity ~request_capacity description,
+      witness )
 
-  let snapshot_value snapshot =
-    snapshot_value harness snapshot |> Option.map Obj.obj
+  let snapshot_value witness snapshot =
+    snapshot_value witness snapshot
 
-  let commit_value commit =
-    commit_value harness commit |> Option.map Obj.obj
+  let commit_value witness commit =
+    commit_value witness commit
 
-  let delivery_value delivery =
-    delivery_value harness delivery |> Option.map Obj.obj
+  let delivery_value witness delivery =
+    delivery_value witness delivery
 end

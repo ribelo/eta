@@ -2,26 +2,27 @@ module Crux = Eta_crux
 module Projection = Eta_crux_test.Projection_harness.Opaque
 module Typed_projection = Eta_crux_test.Projection_harness
 
-let output_of_delivery delivery =
+let output_of_delivery witness delivery =
   Eta_crux_test.Projection_harness.Opaque.delivery_value
+    witness
     (Crux.Driver.Delivery.projection delivery)
   |> Option.get
 
-let output_of_commit commit =
-  Eta_crux_test.Projection_harness.Opaque.commit_value commit
+let output_of_commit witness commit =
+  Eta_crux_test.Projection_harness.Opaque.commit_value witness commit
   |> Option.get
 
-let latest_committed_snapshot driver =
+let latest_committed_snapshot witness driver =
   Option.bind (Crux.Driver.latest_committed_snapshot driver)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
-let handle_latest_committed_snapshot handle =
+let handle_latest_committed_snapshot witness handle =
   Option.bind (Eta_crux_test.Handle.latest_committed_snapshot handle)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
-let handle_latest_delivered_snapshot handle =
+let handle_latest_delivered_snapshot witness handle =
   Option.bind (Eta_crux_test.Handle.latest_delivered_snapshot handle)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
 let projection_content_value = function
   | Crux.Wire.Frame.Bootstrap (entry :: _) -> entry.value
@@ -48,9 +49,9 @@ let run_ok eff =
   |> fun result ->
   Eta_test.Expect.expect_ok result.exit
 
-let committed = function
+let committed witness = function
   | Ok (Crux.Root.Committed { commit; post_commit }) ->
-      let output = output_of_commit commit in
+      let output = output_of_commit witness commit in
       (output, post_commit)
   | _ -> Alcotest.fail "expected committed advancement"
 
@@ -70,17 +71,17 @@ let conformance_identity_zero_wire () =
       (Crux.Exported_endpoint.create (Crux.map machine ~f:snd)
          ~codec)
   in
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1 description
   in
   let ((_, _), export), initial_post =
-    committed (run_ok (Crux.Root.advance root))
+    committed witness (run_ok (Crux.Root.advance root))
   in
   ignore (run_ok (Crux.Post_commit.start initial_post));
   Alcotest.(check bool) "local invocation accepted" true
     (Crux.Exported_endpoint.try_invoke export 7 = Ok (Ok (Ok ())));
   let ((model, _), _), action_post =
-    committed (run_ok (Crux.Root.advance root))
+    committed witness (run_ok (Crux.Root.advance root))
   in
   Alcotest.(check int) "local typed payload" 7 model;
   ignore (run_ok (Crux.Post_commit.start action_post));
@@ -371,7 +372,7 @@ let test_session_loss_requests () =
     |> Eta.Effect.map (fun result ->
            request_result := Some result)
   in
-  let root =
+  let root, _witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.lifecycle (Crux.return request_program))
   in
@@ -466,7 +467,7 @@ let test_serialized_receive_wakes_await () =
     Crux.Driver.Binding.serialized
       ~operations:[] ~session:candidate
   in
-  let root =
+  let root, _witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.lifecycle (Crux.return program))
   in
@@ -542,7 +543,7 @@ let test_session_loss_settles_pending_delivery () =
     Crux.Driver.Binding.serialized
       ~operations:[] ~session:candidate
   in
-  let root =
+  let root, _witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return 17)
   in
@@ -590,7 +591,7 @@ let test_session_loss_settles_replacement () =
     Crux.Driver.Binding.serialized
       ~operations:[] ~session:old_candidate
   in
-  let root =
+  let root, _witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return 23)
   in
@@ -709,7 +710,7 @@ let test_raising_response_decoder_is_fatal () =
     |> Eta.Effect.map (fun result ->
            request_result := Some result)
   in
-  let root =
+  let root, _witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.lifecycle (Crux.return request_program))
   in
@@ -1013,7 +1014,7 @@ let conformance_serialized_crash () =
     Crux.Driver.Binding.serialized
       ~operations:[] ~session:candidate
   in
-  let root =
+  let root, _witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       description
   in

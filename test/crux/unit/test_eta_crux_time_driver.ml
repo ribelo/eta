@@ -1,33 +1,34 @@
 module Crux = Eta_crux
 module Projection = Eta_crux_test.Projection_harness.Opaque
 
-let output_of_delivery delivery =
+let output_of_delivery witness delivery =
   Eta_crux_test.Projection_harness.Opaque.delivery_value
+    witness
     (Crux.Driver.Delivery.projection delivery)
   |> Option.get
 
-let output_of_commit commit =
-  Eta_crux_test.Projection_harness.Opaque.commit_value commit
+let output_of_commit witness commit =
+  Eta_crux_test.Projection_harness.Opaque.commit_value witness commit
   |> Option.get
 
-let latest_committed_snapshot driver =
+let latest_committed_snapshot witness driver =
   Option.bind (Crux.Driver.latest_committed_snapshot driver)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
-let handle_latest_committed_snapshot handle =
+let handle_latest_committed_snapshot witness handle =
   Option.bind (Eta_crux_test.Handle.latest_committed_snapshot handle)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
-let handle_latest_delivered_snapshot handle =
+let handle_latest_delivered_snapshot witness handle =
   Option.bind (Eta_crux_test.Handle.latest_delivered_snapshot handle)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
 let run_ok runtime effect =
   Eta.Runtime.run runtime effect |> Eta_test.Expect.expect_ok
 
-let deliver runtime = function
+let deliver runtime witness = function
   | Some (Crux.Driver.Deliver delivery) ->
-      let output = output_of_delivery delivery in
+      let output = output_of_delivery witness delivery in
       let completion =
         run_ok runtime (Crux.Driver.Delivery.delivered delivery)
       in
@@ -45,32 +46,36 @@ let test_graph_time_shared_sample_and_due_coalescing () =
     and+ ticks = Crux.Time.interval (Eta.Duration.ms 10) in
     (Crux.Time.to_ms now, due, ticks)
   in
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
       description
   in
   let driver =
     Crux.Driver.create (Crux.Driver.Binding.identity []) root
   in
-  let initial = deliver runtime (run_ok runtime (Crux.Driver.poll driver)) in
+  let initial =
+    deliver runtime witness (run_ok runtime (Crux.Driver.poll driver))
+  in
   Alcotest.(check (triple int bool int)) "initial shared sample"
     (0, false, 0) initial;
   Eta_test.Test_clock.advance_to clock 25;
   let caught_up =
-    deliver runtime (run_ok runtime (Crux.Driver.poll driver))
+    deliver runtime witness (run_ok runtime (Crux.Driver.poll driver))
   in
   Alcotest.(check (triple int bool int)) "coalesced due sample"
     (25, true, 2) caught_up;
   Alcotest.(check bool) "one due commit" true
     (run_ok runtime (Crux.Driver.poll driver) = None);
   Eta_test.Test_clock.advance_to clock 30;
-  let next = deliver runtime (run_ok runtime (Crux.Driver.poll driver)) in
+  let next =
+    deliver runtime witness (run_ok runtime (Crux.Driver.poll driver))
+  in
   Alcotest.(check (triple int bool int)) "activation-aligned cadence"
     (30, true, 3) next
 
 let test_driver_attachment_fence () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return 7)
   in
@@ -78,18 +83,20 @@ let test_driver_attachment_fence () =
     Crux.Driver.create (Crux.Driver.Binding.identity []) root
   in
   Alcotest.(check (option int)) "no commit yet" None
-    (latest_committed_snapshot driver);
+    (latest_committed_snapshot witness driver);
   (match run_ok runtime (Crux.Root.advance root) with
   | Error Crux.Root.Driver_attached -> ()
   | _ -> Alcotest.fail "direct advance crossed driver fence");
-  let output = deliver runtime (run_ok runtime (Crux.Driver.poll driver)) in
+  let output =
+    deliver runtime witness (run_ok runtime (Crux.Driver.poll driver))
+  in
   Alcotest.(check int) "delivery output" 7 output;
   Alcotest.(check (option int)) "published before delivery" (Some 7)
-    (latest_committed_snapshot driver)
+    (latest_committed_snapshot witness driver)
 
 let test_pull_does_not_complete_delivery () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.return 11)
   in
@@ -102,7 +109,7 @@ let test_pull_does_not_complete_delivery () =
     | Some _ | None -> Alcotest.fail "expected delivery"
   in
   Alcotest.(check (option int)) "pull sees commit" (Some 11)
-    (latest_committed_snapshot driver);
+    (latest_committed_snapshot witness driver);
   Alcotest.(check bool) "pull left delivery incomplete" true
     (run_ok runtime (Crux.Driver.poll driver) = None);
   Alcotest.(check bool) "delivery token still accepted" true
@@ -111,14 +118,16 @@ let test_pull_does_not_complete_delivery () =
 
 let test_driver_await_wakes_at_graph_deadline () =
   Eta_test.with_test_clock @@ fun switch clock runtime ->
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.after (Eta.Duration.ms 10))
   in
   let driver =
     Crux.Driver.create (Crux.Driver.Binding.identity []) root
   in
-  ignore (deliver runtime (run_ok runtime (Crux.Driver.poll driver)));
+  ignore
+    (deliver runtime witness
+       (run_ok runtime (Crux.Driver.poll driver)));
   let waiting =
     Eta_test.Async.fork_run switch runtime (Crux.Driver.await driver)
   in
@@ -136,12 +145,12 @@ let test_driver_await_wakes_at_graph_deadline () =
   let event =
     Eta_test.Async.await waiting |> Eta_test.Expect.expect_ok
   in
-  let output = deliver runtime (Some event) in
+  let output = deliver runtime witness (Some event) in
   Alcotest.(check bool) "deadline became due" true output
 
 let test_graph_time_runtime_mismatch () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
-  let root =
+  let root, _witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.interval (Eta.Duration.ms 1))
   in
@@ -179,7 +188,7 @@ let test_due_advancement_preserves_queued_ingress () =
       ~apply_action:(fun ~self:_ ~input:() ~model ~action ->
         (model + action, None))
   in
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:2 ~request_capacity:1
       (Crux.both machine
          (Crux.Time.after (Eta.Duration.ms 10)))
@@ -188,7 +197,7 @@ let test_due_advancement_preserves_queued_ingress () =
     Crux.Driver.create (Crux.Driver.Binding.identity []) root
   in
   let (model, endpoint), due =
-    deliver runtime (run_ok runtime (Crux.Driver.poll driver))
+    deliver runtime witness (run_ok runtime (Crux.Driver.poll driver))
   in
   Alcotest.(check (pair int bool)) "initial output" (0, false)
     (model, due);
@@ -199,26 +208,28 @@ let test_due_advancement_preserves_queued_ingress () =
               Invalid_argument "ingress closed")));
   Eta_test.Test_clock.advance_to clock 10;
   let (model, _), due =
-    deliver runtime (run_ok runtime (Crux.Driver.poll driver))
+    deliver runtime witness (run_ok runtime (Crux.Driver.poll driver))
   in
   Alcotest.(check (pair int bool)) "clock due won priority"
     (0, true) (model, due);
   let (model, _), due =
-    deliver runtime (run_ok runtime (Crux.Driver.poll driver))
+    deliver runtime witness (run_ok runtime (Crux.Driver.poll driver))
   in
   Alcotest.(check (pair int bool)) "queued action remained"
     (1, true) (model, due)
 
 let test_clock_regression_is_structured_failure () =
   Eta_test.with_test_clock @@ fun _switch clock runtime ->
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.after (Eta.Duration.ms 10))
   in
   let driver =
     Crux.Driver.create (Crux.Driver.Binding.identity []) root
   in
-  ignore (deliver runtime (run_ok runtime (Crux.Driver.poll driver)));
+  ignore
+    (deliver runtime witness
+       (run_ok runtime (Crux.Driver.poll driver)));
   Eta_test.Test_clock.advance_to clock 5;
   Alcotest.(check bool) "sampled movement stayed idle" true
     (run_ok runtime (Crux.Driver.poll driver) = None);
@@ -247,21 +258,21 @@ let test_graph_time_static_validation () =
 
 let now_token runtime clock ~at_ms =
   Eta_test.Test_clock.advance_to clock at_ms;
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.now ~every:(Eta.Duration.ms 1))
   in
   let driver =
     Crux.Driver.create (Crux.Driver.Binding.identity []) root
   in
-  deliver runtime (run_ok runtime (Crux.Driver.poll driver))
+  deliver runtime witness (run_ok runtime (Crux.Driver.poll driver))
 
 let test_graph_time_dynamic_failures () =
   Eta_test.with_test_clock @@ fun _switch clock runtime ->
   (* GTC-19: every clock read compares against the last successful read.
      Mismatch, regression, internal overflow, and a past dynamic deadline
      each terminally fail the root. *)
-  let mismatched_root =
+  let mismatched_root, _mismatched_witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.interval (Eta.Duration.ms 1))
   in
@@ -283,7 +294,7 @@ let test_graph_time_dynamic_failures () =
    with
   | Ok (Crux.Root.Failed _) -> ()
   | _ -> Alcotest.fail "clock mismatch did not fail the root");
-  let regressed_root =
+  let regressed_root, _regressed_witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.after (Eta.Duration.ms 10))
   in
@@ -304,7 +315,7 @@ let test_graph_time_dynamic_failures () =
   (match run_ok runtime (Crux.Root.advance regressed_root) with
   | Ok (Crux.Root.Failed _) -> ()
   | _ -> Alcotest.fail "clock regression did not fail the root");
-  let overflow_root =
+  let overflow_root, overflow_witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.interval (Eta.Duration.ms 10))
   in
@@ -312,7 +323,9 @@ let test_graph_time_dynamic_failures () =
     Crux.Driver.create (Crux.Driver.Binding.identity []) overflow_root
   in
   Eta_test.Test_clock.set_time clock 0;
-  ignore (deliver runtime (run_ok runtime (Crux.Driver.poll overflow_driver)));
+  ignore
+    (deliver runtime overflow_witness
+       (run_ok runtime (Crux.Driver.poll overflow_driver)));
   Eta_test.Test_clock.advance_to clock (max_int - 1);
   (match run_ok runtime (Crux.Driver.poll overflow_driver) with
   | Some (Crux.Driver.Crash_detected _) -> ()
@@ -325,7 +338,7 @@ let test_graph_time_dynamic_failures () =
     | Error _ -> Alcotest.fail "valid time addition failed"
   in
   Eta_test.Test_clock.advance_to clock 100;
-  let past_root =
+  let past_root, _past_witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.deadline target)
   in
@@ -345,7 +358,7 @@ let test_graph_time_failure_attribution () =
     Alcotest.(check bool) (label ^ " trigger") true
       (failure.Crux.Failure.primary.trigger = trigger)
   in
-  let mismatched_root =
+  let mismatched_root, _mismatched_witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.interval (Eta.Duration.ms 1))
   in
@@ -370,14 +383,16 @@ let test_graph_time_failure_attribution () =
         ~origin:Crux.Failure.Graph_clock
         ~trigger:Crux.Failure.Clock_sample
   | _ -> Alcotest.fail "clock mismatch did not fail the root");
-  let overflow_root =
+  let overflow_root, overflow_witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.interval (Eta.Duration.ms 10))
   in
   let overflow_driver =
     Crux.Driver.create (Crux.Driver.Binding.identity []) overflow_root
   in
-  ignore (deliver runtime (run_ok runtime (Crux.Driver.poll overflow_driver)));
+  ignore
+    (deliver runtime overflow_witness
+       (run_ok runtime (Crux.Driver.poll overflow_driver)));
   Eta_test.Test_clock.advance_to clock (max_int - 1);
   (match run_ok runtime (Crux.Driver.poll overflow_driver) with
   | Some (Crux.Driver.Crash_detected failure) ->
@@ -393,7 +408,7 @@ let test_graph_time_failure_attribution () =
     | Error _ -> Alcotest.fail "valid time addition failed"
   in
   Eta_test.Test_clock.advance_to clock 100;
-  let past_root =
+  let past_root, _past_witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.deadline target)
   in
@@ -423,7 +438,7 @@ let test_graph_time_no_fallback () =
     | Error _ -> Alcotest.fail "valid time addition failed"
   in
   Eta_test.Test_clock.set_time clock 100;
-  let past_root =
+  let past_root, _past_witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.deadline target)
   in
@@ -431,7 +446,7 @@ let test_graph_time_no_fallback () =
   | Ok (Crux.Root.Failed _) -> ()
   | _ -> Alcotest.fail "past deadline was clamped instead of failing");
   let foreign_clock = Eta_test.Test_clock.create () in
-  let foreign_root =
+  let foreign_root, foreign_witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.now ~every:(Eta.Duration.ms 1))
   in
@@ -442,7 +457,8 @@ let test_graph_time_no_fallback () =
            (Eta_test.Test_clock.as_capability foreign_clock)
       |> run_ok runtime
     with
-    | Ok (Crux.Root.Committed committed) -> output_of_commit committed.commit
+    | Ok (Crux.Root.Committed committed) ->
+        output_of_commit foreign_witness committed.commit
     | _ -> Alcotest.fail "foreign now commit failed"
   in
   let foreign_target =
@@ -450,7 +466,7 @@ let test_graph_time_no_fallback () =
     | Ok target -> target
     | Error _ -> Alcotest.fail "valid foreign addition failed"
   in
-  let switched_root =
+  let switched_root, _switched_witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.deadline foreign_target)
   in
@@ -463,7 +479,7 @@ let test_graph_time_no_fallback () =
 
 let test_dynamic_deadline_uses_timestamp_provenance () =
   Eta_test.with_test_clock @@ fun _switch clock runtime ->
-  let source_root =
+  let source_root, source_witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.now ~every:(Eta.Duration.ms 100))
   in
@@ -472,7 +488,7 @@ let test_dynamic_deadline_uses_timestamp_provenance () =
       source_root
   in
   let now =
-    deliver runtime
+    deliver runtime source_witness
       (run_ok runtime (Crux.Driver.poll source_driver))
   in
   let target =
@@ -480,7 +496,7 @@ let test_dynamic_deadline_uses_timestamp_provenance () =
     | Ok target -> target
     | Error _ -> Alcotest.fail "valid time addition failed"
   in
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1 ~ingress_capacity:1 ~request_capacity:1
       (Crux.Time.deadline target)
   in
@@ -488,10 +504,10 @@ let test_dynamic_deadline_uses_timestamp_provenance () =
     Crux.Driver.create (Crux.Driver.Binding.identity []) root
   in
   Alcotest.(check bool) "dynamic deadline starts false" false
-    (deliver runtime (run_ok runtime (Crux.Driver.poll driver)));
+    (deliver runtime witness (run_ok runtime (Crux.Driver.poll driver)));
   Eta_test.Test_clock.advance_to clock 10;
   Alcotest.(check bool) "dynamic deadline becomes true" true
-    (deliver runtime (run_ok runtime (Crux.Driver.poll driver)))
+    (deliver runtime witness (run_ok runtime (Crux.Driver.poll driver)))
 
 let () =
   Alcotest.run "eta_crux time and driver"

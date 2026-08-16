@@ -68,7 +68,7 @@ laws are rewritten in place.
 | T-03 | A commit publishes one projection image. The batch can be empty. | `qcheck_projection_image_per_commit` (renamed) |
 | T-04 | The root-frame publication includes the image. A pre-publication failure preserves the previous frame. | `race_commit_atomicity` (amended) |
 | D-02 | Projection delivery completes before post-commit admission. The delivery token accepts one answer. | `qcheck_delivery_token` (amended) |
-| D-03 | Stop or crash preserves a pending projection delivery or bootstrap. Terminal work starts after its answer. | `race_terminal_vs_delivery` (amended) |
+| D-03 | Stop or crash preserves a pending projection delivery or bootstrap. Terminal work starts after its answer. | `race_terminal_vs_delivery` (amended) and `race_terminal_vs_bootstrap` (new) |
 | D-07 | The latest committed snapshot is absent before the first commit. Each commit atomically replaces it. Delivery and terminal state do not replace or clear it. | `qcheck_latest_committed_snapshot` plus `test_latest_committed_snapshot_retained_after_failed_delivery`, `test_latest_committed_snapshot_retained_after_stop`, and `test_latest_committed_snapshot_retained_after_crash` (new) |
 | D-08 | A pull concurrent with commit publication observes the previous or new complete snapshot. | `race_pull_vs_commit_both_winners` (amended) |
 | D-09 | A pull has no delivery or post-commit effect. | `test_pull_does_not_complete_delivery` (amended) |
@@ -190,7 +190,7 @@ Binding tag: `serialized-only` for every row.
 | PRB-11 | Replacement is legal in the window between session loss and the next commit. This is the recovery path. | `test_projection_replace_in_loss_window` |
 | PRB-12 | Replacement never waits for in-flight post-commit effects. A bootstrap admits no post-commit work. | `test_projection_bootstrap_no_post_commit` (held post-commit effect) |
 | PRB-13 | A failed bootstrap result or new-session loss during bootstrap latches `Adapter_delivery` and returns `Crashed`. Eta Crux does not retry. | `test_projection_bootstrap_failure_crashes` and `test_projection_bootstrap_session_loss` |
-| PRB-14 | Root stop during the bootstrap wait returns `Stopped`. Root crash returns `Crashed`. Terminal work waits for the pending answer. | `race_terminal_vs_delivery` (amended, shared) |
+| PRB-14 | Root stop during the bootstrap wait returns `Stopped`. Root crash returns `Crashed`. Terminal work waits for the pending answer. | `race_terminal_vs_bootstrap` (new) |
 | PRB-15 | Commit and replacement use first-winner arbitration at driver-operation granularity. The bootstrap carries the prior or the new complete committed snapshot, never a mix. | `race_replacement_vs_commit_both_winners` (new) |
 | PRB-16 | Advancement runs only in driver state `Running`. No advancement runs while a replacement delivery is pending. | `test_projection_advancement_fence` |
 | PRB-17 | The bootstrap entry count cannot exceed `projection_capacity`. Replacement adds no new preflight failure. | Shared with the PRJ-19 gate |
@@ -239,7 +239,8 @@ trigger controls:
 
 - `race_commit_atomicity` (amended)
 - `race_commit_vs_crash_both_winners` (amended)
-- `race_terminal_vs_delivery` (amended; bootstrap included)
+- `race_terminal_vs_delivery` (amended)
+- `race_terminal_vs_bootstrap` (new)
 - `race_pull_vs_commit_both_winners` (amended)
 - `race_replacement_vs_commit_both_winners` (new)
 

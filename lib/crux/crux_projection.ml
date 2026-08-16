@@ -9,6 +9,8 @@ module Incarnation = struct
 end
 
 module Kind = struct
+  type (_, _) equality = Refl : ('value, 'value) equality
+
   type ('key, 'value) t = {
     id : int;
     name : string;
@@ -21,13 +23,30 @@ module Kind = struct
 
   type packed = Pack : ('key, 'value) t -> packed
 
+  type identity_state =
+    | Next of int
+    | Exhausted
+
   let next_id =
-    let counter = Atomic.make 0 in
-    fun () ->
-      let id = Atomic.fetch_and_add counter 1 in
-      if id < 0 || id = max_int then
-        invalid_arg "Eta_crux.Projection.Kind.define: descriptor identity overflow";
-      id
+    let state = Atomic.make (Next 0) in
+    let rec allocate () =
+      let current = Atomic.get state in
+      match current with
+      | Exhausted ->
+          invalid_arg
+            "Eta_crux.Projection.Kind.define: descriptor identity overflow"
+      | Next id ->
+          let next =
+            if id = max_int then Exhausted else Next (id + 1)
+          in
+          if Atomic.compare_and_set state current next then
+            if id = max_int then
+              invalid_arg
+                "Eta_crux.Projection.Kind.define: descriptor identity overflow"
+            else id
+          else allocate ()
+    in
+    allocate
 
   let define ~name ~key_compare ~key_codec ~value_codec ~value_equal ~cutoff =
     {
@@ -40,7 +59,30 @@ module Kind = struct
       cutoff;
     }
 
-  let same left right = left.id = right.id
+  let equal :
+      type left_key left_value right_key right_value.
+      (left_key, left_value) t ->
+      (right_key, right_value) t ->
+      ((left_key, right_key) equality
+      * (left_value, right_value) equality)
+      option =
+   fun left right ->
+    if left.id = right.id then
+      (* Kind identities are allocated once and never reused. Equal identities
+         therefore prove that both descriptors have the same key and value
+         types. Keep the representation cast at this proof boundary. *)
+      Some (Obj.magic (Refl, Refl))
+    else None
+
+  let same left right = Option.is_some (equal left right)
+
+  let cast :
+      type left right.
+      (left, right) equality -> left -> right =
+   fun equal value ->
+    match equal with
+    | Refl -> value
+
   let name kind = kind.name
   let key_codec kind = kind.key_codec
   let value_codec kind = kind.value_codec
@@ -113,6 +155,18 @@ type ('key, 'value) update =
       incarnation : Incarnation.t;
     }
 
+let cast_update :
+    type left_key right_key left_value right_value.
+    (left_key, right_key) Kind.equality ->
+    (left_value, right_value) Kind.equality ->
+    (left_key, left_value) update ->
+    (right_key, right_value) update =
+ fun key_equal value_equal update ->
+  match key_equal with
+  | Kind.Refl -> (
+      match value_equal with
+      | Kind.Refl -> update)
+
 type occurrence = unit ref
 
 type candidate =
@@ -143,18 +197,19 @@ module Snapshot = struct
   let find_opt (type key value) (kind : (key, value) Kind.t) ~key snapshot =
     let rec loop = function
       | [] -> None
-      | Stored stored :: rest ->
-          if Kind.same kind stored.kind then
-            let stored_key : key = Obj.magic stored.key in
-            if kind.key_compare key stored_key = 0 then
-              Some
-                {
-                  key = stored_key;
-                  incarnation = stored.incarnation;
-                  value = (Obj.magic stored.value : value);
-                }
-            else loop rest
-          else loop rest
+      | Stored stored :: rest -> (
+          match Kind.equal stored.kind kind with
+          | Some (key_equal, value_equal) ->
+              let stored_key = Kind.cast key_equal stored.key in
+              if kind.key_compare key stored_key = 0 then
+                Some
+                  {
+                    key = stored_key;
+                    incarnation = stored.incarnation;
+                    value = Kind.cast value_equal stored.value;
+                  }
+              else loop rest
+          | None -> loop rest)
     in
     loop snapshot
 
@@ -195,11 +250,12 @@ module Batch = struct
   let find_opt (type key value) (kind : (key, value) Kind.t) ~key batch =
     List.fold_left
       (fun found (Packed_update (stored_kind, update)) ->
-        if Kind.same kind stored_kind then
-          let update : (key, value) update = Obj.magic update in
-          if kind.key_compare key (update_key update) = 0 then update :: found
-          else found
-        else found)
+        match Kind.equal stored_kind kind with
+        | Some (key_equal, value_equal) ->
+            let update = cast_update key_equal value_equal update in
+            if kind.key_compare key (update_key update) = 0 then update :: found
+            else found
+        | None -> found)
       [] batch.updates
     |> List.rev
 
@@ -231,7 +287,13 @@ let candidate ~occurrence kind ~key value = Candidate { occurrence; kind; key; v
 
 type plan =
   | Keep of stored_entry
-  | Change : stored_entry * candidate -> plan
+  | Change : {
+      occurrence : occurrence;
+      kind : ('key, 'value) Kind.t;
+      key : 'key;
+      incarnation : Incarnation.t;
+      value : 'value;
+    } -> plan
   | Attach of candidate
   | Remove of stored_entry
   | Replace : stored_entry * candidate -> plan
@@ -244,7 +306,14 @@ let compare_candidates catalog (Candidate left) (Candidate right) =
   | Some left_rank, Some right_rank ->
       let by_kind = Int.compare left_rank right_rank in
       if by_kind <> 0 then by_kind
-      else left.kind.key_compare left.key (Obj.magic right.key)
+      else (
+        match Kind.equal right.kind left.kind with
+        | Some (key_equal, _value_equal) ->
+            left.kind.key_compare left.key
+              (Kind.cast key_equal right.key)
+        | None ->
+            invalid_arg
+              "Eta_crux.Projection: catalog rank does not identify one kind")
   | None, _ | _, None ->
       invalid_arg "Eta_crux.Projection: compared an unknown kind"
 
@@ -253,7 +322,14 @@ let compare_stored_candidate catalog (Stored left) (Candidate right) =
   | Some left_rank, Some right_rank ->
       let by_kind = Int.compare left_rank right_rank in
       if by_kind <> 0 then by_kind
-      else left.kind.key_compare left.key (Obj.magic right.key)
+      else (
+        match Kind.equal right.kind left.kind with
+        | Some (key_equal, _value_equal) ->
+            left.kind.key_compare left.key
+              (Kind.cast key_equal right.key)
+        | None ->
+            invalid_arg
+              "Eta_crux.Projection: catalog rank does not identify one kind")
   | None, _ | _, None ->
       invalid_arg "Eta_crux.Projection: compared an unknown kind"
 
@@ -280,14 +356,30 @@ let plans catalog previous candidates =
           loop (Remove stored :: acc) previous (fresh :: candidates)
         else if compared > 0 then
           loop (Attach fresh :: acc) (stored :: previous) candidates
-        else if old.occurrence != candidate.occurrence then
-          loop (Replace (stored, fresh) :: acc) previous candidates
-        else
-          let candidate_value = Obj.magic candidate.value in
-          if old.kind.cutoff old.value candidate_value then
-            loop (Keep stored :: acc) previous candidates
-          else
-            loop (Change (stored, fresh) :: acc) previous candidates
+        else (
+          match Kind.equal candidate.kind old.kind with
+          | None ->
+              invalid_arg
+                "Eta_crux.Projection: equal identities have different kinds"
+          | Some (_key_equal, value_equal) ->
+              if old.occurrence != candidate.occurrence then
+                loop (Replace (stored, fresh) :: acc) previous candidates
+              else if
+                old.kind.cutoff old.value
+                  (Kind.cast value_equal candidate.value)
+              then loop (Keep stored :: acc) previous candidates
+              else
+                loop
+                  (Change
+                     {
+                       occurrence = candidate.occurrence;
+                       kind = candidate.kind;
+                       key = candidate.key;
+                       incarnation = old.incarnation;
+                       value = candidate.value;
+                     }
+                  :: acc)
+                  previous candidates)
   in
   loop [] previous candidates
 
@@ -308,28 +400,26 @@ let materialize plans next_incarnation =
     | [] -> Ok (List.rev entries, List.rev updates, counter)
     | Keep stored :: rest ->
         loop (stored :: entries) updates counter rest
-    | Change (Stored old, Candidate fresh) :: rest ->
-        let key = Obj.magic fresh.key in
-        let value = Obj.magic fresh.value in
+    | Change changed :: rest ->
         let entry =
           {
-            key;
-            incarnation = old.incarnation;
-            value;
+            key = changed.key;
+            incarnation = changed.incarnation;
+            value = changed.value;
           }
         in
         let stored =
           Stored
             {
-              occurrence = fresh.occurrence;
-              kind = old.kind;
-              key;
-              incarnation = old.incarnation;
-              value;
+              occurrence = changed.occurrence;
+              kind = changed.kind;
+              key = changed.key;
+              incarnation = changed.incarnation;
+              value = changed.value;
             }
         in
         loop (stored :: entries)
-          (Packed_update (old.kind, Changed entry) :: updates)
+          (Packed_update (changed.kind, Changed entry) :: updates)
           counter rest
     | Remove (Stored old) :: rest ->
         loop entries

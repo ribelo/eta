@@ -1,37 +1,38 @@
 module Crux = Eta_crux
 module Projection = Eta_crux_test.Projection_harness.Opaque
 
-let output_of_delivery delivery =
+let output_of_delivery witness delivery =
   Eta_crux_test.Projection_harness.Opaque.delivery_value
+    witness
     (Crux.Driver.Delivery.projection delivery)
   |> Option.get
 
-let output_of_commit commit =
-  Eta_crux_test.Projection_harness.Opaque.commit_value commit
+let output_of_commit witness commit =
+  Eta_crux_test.Projection_harness.Opaque.commit_value witness commit
   |> Option.get
 
-let latest_committed_snapshot driver =
+let latest_committed_snapshot witness driver =
   Option.bind (Crux.Driver.latest_committed_snapshot driver)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
-let handle_latest_committed_snapshot handle =
+let handle_latest_committed_snapshot witness handle =
   Option.bind (Eta_crux_test.Handle.latest_committed_snapshot handle)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 
-let handle_latest_delivered_snapshot handle =
+let handle_latest_delivered_snapshot witness handle =
   Option.bind (Eta_crux_test.Handle.latest_delivered_snapshot handle)
-    Eta_crux_test.Projection_harness.Opaque.snapshot_value
+    (Eta_crux_test.Projection_harness.Opaque.snapshot_value witness)
 module Observer = Eta_crux_test.Post_commit_effect_observer
 
 let run_ok runtime effect =
   Eta.Runtime.run runtime effect |> Eta_test.Expect.expect_ok
 
-let accept_delivery runtime = function
+let accept_delivery runtime witness = function
   | Some (Crux.Driver.Deliver delivery) ->
       ignore
         (run_ok runtime
            (Crux.Driver.Delivery.delivered delivery));
-      output_of_delivery delivery
+      output_of_delivery witness delivery
   | Some _ | None -> Alcotest.fail "expected delivery"
 
 type action =
@@ -59,7 +60,7 @@ let observer_machine ran =
             Some (Eta.Effect.sync (fun () -> ran := true)) ))
 
 let create_driver observer ran =
-  let root =
+  let root, witness =
     Projection.root ~projection_capacity:1
       ~post_commit_effect_observer:(Observer.attachment observer)
       ~ingress_capacity:2 ~request_capacity:1
@@ -68,7 +69,7 @@ let create_driver observer ran =
   let driver =
     Crux.Driver.create (Crux.Driver.Binding.identity []) root
   in
-  (root, driver)
+  (root, driver, witness)
 
 let staged = function
   | Observer.Staged { position; commit; effects } ->
@@ -81,9 +82,10 @@ let test_post_commit_effect_observer_inventory_and_lifecycle () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let observer = Observer.create () in
   let ran = ref false in
-  let _root, driver = create_driver observer ran in
+  let _root, driver, witness = create_driver observer ran in
   let model, endpoint =
-    accept_delivery runtime (run_ok runtime (Crux.Driver.poll driver))
+    accept_delivery runtime witness
+      (run_ok runtime (Crux.Driver.poll driver))
   in
   Alcotest.(check int) "initial model" 0 model;
   let position, commit, effects =
@@ -103,7 +105,7 @@ let test_post_commit_effect_observer_inventory_and_lifecycle () =
        |> Eta.Effect.or_die (fun _ ->
               Invalid_argument "ingress closed")));
   ignore
-    (accept_delivery runtime
+    (accept_delivery runtime witness
        (run_ok runtime (Crux.Driver.poll driver)));
   let position, commit, effects =
     match Observer.poll observer with
@@ -171,9 +173,10 @@ let test_post_commit_effect_observer_discard_before_start () =
   Eta_test.with_test_clock @@ fun _switch _clock runtime ->
   let observer = Observer.create () in
   let ran = ref false in
-  let _root, driver = create_driver observer ran in
+  let _root, driver, witness = create_driver observer ran in
   let _, endpoint =
-    accept_delivery runtime (run_ok runtime (Crux.Driver.poll driver))
+    accept_delivery runtime witness
+      (run_ok runtime (Crux.Driver.poll driver))
   in
   ignore (Observer.drain observer);
   ignore
@@ -232,9 +235,9 @@ let test_post_commit_effect_observer_failure_and_interruption () =
   let run_case action expected =
     let observer = Observer.create () in
     let ran = ref false in
-    let _root, driver = create_driver observer ran in
+    let _root, driver, witness = create_driver observer ran in
     let _, endpoint =
-      accept_delivery runtime
+      accept_delivery runtime witness
         (run_ok runtime (Crux.Driver.poll driver))
     in
     ignore (Observer.drain observer);
