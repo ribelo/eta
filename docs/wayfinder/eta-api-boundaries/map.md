@@ -52,6 +52,10 @@ Consumer project roots for spot-checks:
 - `/home/ribelo/projects/ribelo/grip`
 - `/home/ribelo/projects/exergy`
 
+Two standing principles from the rubric: Eta can be complex inside to keep
+the outside simple, and Eta prefers deep modules. An addition must not create
+a second way to do one job.
+
 Use `$grilling` and `$domain-modeling` for decision tickets. Use
 `$codebase-design` for the deep-module test in ticket 01. Use `$research`
 for research tickets. Use `$prototype` for `.mli` sketches. Use `$eio` and
@@ -63,6 +67,7 @@ ordinary build work.
 
 ## Decisions so far
 
+- [H-W4 decision rubric](issues/01-hw4-decision-rubric.md) — two branches (Eio and Eta surface), six verdicts (`wrap`, `bridge`, `recipe`, `complete`, `prune`, `reject`), both the invariant test and the deletion test required for `wrap`, `recipe` legal only when the caller must supply policy Eta cannot know, a mandatory prune check on every accepted API, a three-question package-home test, and a fixed eight-field record per candidate.
 - [Runtime-door prior art](issues/02-runtime-door-prior-art.md) — ZIO and effect-ts run one root-fiber door with full cause rendering and a distinct interrupt exit code, and both steer users to one shared runtime ([report](../../../../.scratch/research/eta-api-boundaries/02-runtime-door-prior-art.md)).
 
 ## Not yet specified
